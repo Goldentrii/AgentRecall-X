@@ -5,6 +5,7 @@
 <p align="center">Persistent, compounding memory + automatic correction capture. MCP server + SDK + CLI.</p>
 
 <p align="center">
+  <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
@@ -838,11 +839,18 @@ All benchmark code: [`benchmark/run.mjs`](benchmark/run.mjs), [`benchmark/ab-com
 
 ---
 
+## Community
+
+Join the Telegram group to give feedback, share how you use AgentRecall, and talk about AI agents:
+
+**[→ Join Telegram Community](https://t.me/+ywZwoHrg3AM0NDVi)**
+
 ## Contributing
 
 Built by [tongwu](https://github.com/Goldentrii) at [Novada](https://www.novada.com).
 
 - Issues & feedback: [GitHub Issues](https://github.com/Goldentrii/AgentRecall/issues)
+- Telegram: [t.me/+ywZwoHrg3AM0NDVi](https://t.me/+ywZwoHrg3AM0NDVi)
 - Email: [tong.wu@novada.com](mailto:tong.wu@novada.com)
 - Website: [novada.com](https://www.novada.com)
 
