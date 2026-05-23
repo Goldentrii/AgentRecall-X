@@ -198,15 +198,20 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   const watchFor = extractWatchPatterns(trimmed, 3);
 
   // 4. Phase 5: auto-promote strong patterns (3+) to awareness
+  // Quality gate: skip patterns that are raw speech fragments, not actionable insights.
   let autoPromoted = 0;
   for (const w of watchFor) {
     if (w.frequency >= 3) {
+      const words = w.pattern.split(/\s+/).filter((word: string) => word.length > 1);
+      // Quality filters: must be ≥5 meaningful words and contain an action verb signal
+      const hasActionSignal = /\b(don't|never|always|must|should|use|avoid|prefer|stop|skip|check|verify|wait|need)\b/i.test(w.pattern);
+      if (words.length < 5 || !hasActionSignal) continue;
       try {
         await awarenessUpdate({
           insights: [{
             title: `Human preference: ${w.pattern.slice(0, 60)}`,
             evidence: `Detected from ${w.frequency} corrections in alignment log`,
-            applies_when: w.pattern.split(/[\s\-:()]+/).filter((word) => word.length > 3).slice(0, 5),
+            applies_when: w.pattern.split(/[\s\-:()]+/).filter((word: string) => word.length > 3).slice(0, 5),
             source: `check auto-promote ${todayISO()}`,
             severity: "important",
           }],

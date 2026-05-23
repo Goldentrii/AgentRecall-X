@@ -38,8 +38,21 @@ export interface MergeReceipt {
 export async function journalMerge(input: JournalMergeInput): Promise<MergeReceipt> {
   const slug = await resolveProject(input.project);
   const dir = journalDir(slug);
+
+  // Path traversal protection: reject filenames with .. or /
+  for (const fname of [input.target_file, input.source_file]) {
+    if (fname.includes("..") || fname.includes("/") || fname.includes("\\")) {
+      throw new Error(`Invalid filename (path traversal rejected): ${fname}`);
+    }
+  }
+
   const targetPath = path.join(dir, input.target_file);
   const sourcePath = path.join(dir, input.source_file);
+
+  // Extra guard: ensure resolved paths stay within journal dir
+  if (!targetPath.startsWith(dir) || !sourcePath.startsWith(dir)) {
+    throw new Error("Path traversal detected: resolved path escapes journal directory");
+  }
 
   // Validate both files exist
   if (!fs.existsSync(targetPath)) {

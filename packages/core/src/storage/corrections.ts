@@ -44,7 +44,7 @@ function correctionsDir(project: string): string {
 
 /** Auto-detect severity: p0 if uses strong negation/mandate language, else p1. */
 function detectSeverity(text: string): "p0" | "p1" {
-  const p0Patterns = /\bnever\b|\balways\b|\bno\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid/i;
+  const p0Patterns = /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b/i;
   return p0Patterns.test(text) ? "p0" : "p1";
 }
 

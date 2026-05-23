@@ -214,8 +214,10 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
             evidence: input.content,
             applies_when: slugResult.keywords,
             source: `smart_remember ${new Date().toISOString().slice(0, 10)}`,
+            source_project: input.project,
           },
         ],
+        project: input.project,
       });
       break;
     }
