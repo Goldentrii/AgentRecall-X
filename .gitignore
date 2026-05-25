@@ -9,3 +9,5 @@ dist/
 
 # Stray src copies
 /src/
+supabase/.temp/
+.superpowers/
