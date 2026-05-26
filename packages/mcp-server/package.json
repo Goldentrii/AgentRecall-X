@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-mcp",
-  "version": "3.4.18",
+  "version": "3.4.19",
   "description": "Memory Palace MCP server for AI agents",
   "type": "module",
   "main": "dist/index.js",

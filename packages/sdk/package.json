@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-sdk",
-  "version": "3.4.18",
+  "version": "3.4.19",
   "description": "SDK for AgentRecall \u2014 persistent, compounding memory for AI agents",
   "type": "module",
   "main": "dist/index.js",
