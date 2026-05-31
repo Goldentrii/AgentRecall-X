@@ -325,7 +325,7 @@ Agent 5 finishes: you /arsave again            → Zero conflicts (session-ID sc
 
 Memory is the mechanism. Understanding is the goal. Every time you correct your agent — "no, not that version", "put this section first", "ask me before you assume" — that correction is stored, weighted, and recalled next time. After 10 sessions, your agent doesn't just remember your project. It understands how you think: your priorities, your communication style, your non-negotiables.
 
-- **Your agent learns how you think.** Humans are inconsistent — we skip from A to E, forget what we said yesterday, change priorities mid-sentence. AgentRecall captures every correction and surfaces it before the next mistake. The gap between what you mean and what your agent does shrinks with every session.
+- **Your agent learns how you think.** Humans are inconsistent — we skip from A to E, forget what we said yesterday, and change priorities mid-sentence. AgentRecall captures every correction and surfaces it before the next mistake. The gap between what you mean and what your agent does shrinks with every session.
 
 - **Compounding awareness, not infinite logs.** Memory is capped at 200 lines. New insights either merge with existing ones (strengthening them) or replace the weakest. After 100 sessions, your awareness file is still 200 lines — but each line carries the weight of cross-validated, confirmed observations.
 
@@ -866,7 +866,7 @@ MIT License.
 >
 > **AgentRecall 让它学会理解你的思维方式。**
 >
-> 赋能agent长期记忆，并从错误中学习和纠正，随时间和项目难度进化，越来越擅长和了解用户和agent的思维。
+> 赋能 Agent 获得长期记忆，使其能从错误中学习并自我纠正，随时间和项目难度的增加而不断进化，最终越来越了解用户与智能体的思维方式。
 >
 > 持久复合记忆 + 智能距离协议。MCP 服务器 + SDK + CLI。
 
@@ -963,7 +963,7 @@ claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
 codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```
 
-**Claude Code 技能安装：**
+**Claude Code 技能安装:**
 ```bash
 mkdir -p ~/.claude/skills/agent-recall
 curl -o ~/.claude/skills/agent-recall/SKILL.md \
