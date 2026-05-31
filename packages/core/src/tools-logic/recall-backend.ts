@@ -70,8 +70,9 @@ export async function getRecallBackend(): Promise<RecallBackend> {
         return backend;
       }
     }
-  } catch {
+  } catch (err) {
     // Supabase not configured or module not yet available (Task 8).
+    process.stderr.write(`[agent-recall] backend load error: ${err}\n`);
   }
 
   // If OPENAI_API_KEY is set and no Supabase config, use local vector backend.

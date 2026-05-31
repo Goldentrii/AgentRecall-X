@@ -121,8 +121,9 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         context: corrText,
         tags: corrTags,
       });
-    } catch {
+    } catch (err) {
       // Best effort — never block the check flow
+      process.stderr.write(`[agent-recall] correction write error: ${err}\n`);
     }
   }
 

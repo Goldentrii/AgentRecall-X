@@ -277,7 +277,8 @@ async function autoBackfill(project: string): Promise<void> {
     if (files.length > 0) {
       await backfill(project, files);
     }
-  } catch {
-    // Silent — backfill failure must not break session_start
+  } catch (err) {
+    // Non-blocking — backfill failure must not break session_start
+    process.stderr.write(`[agent-recall] backfill error: ${err}\n`);
   }
 }

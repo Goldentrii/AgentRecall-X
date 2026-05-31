@@ -254,7 +254,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         }
       }
     }
-  } catch { /* merge detection is best-effort */ }
+  } catch (err) { /* merge detection is best-effort */
+    process.stderr.write(`[agent-recall] merge detection error: ${err}\n`);
+  }
 
   // 5. Render save card — server-side, always correct
   const root = getRoot();
@@ -269,14 +271,18 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   try {
     const awareness = readAwarenessState();
     totalInsights = awareness?.topInsights?.length ?? 0;
-  } catch { /* non-blocking */ }
+  } catch (err) { /* non-blocking */
+    process.stderr.write(`[agent-recall] awareness read error: ${err}\n`);
+  }
 
   // Get updated rooms
   let roomNames: string[] = [];
   try {
     const rooms = listRooms(slug);
     roomNames = rooms.slice(0, 3).map(r => r.name);
-  } catch { /* non-blocking */ }
+  } catch (err) { /* non-blocking */
+    process.stderr.write(`[agent-recall] rooms read error: ${err}\n`);
+  }
 
   // Count corrections for this project
   let correctionCount = 0;

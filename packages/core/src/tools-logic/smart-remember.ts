@@ -150,8 +150,9 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
     if (conflictResult.hasConflict && conflictResult.matches.length > 0) {
       conflict_warning = formatConflictWarning(conflictResult.matches, input.project);
     }
-  } catch {
+  } catch (err) {
     // Conflict scan is best-effort — never blocks save
+    process.stderr.write(`[agent-recall] conflict scan error: ${err}\n`);
   }
 
   let result: unknown;
@@ -230,8 +231,9 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
     if (check.warnings.length > 0) {
       consistency_warnings = check.warnings;
     }
-  } catch {
+  } catch (err) {
     // Consistency check is best-effort — never blocks save
+    process.stderr.write(`[agent-recall] consistency check error: ${err}\n`);
   }
 
   // Extract file path and entry indicator from the routed result
