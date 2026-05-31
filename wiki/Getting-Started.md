@@ -31,16 +31,22 @@ claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
 codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```
 
-### Optional: Install `/arsave` and `/arstart` commands (Claude Code only)
+### Optional: Install slash commands (Claude Code only)
 
-可选：安装 `/arsave` 和 `/arstart` 命令（仅限 Claude Code）
+可选：安装 slash commands（仅限 Claude Code）
 
 ```bash
 mkdir -p ~/.claude/commands
-curl -o ~/.claude/commands/arsave.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsave.md
+curl -o ~/.claude/commands/arstatus.md \
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstatus.md
 curl -o ~/.claude/commands/arstart.md \
   https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstart.md
+curl -o ~/.claude/commands/arsave.md \
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsave.md
+curl -o ~/.claude/commands/arsaveall.md \
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsaveall.md
+curl -o ~/.claude/commands/arbootstrap.md \
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arbootstrap.md
 ```
 
 ### SDK (for JS/TS applications | 适用于 JS/TS 应用)

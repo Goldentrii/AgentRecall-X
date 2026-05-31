@@ -943,6 +943,7 @@ curl -o ~/.claude/commands/arstatus.md https://raw.githubusercontent.com/Goldent
 curl -o ~/.claude/commands/arstart.md https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstart.md
 curl -o ~/.claude/commands/arsave.md https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsave.md
 curl -o ~/.claude/commands/arsaveall.md https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsaveall.md
+curl -o ~/.claude/commands/arbootstrap.md https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arbootstrap.md
 ```
 
 ---
