@@ -12,8 +12,9 @@ This log tracks phase-by-phase improvements to AgentRecall's architecture, based
 | [Phase 2](#phase-2--ambient-recall) | Ambient Recall — remove agent discretion from retrieval | ✅ Done |
 | [Phase 3](#phase-3--multi-label-classification) | Multi-label Classification — memories findable from any angle | ✅ Done |
 | [Phase 4](#phase-4--corrections-as-first-class-citizens) | Corrections as First-Class Citizens — behavioral calibration layer | ✅ Done |
-| [Phase 2.5](#phase-25--intelligent-file-naming) | Intelligent File Naming — readable for humans, parseable for agents | 🔧 In Progress |
+| [Phase 2.5](#phase-25--intelligent-file-naming) | Intelligent File Naming — readable for humans, parseable for agents | ✅ Done (closed by Phase 6b) |
 | [Phase 5](#phase-5--protocol-foundations) | Protocol Foundations — schema + cross-LLM interoperability | 🔲 Long-term |
+| [Phase 6](#phase-6--research-driven-foundation-layer-2026-05-30) | Research-driven foundation: 4 memory layers, naming system, KPI, FSRS, Hopfield | 🔧 In Progress |
 
 ---
 
@@ -226,6 +227,105 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 | v3.4.13 | 2026-05-20 | Agent experience overhaul (5 fixes) | **What:** (1) **Write confirmation with path** — `remember()` returns exact file path + entry indicator (`[new]`, `[appended]`, `[Q4]`, `[insight #7]`). Fixed speculative path construction bug for `journal_capture` (was using unresolved slug). Removed redundant JSON dump from MCP response. (2) **Tighter session_start** — output switched from JSON dump (~1200 tokens) to structured terse text (~250 tokens). `verbose:bool` param added to restore full JSON. Format: header + hard rules + watch_for + recent activity + top 5 insights + palace rooms + cross-project. (3) **Correction classifier** — `hook-correction` now requires behavioral signals before storing a correction (frequency words: "again", "keep", "every time", "I told you"). Task corrections ("no, use the blue button") are discarded. Also fixed: `/\bno\b/i` removed from P0 severity detector — too broad. (4) **Feedback loop** — `recall` and `memory_query` output terse formatted results with a feedback nudge + result IDs at the end. `SmartRecallResultItem` exported from core barrel. `MemoryQueryItem.id` added and passed through. The Beta distribution feedback system was fully built but never surfaced to agents. (5) **Tool surface reduction** — default MCP server exposes 6 core tools (`session_start`, `remember`, `recall`, `session_end`, `check`, `memory_query`). `--full` flag restores all 11. Smoke tests updated for both modes. Core dep in mcp-server/cli/sdk packages fixed from 3.4.10 → 3.4.13. **Why:** Adversarial self-review identified 5 specific friction points from daily agent usage: write blindness, context bloat, correction false positives, unused feedback loop, and tool noise. All 5 addressed in one pass. **How:** See individual commit diffs for each fix. All 304 tests pass. |
 | — | — | Phase 2.5 | Intelligent file naming system |
 | — | — | Phase 5 | Protocol spec |
+
+---
+
+## Phase 6 — Research-Driven Foundation Layer (2026-05-30)
+
+**Goal: close 11 structural gaps the field's research literature flags, ground every change in a published equation, and make memory math (not just memory storage) a first-class concern.**
+
+### How this phase was scoped
+
+Two parallel research passes on 2026-05-30:
+
+1. **10-vantage attack on AgentRecall.** Dispatched 10 subagents, each from a distinct evaluation perspective (cognitive science, LLM agent papers, production memory products, PKM, decay/forgetting, long-horizon agent context, multi-agent shared memory, dashboard UX, feedback loops, formal taxonomy). Each produced ranked P0/P1/P2 findings with paper/repo citations. Synthesized into 11 concrete defects.
+
+2. **4-family math survey.** Dispatched 4 subagents to find published equations from distinct mathematical families (Bayesian/ACT-R, energy-based/Hopfield, information-theoretic, optimal scheduling/RL) that could upgrade AgentRecall beyond the Ebbinghaus + BM25 + RRF stack it shipped with. Each produced a 1-day implementation primitive.
+
+### Changes shipped
+
+| # | Change | File | Research grounding |
+|---|--------|------|---------------------|
+| 6a | Pipeline layer — project phase milestones (Goal/Hard/Solved/Synthesis) | `palace/pipeline.ts` + 5 MCP tools | Park et al. 2023 reflection pattern |
+| 6b | Canonical naming system v1 (`<scope>/<type>/<topic>/<temporal>--<slug>.md`) | `naming.ts` + `dashboard-export` index | Closes Phase 2.5 |
+| 6c | Procedural memory layer (5th type) — IF-THEN production rules | `palace/skills.ts` + 3 MCP tools | Squire 2004 / Tulving / ACT-R / CoALA |
+| 6d | Correction outcome KPIs — `retrieved_count`, `heeded_count`, `recurrence_count`, `precision` | `storage/corrections.ts` | V9 vantage: "the only KPI that matters is recurrence after retrieval" |
+| 6e | FSRS-lite decay scorer (R = exp(-t/S), reinforce/penalize) | `palace/fsrs.ts` | Ebbinghaus 1885 / FSRS-6 (Anki ≥23.10) |
+| 6f | `session_start` lite mode (≤500 tokens, pull on demand) | `tools-logic/session-start-lite.ts` | Anthropic 2026 context engineering guidance |
+| 6g | Reflection bundle — Park-2023-style aggregation prompt | `tools-logic/session-end-reflect.ts` | Park et al. 2023 §4.3 |
+| 6h | Agent-readable `dashboard.json` snapshot (schema_version=1) | `tools-logic/dashboard-export.ts` | V8 vantage gap |
+| 6i | Security hardening — path traversal, frontmatter YAML injection, markdown section injection | `storage/paths.ts`, `palace/obsidian.ts`, `palace/pipeline.ts` | 8-agent red-team P0 findings |
+| 6j | Atomic writes (tmp + rename) on all new write paths | `palace/{skills,pipeline}.ts`, `storage/corrections.ts` | Reviewer loop-2 P0 |
+| 6k | Modern Hopfield re-ranker (associative blend + soft k-NN) | `palace/hopfield.ts` | Ramsauer et al. 2020 / Hopfield 1982 |
+| 6k.1 | Hopfield input hardening — finite checks, dim mismatch throws, ids length check, rerank candidate guard | `palace/hopfield.ts` | Reviewer-loop-2 P0/P1 findings |
+
+### Why this phase exists
+
+Until now AgentRecall used:
+- Forgetting math from **1885** (Ebbinghaus exponential curve)
+- Retrieval math from **1976** (BM25)
+- Fusion math from **2009** (RRF)
+- A 3-layer memory model that misses procedural memory entirely
+
+The literature has moved. This phase is the consolidation pass that brings the foundation closer to the 1982-2024 state of the art, while keeping AgentRecall's actual moat (correction-first feedback loop, local markdown, zero cloud).
+
+### How to verify
+
+```bash
+cd ~/Projects/AgentRecall
+npm run build                                    # green
+node test/smoke-phase6.mjs                       # 34 checks pass (see REPORT-2026-05-30.html)
+open REPORT-2026-05-30.html                      # full visual report
+cat ~/.agent-recall/dashboard.json | jq .schema_version   # 1
+```
+
+### Related artifacts
+
+- `REPORT-2026-05-30.html` — full visual report of all 11 fixes with before/after, KPI definitions, Supabase schema deltas, and deferred items
+- 10 subagent research outputs preserved in session transcript (see project AgentRecall journal `2026-05-30`)
+- 4 subagent math surveys preserved in session transcript
+
+### Hopfield review summary (2026-05-30, 3 parallel reviewers)
+
+**Reviewer 1 — math correctness** (vs Ramsauer 2020): all 6 checks PASS to float epsilon.
+1. Exponential capacity claim verified at d=32 (matches `exp(d/2)` regime; d=8 below regime as expected).
+2. Softmax temperature: monotonic sharpening from β=0.1 (uniform) → β=32 (one-hot).
+3. Energy formula hand-calc matches implementation to 6 decimal places.
+4. Numerical stability: no NaN/Inf at β=64 with raw scores up to 64 (max-subtraction works).
+5. One-step convergence: at β=8 with 1-bit-flipped query, steps=1 and steps=5 disagree on 2/50 trials (4%, expected).
+6. Normalization invariance: |Δweight| ≤ 2.4e-17 across scaled inputs.
+
+**Reviewer 2 — edge case fuzz**: 3 P0 + 5 P1 + 3 P2 found. **All P0+P1 fixed in loop 2.**
+
+**Reviewer 3 — AgentRecall fit**: math holds, but wiring needs 3 prerequisites before activating:
+1. Extend `SmartRecallResultItem` with optional `embedding: number[]`
+2. Add `fetchEmbeddingsByIds(project, ids)` helper to vector backends
+3. Semantic-dedup pre-pass at cos > 0.92 + `status === "spurious"` fallback to RRF order
+
+Then ship behind `AGENTRECALL_HOPFIELD=1` env flag with JSONL telemetry for one week. Default `β=8` for unit-normalized embeddings (text-embedding-3-small at d=1536).
+
+### What's still deferred (honest)
+
+| Item | Why deferred |
+|------|---------------|
+| Wire FSRS reinforcement into `recall()` hot path | Primitive shipped; wiring is one-line follow-up |
+| Wire Hopfield into RRF re-rank step | Primitive shipped + reviewed + hardened; needs 3 prerequisites (see Reviewer 3 summary) |
+| Cytoscape graph card in dashboard.html | Existing 4884-line dashboard needs careful surgery |
+| Correction Timeline + Promotion Funnel UI card | Data layer in place via KPIs |
+| LangGraph reducer + version vector for multi-agent | Needs design week, not a day |
+| Per-project awareness (vs global) | Upstream awareness.ts redesign |
+| Half-Life Regression trainable θ | Needs ~10k retrieval events to fit; not enough data yet |
+
+### Math primitives identified but not yet implemented
+
+The 4-family math survey produced 4 ready-to-implement primitives. Hopfield (6k) ships in this phase. The other 3 remain candidates:
+
+| Primitive | Family | Math | Status |
+|-----------|--------|------|--------|
+| `baseLevelActivation(presentations, d=0.5)` | Bayesian / ACT-R | `B = ln(Σ t_j^-d)` | Designed, not built |
+| `hopfieldRecall(query, X, β=8)` | Energy-based | `ξ_new = X·softmax(β·X^⊤·ξ)` | ✅ Built (6k) + reviewed + hardened (6k.1) |
+| `estimateCompressionHealth(palace, source)` | Info theory / MDL | gzip-based two-part code | Designed, not built; **needs severity-weighting before ship** |
+| `shouldAutoSurface(insight, now)` | MEMORIZE / optimal control | `u*(t) = (1/√q)·(1-m(t))` | Designed, not built |
 
 ---
 

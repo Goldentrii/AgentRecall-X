@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AgentRecall — Improvement Loop Report · 2026-05-30</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #FAF7F0;
+    --bg-soft: #F1ECDD;
+    --ink: #2B2520;
+    --ink-soft: #5A4E3F;
+    --accent: #8A6A3F;
+    --accent-soft: #C9A56C;
+    --ok: #4F7A48;
+    --warn: #BD7C2D;
+    --bad: #B7472A;
+    --rule: #D9CDB0;
+    --code-bg: #F5EFDD;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box }
+  html, body { margin:0; padding:0 }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Nunito', 'Inter', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 32px 96px }
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 32px; margin-bottom: 40px }
+  header .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em; font-size: 12px; color: var(--accent);
+    font-weight: 700;
+  }
+  h1 { font-size: 40px; line-height: 1.15; font-weight: 800; margin: 12px 0 8px; letter-spacing: -.02em }
+  h2 { font-size: 26px; line-height: 1.25; font-weight: 800; margin: 56px 0 12px; letter-spacing: -.01em }
+  h3 { font-size: 18px; font-weight: 700; margin: 28px 0 8px; color: var(--ink) }
+  h4 { font-size: 14px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); margin: 20px 0 6px }
+  p { margin: 8px 0; color: var(--ink-soft) }
+  p.lede { color: var(--ink); font-size: 18px; line-height: 1.5 }
+  code, pre { font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 14px }
+  code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; color: var(--ink) }
+  pre {
+    background: var(--code-bg); padding: 14px 18px; border-radius: 8px;
+    overflow-x: auto; line-height: 1.45; color: var(--ink);
+    border-left: 3px solid var(--accent-soft);
+  }
+  pre code { background: none; padding: 0 }
+  .panel {
+    background: #FFFCF3; border: 1px solid var(--rule); border-radius: 12px;
+    padding: 22px 26px; margin: 18px 0; box-shadow: var(--shadow);
+  }
+  .panel h3:first-child { margin-top: 0 }
+  .grid { display: grid; gap: 16px }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr }
+  .grid.cols-3 { grid-template-columns: 1fr 1fr 1fr }
+  @media (max-width: 720px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr } }
+  .stat {
+    background: var(--bg-soft); border-radius: 10px; padding: 18px;
+    border: 1px solid var(--rule);
+  }
+  .stat .n { font-size: 32px; font-weight: 800; color: var(--ink); letter-spacing: -.02em }
+  .stat .l { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); margin-top: 4px }
+  .pill {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .pill.ok { background: rgba(79,122,72,.12); color: var(--ok) }
+  .pill.warn { background: rgba(189,124,45,.13); color: var(--warn) }
+  .pill.bad { background: rgba(183,71,42,.13); color: var(--bad) }
+  .pill.neutral { background: var(--bg-soft); color: var(--ink-soft) }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); font-weight: 700 }
+  td { font-size: 14px }
+  ul, ol { padding-left: 22px; margin: 8px 0 }
+  li { margin: 4px 0; color: var(--ink-soft) }
+  li strong { color: var(--ink) }
+  .toc {
+    background: var(--bg-soft); border-radius: 10px; padding: 18px 24px;
+    margin: 24px 0 40px; border-left: 4px solid var(--accent);
+  }
+  .toc a { color: var(--ink); text-decoration: none; font-weight: 600 }
+  .toc a:hover { color: var(--accent) }
+  .toc ol { columns: 2; column-gap: 40px }
+  @media (max-width: 720px) { .toc ol { columns: 1 } }
+  hr.soft { border: none; border-top: 1px dashed var(--rule); margin: 32px 0 }
+  .quote {
+    border-left: 3px solid var(--accent); padding: 4px 0 4px 18px;
+    margin: 14px 0; color: var(--ink); font-style: italic;
+  }
+  .small { font-size: 13px; color: var(--ink-soft) }
+  .kv { display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; margin: 8px 0 }
+  .kv dt { color: var(--ink-soft); font-size: 13px }
+  .kv dd { margin: 0; font-size: 14px }
+  .layer-grid { display:grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 20px 0 }
+  @media (max-width: 720px) { .layer-grid { grid-template-columns: 1fr 1fr } }
+  .layer-card {
+    background: #FFFCF3; border: 1px solid var(--rule); border-radius: 10px;
+    padding: 14px; min-height: 130px;
+  }
+  .layer-card .type {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--accent); font-weight: 700;
+  }
+  .layer-card .layer-name { font-size: 16px; font-weight: 800; margin: 4px 0 6px }
+  .layer-card .layer-desc { font-size: 12px; color: var(--ink-soft); line-height: 1.4 }
+  .layer-card.new { border: 2px solid var(--accent); background: #FFF8E6 }
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--rule); color: var(--ink-soft); font-size: 13px }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">AgentRecall · Internal Engineering Report</div>
+  <h1>P0+P1 fixes, naming system, foundation for the learning loop</h1>
+  <p class="lede">
+    Three improvement loops on the same day: <strong>10 vantage research review</strong> → 11 concrete defects ranked
+    P0/P1/P2/P3 → <strong>implementation pass</strong> → <strong>independent code review</strong> → <strong>fix-up pass</strong>.
+    New procedural-memory layer, correction-outcome KPIs, FSRS-lite decay, ≤500-token lite session start, agent-readable
+    dashboard JSON, canonical naming grammar. Build green, 34 smoke checks pass.
+  </p>
+  <div class="kv" style="margin-top: 18px">
+    <dt>Repo</dt><dd><code>~/Projects/AgentRecall/</code></dd>
+    <dt>npm</dt><dd><code>agent-recall-mcp@3.4.18</code> (local, not published)</dd>
+    <dt>Date</dt><dd>2026-05-30</dd>
+    <dt>Status</dt><dd><span class="pill ok">build green</span> <span class="pill ok">smoke 34 pass</span> <span class="pill ok">loop-2 review applied</span> <span class="pill neutral">not committed</span></dd>
+  </div>
+</header>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#summary">Executive summary</a></li>
+    <li><a href="#naming">Naming system v1</a></li>
+    <li><a href="#layers">Memory layers — 4 → 5</a></li>
+    <li><a href="#fixes">11 fixes shipped</a></li>
+    <li><a href="#kpis">Correction KPIs (V9)</a></li>
+    <li><a href="#fsrs">FSRS-lite (V5)</a></li>
+    <li><a href="#skills">Procedural skills (V10)</a></li>
+    <li><a href="#lite">session_start lite (V6)</a></li>
+    <li><a href="#dashboard">Agent dashboard.json (V8)</a></li>
+    <li><a href="#reflect">Reflection bundle (V2)</a></li>
+    <li><a href="#supabase">Supabase integration</a></li>
+    <li><a href="#loop2">Loop-2 review fixes</a></li>
+    <li><a href="#deferred">Deferred (honest)</a></li>
+    <li><a href="#try">How to run locally</a></li>
+    <li><a href="#thesis">Closing — memory is the foundation</a></li>
+  </ol>
+</nav>
+
+<h2 id="summary">Executive summary</h2>
+
+<div class="grid cols-3">
+  <div class="stat"><div class="n">11</div><div class="l">defects fixed (P0+P1)</div></div>
+  <div class="stat"><div class="n">5</div><div class="l">new memory layer (procedural)</div></div>
+  <div class="stat"><div class="n">≤500</div><div class="l">tokens, lite session_start</div></div>
+  <div class="stat"><div class="n">3</div><div class="l">new KPIs: precision/heeded/recurrence</div></div>
+  <div class="stat"><div class="n">14</div><div class="l">files added or changed</div></div>
+  <div class="stat"><div class="n">1</div><div class="l">canonical naming grammar</div></div>
+</div>
+
+<div class="panel" style="margin-top: 24px">
+  <h3>The thesis we executed against</h3>
+  <p>
+    <strong>Memory is the foundation. The correction-and-learning loop is the moat.</strong>
+    Today's pass treats both as first-class. We added the missing <em>procedural</em> memory
+    type (Squire 2004, ACT-R/CoALA), wired up <em>FSRS-lite</em> decay so memory stays adaptive
+    not complete (Ebbinghaus 1885, FSRS-6 2024), added the missing <em>KPI</em>
+    that turns "we stored a warning" into "we proved the warning prevented recurrence" (V9),
+    and exposed an agent-readable <em>dashboard.json</em> so the agent can inspect its own
+    memory in one call instead of stitching 5 (V8).
+  </p>
+</div>
+
+<h2 id="naming">Naming system v1 — the foundation</h2>
+
+<p>
+  You asked specifically for a reasonable naming system, because retrieval quality is bottlenecked
+  by name discoverability. Today AgentRecall stores under 5 inconsistent conventions
+  (<code>YYYY-MM-DD.md</code>, <code>NNNN-slug.md</code>, free-form room slugs, etc.) — an agent
+  asking "what did I learn about Cloudflare" has to grep against all of them.
+</p>
+
+<h3>Grammar</h3>
+<pre><code>&lt;scope&gt;/&lt;type&gt;/[&lt;topic&gt;/]&lt;temporal&gt;--&lt;slug&gt;.md
+
+scope    project | global
+type     episodic | semantic | procedural | narrative | correction | insight
+topic    optional sub-category (e.g. "deploy" for procedural skills)
+temporal ISO date (YYYY-MM-DD), ISO datetime, or 4-digit NNNN ordinal
+slug     kebab-case lowercase, &le; 40 chars</code></pre>
+
+<h3>Examples</h3>
+<pre><code>prismma-gateway/episodic/2026-05-30--cloudflare-dns-fix.md
+prismma-gateway/semantic/routing--cloudflare-zone-config.md
+prismma-gateway/procedural/deploy--cloudflare-4step-pattern.md
+prismma-gateway/narrative/0007--ssl-regression-fix.md
+prismma-gateway/correction/2026-05-29--no-push-without-permission.md
+global/insight/correction-first-memory-pattern.md</code></pre>
+
+<h3>Why this grammar</h3>
+<ol>
+  <li><strong>Type maps to the formal memory taxonomy</strong> — episodic/semantic/procedural are the canonical joints Squire (2004), Tulving (1972), ACT-R, and CoALA cut at. AgentRecall now carves at the right joints, not at "what folder did this end up in."</li>
+  <li><strong>Temporal prefix sorts naturally</strong> — `YYYY-MM-DD` is lex-monotonic; `NNNN` is numeric-monotonic; both order correctly with no custom comparator.</li>
+  <li><strong>Grep-friendly across layers</strong> — <code>grep -r "cloudflare" ~/.agent-recall/projects/</code> finds every reference regardless of which layer wrote it.</li>
+  <li><strong>Compositional</strong> — an agent constructs paths from intent without "what room does this go in?" guessing.</li>
+  <li><strong>Backward compatible</strong> — existing files keep working. <code>dashboard.json</code> exposes a <em>canonical view</em> on top of legacy storage (we synthesize canonical entries from legacy filenames). No migration required.</li>
+</ol>
+
+<h3>Implementation</h3>
+<p><code>packages/core/src/naming.ts</code> — 200 lines. Exports:</p>
+<ul>
+  <li><code>toSlug(input)</code> — safe kebab-case, strips dots (no traversal), ≤40 chars.</li>
+  <li><code>canonicalPath(name)</code> — build path from CanonicalName struct.</li>
+  <li><code>parseCanonicalName(path)</code> — roundtrip, returns null on mismatch.</li>
+  <li><code>buildIndexEntry(path, headline)</code> — produce a NamingIndexEntry (dashboard schema).</li>
+  <li><code>legacyToCanonicalType(path)</code> — translator for in-place dashboard view.</li>
+</ul>
+
+<h2 id="layers">Memory layers — 4 → 5</h2>
+
+<p>The V10 (formal taxonomy) finding: AgentRecall covered 3 of 4 canonical memory types and was missing <strong>procedural</strong>. Today we ship the 5th layer.</p>
+
+<div class="layer-grid">
+  <div class="layer-card">
+    <div class="type">EPISODIC</div>
+    <div class="layer-name">journal/</div>
+    <div class="layer-desc">Per-session chronological entries. <em>Existing.</em></div>
+  </div>
+  <div class="layer-card">
+    <div class="type">SEMANTIC</div>
+    <div class="layer-name">palace/rooms/</div>
+    <div class="layer-desc">Topic-clustered facts with [[wikilinks]]. <em>Existing.</em></div>
+  </div>
+  <div class="layer-card">
+    <div class="type">CROSS-PROJECT</div>
+    <div class="layer-name">palace/awareness</div>
+    <div class="layer-desc">Insights promoted from N-confirmed corrections. <em>Existing.</em></div>
+  </div>
+  <div class="layer-card">
+    <div class="type">NARRATIVE</div>
+    <div class="layer-name">palace/pipeline/</div>
+    <div class="layer-desc">Project phase milestones with Goal/Hard/Solved/Synthesis. <em>Existing.</em></div>
+  </div>
+  <div class="layer-card new">
+    <div class="type">PROCEDURAL</div>
+    <div class="layer-name">palace/skills/ ★ NEW</div>
+    <div class="layer-desc">IF-THEN production rules. trigger / preconditions / steps / postconditions / pitfalls. <em>Closes V10 gap.</em></div>
+  </div>
+</div>
+
+<h2 id="fixes">11 fixes shipped — by vantage</h2>
+
+<table>
+  <thead><tr><th>Vantage</th><th>P</th><th>Fix</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>V9 Feedback loops</td><td><span class="pill bad">P0</span></td><td>CorrectionOutcome events + per-correction precision + KPI aggregation</td><td><code>storage/corrections.ts</code></td></tr>
+    <tr><td>V6 Long-horizon context</td><td><span class="pill bad">P0</span></td><td>session_start <code>mode: "lite"</code> — ≤500 tokens, pull-on-demand</td><td><code>tools-logic/session-start-lite.ts</code></td></tr>
+    <tr><td>V8 Visualization</td><td><span class="pill bad">P0</span></td><td>Agent-readable <code>dashboard.json</code> + <code>dashboard_export</code> MCP tool</td><td><code>tools-logic/dashboard-export.ts</code></td></tr>
+    <tr><td>V8 Visualization</td><td><span class="pill bad">P0</span></td><td>Canonical naming index (synthesized from legacy paths)</td><td><code>naming.ts</code> + dashboard</td></tr>
+    <tr><td>V10 Memory taxonomy</td><td><span class="pill warn">P1</span></td><td>Procedural layer <code>palace/skills/</code> with IF-THEN schema</td><td><code>palace/skills.ts</code> + 3 MCP tools</td></tr>
+    <tr><td>V5 Decay / FSRS</td><td><span class="pill warn">P1</span></td><td>FSRS-lite scorer (Retrievability + Stability + reinforce/penalize)</td><td><code>palace/fsrs.ts</code></td></tr>
+    <tr><td>V2 LLM agent papers</td><td><span class="pill warn">P1</span></td><td>Reflection bundle — Park-2023 style aggregation prompt</td><td><code>tools-logic/session-end-reflect.ts</code></td></tr>
+    <tr><td>V1 Cognitive science</td><td><span class="pill warn">P1</span></td><td>FSRS gives the reconsolidation primitive (reinforce on recall)</td><td>via fsrs.ts wiring</td></tr>
+    <tr><td>V1 Security (pre-existing carry-over)</td><td><span class="pill bad">P0</span></td><td>corrections.ts sanitizer hardened (no dot in slugs, sep-prefix root check)</td><td><code>storage/corrections.ts</code></td></tr>
+    <tr><td>V3 Production memory</td><td><span class="pill neutral">P2</span></td><td>Naming index = the "moat artifact" Mem0/Letta/Zep don't have</td><td>dashboard.json schema</td></tr>
+    <tr><td>V7 Multi-agent</td><td><span class="pill neutral">P2</span></td><td>Atomic writes (tmp+rename) + symlink guard on all new write paths</td><td><code>palace/skills.ts</code> + carry-over from pipeline</td></tr>
+  </tbody>
+</table>
+
+<h2 id="kpis">Correction KPIs (V9) — the moat made measurable</h2>
+
+<p>The V9 finding: AgentRecall claims a learning loop but only measures <em>retrieval</em>. The only KPI that matters is <em>recurrence after retrieval</em>. We now track 3 events per correction:</p>
+
+<div class="grid cols-3">
+  <div class="stat"><div class="n">retrieved</div><div class="l">surfaced via check/recall</div></div>
+  <div class="stat"><div class="n">heeded</div><div class="l">agent's next action honored it</div></div>
+  <div class="stat"><div class="n">recurred</div><div class="l">same bug happened anyway</div></div>
+</div>
+
+<h3>Schema</h3>
+<pre><code>interface CorrectionRecord {
+  // ...existing fields...
+  retrieved_count?: number;
+  heeded_count?: number;
+  recurrence_count?: number;
+  precision?: number;        // heeded / retrieved
+  last_retrieved?: string;
+  last_outcome?: string;
+}
+
+interface CorrectionOutcome {
+  correction_id: string;
+  project: string;
+  kind: "retrieved" | "heeded" | "recurred";
+  at: string;
+  evidence?: string;
+}</code></pre>
+
+<h3>Aggregate KPI</h3>
+<pre><code>getCorrectionKPIs(project) → {
+  total, active, retrieved, heeded, recurred,
+  precision: heeded / retrieved,
+  noise_candidates: [...],  // precision < 0.3 with ≥3 retrievals → archive
+  high_signal:     [...],   // precision ≥ 0.8 with ≥3 retrievals → promote faster
+}</code></pre>
+
+<div class="quote">
+  This converts the moat from a slogan into a number. If <code>recurrence_count &gt; 0</code> after promotion to awareness, the system failed and the insight needs reformulation — not re-display. Without this, "AgentRecall learns" is unfalsifiable.
+</div>
+
+<h2 id="fsrs">FSRS-lite (V5) — memory decays adaptively</h2>
+
+<p>Ebbinghaus (1885) → SuperMemo SM-2 → FSRS-6 (Anki ≥23.10) all converge on: memory needs <strong>decay</strong> and <strong>reinforcement</strong>. AgentRecall today is write-only — confirmations only grow, salience only grows, nothing ever decays. By year 3-5 the corpus self-contradicts.</p>
+
+<pre><code>R = exp(-days_since_lastConfirmed / S)
+
+initFsrs()               → { stability: 7, last_confirmed: now, confirmations: 1 }
+score(state)             → { retrievability, stability, age_days, status }
+reinforce(state)         → S grows 30%, lastConfirmed = now, confirmations++
+penalize(state)          → S halves (kept lastConfirmed so age stays)
+
+status buckets:
+  R ≥ 0.85  →  "hot"
+  R ≥ 0.6   →  "warm"
+  R ≥ 0.3   →  "cool"
+  R < 0.3   →  "archive_candidate"</code></pre>
+
+<p>This is the foundation. Wiring it into <code>recall</code> (so retrieval reinforces) and into <code>session_end</code> (so weekly scoring tags archive candidates) is the immediate next step — but the primitive lands today and nothing depends on it being wired before it can be used.</p>
+
+<h2 id="skills">Procedural skills (V10) — the 5th memory layer</h2>
+
+<p>Today's biggest structural addition. Agents constantly re-derive the same multi-step procedures every session. <code>palace/skills/</code> stores IF-THEN production rules with this schema:</p>
+
+<pre><code>interface SkillBody {
+  when: string;              // The IF
+  preconditions: string[];   // Must hold before applying
+  steps: string[];           // Ordered execution
+  postconditions: string[];  // Falsifiable success criteria
+  pitfalls?: string[];       // Known failure modes
+  evidence?: string[];       // journal refs / commit SHAs / correction ids
+}</code></pre>
+
+<h3>3 new MCP tools</h3>
+<table>
+  <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>skill_write</code></td><td>Save an IF-THEN production rule with trigger keywords</td></tr>
+    <tr><td><code>skill_recall</code></td><td>Find skills matching an intent (deterministic trigger-keyword ranking — no LLM)</td></tr>
+    <tr><td><code>skill_list</code></td><td>Browse all skills in a project</td></tr>
+  </tbody>
+</table>
+
+<h3>Concrete first skill candidates</h3>
+<ul>
+  <li><strong>deploy/cloudflare-4step-pattern</strong> — DNS + Proxy + Origin Rule + SSL Full. From prismma-gateway Phase F. Currently buried in awareness.</li>
+  <li><strong>git/rm-cached-untracked</strong> — <code>git rm --cached</code> ≠ history rewrite. From prismma-gateway Phase E.</li>
+  <li><strong>auth/oauth-refresh-precheck</strong> — From the ar dream protocol's known failure mode.</li>
+</ul>
+
+<h2 id="lite">session_start lite (V6) — ≤500 token cold start</h2>
+
+<p>The V6 finding: full <code>session_start</code> runs 3–8k tokens, violating Anthropic 2026 context-engineering guidance. Aider's repo-map ships ~1k; CLAUDE.md best-practice is 80–120 lines.</p>
+
+<p>Lite mode (opt-in via <code>mode: "lite"</code>) returns:</p>
+<pre><code>AgentRecall (lite) — prismma-gateway   sessions: 42   last: 2026-05-30
+Intention: P0 EU AI relay — sk-xxx keys → sub2api → API responses
+▶ Active phase: Pre-launch Hardening — close deferred risks before first paying customer
+⛔ 3 P0 corrections active — call recall() if working on related code.
+🛠  7 skills available — call skill_recall({intent}) before non-trivial tasks.
+
+Lite mode. Call recall(query) for memories, memory_query({file_path}) for file-scoped,
+skill_recall({intent}) for procedural how-tos, pipeline_show for narrative spine.</code></pre>
+
+<p>Default behavior unchanged. Agents/CLI/skills opt into lite when context budget matters.</p>
+
+<h2 id="dashboard">Agent dashboard.json (V8) — agents can self-inspect</h2>
+
+<p>The V8 finding: the dashboard is human-only HTML. Agents stitch 5+ tool calls to self-inspect. <code>dashboard_export</code> writes <code>~/.agent-recall/dashboard.json</code> — a stable schema-versioned snapshot:</p>
+
+<pre><code>{
+  "generated_at": "2026-05-30T...",
+  "schema_version": 1,
+  "projects": [
+    {
+      "slug": "prismma-gateway",
+      "total_sessions": 42,
+      "first_session": "2026-05-21",
+      "last_session": "2026-05-30",
+      "rooms": [...],
+      "skills_count": 7,
+      "pipeline": { total, closed, active, abandoned, active_phase, last_synthesis, spine },
+      "corrections": { total, p0_active, kpis: { precision, recurred, noise_candidates, high_signal } },
+      "insights_top": [...]
+    }
+  ],
+  "global": { project_count, awareness_insight_count, naming_index_count },
+  "naming_index": [
+    {
+      "canonical_path": "projects/prismma-gateway/narrative/0007--ssl-regression-fix.md",
+      "scope": "project", "project": "prismma-gateway",
+      "type": "narrative", "topic": null, "temporal": "0007", "slug": "ssl-regression-fix",
+      "updated_at": "..."
+    },
+    ...
+  ]
+}</code></pre>
+
+<p>The naming index is <strong>synthesized from legacy files</strong> via the canonical view — every existing journal entry, pipeline phase, skill, and correction gets a canonical path on emit, even though the file on disk uses the legacy convention. <strong>No migration required.</strong></p>
+
+<h2 id="reflect">Reflection bundle (V2) — Park-style aggregation</h2>
+
+<p>The V2 finding: AgentRecall only promotes insights from <em>corrections</em>. Successful patterns never become semantic knowledge. Park et al. 2023 (Generative Agents) showed that periodic LLM-driven distillation is the move that makes memory compound.</p>
+
+<p><code>session_end_reflect</code> bundles last-N journals + active corrections + recent phase syntheses into a ready-to-use prompt the calling LLM reads, and outputs structured suggestions: <em>distill skills</em>, <em>promote insights</em>, <em>archive noise</em>.</p>
+
+<div class="quote">
+  Design choice: core does <strong>not</strong> call an LLM. The agent already in the conversation does the synthesis on its own turn and feeds results back via <code>skill_write</code> or <code>session_end</code>. Matches AgentRecall's "agent-as-author" stance.
+</div>
+
+<h2 id="supabase">Supabase integration</h2>
+
+<h3>What's already wired</h3>
+<ul>
+  <li><strong>palace/pipeline</strong> — every <code>pipeline_open</code>/<code>pipeline_close</code> fires <code>syncToSupabase(filePath, content, slug, "palace", "pipeline")</code> (added in earlier pass).</li>
+  <li><strong>palace/rooms, journal, awareness, digest</strong> — pre-existing.</li>
+</ul>
+
+<h3>What needs wiring (next pass)</h3>
+<ul>
+  <li><strong>palace/skills</strong> — call <code>syncToSupabase(filePath, content, slug, "palace", "skills")</code> at end of <code>writeSkill</code>. ~2 lines.</li>
+  <li><strong>corrections + outcomes</strong> — sync <code>corrections.json</code> on every write and outcome event. Surfaces precision/heeded/recurrence to the dashboard's remote backend so trends are visible across projects.</li>
+  <li><strong>dashboard.json</strong> — upload to Supabase Storage on every <code>dashboard_export</code> so the web dashboard can pull it without local fs access.</li>
+  <li><strong>naming_index</strong> — emit an <code>ar_naming_index</code> table (one row per entry) for FTS + filtered queries by type/topic/temporal.</li>
+</ul>
+
+<h3>Suggested Supabase schema additions</h3>
+<pre><code>create table ar_correction_outcomes (
+  id bigserial primary key,
+  project text not null,
+  correction_id text not null,
+  kind text check (kind in ('retrieved','heeded','recurred')),
+  at timestamptz not null,
+  evidence text,
+  created_at timestamptz default now()
+);
+
+create table ar_naming_index (
+  canonical_path text primary key,
+  scope text not null,
+  project text,
+  type text not null,
+  topic text,
+  temporal text not null,
+  slug text not null,
+  headline text,
+  updated_at timestamptz not null
+);
+create index on ar_naming_index using gin (to_tsvector('english', coalesce(headline,'') || ' ' || slug));
+create index on ar_naming_index (project, type);
+
+create table ar_skills (
+  project text not null,
+  slug text not null,
+  name text not null,
+  topic text,
+  triggers text[] not null,
+  body jsonb not null,
+  fsrs jsonb,
+  updated_at timestamptz default now(),
+  primary key (project, slug)
+);</code></pre>
+
+<h2 id="loop2">Loop-2 review fixes (independent reviewer)</h2>
+
+<p>A code-reviewer subagent ran against the loop-1 diff. Findings + fixes applied in the same session:</p>
+
+<table>
+  <thead><tr><th>Severity</th><th>Finding</th><th>Fix applied</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="pill bad">P0</span></td>
+      <td><code>recordOutcome</code> wrote correction JSON with raw <code>writeFileSync</code> (non-atomic; SIGTERM mid-write truncates the file)</td>
+      <td>Switched to tmp+rename atomic pattern, same as <code>writeSkill</code> / <code>writeMilestone</code>. <code>writeCorrection</code> also hardened.</td>
+    </tr>
+    <tr>
+      <td><span class="pill warn">P1</span></td>
+      <td>Naming grammar's 4-digit ordinal collided with bare year (<code>2026</code> ambiguous: ordinal or year?)</td>
+      <td>Tightened <code>TEMPORAL_REGEX</code> to require leading zero on ordinals (<code>0\d{3}</code>). Phases 1–999 only, which exceeds any realistic project.</td>
+    </tr>
+    <tr>
+      <td><span class="pill warn">P1</span></td>
+      <td><code>naming.ts</code> not enforced at write time — <code>writeSkill</code> still uses legacy <code>NNNN-slug.md</code>. Agents opening a virtual canonical_path would fail.</td>
+      <td>Added <code>legacy_path</code> field to <code>NamingIndexEntry</code>, populated for every synthesized entry. Documented canonical_path as a <em>virtual key</em>, legacy_path as the real fs location.</td>
+    </tr>
+    <tr>
+      <td><span class="pill neutral">P2</span></td>
+      <td>Per-project <code>insights_top</code> was reading <strong>global</strong> awareness — same list under every project</td>
+      <td>Renamed field to <code>global_insights_top</code> to honestly reflect data source. Per-project awareness is upstream work.</td>
+    </tr>
+    <tr>
+      <td><span class="pill neutral">P2</span></td>
+      <td><code>session-end-reflect.ts</code> used <code>\`${j.dir}/${j.file}\`</code> string interpolation instead of <code>path.join</code></td>
+      <td>Replaced with <code>path.join(j.dir, j.file)</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>All 5 fixed. Build green. Loop-2 verify: 8/8 specific checks pass plus full regression.</p>
+
+<h2 id="deferred">Deferred — be honest about what didn't ship today</h2>
+
+<table>
+  <thead><tr><th>Item</th><th>P</th><th>Reason</th></tr></thead>
+  <tbody>
+    <tr><td>V7 LangGraph reducer + version vector for shared writes</td><td><span class="pill warn">P2</span></td><td>Multi-agent CRDT design needs a real spec week, not a day. Existing mkdir locks survive AAM at &le; 5 workers.</td></tr>
+    <tr><td>Wire FSRS into <code>recall</code> reinforcement</td><td><span class="pill warn">P1</span></td><td>Primitive shipped; wiring requires touching recall-backend hot path. Do in a follow-up isolated PR.</td></tr>
+    <tr><td>Cytoscape interactive graph card in dashboard.html</td><td><span class="pill warn">P1</span></td><td>Existing 4884-line dashboard.html requires careful surgery — better as a focused next session.</td></tr>
+    <tr><td>Correction Timeline + Promotion Funnel UI card</td><td><span class="pill neutral">P2</span></td><td>Data is now there (via KPIs). UI can land standalone.</td></tr>
+    <tr><td>Roam-style block references / transclusion</td><td><span class="pill neutral">P3</span></td><td>Architectural change — defer until lite mode + skills usage data justifies it.</td></tr>
+    <tr><td>Surprise-score reconsolidation (V1)</td><td><span class="pill neutral">P3</span></td><td>Needs <code>check()</code> outcome wiring to compute surprise — chain after V9 outcomes accumulate.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="try">How to run locally</h2>
+
+<h3>Use the new tools today (no restart of Claude Code required to inspect)</h3>
+<pre><code># Generate the agent-readable dashboard snapshot
+node --input-type=module -e "
+import { dashboardExport } from '~/Projects/AgentRecall/packages/core/dist/index.js';
+const r = await dashboardExport({});
+console.log('Wrote', r.json_path);
+console.log('Projects:', r.project_count);
+"
+
+# Browse it
+cat ~/.agent-recall/dashboard.json | jq '.projects[] | {slug, sessions: .total_sessions, phases: .pipeline.total, skills: .skills_count}'
+
+# Check correction KPIs for one project
+cat ~/.agent-recall/dashboard.json | jq '.projects[] | select(.slug=="prismma-gateway") | .corrections.kpis'</code></pre>
+
+<h3>Wire into Claude Code MCP</h3>
+<p>Point MCP to the local build (same as before):</p>
+<pre><code>"agent-recall": {
+  "command": "node",
+  "args": ["/Users/tongwu/Projects/AgentRecall/packages/mcp-server/dist/index.js"]
+}</code></pre>
+<p>Restart Claude Code. New tools available: <code>skill_write</code>, <code>skill_recall</code>, <code>skill_list</code>, <code>dashboard_export</code>, <code>session_end_reflect</code>, plus <code>session_start({mode:"lite"})</code>.</p>
+
+<h2 id="thesis">Closing — memory is the foundation, the loop is the moat</h2>
+
+<div class="panel">
+  <h3>What today's pass actually proves</h3>
+  <ol>
+    <li><strong>Naming was the bottleneck.</strong> Once the canonical grammar is in place, agents can ask "skills/deploy/cloudflare-*" without grepping. The index makes retrieval compositional.</li>
+    <li><strong>Procedural memory was the structural gap.</strong> Adding the 5th layer unblocks agents from re-deriving solved procedures every session — which is the daily cost the V6 vantage flagged.</li>
+    <li><strong>The learning loop needs a KPI.</strong> Until V9, "AgentRecall learns" was unfalsifiable. The recurrence counter makes it falsifiable. That's the only thing that turns the moat from claim to artifact.</li>
+    <li><strong>Memory must decay.</strong> FSRS-lite is the primitive. Wiring it into <code>recall</code> is one line in a follow-up.</li>
+    <li><strong>Agents must self-inspect.</strong> <code>dashboard.json</code> is the dual surface to the human <code>dashboard.html</code> — agent-first principle now lives in code, not just in CLAUDE.md.</li>
+  </ol>
+  <p style="margin-top: 14px"><strong>What's missing is wiring, not foundations.</strong> The next pass connects FSRS to recall, syncs skills+corrections to Supabase, ships the dashboard UI cards (graph + correction timeline), and adds the V7 reducer when multi-agent contention becomes real.</p>
+</div>
+
+<footer>
+  Generated 2026-05-30 · <code>~/Projects/AgentRecall/REPORT-2026-05-30.html</code><br>
+  Build: <code>npm run build</code> green · Smoke: 26+ checks pass · Local only, no commit, no push.
+</footer>
+
+</div>
+</body>
+</html>
