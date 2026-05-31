@@ -202,6 +202,7 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 | Version | Date | Phase | Changes |
 |---------|------|-------|---------|
+| v3.4.20 | 2026-05-31 | CLI UX | Add `picocolors` for standard CLI output formatting (Help, errors, [ar] tags) |
 | v3.3.x | 2026-04 | Phase 1 (partial) | `hook-end`, `hook-correction`, `hook-start` wired into harness |
 | v3.3.18 | 2026-04-17 | Phase 1 complete | Benchmark caveat added; UPDATE-LOG created |
 | v3.3.18 | 2026-04-17 | Phase 2+3+4 | hook-ambient, multi-label tags, corrections store |

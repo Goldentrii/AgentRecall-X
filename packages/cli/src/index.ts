@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import pc from "picocolors";
 import { VERSION, setRoot } from "agent-recall-core";
 import type { Importance, WalkDepth } from "agent-recall-core";
 
@@ -39,88 +40,87 @@ function output(data: unknown): void {
 }
 
 function printHelp(): void {
-  output(`ar v${VERSION} — AgentRecall CLI
+  output(`${pc.bold(`ar v${VERSION}`)} — ${pc.dim("AgentRecall CLI")}
 
-JOURNAL:
-  ar read [--date YYYY-MM-DD] [--section <name>]
-  ar write <content> [--section <name>] [--palace-room <room>]
-  ar capture <question> <answer> [--tags tag1,tag2] [--palace-room <room>]
-  ar list [--limit N]
-  ar search <query> [--include-palace]
-  ar state read|write [data]
-  ar cold-start
-  ar archive [--older-than-days N]
-  ar rollup [--min-age-days N] [--dry-run]
+${pc.bold("JOURNAL:")}
+  ${pc.green("ar read")} [--date YYYY-MM-DD] [--section <name>]
+  ${pc.green("ar write")} <content> [--section <name>] [--palace-room <room>]
+  ${pc.green("ar capture")} <question> <answer> [--tags tag1,tag2] [--palace-room <room>]
+  ${pc.green("ar list")} [--limit N]
+  ${pc.green("ar search")} <query> [--include-palace]
+  ${pc.green("ar state")} read|write [data]
+  ${pc.green("ar cold-start")}
+  ${pc.green("ar archive")} [--older-than-days N]
+  ${pc.green("ar rollup")} [--min-age-days N] [--dry-run]
 
-PALACE:
-  ar palace read [<room>] [--topic <name>]
-  ar palace write <room> <content> [--importance high|medium|low] [--connections room1,room2]
-  ar palace walk [--depth identity|active|relevant|full] [--focus <keyword>]
+${pc.bold("PALACE:")}
+  ${pc.green("ar palace read")} [<room>] [--topic <name>]
+  ${pc.green("ar palace write")} <room> <content> [--importance high|medium|low] [--connections room1,room2]
+  ${pc.green("ar palace walk")} [--depth identity|active|relevant|full] [--focus <keyword>]
     depth: identity(~50t) active(~200t) relevant(~500t) full(~2000t)
-  ar palace search <query>
-  ar palace lint [--fix]
+  ${pc.green("ar palace search")} <query>
+  ${pc.green("ar palace lint")} [--fix]
 
-WRITE PATH GUIDE:
-  ar write <content>             → journal (ephemeral; use for session notes)
-  ar palace write <room> <text>  → palace (permanent; use for decisions, blockers, goals)
-  ar capture <Q> <A>             → Q&A log (use for lessons and quick lookups)
-  ar awareness update --insight "title" --evidence "ev"  → cross-session insights
+${pc.bold("WRITE PATH GUIDE:")}
+  ${pc.green("ar write <content>")}             → journal ${pc.dim("(ephemeral; use for session notes)")}
+  ${pc.green("ar palace write <room> <text>")}  → palace ${pc.dim("(permanent; use for decisions, blockers, goals)")}
+  ${pc.green("ar capture <Q> <A>")}             → Q&A log ${pc.dim("(use for lessons and quick lookups)")}
+  ${pc.green("ar awareness update")} --insight "title" --evidence "ev"  → cross-session insights
 
-AWARENESS:
-  ar awareness read [--json]
-  ar awareness update --insight "title" --evidence "ev" --applies-when kw1,kw2 [--source <s>] [--severity critical|important|minor]
-  ar awareness rollup [--threshold N]
+${pc.bold("AWARENESS:")}
+  ${pc.green("ar awareness read")} [--json]
+  ${pc.green("ar awareness update")} --insight "title" --evidence "ev" --applies-when kw1,kw2 [--source <s>] [--severity critical|important|minor]
+  ${pc.green("ar awareness rollup")} [--threshold N]
 
-INSIGHT:
-  ar insight <context> [--limit N] [--project <slug>]
-  ar recall <context> [--limit N] [--project <slug>]  (alias for ar insight)
+${pc.bold("INSIGHT:")}
+  ${pc.green("ar insight")} <context> [--limit N] [--project <slug>]
+  ${pc.green("ar recall")} <context> [--limit N] [--project <slug>]  ${pc.dim("(alias for ar insight)")}
 
-DIGEST (context cache):
-  ar digest store --title "t" --scope "s" --content "c" [--ttl 168] [--global]  (--title or first positional arg)
-  ar digest recall <query> [--limit N] [--stale] [--no-global]
-  ar digest list [--stale]
-  ar digest invalidate <id> [--reason "why"] [--global]
+${pc.bold("DIGEST (context cache):")}
+  ${pc.green("ar digest store")} --title "t" --scope "s" --content "c" [--ttl 168] [--global]  ${pc.dim("(--title or first positional arg)")}
+  ${pc.green("ar digest recall")} <query> [--limit N] [--stale] [--no-global]
+  ${pc.green("ar digest list")} [--stale]
+  ${pc.green("ar digest invalidate")} <id> [--reason "why"] [--global]
 
-META:
-  ar projects
-  ar synthesize [--entries N] [--focus full|decisions|blockers|goals] [--no-palace] [--consolidate]
-  ar knowledge write --category <cat> --title "t" --what "w" --cause "c" --fix "f" [--severity critical|important|minor]
-  ar knowledge read [--category <cat>]
+${pc.bold("META:")}
+  ${pc.green("ar projects")}
+  ${pc.green("ar synthesize")} [--entries N] [--focus full|decisions|blockers|goals] [--no-palace] [--consolidate]
+  ${pc.green("ar knowledge write")} --category <cat> --title "t" --what "w" --cause "c" --fix "f" [--severity critical|important|minor]
+  ${pc.green("ar knowledge read")} [--category <cat>]
 
-DIAGNOSTICS:
-  ar stats             Show memory system health: corrections, feedback, insights, graph edges
-  ar rooms             Show palace rooms with entry counts and topic keywords
-  ar sync-memory       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
+${pc.bold("DIAGNOSTICS:")}
+  ${pc.green("ar stats")}             Show memory system health: corrections, feedback, insights, graph edges
+  ${pc.green("ar rooms")}             Show palace rooms with entry counts and topic keywords
+  ${pc.green("ar sync-memory")}       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
 
-BOOTSTRAP:
-  ar bootstrap               Scan machine for projects and show summary card
-  ar bootstrap --source <dir1,dir2>  Also scan these custom directories
-  ar bootstrap --dry-run     Preview what would be imported
-  ar bootstrap --import      Import all new projects into AgentRecall
-  ar bootstrap --import --project <slug>  Import a single project
+${pc.bold("BOOTSTRAP:")}
+  ${pc.green("ar bootstrap")}               Scan machine for projects and show summary card
+  ${pc.green("ar bootstrap")} --source <dir1,dir2>  Also scan these custom directories
+  ${pc.green("ar bootstrap")} --dry-run     Preview what would be imported
+  ${pc.green("ar bootstrap")} --import      Import all new projects into AgentRecall
+  ${pc.green("ar bootstrap")} --import --project <slug>  Import a single project
 
-MULTI-SESSION:
-  ar sessions                List all Claude Code sessions active today (diagnostic)
-  ar saveall [--dry-run]     Save all today's sessions to AgentRecall automatically
+${pc.bold("MULTI-SESSION:")}
+  ${pc.green("ar sessions")}                List all Claude Code sessions active today (diagnostic)
+  ${pc.green("ar saveall")} [--dry-run]     Save all today's sessions to AgentRecall automatically
 
-HOOKS (auto-fired by Claude Code hooks — no agent discipline needed):
-  ar hook-start          Session start: load context, show watch_for warnings
-  ar hook-end            Session end: auto-save journal if not already saved today
-  ar hook-correction     Read UserPromptSubmit JSON from stdin, capture corrections silently
-  ar hook-ambient        Read UserPromptSubmit JSON from stdin, inject relevant memories into context
-  ar hook-save           Read UserPromptSubmit JSON from stdin, detect "save session"/"retain" phrases, prompt agent to call session_end()
-  ar correct --goal "g" --correction "c" [--delta "d"]  Manually record a correction
-  ar merge <target> <source>   Merge two journal files (append source into target, backup source)
+${pc.bold("HOOKS")} ${pc.dim("(auto-fired by Claude Code hooks — no agent discipline needed):")}
+  ${pc.green("ar hook-start")}          Session start: load context, show watch_for warnings
+  ${pc.green("ar hook-end")}            Session end: auto-save journal if not already saved today
+  ${pc.green("ar hook-correction")}     Read UserPromptSubmit JSON from stdin, capture corrections silently
+  ${pc.green("ar hook-ambient")}        Read UserPromptSubmit JSON from stdin, inject relevant memories into context
+  ${pc.green("ar hook-save")}           Read UserPromptSubmit JSON from stdin, detect "save session"/"retain" phrases, prompt agent to call session_end()
+  ${pc.green("ar correct")} --goal "g" --correction "c" [--delta "d"]  Manually record a correction
+  ${pc.green("ar merge")} <target> <source>   Merge two journal files (append source into target, backup source)
 
-SETUP:
-  ar setup supabase [--backfill]   Backfill all local files to Supabase
+${pc.bold("SETUP:")}
+  ${pc.green("ar setup supabase")} [--backfill]   Backfill all local files to Supabase
 
-GLOBAL FLAGS:
+${pc.bold("GLOBAL FLAGS:")}
   --root <path>     Storage root (default: ~/.agent-recall)
   --project <slug>  Project override
   --help, -h        Show help
-  --version, -v     Show version`);
-}
+  --version, -v     Show version`);}
 
 async function main(): Promise<void> {
   if (!command || command === "--help" || command === "-h") {
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
       output(result);
       // Print advisory note to stderr (keeps stdout clean for piping)
       if (result._note) {
-        process.stderr.write(`\n[ar] ${result._note}\n`);
+        process.stderr.write(`\n[${pc.cyan("ar")}] ${result._note}\n`);
       }
       break;
     }
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
           const DEFAULT_ROOM_SLUGS = new Set(["goals", "architecture", "decisions", "blockers", "alignment", "knowledge"]);
           if (room && !DEFAULT_ROOM_SLUGS.has(room)) {
             process.stderr.write(
-              `[ar] Note: '${room}' is not a default room. Creating new room. ` +
+              `[${pc.cyan("ar")}] Note: '${room}' is not a default room. Creating new room. ` +
               `Default rooms: ${Array.from(DEFAULT_ROOM_SLUGS).join(", ")}\n`
             );
           }
@@ -352,7 +352,7 @@ async function main(): Promise<void> {
         const thresholdStr = getFlag("--threshold", rest);
         const threshold = thresholdStr !== undefined ? parseInt(thresholdStr, 10) : 3;
         if (isNaN(threshold) || threshold < 1) {
-          process.stderr.write(`Error: --threshold must be a positive integer (got: ${thresholdStr})\n`);
+          process.stderr.write(`${pc.red("Error:")} --threshold must be a positive integer (got: ${thresholdStr})\n`);
           process.exit(1);
         }
         try {
@@ -368,7 +368,7 @@ async function main(): Promise<void> {
           }
         } catch (e: unknown) {
           const message = e instanceof Error ? e.message : String(e);
-          process.stderr.write(`Error: ${message}\n`);
+          process.stderr.write(`${pc.red("Error:")} ${message}\n`);
           process.exit(1);
         }
       } else {
@@ -463,7 +463,7 @@ async function main(): Promise<void> {
 
       try {
         const result = await core.sessionStart({ project });
-        const lines: string[] = ["[AgentRecall] Session context loaded"];
+        const lines: string[] = [`[${pc.blue("AgentRecall")}] Session context loaded`];
 
         // Project + identity — always show so agent knows the project
         lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
@@ -550,7 +550,7 @@ async function main(): Promise<void> {
         process.stdout.write(lines.join("\n") + "\n\n");
       } catch (e) {
         // Never block the session — fail silently
-        process.stderr.write(`[AgentRecall hook-start] ${String(e)}\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")} hook-start] ${String(e)}\n`);
       }
       break;
     }
@@ -605,7 +605,7 @@ async function main(): Promise<void> {
         }
 
         await core.sessionEnd({ summary, project, saveType: "hook-end" });
-        process.stderr.write(`[AgentRecall] Session auto-saved\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")}] Session auto-saved\n`);
 
         // Write summary for arstatus cache script (async, non-blocking)
         try {
@@ -644,7 +644,7 @@ async function main(): Promise<void> {
           }
         } catch { /* non-blocking — prefetch is best-effort */ }
       } catch (e) {
-        process.stderr.write(`[AgentRecall hook-end] ${String(e)}\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")} hook-end] ${String(e)}\n`);
       }
       break;
     }
@@ -811,7 +811,7 @@ async function main(): Promise<void> {
           // Silent — no stdout output, correction captured in alignment-log
         }
       } catch (e) {
-        process.stderr.write(`[AgentRecall hook-correction] ${String(e)}\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")} hook-correction] ${String(e)}\n`);
       }
       process.exit(0);
     }
@@ -952,7 +952,7 @@ async function main(): Promise<void> {
         const items = allItems.filter(item => !historySet.has(item.id));
         if (items.length === 0) process.exit(0);
 
-        let out = "[AgentRecall] Relevant past context:\n";
+        let out = `[${pc.blue("AgentRecall")}] Relevant past context:\n`;
         for (const item of items) {
           const source = item.source ?? "memory";
           const conf = (item.confidence ?? "low").toUpperCase().slice(0, 3);  // HIGH/MED/LOW/WEA
@@ -981,7 +981,7 @@ async function main(): Promise<void> {
           fs.writeFileSync(surfacedFile, JSON.stringify(surfacedData), "utf-8");
         } catch { /* non-blocking */ }
       } catch (e) {
-        process.stderr.write(`[AgentRecall hook-ambient] ${String(e)}\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")} hook-ambient] ${String(e)}\n`);
       }
       process.exit(0);
     }
@@ -1025,10 +1025,10 @@ async function main(): Promise<void> {
 
         // Inject signal — Claude reads this and calls session_end()
         process.stdout.write(
-          "[AgentRecall] ⚡ Save intent detected — call session_end() now to persist this session to memory.\n"
+          `[${pc.blue("AgentRecall")}] ⚡ Save intent detected — call session_end() now to persist this session to memory.\n`
         );
       } catch (e) {
-        process.stderr.write(`[AgentRecall hook-save] ${String(e)}\n`);
+        process.stderr.write(`[${pc.blue("AgentRecall")} hook-save] ${String(e)}\n`);
       }
       process.exit(0);
     }
@@ -1476,7 +1476,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         // ── ar bootstrap --import [--project <slug>] ──────────────────────
         if (targetProject && !scan.projects.some((p) => p.slug === targetProject)) {
           const available = scan.projects.filter((p) => !p.already_in_ar).map((p) => p.slug).slice(0, 10);
-          output(`  Error: no project matching slug '${targetProject}' found in scan results.`);
+          output(`  ${pc.red("Error:")} no project matching slug '${targetProject}' found in scan results.`);
           output(`  Available: ${available.join(", ") || "(none)"}`);
           break;
         }
@@ -1753,6 +1753,6 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
 
 main().catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`Error: ${message}\n`);
+  process.stderr.write(`${pc.red("Error:")} ${message}\n`);
   process.exit(1);
 });

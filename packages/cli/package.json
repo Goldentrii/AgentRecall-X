@@ -22,11 +22,12 @@
     "agent-memory"
   ],
   "dependencies": {
-    "agent-recall-core": "3.4.18"
+    "agent-recall-core": "3.4.18",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   },
   "license": "MIT"
 }
