@@ -13,8 +13,11 @@ import { getRoot, getLegacyRoot } from "../types.js";
 /**
  * Sanitize a project name for safe use in path.join().
  * Strips ALL non-alphanumeric chars (including dots) to prevent ".." traversal.
+ *
+ * Exported so other modules (bootstrap, etc.) share the same hardened slug
+ * grammar instead of rolling their own. Future-proofing against drift.
  */
-function sanitizeProject(project: string): string {
+export function sanitizeProject(project: string): string {
   if (!project) return "unnamed";
   const safe = project
     .replace(/[^a-zA-Z0-9_\-]/g, "-")

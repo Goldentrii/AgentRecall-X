@@ -63,7 +63,22 @@ function topicSlug(content: string): string {
 export function journalFileName(date: string, baseExists: boolean, opts?: SmartNameOpts, dir?: string): string {
   // New intelligent naming
   if (opts?.saveType && opts?.content) {
-    // SAME-DAY RULE: one file per day per project.
+    // SESSION-SCOPED EXCEPTION (arsaveall):
+    // When multiple parallel sessions all touch the same project today,
+    // the SAME-DAY rule would collapse them into one file and silently
+    // drop content. For arsaveall specifically we bypass it and generate
+    // a unique per-call session-scoped filename so every session survives.
+    if (opts.saveType === "arsaveall") {
+      const slug = topicSlug(opts.content);
+      const sigTag = opts.sig ?? "none";
+      const themeTag = opts.theme ?? "none";
+      const uniq = crypto.randomBytes(3).toString("hex");  // per-call random — unique across iterations
+      const name = `${date}--arsaveall--${sigTag}--${themeTag}--${slug}--${uniq}.md`;
+      if (dir) ownedFiles.add(`smart:${name}`);
+      return name;
+    }
+
+    // SAME-DAY RULE: one file per day per project (other saveTypes only).
     // If ANY file for today already exists (smart or legacy), append to it.
     if (dir) {
       const existingToday = fs.readdirSync(dir)

@@ -1139,7 +1139,11 @@ async function main(): Promise<void> {
       // combining all sessions that share the same projectGuess.
       const byProject = new Map<string, typeof sessions>();
       for (const s of sessions) {
-        const key = s.projectGuess ?? `unknown-${s.lastModified.toTimeString().slice(0, 5).replace(":", "")}`;
+        // Unknown-project sessions get a unique key per session — never merge
+        // unrelated unknowns. `sessionFile` is a stable path, so use it as the
+        // deduplication key. Previously two unknown sessions started in the
+        // same minute would collapse into one phantom project.
+        const key = s.projectGuess ?? `unknown:${s.sessionId ?? s.lastModified.getTime()}`;
         if (!byProject.has(key)) byProject.set(key, []);
         byProject.get(key)!.push(s);
       }
@@ -1149,21 +1153,13 @@ async function main(): Promise<void> {
       const failed: { proj: string; err: string }[] = [];
 
       for (const [proj, projSessions] of byProject) {
-        // Check if already journaled today (any .md that isn't -log.md or -alignment.md)
-        const journalDir = path.join(arRoot, proj, "journal");
-        let alreadyJournaled = false;
-        if (fs.existsSync(journalDir)) {
-          alreadyJournaled = fs.readdirSync(journalDir).some((f) => {
-            if (!f.startsWith(today)) return false;
-            if (f.endsWith("-log.md") || f.endsWith("-alignment.md")) return false;
-            return f.endsWith(".md");
-          });
-        }
-
-        if (alreadyJournaled) {
-          skipped.push(proj);
-          continue;
-        }
+        // NOTE (Phase 6 fix): we used to skip the project if ANY journal file
+        // existed for today, which silently dropped 4 of 5 parallel sessions.
+        // Now each session writes its own session-scoped filename
+        // (`{date}--arsaveall--...--{uniq}.md`) via journalFileName, so
+        // re-runs are safe and parallel sessions all survive. We still need
+        // to dedupe within a single saveall invocation though — same upstream
+        // session shouldn't be saved twice in one call.
 
         // Synthesize summary from all sessions for this project
         const largest = projSessions.sort((a, b) => b.sizeMb - a.sizeMb)[0];

@@ -19,9 +19,52 @@ import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { palaceWrite } from "./palace-write.js";
 import { journalWrite } from "./journal-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
-import { palaceDir } from "../storage/paths.js";
+import { palaceDir, sanitizeProject } from "../storage/paths.js";
 
 const execFileAsync = promisify(execFile);
+
+// ---------------------------------------------------------------------------
+// Denylist — parent / system / cache directories that should NEVER be imported
+// as projects. AutoMemory encoded paths like "-Users-tongwu-Downloads" decode
+// to basename "Downloads", which without filtering becomes a phantom project.
+// ---------------------------------------------------------------------------
+const SYSTEM_DIR_DENYLIST = new Set<string>([
+  // Standard macOS home directories
+  "Downloads", "Documents", "Desktop", "Library", "Applications",
+  "Movies", "Music", "Pictures", "Public", "Sites",
+  // Common code-root containers (containers, not actual projects)
+  "Projects", "Code", "Codebases", "Repos", "GitHub", "Repositories",
+  "Source", "Sources", "src", "work", "Work", "dev", "Dev",
+  // Build / vendor / cache directories
+  "node_modules", "dist", "build", ".next", ".turbo", ".cache",
+  "tmp", "temp", ".tmp",
+  // Tool / IDE / agent directories
+  "claude", "Claude", ".cursor", ".vscode", ".idea", ".git",
+]);
+
+function isSystemDir(name: string): boolean {
+  if (!name) return true;
+  if (name.length < 2) return true;
+  if (name.startsWith(".")) return true;                          // dotfiles / hidden
+  if (name.includes("paperclip-instances")) return true;          // UUID-suffixed pattern
+  if (/^[0-9a-f-]{20,}$/i.test(name)) return true;                // bare UUIDs
+  return SYSTEM_DIR_DENYLIST.has(name);
+}
+
+/**
+ * Strip prompt-injection patterns from imported user content before writing it
+ * to palace. CLAUDE.md and AutoMemory files frequently contain
+ * `<system-reminder>` markers etc. that, once in palace, would surface to future
+ * agents as if they were system instructions.
+ */
+function scrubPromptInjection(s: string): string {
+  return s
+    .replace(/<\/?\s*(system[-_]?(reminder|prompt|message|instruction)|important|critical)\b[^>]*>/gi, "[stripped tag]")
+    .replace(/<\|im_(start|end)\|>/gi, "[stripped]")
+    .replace(/\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|messages?)/gi, "[stripped injection attempt]")
+    .replace(/[‪-‮⁦-⁩]/g, "")  // bidi override
+    .replace(/\0/g, "");
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -356,7 +399,14 @@ export async function bootstrapScan(options?: {
       const pkgInfo = readPackageInfo(repoDir);
       const remoteName = remoteUrl ? path.basename(remoteUrl, ".git") : "";
       const name = pkgInfo.name ?? (remoteName || path.basename(repoDir));
-      const slug = toSlug(name);
+      // Skip if this resolved to a system / container directory.
+      // Throw a sentinel — Promise.allSettled will reject this one;
+      // downstream `.filter(r => r.status === "fulfilled")` drops it.
+      if (isSystemDir(name)) {
+        throw new Error(`SKIP_SYSTEM_DIR:${name}`);
+      }
+      // Hardened slug — same grammar as paths.ts (no dots, no traversal).
+      const slug = sanitizeProject(toSlug(name));
       const language = detectLanguage(repoDir);
       const lastActivity = lastCommitIso || undefined;
       const description = pkgInfo.description ?? readReadmeDescription(repoDir);
@@ -468,7 +518,13 @@ export async function bootstrapScan(options?: {
       // Decode encoded path: "-Users-tongwu-Projects-myapp" → last segment
       const decoded = encodedName.replace(/^-/, "").replace(/-/g, "/");
       const projectName = path.basename(decoded) || encodedName;
-      const slug = toSlug(projectName);
+
+      // SKIP system/parent/cache dirs — AutoMemory may have indexed
+      // things like ~/Downloads or ~/Projects; those aren't real projects.
+      if (isSystemDir(projectName)) continue;
+
+      // Hardened slug — matches paths.ts sanitizer (no dots, no path chars).
+      const slug = sanitizeProject(toSlug(projectName));
 
       // List .md files in memory/ (skip > 5KB, skip secrets)
       let mdFiles: string[] = [];
@@ -711,7 +767,10 @@ export async function bootstrapImport(
             continue;
           }
           const raw = fs.readFileSync(item.source_path, "utf-8");
-          const claudemdContent = raw.slice(0, 3000);
+          // Scrub prompt-injection patterns before importing user-controlled
+          // content into palace. CLAUDE.md often contains <system-reminder>
+          // tags etc. that would surface to future agents as if real.
+          const claudemdContent = scrubPromptInjection(raw.slice(0, 3000));
           await palaceWrite({
             room: "architecture",
             topic: "project-conventions",
@@ -735,7 +794,9 @@ export async function bootstrapImport(
             continue;
           }
           const rawContent = fs.readFileSync(item.source_path, "utf-8");
-          const { body, meta } = stripFrontmatter(rawContent);
+          const { body: rawBody, meta } = stripFrontmatter(rawContent);
+          // Scrub prompt-injection patterns before storing imported content.
+          const body = scrubPromptInjection(rawBody);
           const rawTopic = (meta["name"] ?? item.id.replace("claude-memory:", "")).replace(/\.md$/, "");
           const topic = rawTopic.replace(/[^a-zA-Z0-9_\-]/g, "-");
 
@@ -813,7 +874,8 @@ export async function bootstrapImport(
           continue;
         }
         const rawContent = fs.readFileSync(item.source_path, "utf-8");
-        const { body, meta } = stripFrontmatter(rawContent);
+        const { body: rawBody, meta } = stripFrontmatter(rawContent);
+        const body = scrubPromptInjection(rawBody);
         const rawTopic2 = (meta["name"] ?? item.id.replace("global:", "")).replace(/\.md$/, "");
         const topic = rawTopic2.replace(/[^a-zA-Z0-9_\-]/g, "-");
 
