@@ -1,41 +1,44 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import * as z from "zod/v4";
-import { smartRemember } from "agent-recall-core";
+  import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+  import * as z from "zod/v4";
+  import { executeStoreMemory, getMemoryMap } from "agent-recall-core";
 
-export function register(server: McpServer): void {
-  server.registerTool("remember", {
-    title: "Remember",
-    description: "Use when the user asks to remember, store, note, or save a specific decision, fact, or insight.",
-    inputSchema: {
-      content: z.string().describe("What to remember."),
-      context: z.string().optional().describe(
-        "Routing hint. Values: 'architecture' or 'decision' → palace/architecture room. " +
-        "'blocker' or 'blocked' → palace/blockers room. " +
-        "'goal' → palace/goals room. " +
-        "'lesson' or 'insight' → awareness. " +
-        "'qa' or 'capture' → Q&A log. " +
-        "Omit for auto-classification."
-      ),
-      project: z.string().default("auto"),
-    },
-  }, async ({ content, context, project }) => {
-    const result = await smartRemember({ content, context, project });
+  export function register(server: McpServer): void {
 
-    if (!result.success) {
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }], isError: true };
-    }
+    server.registerTool("view_memory_map", {
+      title: "View Memory Map",
+      description: "Always call this tool first if you do not know the exact target_path to store a memory. It returns the directory structure
+  and rules of the memory system.",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      },
+    }, async () => {
+      const map = await getMemoryMap();
+      return { content: [{ type: "text" as const, text: map }] };
+    });
 
-    // Show exactly where the memory was written
-    const indicator = result.entry_indicator ? ` [${result.entry_indicator}]` : "";
-    const dest = result.file_path ?? result.auto_name;
-    const lines: string[] = [];
-    if (result.conflict_warning) lines.push(result.conflict_warning);
-    lines.push(`Saved → ${dest}${indicator}`);
-    if (result.retrieval_hint) lines.push(`Find again: ${result.retrieval_hint}`);
-    if (result.consistency_warnings && result.consistency_warnings.length > 0) {
-      lines.push(`⚠ Consistency: ${result.consistency_warnings.map(w => w.detail).join("; ")}`);
-    }
-
-    return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-  });
-}
+    server.registerTool("remember", {
+      title: "Store Memory",
+      description: "Store a fact, decision, or insight. You MUST provide a valid target_path retrieved from view_memory_map.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          content: z.string().describe("The exact content to memorize."),
+          target_path: z.string().describe("Target path (e.g., '/palace/architecture', '/journal', '/awareness').")
+        },
+        required: ["content", "target_path"]
+      },
+    }, async ({ content, target_path }) => {
+      try {
+        const result = await executeStoreMemory(target_path as string, content as string);
+        return {
+          content: [{
+            type: "text" as const,
+            text: Successfully routed to ${target_path}.\nResult:\n${JSON.stringify(result, null, 2)}
+          }]
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text" as const, text: Memory storage failed: ${e instanceof Error ? e.message : String(e)} }],
+          isError: true
+        };
