@@ -230,6 +230,57 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Release — v3.4.20 (2026-06-01)
+
+**One patch release ships everything from Phase 6 + the post-Phase-6 audit fixes.** User direction: *"do not make any version inflation"* — so this is a patch bump (3.4.19 → 3.4.20) even though semver would normally call for a minor (12 new MCP tools, 5th memory layer, new primitives). The work itself is unchanged; only the version label is conservative.
+
+### Published
+
+| Package | npm | Size |
+|---|---|---|
+| `agent-recall-core` | [3.4.20](https://www.npmjs.com/package/agent-recall-core) | 263 kB / 1.1 MB unpacked |
+| `agent-recall-mcp` | [3.4.20](https://www.npmjs.com/package/agent-recall-mcp) | — |
+| `agent-recall-sdk` | [3.4.20](https://www.npmjs.com/package/agent-recall-sdk) | — |
+| `agent-recall-cli` | [3.4.20](https://www.npmjs.com/package/agent-recall-cli) | — |
+
+GitHub: tag `v3.4.20` on `main`. Repo redirect: `Goldentrii/AgentRecall` → `Goldentrii/AgentRecall-MCP`.
+
+### What this version contains (one-page summary)
+
+| Area | Change |
+|------|--------|
+| Memory model | 5 layers (added **procedural**: `palace/skills/`) |
+| Naming | Canonical `<scope>/<type>/[<topic>/]<temporal>--<slug>.md` grammar with `legacy_path` virtual-key view (no migration needed) |
+| Retrieval math | **Modern Hopfield** re-ranker primitive (Ramsauer 2020, ξ_new = X·softmax(β·X^⊤·ξ), exp(d/2) capacity) — unwired pending 3 prereqs |
+| Decay math | **FSRS-lite** scorer (R = exp(-t/S), reinforce/penalize), Anki ≥23.10 grounding |
+| Feedback KPIs | Corrections track `retrieved_count` / `heeded_count` / `recurrence_count` / `precision`; aggregate via `getCorrectionKPIs()` with noise/high-signal buckets |
+| 12 new MCP tools | `pipeline_open/close/list/current/show` · `skill_write/recall/list` · `dashboard_export` · `session_end_reflect` · `session_start mode: lite` (extension) |
+| Reflection | Park-2023-style bundle (LLM call happens in caller's turn, not core) |
+| Security | path traversal blocked (paths.ts sanitizer, no dots, sep-prefix check), frontmatter YAML escaped (`quoteScalar`), atomic writes (tmp+rename), line-walk section parser, symlink guard on milestone writes |
+| Hopfield input hardening | Throws on NaN/Inf/dim-mismatch/negative β/empty query/ids-length-mismatch/missing embedding (11 fuzz P0s closed in second reviewer loop) |
+| `/arsaveall` data-loss fix | Bypassed SAME-DAY rule + per-call 6-hex suffix → parallel sessions no longer collapse onto one file; removed CLI `alreadyJournaled` skip; unknown-project key uses sessionId not minute-window |
+| `/arbootstrap` hardening | SYSTEM_DIR_DENYLIST (Downloads, Projects, Code, .paperclip-instances-*, UUIDs, etc); `sanitizeProject()` shared between paths.ts and bootstrap; `scrubPromptInjection()` strips `<system-reminder>`/`<\|im_start\|>`/"ignore previous instructions"/bidi/NULL at 3 import sites |
+| `/arstatus` race + clobber fix | (in `~/.claude` repo) freshness guard in slash command; single-slug mode merges into existing status.json instead of replacing |
+| `/arstart` typo guard | (in `~/.claude` repo) ghost-project guard + Levenshtein did-you-mean; `--mode lite` documented (~140 tokens vs ~1,800 full) |
+| Naming-cleanup | Internal `agent-recall-core` dep pin in mcp/sdk/cli was lagging at 3.4.18 → bumped to 3.4.20 so fresh installs resolve consistently. `VERSION` constant in core/src/types.ts likewise stuck at 3.4.18 → now 3.4.20 |
+| Docs | README rewritten side-by-side EN/ZH (1175 → 567 lines), 18-tool badge, 5-layer model section, Phase 6 features section, math citations; full visual report at `REPORT-2026-05-30.html` |
+
+### Commits behind this release
+
+```
+2ccf867  chore: release v3.4.20 — patch bump (Phase 6 + arsaveall/bootstrap fixes)
+6be32e2  fix: critical P0s from /arsaveall + /arbootstrap audit
+83bb771  docs: bilingual README + UPDATE-LOG Phase 6 + improvement report
+1cdf185  feat: Phase 6 — research-driven foundation pass
+5520ec4  fix(security): P0 hardening — path traversal + frontmatter YAML injection
+```
+
+### Phase 6 status after this release
+
+Phase 6 (the architectural work) → marked **shipped** below. Wire-up work (Hopfield → smart-recall, FSRS reinforce-on-recall, etc.) tracked as Phase 7 candidates in the deferred items table.
+
+---
+
 ## Phase 6 — Research-Driven Foundation Layer (2026-05-30)
 
 **Goal: close 11 structural gaps the field's research literature flags, ground every change in a published equation, and make memory math (not just memory storage) a first-class concern.**
