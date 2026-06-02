@@ -230,6 +230,26 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Post-v3.4.20 — Real-Usage Feedback Pass (2026-06-03)
+
+Seven concrete fixes from a Claude agent that ran a 4-hour high-intensity
+session on `prismma-gateway`. Each item ships behind smoke tests; no
+regression on existing `session_start` / `session_end` callers.
+
+| # | Item | Commit | Lives in |
+|---|------|--------|----------|
+| 1 | `cwd-allowlist.json` per project + cwd-aware `detectProject()` — solves wrong-project routing from `~/Projects/prismma-web` loading `prismma` instead of `prismma-gateway`. Auto-registers on explicit `resolveProject()`; macOS symlink-safe via `fs.realpathSync`. | `2b008c6` | AgentRecall repo |
+| 2 | Dream-cron failure banner — `getDreamHealth()` walks last 7 nights of `~/.aam/dreams/run-*.log`, surfaces red `🔴` banner at top of `session_start` when ≥2 consecutive failures. | `6c0fe86` | AgentRecall repo |
+| 3 | `check_action` MCP tool — pre-action matcher returns matching behavior rules + active corrections (P0-first) for the upcoming action. Replaces tautological "P0 correction — follow strictly" with concrete reminders. | `5818510` | AgentRecall repo |
+| 4 | `ar-sync-status.py <slug>` no longer prints the picker — single-slug invocations are silent jobs that only write `status.json`. | `~/.claude` auto-sync | ~/.claude repo |
+| 5 | Same `check_action` tool — also returns matching high-salience insights (mid-session recall hook). One primitive serves items 3+5. | `5818510` | AgentRecall repo |
+| 6 | `register_rule` MCP tool + `palace/behavior-policies.json` store — always-loaded IF-THEN behavior commitments surfaced at top of `session_start` above insights/rooms. Hit-counter bumps on every load. | `eff348e` | AgentRecall repo |
+| 7 | Startup noise cap — `session_start` surfaces top 3 awareness (was 8) + top 1 cross-project (was 5) + top 3 palace rooms (was 5). Behavior rules NOT capped (commitments, not context). | `eff348e` | AgentRecall repo |
+
+Migration: `cwd_allowlist` defaults to empty for existing projects; new tools are additive; no schema break.
+
+---
+
 ## Release — v3.4.20 (2026-06-01)
 
 **One patch release ships everything from Phase 6 + the post-Phase-6 audit fixes.** User direction: *"do not make any version inflation"* — so this is a patch bump (3.4.19 → 3.4.20) even though semver would normally call for a minor (12 new MCP tools, 5th memory layer, new primitives). The work itself is unchanged; only the version label is conservative.
