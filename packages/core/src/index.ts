@@ -124,6 +124,8 @@ export type { ConsolidationResult } from "./palace/consolidate.js";
 export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
 export { detectProject, resolveProject, listAllProjects } from "./storage/project.js";
+export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
+export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
 export { getSessionId, journalFileName, captureLogFileName, resetOwnedFiles, resetSessionState } from "./storage/session.js";
 export type { SaveType, SmartNameOpts } from "./storage/session.js";
 export { acquireLock, withLock } from "./storage/filelock.js";

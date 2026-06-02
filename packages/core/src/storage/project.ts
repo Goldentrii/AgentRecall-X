@@ -31,7 +31,18 @@ export async function detectProject(): Promise<string> {
     return process.env.AGENT_RECALL_PROJECT;
   }
 
-  // 2. Git repo name (async)
+  // 2. cwd-allowlist match — explicit per-project mapping wins over heuristics.
+  // Solves the wrong-project-routing bug where ~/Projects/prismma-web loaded
+  // `prismma` (video gen) instead of `prismma-gateway`.
+  try {
+    const { findProjectByCwd } = await import("./cwd-allowlist.js");
+    const hit = findProjectByCwd(process.cwd());
+    if (hit) return hit;
+  } catch {
+    // never let allowlist scan break detection
+  }
+
+  // 3. Git repo name (async)
   try {
     const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], { timeout: 3000 });
     const remote = stdout.trim();
@@ -97,10 +108,22 @@ export async function detectProject(): Promise<string> {
 
 /**
  * Resolve "auto" project to actual slug.
+ *
+ * When a caller passes an explicit slug we auto-register the current cwd
+ * into that project's cwd-allowlist (idempotent), so future calls from the
+ * same directory route correctly without needing the explicit slug. This is
+ * the migration path for existing projects — the allowlist fills itself over
+ * normal use.
  */
 export async function resolveProject(project: string | undefined): Promise<string> {
   if (!project || project === "auto") {
     return await detectProject();
+  }
+  try {
+    const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
+    addCwdToAllowlist(project, process.cwd());
+  } catch {
+    // never let allowlist write break resolution
   }
   return project;
 }
