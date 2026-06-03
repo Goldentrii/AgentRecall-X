@@ -55,7 +55,9 @@ export function parseMemoryFile(content: string): ParsedMemoryFile {
 }
 
 export function deriveSlug(filePath: string): string {
-  const parts = filePath.split(path.sep);
+  // Normalise to forward slashes so this works on both Windows and POSIX
+  const normalised = filePath.replace(/\\/g, "/");
+  const parts = normalised.split("/");
   const fileName = path.basename(filePath, ".md");
 
   const journalIdx = parts.indexOf("journal");
@@ -74,7 +76,13 @@ export function deriveSlug(filePath: string): string {
 // ---------------------------------------------------------------------------
 
 export function logSyncError(message: string): void {
-  const logPath = path.join(os.homedir(), ".agent-recall", "sync-errors.log");
+  // Respect AGENT_RECALL_ROOT or HOME env vars so tests can redirect to a tmpdir.
+  // os.homedir() ignores process.env.HOME on Windows, so we check the env first.
+  const homeDir =
+    process.env.AGENT_RECALL_ROOT ||
+    process.env.HOME ||
+    os.homedir();
+  const logPath = path.join(homeDir, ".agent-recall", "sync-errors.log");
   const timestamp = new Date().toISOString();
   const line = `${timestamp} ${message}\n`;
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
