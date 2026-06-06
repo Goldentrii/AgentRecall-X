@@ -60,4 +60,4 @@ Persistent, compounding memory + Intelligent Distance Protocol. MCP server + SDK
 - [npm: agent-recall-mcp](https://www.npmjs.com/package/agent-recall-mcp)
 - [npm: agent-recall-sdk](https://www.npmjs.com/package/agent-recall-sdk)
 - [npm: agent-recall-cli](https://www.npmjs.com/package/agent-recall-cli)
-- [GitHub: Goldentrii/AgentRecall](https://github.com/Goldentrii/AgentRecall)
+- [GitHub: Goldentrii/AgentRecall-MCP](https://github.com/Goldentrii/AgentRecall-MCP)

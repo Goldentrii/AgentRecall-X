@@ -38,9 +38,9 @@ codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```bash
 mkdir -p ~/.claude/commands
 curl -o ~/.claude/commands/arsave.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsave.md
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arsave.md
 curl -o ~/.claude/commands/arstart.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstart.md
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arstart.md
 ```
 
 ### SDK (for JS/TS applications | 适用于 JS/TS 应用)

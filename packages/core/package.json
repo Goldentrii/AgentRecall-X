@@ -44,7 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Goldentrii/AgentRecall.git",
+    "url": "git+https://github.com/Goldentrii/AgentRecall-MCP.git",
     "directory": "packages/core"
   }
 }

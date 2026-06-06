@@ -126,4 +126,4 @@ If you want to help build this:
 
 - [[Intelligent Distance]] — the protocol in detail / 协议详解
 - [[Core Concepts]] — how the memory layers work / 记忆层如何工作
-- [README](https://github.com/Goldentrii/AgentRecall) — installation and quick start / 安装和快速入门
+- [README](https://github.com/Goldentrii/AgentRecall-MCP) — installation and quick start / 安装和快速入门

@@ -126,6 +126,6 @@ Over time, alignment checks reveal which gap types occur most often for a given 
 
 ## Further Reading | 延伸阅读
 
-- [Intelligent Distance Protocol — Full Spec](https://github.com/Goldentrii/AgentRecall/blob/main/docs/intelligent-distance-protocol.md)
+- [Intelligent Distance Protocol — Full Spec](https://github.com/Goldentrii/AgentRecall-MCP/blob/main/docs/intelligent-distance-protocol.md)
 - [[Core Concepts]] — the memory pyramid / 记忆金字塔
 - [[The Vision]] — where this is heading / 这将走向何方

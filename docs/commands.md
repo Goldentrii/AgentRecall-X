@@ -4,10 +4,10 @@ Four slash commands for Claude Code. Install once, use every session.
 
 ```bash
 mkdir -p ~/.claude/commands
-curl -o ~/.claude/commands/arstatus.md  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstatus.md
-curl -o ~/.claude/commands/arstart.md   https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arstart.md
-curl -o ~/.claude/commands/arsave.md    https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsave.md
-curl -o ~/.claude/commands/arsaveall.md https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/commands/arsaveall.md
+curl -o ~/.claude/commands/arstatus.md  https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arstatus.md
+curl -o ~/.claude/commands/arstart.md   https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arstart.md
+curl -o ~/.claude/commands/arsave.md    https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arsave.md
+curl -o ~/.claude/commands/arsaveall.md https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/commands/arsaveall.md
 ```
 
 ---

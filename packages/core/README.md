@@ -10,7 +10,7 @@
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-MCP/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
   <a href="https://lobehub.com/mcp/goldentrii-agentrecall"><img src="https://lobehub.com/badge/mcp/goldentrii-agentrecall" alt="MCP Badge"></a>
   <img src="https://img.shields.io/badge/MCP-18_tools-orange?style=flat-square" alt="Tools">
   <img src="https://img.shields.io/badge/memory_layers-5-7C3AED?style=flat-square" alt="5 layers">
@@ -256,7 +256,7 @@ codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```bash
 mkdir -p ~/.claude/skills/agent-recall
 curl -o ~/.claude/skills/agent-recall/SKILL.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/SKILL.md
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-MCP/main/SKILL.md
 ```
 
 ### SDK — for JS/TS applications
@@ -547,7 +547,7 @@ packages/
 ## Community · 社区
 
 - 💬 [Telegram](https://t.me/+ywZwoHrg3AM0NDVi) — questions, feedback, requests
-- 🐛 [GitHub Issues](https://github.com/Goldentrii/AgentRecall/issues) — bugs and feature requests
+- 🐛 [GitHub Issues](https://github.com/Goldentrii/AgentRecall-MCP/issues) — bugs and feature requests
 - 📦 [npm: agent-recall-mcp](https://www.npmjs.com/package/agent-recall-mcp)
 - 📦 [npm: agent-recall-sdk](https://www.npmjs.com/package/agent-recall-sdk)
 - 📦 [npm: agent-recall-cli](https://www.npmjs.com/package/agent-recall-cli)
