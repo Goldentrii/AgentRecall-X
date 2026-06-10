@@ -230,6 +230,47 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Release — v3.4.22 "Trust" (2026-06-11)
+
+**Theme: freeze features, fix consistency.** Triggered by a hands-on external evaluation (Claude agent, raw stdio JSON-RPC, clean Linux sandbox, 2026-06-11) that reproduced four trust-breaking bugs live. The product's core invariant — *anything saved must be acknowledged as existing at orientation time, 100% deterministically* — was broken. This release restores it. No new features.
+
+### Published
+| Package | npm |
+|---|---|
+| `agent-recall-core` | 3.4.22 |
+| `agent-recall-mcp` | 3.4.22 |
+| `agent-recall-sdk` | 3.4.22 |
+| `agent-recall-cli` | 3.4.22 |
+
+### P0 consistency fixes (all shipped together)
+
+| # | Bug | Root cause | Fix |
+|---|---|---|---|
+| **P0-1** | `session_start` returned "No memory found" despite 4 writes on disk | `isEmpty` keyed on `session_end` artifacts (journal briefs/resume/corrections) — ignored palace content AND CLI capture logs | `isEmpty` now folds in `hasCaptures` (capture-log scan) + `hasPalaceContent` (`countRoomEntries > 0`). New `recent_captures` field renders uncommitted captures as "Recent captures (unsaved session)". `session-start.ts` + `journal-files.ts` + `project-status.ts` |
+| **P0-2** | Empty default rooms (salience 0.5) outranked content rooms (0.41); `memory_count` stuck at 0 | (a) `memory_count` counted non-README files, but default writes land in README.md → always 0. (b) default 0.5 > computed fresh-room salience | `countRoomEntries()` counts `### ` entry blocks as disk truth. Hard invariant in `listRooms` comparator: **content room always sorts above empty room** (not emergent from the formula). Empty rooms get salience floor 0. `--importance high` propagates into the salience calc. `rooms.ts` + `index-manager.ts` + `palace-write.ts` |
+| **P0-3** | Session-1 insight invisible at session-2 | Global awareness only receives an index insight after `promoteConfirmedInsights` fires (confirmed_count ≥ 3); a fresh count-1 insight lived only in the project-scoped index, never rendered | Merge project-scoped index insights into the render with an **independent budget** (up to 2 reserved slots on top of awareness top-3), so a fresh insight surfaces even when awareness is already full. Threshold now controls order/verbosity, never existence. `session-start.ts` |
+| **P0-4** | `💬 Community: https://t.me/...` in every `session_start` response | Promotional trailer in `formatTerse` | Removed from all tool output. (Acceptable in `ar --help`/README/postinstall.) Regression test asserts no `t.me`/telegram URL in payload. `mcp-server/.../session-start.ts` |
+
+### P1 folded in (same render path / trivial)
+- **P1-1** — markdown leak (`Trajectory: ## Next`): `stripMarkdownHeaders()` drops full ATX-heading lines before embedding journal fragments into card fields.
+- **P1-5** — repo hygiene: moved `README.md.bak`, `REVIEW-BRIEF.md`, `SESSION-REPORT-*.md`, `PLAN-AGENT-EXPERIENCE-V2.md`, `TEST-PROMPT.md`, `HANDOFF-warroom-design.md` → `docs/internal/`.
+
+### Reviewer-loop findings (fresh-eyes code-review caught 2 HIGH the happy-path suite missed)
+- **HIGH-1** — named-topic first write (`palace write <room> --topic X`) took a code path that omitted the `### ` entry header → `countRoomEntries` saw 0 → room sorted empty + salience zeroed. Fixed: first write to a new topic file now wraps content in a `### DATE — importance` block, consistent with the README + append paths.
+- **HIGH-2** — P0-3 fix was a no-op for established projects: the shared 3-cap filled from awareness before the project-index merge loop ran. Fixed with the independent 2-slot project budget above.
+- **MEDIUM** — `listRooms` was called twice + `hasPalaceContent` re-scanned: collapsed to one `listRooms` call. `updatePalaceIndex` now wrapped in `withLock` to prevent concurrent-write `memory_count` loss. Case-insensitive archived-title filter.
+
+### Regression suite
+`benchmark/consistency.mjs` — replays the **exact** live-eval sequence + the two reviewer HIGH cases. 10/10 assertions pass. Run: `node benchmark/consistency.mjs` (exit 1 on any regression). This is the permanent guard against the trust-break ever returning.
+
+### Multi-agent process used (recorded for reuse)
+Orchestrator + 2 parallel workers (file-disjoint: palace-ranking files vs session-start files) → central build → fresh-eyes `code-reviewer` (no prior context) → consistency verifier → orchestrator integrates findings. The reviewer found 2 HIGH bugs the workers' own happy-path checks structurally could not — validating the never-self-review rule.
+
+### Deferred to roadmap (explicitly NOT in this release — "freeze features")
+P1-2 (journal fragmentation/merge story), P1-3 (token-budget benchmark), P1-4 (document enums in SKILL.md + tool descriptions), P1-6 (`ar correction list/retract` + per-project scoping). All of Phase 3 / P2 (epistemic typing, contradiction detection, negative-knowledge recall, local semantic search, progressive disclosure, `handoff()`, `ar review`, MCP resources). Open question Q2 (lazy room creation vs default rooms) deferred — current fix makes the salience-inversion class impossible regardless. `ar doctor` index-rebuild backstop deferred (the isEmpty fix removes the need; doctor becomes belt-and-suspenders).
+
+---
+
 ## Release — v3.4.21 (2026-06-03)
 
 **Patch release shipping the 7-item real-usage feedback pass.** Same conservative

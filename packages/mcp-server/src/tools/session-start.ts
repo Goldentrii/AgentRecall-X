@@ -101,14 +101,24 @@ function formatTerse(result: SessionStartResult): string {
     }
   }
 
+  // ── Recent captures (unsaved session) ─────────────────────────────────
+  // journal_capture writes that pre-date any session_end. Surfaced so the
+  // agent sees in-flight work instead of "No memory found".
+  if (result.recent_captures && result.recent_captures.length > 0) {
+    lines.push("");
+    lines.push("📝 Recent captures (unsaved session):");
+    for (const c of result.recent_captures.slice(0, 5)) {
+      const q = c.question ? trunc(c.question, 80) : "";
+      const a = c.answer ? trunc(c.answer, 120) : "";
+      lines.push(`  - ${q}${q && a ? " → " : ""}${a}`);
+    }
+  }
+
   // ── Empty state guidance ──────────────────────────────────────────────
   if (result.empty_state) {
     lines.push("");
     lines.push(result.empty_state);
   }
-
-  lines.push("");
-  lines.push("💬 Community: https://t.me/+ywZwoHrg3AM0NDVi");
 
   return lines.join("\n");
 }

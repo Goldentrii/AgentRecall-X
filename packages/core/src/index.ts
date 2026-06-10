@@ -42,6 +42,7 @@ export {
   recordAccess,
   touchRoom,
   isRoomStale,
+  countRoomEntries,
 } from "./palace/rooms.js";
 
 // Palace — graph

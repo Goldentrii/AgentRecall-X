@@ -96,12 +96,19 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
       fs.writeFileSync(targetFile, existing + entry, "utf-8");
     } else {
       const fm = generateFrontmatter({ room: input.room, topic: targetTopic, created: timestamp, importance, tags: input.tags ?? [] });
-      fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${content}\n`, "utf-8");
+      // Wrap the first write in a `### DATE — importance` entry block (same as the
+      // append path + README path). Without this, countRoomEntries() — which counts
+      // `### ` headers — would report 0 for a brand-new topic file, sorting a room
+      // with real content as "empty" and zeroing its salience.
+      const entry = `### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`;
+      fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${entry}`, "utf-8");
     }
   }
 
   updateRoomMeta(slug, input.room, { updated: timestamp });
-  recordAccess(slug, input.room);
+  // Propagate the real importance of this write into the salience formula so
+  // --importance high measurably raises the room's salience (not always medium).
+  recordAccess(slug, input.room, importance);
 
   // Async sync to Supabase (non-blocking)
   const writtenContent = fs.readFileSync(targetFile, "utf-8");

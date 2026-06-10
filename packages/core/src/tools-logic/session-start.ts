@@ -7,7 +7,7 @@
 
 import { resolveProject } from "../storage/project.js";
 import { resetOwnedFiles } from "../storage/session.js";
-import { ensurePalaceInitialized, listRooms, isRoomStale } from "../palace/rooms.js";
+import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
 import { readIdentity } from "../palace/identity.js";
 import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awareness.js";
 import { recallInsights, readInsightsIndex } from "../palace/insights-index.js";
@@ -18,6 +18,7 @@ import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, typ
 import { readP0Corrections, type CorrectionRecord } from "../storage/corrections.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
+import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
@@ -35,6 +36,24 @@ function sliceAtWord(text: string, maxLen: number): string {
   return lastSpace > maxLen * 0.6 ? sliced.slice(0, lastSpace) : sliced;
 }
 
+/**
+ * Strip markdown ATX headers from a journal fragment before embedding it into
+ * a card field. `extractSection(content, "next")` returns the section heading
+ * line ("## Next") followed by the body, so a naive embed leaks
+ * "Trajectory: ## Next…" into the card. We drop entire heading lines
+ * (`^#+\s.*`) rather than just the `#` markers — otherwise "## Next" collapses
+ * to a stray "Next" line in front of the real content. Blank lines are then
+ * collapsed and the result trimmed.
+ */
+function stripMarkdownHeaders(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*#+\s/.test(line))
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 export interface SessionStartInput {
   project?: string;
   context?: string;
@@ -47,6 +66,12 @@ export interface SessionStartResult {
   active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }>;
   cross_project: Array<{ title: string; from_project: string; relevance: number }>;
   recent: { today: string | null; yesterday: string | null; older_count: number };
+  /**
+   * Capture-log entries written by `journal_capture` that have NOT yet been
+   * committed via `session_end`. Surfaced so the agent sees in-flight work
+   * instead of "No memory found". Empty array when there are none.
+   */
+  recent_captures: Array<{ date: string; question: string; answer: string }>;
   watch_for: WatchForPattern[];
   corrections: CorrectionRecord[];
   resume: {
@@ -111,10 +136,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     return (b.lastConfirmed ?? "").localeCompare(a.lastConfirmed ?? "");
   });
 
-  // Filter out insights archived via the dashboard (Supabase sync-back)
-  const archivedTitles = await fetchDashboardArchivedTitles();
-  if (archivedTitles.length > 0) {
-    sortedInsights = sortedInsights.filter(i => !archivedTitles.includes(i.title));
+  // Filter out insights archived via the dashboard (Supabase sync-back).
+  // Case-insensitive match — dedup elsewhere normalizes to lowercase, so the
+  // archive filter must too (else "Bug Fix" fails to suppress "bug fix").
+  const archivedLower = new Set((await fetchDashboardArchivedTitles()).map((t) => t.toLowerCase()));
+  if (archivedLower.size > 0) {
+    sortedInsights = sortedInsights.filter(i => !archivedLower.has(i.title.toLowerCase()));
   }
 
   // Cap startup noise: top 3 awareness insights (was 8). Anything below the
@@ -124,11 +151,52 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     title: sliceAtWord(i.title, 200),
     confirmed: i.confirmations ?? 1,
     severity: i.severity ?? "important",
-    trend: i.trend,
+    trend: i.trend as string | undefined,
   }));
 
+  // 2b. P0-3 — guarantee a session-1 insight is visible at session-2.
+  // Confirmation count must control ORDER/verbosity, never EXISTENCE. The
+  // global awareness `topInsights` only receives an index insight once
+  // `promoteConfirmedInsights` fires (confirmed_count >= 3), so a brand-new
+  // single-confirmation insight stored by session_end can be absent from
+  // `topInsights` while living in the project-scoped insights-index. Surface
+  // those directly so they appear from confirmation count 1.
+  const index = readInsightsIndex();
+  const projectIndexInsights = index.insights
+    .filter((i) => (i.projects ?? []).includes(slug))
+    .filter((i) => !archivedLower.has(i.title.toLowerCase()))
+    .sort((a, b) => b.confirmed_count - a.confirmed_count || (b.last_confirmed ?? "").localeCompare(a.last_confirmed ?? ""));
+
+  // RESERVED SLOTS: project-scoped index insights get their own budget (up to 2)
+  // ON TOP of the awareness top-3. If we shared one cap, an established project
+  // whose global awareness already has 3+ insights would never surface a fresh
+  // session-1 insight — the cap would be full before this loop ran. P0-3 requires
+  // existence, not just ordering, so the budget must be independent.
+  const seenTitles = new Set(insights.map((i) => i.title.toLowerCase()));
+  const PROJECT_INSIGHT_BUDGET = 2;
+  let projectAdded = 0;
+  for (const idx of projectIndexInsights) {
+    if (projectAdded >= PROJECT_INSIGHT_BUDGET) break;
+    if (seenTitles.has(idx.title.toLowerCase())) continue;
+    insights.push({
+      title: sliceAtWord(idx.title, 200),
+      confirmed: idx.confirmed_count ?? 1,
+      severity: idx.severity ?? "important",
+      trend: undefined,
+    });
+    seenTitles.add(idx.title.toLowerCase());
+    projectAdded++;
+  }
+  // Keep highest-confirmed first (order, not existence, is the threshold's job).
+  // Total visible = up to 3 awareness + up to 2 project-scoped = max 5.
+  insights.sort((a, b) => b.confirmed - a.confirmed);
+
   // 3. Active rooms — top 3 by salience (was 5). Same noise-cap rationale.
-  const rooms = listRooms(slug).slice(0, 3);
+  // Call listRooms ONCE — it internally scans every room via countRoomEntries
+  // to enforce the empty-last sort. Reuse the result for both active_rooms and
+  // the hasPalaceContent check below (avoids a 2nd full sort + 3rd scan pass).
+  const allRooms = listRooms(slug);
+  const rooms = allRooms.slice(0, 3);
   const active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }> = rooms.map((r) => ({
     name: r.name,
     salience: r.salience,
@@ -177,12 +245,14 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       if (d === today) {
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
         const brief = extractSection(content, "brief");
-        const entry = brief ? sliceAtWord(brief, 400) : sliceAtWord(content.split("\n").slice(0, 3).join(" "), 400);
+        const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
+        const entry = sliceAtWord(stripMarkdownHeaders(raw), 400);
         todayBrief = todayBrief ? `${todayBrief} | ${entry}` : entry;
       } else if (d === yesterday && !yesterdayBrief) {
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
         const brief = extractSection(content, "brief");
-        yesterdayBrief = brief ? sliceAtWord(brief, 400) : sliceAtWord(content.split("\n").slice(0, 3).join(" "), 400);
+        const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
+        yesterdayBrief = sliceAtWord(stripMarkdownHeaders(raw), 400);
       } else if (d < yesterday) {
         olderCount++;
       }
@@ -235,7 +305,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       // session_end writes trajectory under "## Next" — use "next" key to extract it
       const trajectorySection = extractSection(content, "next") ?? extractSection(content, "trajectory");
       if (trajectorySection) {
-        lastTrajectory = sliceAtWord(trajectorySection, 200);
+        // Strip the leading "## Next" (or any markdown header) so it never
+        // leaks into the rendered card as "Trajectory: ## Next…".
+        lastTrajectory = sliceAtWord(stripMarkdownHeaders(trajectorySection), 200);
       }
     }
 
@@ -246,13 +318,33 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     };
   }
 
-  // 9. Empty state detection — guide first-time agents on THIS project
-  // Uses project-scoped signals only: no journals, no corrections, no resume
-  // cross_project and insights are global — a returning user always has those
+  // 8c. Recent captures — journal_capture writes that pre-date any session_end.
+  // These live in `*-log.md` / `--capture--` files the orientation path skips,
+  // so without this an agent that captured 4 things sees "No memory found".
+  const recentCaptures: CaptureLogEntry[] = readRecentCaptures(slug, 5);
+
+  // 9. Empty state detection — guide first-time agents on THIS project.
+  // The filesystem is the single source of truth: ANY committed store
+  // (resume/journal/corrections) OR uncommitted store (captures) OR real
+  // palace content makes the project non-empty. session_end is NOT a
+  // prerequisite for visibility.
+  //
+  // Short-circuit order is cheapest-first: in-memory checks (resume,
+  // corrections, briefs) before the fs/palace scans (captures, room content).
+  //
+  // hasPalaceContent: a freshly-initialized palace has scaffold rooms with
+  // zero `### ` entries — those don't count. countRoomEntries() (palace's own
+  // public helper) tells a real room from scaffold without touching palace
+  // internals, so "non-empty" is precise rather than `active_rooms.length > 0`.
+  const hasPalaceContent = allRooms.some((r) => countRoomEntries(slug, r.slug) > 0);
+  const hasCaptures = recentCaptures.length > 0 || hasCaptureLogs(slug);
+
   const isEmpty = !resume &&
     corrections.length === 0 &&
     !todayBrief && !yesterdayBrief &&
-    olderCount === 0;
+    olderCount === 0 &&
+    !hasCaptures &&
+    !hasPalaceContent;
 
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();
@@ -302,6 +394,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     active_rooms,
     cross_project,
     recent: { today: todayBrief, yesterday: yesterdayBrief, older_count: olderCount },
+    recent_captures: recentCaptures.map((c) => ({
+      date: c.date,
+      question: sliceAtWord(c.question, 120),
+      answer: sliceAtWord(c.answer, 200),
+    })),
     watch_for,
     corrections,
     resume,

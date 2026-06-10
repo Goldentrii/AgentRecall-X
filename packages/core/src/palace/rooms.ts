@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RoomMeta } from "../types.js";
+import type { RoomMeta, Importance } from "../types.js";
 import { DEFAULT_PALACE_ROOMS, VERSION } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { palaceDir, sanitizeSlug } from "../storage/paths.js";
@@ -62,6 +62,43 @@ export function getRoomMeta(project: string, roomSlug: string): RoomMeta | null 
   return readJsonSafe<RoomMeta>(roomMetaPath(pd, roomSlug));
 }
 
+/**
+ * Count the real memory entries written to a room.
+ *
+ * Truth = the number of `### YYYY-MM-DD — importance` entry blocks across all
+ * `.md` files in the room (both README.md's "## Memories" section and any
+ * topic files). This is what palaceWrite actually appends, so it is the
+ * authoritative content count — NOT the file count (README.md is a scaffold
+ * that contains entries) and NOT access_count.
+ *
+ * Returns 0 for a missing/unreadable room dir or any read error — never throws.
+ */
+export function countRoomEntries(project: string, roomSlug: string): number {
+  try {
+    const pd = palaceDir(project);
+    const safe = sanitizeSlug(roomSlug);
+    const roomPath = path.join(pd, "rooms", safe);
+    if (!fs.existsSync(roomPath)) return 0;
+
+    let count = 0;
+    const files = fs.readdirSync(roomPath).filter((f) => f.endsWith(".md"));
+    for (const file of files) {
+      let text: string;
+      try {
+        text = fs.readFileSync(path.join(roomPath, file), "utf-8");
+      } catch {
+        continue; // unreadable file — skip, do not throw
+      }
+      // Count entry headers: lines beginning with "### " (the per-write blocks).
+      const matches = text.match(/^### .+$/gm);
+      if (matches) count += matches.length;
+    }
+    return count;
+  } catch {
+    return 0; // missing/unreadable room dir — treat as empty, never throw
+  }
+}
+
 export function updateRoomMeta(project: string, roomSlug: string, updates: Partial<RoomMeta>): RoomMeta | null {
   return withLock(`room-${project}-${roomSlug}`, () => {
     const pd = palaceDir(project);
@@ -89,8 +126,24 @@ export function listRooms(project: string): RoomMeta[] {
     if (meta) rooms.push(meta);
   }
 
-  // Sort by salience descending
-  rooms.sort((a, b) => b.salience - a.salience);
+  // HARD INVARIANT: a room with real content NEVER ranks below an empty room.
+  // Emptiness is determined by disk truth (entry count), not the stale salience
+  // field — a default room can sit at salience 0.5 while holding zero entries.
+  // Compute emptiness once per room to avoid re-reading files inside the sort.
+  const emptyBySlug = new Map<string, boolean>();
+  for (const room of rooms) {
+    emptyBySlug.set(room.slug, countRoomEntries(project, room.slug) === 0);
+  }
+
+  rooms.sort((a, b) => {
+    const aEmpty = emptyBySlug.get(a.slug) ?? true;
+    const bEmpty = emptyBySlug.get(b.slug) ?? true;
+    // Empty-vs-content check short-circuits BEFORE the salience comparison:
+    // non-empty rooms always sort first.
+    if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
+    // Within the same emptiness class, sort by salience descending.
+    return b.salience - a.salience;
+  });
   return rooms;
 }
 
@@ -157,18 +210,27 @@ export function ensurePalaceInitialized(project: string): void {
   writeJsonAtomic(path.join(pd, "graph.json"), { edges: [] });
 }
 
-/** Record an access (bump access_count, last_accessed, and recompute salience). */
-export function recordAccess(project: string, roomSlug: string): void {
+/**
+ * Record an access (bump access_count, last_accessed, and recompute salience).
+ *
+ * `importance` lets a write path propagate the actual importance of the memory
+ * just written (e.g. --importance high) into the salience formula instead of
+ * always assuming "medium". Defaults to "medium" for plain reads/walks.
+ */
+export function recordAccess(project: string, roomSlug: string, importance: Importance = "medium"): void {
   const meta = getRoomMeta(project, roomSlug);
   if (!meta) return;
   const pd = palaceDir(project);
   const connCount = getConnectionCount(pd, roomSlug);
-  const newSalience = computeSalience({
-    importance: "medium",
-    lastUpdated: meta.updated,
-    accessCount: meta.access_count + 1,
-    connectionCount: connCount,
-  });
+  const empty = countRoomEntries(project, roomSlug) === 0;
+  const newSalience = empty
+    ? 0 // empty rooms get a structural salience floor of 0 — 0.5 on an empty room is a lie
+    : computeSalience({
+        importance,
+        lastUpdated: meta.updated,
+        accessCount: meta.access_count + 1,
+        connectionCount: connCount,
+      });
   updateRoomMeta(project, roomSlug, {
     access_count: meta.access_count + 1,
     last_accessed: new Date().toISOString(),
