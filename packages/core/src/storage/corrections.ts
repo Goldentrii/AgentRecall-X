@@ -132,39 +132,85 @@ function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string
  * Capture-quality gate — rejects context-free fragments, pure acknowledgments,
  * and text that carries no actionable signal.
  *
- * Rules (in order):
- *  1. Must be ≥ 15 chars after trim.
- *  2. Must NOT be a pure acknowledgment / fragment (applies only when ≤ 60 chars).
- *  3. Must contain at least one imperative/modal marker — i.e. an actionable signal.
+ * v2 (2026-06-12): classifies on the RULE field only (context param reserved for
+ * future use but never classified on — prevents long context from bypassing the
+ * acknowledgment gate).
+ *
+ * Gates (in order):
+ *  1. Must be >= 12 chars after trim.
+ *  2. Must NOT be a pure acknowledgment/fragment — applied unconditionally (no
+ *     length cap — v1 60-char cap allowed long-context bypass).
+ *  3. Reject system/tool fragments: starts with '<', is a pure number, or is a
+ *     bare file path (no spaces, contains path separator, no verb-ish content).
+ *  4. PASS if any of:
+ *     a) imperative/modal marker present
+ *     b) preference statement ("user wants/prefers/likes/needs", CJK equiv.)
+ *     c) substantive rule: len >= 40 AND >= 2 words of >= 5 chars AND verb-ish
+ *  5. else reject: "no actionable signal"
  *
  * Returns { ok: true } when the text passes all gates, or { ok: false, reason }
  * explaining which gate fired. Callers may surface the reason in a warning.
  */
-export function isLikelyRealCorrection(text: string): { ok: boolean; reason?: string } {
-  const trimmed = text.trim();
+export function isLikelyRealCorrection(rule: string, _context?: string): { ok: boolean; reason?: string } {
+  // NOTE: _context is accepted for forward-compat but NEVER classified on.
+  const r = rule.trim();
 
   // Gate 1 — minimum length
-  if (trimmed.length < 15) {
-    return { ok: false, reason: "too short (< 15 chars)" };
+  if (r.length < 12) {
+    return { ok: false, reason: "too short" };
   }
 
-  // Gate 2 — pure-acknowledgment / fragment patterns (only when ≤ 60 chars to
-  // avoid false-positive rejections on longer elaborations that happen to start
-  // with "ok" or "yes").
-  //   • "no" / "no, that's wrong"
-  //   • "ok ...", "okay ...", "good ...", "yes ...", "wait ...", "hmm(m+) ..."
-  const acknowledgmentPattern = /^(no[,.]?\s*(that'?s\s+wrong\.?)?|ok(ay)?\b.*|good\b.*|yes\b.*|wait\b.*|hmm+\b.*)$/i;
-  if (trimmed.length <= 60 && acknowledgmentPattern.test(trimmed)) {
+  // Gate 2 — pure acknowledgment / fragment patterns (NO length cap — applied always).
+  // Matches strings that start with an acknowledgment word and trail with only filler content
+  // up to 80 extra chars. The 80-char trailing budget covers e.g.
+  // "Ok good, then we don't change anything. let's focus on novada-mcp" (67 total)
+  // without catching real rules that happen to open with "ok" or "yes" (those tend to be
+  // much longer and/or contain definitive nouns + verbs checked in gate 4).
+  const acknowledgmentPattern =
+    /^(no[,.]?\s*(that'?s\s+wrong[.!]?)?|ok(ay)?\b|good\b|great\b|nice\b|yes\b|yeah\b|right\b|wait\b|hmm+\b|sure\b|thanks?\b)[\s\S]{0,80}$/i;
+  if (acknowledgmentPattern.test(r)) {
     return { ok: false, reason: "pure acknowledgment or fragment — no rule content" };
   }
 
-  // Gate 3 — must contain at least one imperative/modal marker
-  const actionablePattern = /\b(never|always|don'?t|do not|must|should|use|stop|avoid|prefer|instead|make sure|remember to)\b/i;
-  if (!actionablePattern.test(trimmed)) {
-    return { ok: false, reason: "no actionable signal — missing imperative/modal marker (never/always/don't/must/should/use/stop/avoid/prefer/instead/make sure/remember to)" };
+  // Gate 3 — system/tool fragments
+  if (r.startsWith("<")) {
+    return { ok: false, reason: "system/tool fragment (starts with '<')" };
+  }
+  if (/^\d+$/.test(r)) {
+    return { ok: false, reason: "pure number — no rule content" };
+  }
+  // Bare file path: no spaces, contains at least one '/' or '\', no alphanumeric verb words
+  if (!/\s/.test(r) && /[/\\]/.test(r) && !/\b[a-zA-Z]{4,}\b/.test(r)) {
+    return { ok: false, reason: "looks like a bare file path — no rule content" };
   }
 
-  return { ok: true };
+  // Gate 4 — must carry actionable signal (pass if ANY of a/b/c)
+
+  // (a) imperative/modal marker
+  const imperativePattern =
+    /\b(never|always|don'?t|do not|must|should|use|stop|avoid|prefer|instead|make sure|remember to)\b/i;
+  if (imperativePattern.test(r)) {
+    return { ok: true };
+  }
+
+  // (b) preference statement
+  const preferencePattern =
+    /\b(user\s+(wants?|prefers?|likes?|needs?)|the\s+user\s+is|偏好|喜欢|要求)\b/i;
+  if (preferencePattern.test(r)) {
+    return { ok: true };
+  }
+
+  // (c) substantive rule: len >= 40, >= 2 words of >= 5 alphanum chars, has verb-ish token
+  if (r.length >= 40) {
+    const longWords = (r.match(/\b[a-zA-Z0-9]{5,}\b/g) ?? []).length;
+    const verbIsh =
+      /\b(bump|consolidate|release|phase|version|publish|push|format|palette|font|round|warm|side.by.side|bilingual|batch|clean|parse|build|compile|deploy|migrate|export|import|store|handle|return|check|verify|ensure)\b/i;
+    if (longWords >= 2 && verbIsh.test(r)) {
+      return { ok: true };
+    }
+  }
+
+  return { ok: false, reason: "no actionable signal — rule lacks imperative/modal marker, preference statement, or substantive content" };
 }
 
 export interface WriteCorrectionResult {
@@ -182,9 +228,9 @@ export interface WriteCorrectionResult {
  * still compiles and runs correctly).
  */
 export function writeCorrection(project: string, correction: CorrectionRecord): WriteCorrectionResult {
-  // Capture-quality gate — reject noise before touching disk
-  const gateText = `${correction.rule} ${correction.context}`.trim();
-  const gate = isLikelyRealCorrection(gateText);
+  // Capture-quality gate — reject noise before touching disk.
+  // v2: classify on rule field only (context is for future use, never gate-input).
+  const gate = isLikelyRealCorrection(correction.rule ?? "");
   if (!gate.ok) {
     return { written: false, reason: gate.reason };
   }

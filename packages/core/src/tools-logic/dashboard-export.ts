@@ -67,6 +67,12 @@ export interface DashboardProjectSnapshot {
    * every project snapshot until per-project awareness is supported upstream.
    */
   global_insights_top: Array<{ title: string; confirmations: number; severity: string }>;
+  /**
+   * North-star alignment metric — correction precision (heeded/retrieved).
+   * Convenience top-level field mirroring corrections.kpis.precision.
+   * Null when retrieved === 0 (no outcome data yet — no fake claims).
+   */
+  alignment_precision: number | null;
 }
 
 export interface DashboardSnapshot {
@@ -138,6 +144,9 @@ function snapshotProject(slug: string): DashboardProjectSnapshot {
       severity: i.severity ?? "important",
     }));
 
+  // Null when retrieved === 0 — no fake claims before real outcome data exists
+  const alignmentPrecision = kpis.retrieved > 0 ? kpis.precision : null;
+
   return {
     slug,
     total_sessions: journals.length,
@@ -169,6 +178,7 @@ function snapshotProject(slug: string): DashboardProjectSnapshot {
       kpis,
     },
     global_insights_top: globalInsightsTop,
+    alignment_precision: alignmentPrecision,
   };
 }
 

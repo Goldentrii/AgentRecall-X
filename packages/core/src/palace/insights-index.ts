@@ -15,6 +15,79 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { withLock } from "../storage/filelock.js";
 
+// ── Stopwords for title normalization ────────────────────────────────────────
+const STOPWORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+  "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+  "being", "have", "has", "had", "do", "does", "did", "will", "would",
+  "could", "should", "may", "might", "shall", "can", "this", "that",
+  "these", "those", "it", "its", "not", "no", "nor", "so", "yet", "both",
+  "either", "neither", "each", "any", "all", "more", "most", "other",
+  "than", "then", "when", "where", "which", "who", "how", "why", "what",
+  "as", "if", "up", "out", "about", "into", "through", "during", "before",
+  "after", "above", "below", "between", "just", "also", "only", "even",
+]);
+
+/**
+ * Normalize a title for similarity comparison:
+ *   - lowercase
+ *   - strip punctuation
+ *   - split into words
+ *   - drop stopwords and words shorter than 3 characters
+ *
+ * Returns a Set of normalized tokens.
+ */
+export function normalizeTitle(title: string): Set<string> {
+  const words = title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return new Set(words);
+}
+
+/**
+ * Containment-based overlap between two token sets:
+ *   overlap = |intersection| / |smaller set|
+ *
+ * This is robust to length differences — a short title that is a
+ * semantic subset of a longer one still scores high.
+ */
+export function tokenOverlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersect = 0;
+  for (const token of a) {
+    if (b.has(token)) intersect++;
+  }
+  return intersect / Math.min(a.size, b.size);
+}
+
+/**
+ * Find the most similar existing insight by title.
+ * Returns the insight if containment-based overlap >= 0.6, else null.
+ */
+export function findSimilarInsight(
+  title: string,
+  insights: IndexedInsight[]
+): IndexedInsight | null {
+  const incoming = normalizeTitle(title);
+  if (incoming.size === 0) return null;
+
+  let bestInsight: IndexedInsight | null = null;
+  let bestScore = 0;
+
+  for (const insight of insights) {
+    const existing = normalizeTitle(insight.title);
+    const score = tokenOverlap(incoming, existing);
+    if (score >= 0.6 && score > bestScore) {
+      bestScore = score;
+      bestInsight = insight;
+    }
+  }
+
+  return bestInsight;
+}
+
 export interface IndexedInsight {
   id: string;
   title: string;
@@ -61,26 +134,28 @@ export function writeInsightsIndex(index: InsightsIndex): void {
 
 /**
  * Add or update an insight in the index.
+ *
+ * Confirm-first: if a similar insight already exists (containment overlap >= 0.6),
+ * strengthen it instead of creating a new entry. This is the primary mechanism
+ * that drives the confirmation rate above 1%.
+ *
+ * Returns the insight that was confirmed or added.
+ * Returns null only when the cap is full of count>=2 entries (no room for count-1).
  */
-export function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): IndexedInsight {
+export function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): IndexedInsight | null {
   return withLock("insights-index", () => {
   const index = readInsightsIndex();
   const now = new Date().toISOString();
 
-  // Check for existing by title similarity
-  const existing = index.insights.find((i) => {
-    const existingWords = i.title.toLowerCase().split(/\s+/);
-    const newWords = insight.title.toLowerCase().split(/\s+/);
-    const overlap = newWords.filter((w) => existingWords.includes(w) && w.length > 3).length;
-    return overlap / Math.max(existingWords.length, newWords.length) > 0.5;
-  });
+  // Confirm-first: use containment-based overlap at 0.6 threshold
+  const existing = findSimilarInsight(insight.title, index.insights);
 
   if (existing) {
     existing.confirmed_count++;
     existing.last_confirmed = now;
-    // Merge applies_when
+    // Merge applies_when (union, cap at 10 keywords)
     for (const aw of insight.applies_when) {
-      if (!existing.applies_when.includes(aw)) {
+      if (!existing.applies_when.includes(aw) && existing.applies_when.length < 10) {
         existing.applies_when.push(aw);
       }
     }
@@ -95,6 +170,33 @@ export function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirme
     return existing;
   }
 
+  // New insight — check cap before admitting
+  if (index.insights.length >= 200) {
+    // Eviction: evict the OLDEST entry with confirmed_count == 1.
+    // NEVER evict an entry with confirmed_count >= 2 to admit a count-1 entry.
+    let oldestCount1Idx = -1;
+    let oldestTime = Infinity;
+
+    for (let i = 0; i < index.insights.length; i++) {
+      if (index.insights[i].confirmed_count === 1) {
+        const t = new Date(index.insights[i].last_confirmed).getTime();
+        if (t < oldestTime) {
+          oldestTime = t;
+          oldestCount1Idx = i;
+        }
+      }
+    }
+
+    if (oldestCount1Idx === -1) {
+      // All entries are count >= 2 — refuse to admit a new count-1 entry.
+      // This prevents degradation of a fully-compounded index.
+      return null;
+    }
+
+    // Evict the oldest count-1 entry
+    index.insights.splice(oldestCount1Idx, 1);
+  }
+
   const newInsight: IndexedInsight = {
     id: `idx-${Date.now()}`,
     ...insight,
@@ -103,28 +205,6 @@ export function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirme
   };
 
   index.insights.push(newInsight);
-
-  // Prune: if over 200 entries, remove least-confirmed old entries
-  if (index.insights.length > 200) {
-    const now = Date.now();
-    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-    // Remove single-confirmation entries older than 90 days
-    index.insights = index.insights.filter((i) => {
-      if (i.confirmed_count > 1) return true;
-      const age = now - new Date(i.last_confirmed).getTime();
-      return age < ninetyDaysMs;
-    });
-    // If still over 200 after age pruning, keep top 200 by score
-    if (index.insights.length > 200) {
-      index.insights.sort((a, b) => {
-        const scoreA = a.confirmed_count * (a.severity === "critical" ? 3 : a.severity === "important" ? 2 : 1);
-        const scoreB = b.confirmed_count * (b.severity === "critical" ? 3 : b.severity === "important" ? 2 : 1);
-        return scoreB - scoreA;
-      });
-      index.insights = index.insights.slice(0, 200);
-    }
-  }
-
   writeInsightsIndex(index);
   return newInsight;
   }); // end withLock

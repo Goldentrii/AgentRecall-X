@@ -21,6 +21,17 @@ function formatTerse(result: SessionStartResult): string {
     lines.push("");
   }
 
+  // ── North-star alignment metric ────────────────────────────────────────
+  // Rendered only when real outcome data exists (retrieved > 0).
+  // No fake claims: absent when precision cannot be computed.
+  if (result.alignment) {
+    const { precision, retrieved, heeded, recurred } = result.alignment;
+    const pct = Math.round(precision * 100);
+    const recurrStr = recurred > 0 ? `, ${recurred} recurred` : "";
+    lines.push(`🎯 Alignment: ${pct}% corrections heeded (${heeded}/${retrieved}${recurrStr})`);
+    lines.push("");
+  }
+
   // ── Header ──────────────────────────────────────────────────────────────
   const sessionCount = result.resume?.sessions_count ?? 0;
   const lastDate = result.resume?.last_date ?? "—";

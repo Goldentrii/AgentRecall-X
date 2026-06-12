@@ -94,6 +94,9 @@ export {
   writeInsightsIndex,
   addIndexedInsight,
   recallInsights,
+  findSimilarInsight,
+  normalizeTitle,
+  tokenOverlap,
 } from "./palace/insights-index.js";
 export type {
   IndexedInsight,

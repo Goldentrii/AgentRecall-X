@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { journalWrite } from "./journal-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
 import { promoteConfirmedInsights } from "./insight-promotion.js";
+import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
 import { readCorrections, recordOutcome } from "../storage/corrections.js";
@@ -87,6 +88,10 @@ export interface SessionEndResult {
   journal_written: boolean;
   journal_write_error?: string;
   insights_processed: number;
+  /** New insights added to the index (no prior match found). */
+  insights_added: number;
+  /** Existing insights confirmed (near-duplicate title matched, count++). */
+  insights_confirmed: number;
   awareness_updated: boolean;
   awareness_error?: string;
   palace_consolidated: boolean;
@@ -153,6 +158,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       success: false,
       journal_written: false,
       insights_processed: 0,
+      insights_added: 0,
+      insights_confirmed: 0,
       awareness_updated: false,
       palace_consolidated: false,
       card: "Summary too short (minimum 10 characters). Nothing saved.",
@@ -164,6 +171,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   let journalWritten = false;
   let journalWriteError: string | undefined;
   let insightsProcessed = 0;
+  let insightsAdded = 0;
+  let insightsConfirmed = 0;
   let awarenessUpdated = false;
   let awarenessError: string | undefined;
   let palaceConsolidated = false;
@@ -256,9 +265,23 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     }
   }
 
-  // 2. Update awareness with insights
+  // 2. Update awareness with insights — confirm-first classification
+  // Pre-classify each insight against the current index BEFORE passing to
+  // awarenessUpdate. This ensures the count tallies are accurate even if
+  // awarenessUpdate itself also performs its own similarity check.
   if (input.insights && input.insights.length > 0) {
     try {
+      // Read the current index once for confirm-first classification
+      const currentIndex = readInsightsIndex();
+      for (const insight of input.insights) {
+        const match = findSimilarInsight(insight.title, currentIndex.insights);
+        if (match) {
+          insightsConfirmed++;
+        } else {
+          insightsAdded++;
+        }
+      }
+
       const scopedTrajectory = input.trajectory
         ? `${slug}: ${input.trajectory}`
         : undefined;
@@ -278,6 +301,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       awarenessUpdated = true;
     } catch (err) {
       awarenessError = err instanceof Error ? err.message : String(err);
+      // Reset tallies on error so they don't misreport
+      insightsAdded = 0;
+      insightsConfirmed = 0;
     }
   }
 
@@ -376,7 +402,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     `  Journal       ${jDir.replace(root, "~/.agent-recall")}/`,
     `                └─ ${date}.md                    ${journalWritten ? "[written]" : journalWriteError ? `[FAILED: ${journalWriteError}]` : "[skipped]"}`,
     "",
-    `  Awareness     ${insightsProcessed} insight${insightsProcessed !== 1 ? "s" : ""} added  (${totalInsights} total)`,
+    `  Awareness     ${insightsAdded} added, ${insightsConfirmed} confirmed  (${totalInsights} total)`,
     ...(awarenessError ? [`  [WARN: awareness update failed: ${awarenessError}]`] : []),
     ...(palaceError ? [`  [WARN: palace consolidation failed: ${palaceError}]`] : []),
     "",
@@ -452,6 +478,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     journal_written: journalWritten,
     ...(journalWriteError ? { journal_write_error: journalWriteError } : {}),
     insights_processed: insightsProcessed,
+    insights_added: insightsAdded,
+    insights_confirmed: insightsConfirmed,
     awareness_updated: awarenessUpdated,
     ...(awarenessError ? { awareness_error: awarenessError } : {}),
     palace_consolidated: palaceConsolidated,

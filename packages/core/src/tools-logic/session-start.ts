@@ -15,7 +15,7 @@ import { journalDirs } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
-import { readP0Corrections, recordOutcome, type CorrectionRecord } from "../storage/corrections.js";
+import { readP0Corrections, recordOutcome, getCorrectionKPIs, type CorrectionRecord } from "../storage/corrections.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
@@ -102,6 +102,17 @@ export interface SessionStartResult {
     active_phase_stale_days: number;
     closed_count: number;
     last_synthesis: string | null;
+  } | null;
+  /**
+   * North-star alignment metric — correction precision (heeded/retrieved).
+   * Null when the project has zero retrieval outcome data (no fake claims).
+   * Populated automatically once corrections have been surfaced and outcomes recorded.
+   */
+  alignment: {
+    precision: number;
+    retrieved: number;
+    heeded: number;
+    recurred: number;
   } | null;
   empty_state?: string;
 }
@@ -387,6 +398,25 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   if (readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
   const behaviorRules = readBehaviorPolicies(slug).rules;
 
+  // North-star alignment metric — correction precision (heeded/retrieved).
+  // Wrapped in try/catch so a corrupt or unreadable corrections dir never
+  // breaks session orientation. Null when no outcome data exists yet
+  // (retrieved === 0) — no fake claims.
+  let alignment: SessionStartResult["alignment"] = null;
+  try {
+    const kpis = getCorrectionKPIs(slug);
+    if (kpis.retrieved > 0) {
+      alignment = {
+        precision: kpis.precision,
+        retrieved: kpis.retrieved,
+        heeded: kpis.heeded,
+        recurred: kpis.recurred,
+      };
+    }
+  } catch {
+    // alignment remains null — session_start must always succeed
+  }
+
   // Dream cron health — surface when broken for ≥2 nights
   const dreamHealthRaw = getDreamHealth();
   const dreamHealth: DreamHealth | null = dreamHealthRaw.banner ? dreamHealthRaw : null;
@@ -432,6 +462,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     behavior_rules: behaviorRules,
     dream_health: dreamHealth,
     pipeline,
+    alignment,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
   };
 }
