@@ -1,9 +1,9 @@
 ---
 name: agent-recall
 description: >-
-  Persistent compounding memory for AI agents. 10 MCP tools: session_start,
-  remember, recall, session_end, check, digest, project_board, project_status,
-  bootstrap_scan, bootstrap_import.
+  Persistent compounding memory for AI agents. 5 default MCP tools: session_start,
+  session_end, remember, recall, check. Full surface (18 tools) available with --full flag.
+  Two-verb model: inhale (session_start) and exhale (session_end).
   Correction-first memory with decision trail tracking,
   watch_for warnings, palace rooms with salience scoring, cross-project insight
   matching, same-day journal merging, ambient recall hooks. Local markdown only.
@@ -13,7 +13,7 @@ description: >-
   search — same API, semantic understanding. Gracefully degrades to local search
   if not configured.
 origin: community
-version: 3.4.10
+version: 3.4.22
 author: Goldentrii
 platform: clawhub
 install:
@@ -63,9 +63,11 @@ skip:
   - "算了"
 ---
 
-# AgentRecall v3.4.10 — Usage Guide
+# AgentRecall v3.4.22 — Usage Guide
 
-AgentRecall is a persistent memory system with 10 MCP tools. This guide describes how and when to use them.
+AgentRecall is a persistent memory system. Default surface: **5 tools** (two verbs + three essentials). Full surface: 18 tools via `npx agent-recall-mcp --full`. This guide describes how and when to use them.
+
+**Two-verb model:** `session_start` (inhale — load context) and `session_end` (exhale — save and compound). Everything else is available but secondary; most agents never need more than the default 5. See [Automaticity Law](#why-5-default-tools) below.
 
 ## Setup
 
@@ -122,7 +124,15 @@ transport: stdio
 
 ## Tools
 
-AgentRecall provides these MCP tools:
+AgentRecall's default surface provides **5 tools**. Start the server with `--full` to enable the complete 18-tool surface.
+
+**Default tools (always available):** `session_start`, `session_end`, `remember`, `recall`, `check`
+
+**Full-mode only (`--full`):** `memory_query`, `check_action`, `register_rule`, `pipeline_open`, `pipeline_close`, `pipeline_list`, `pipeline_current`, `pipeline_show`, `skill_write`, `skill_recall`, `skill_list`, `dashboard_export`, `session_end_reflect`, `project_board`, `project_status`, `digest`, `bootstrap_scan`, `bootstrap_import`
+
+---
+
+### Default tools
 
 ### `session_start`
 
@@ -294,6 +304,12 @@ check({
 When `outcome` is provided, the decision trail is persisted to the palace `decisions` room. After 3+ closed decisions, `session_start` surfaces calibration warnings: "Your priors average 0.8 but outcomes average 0.5 — you're overconfident."
 
 **Returns:** `recorded`, `watch_for`, `similar_past_deltas`, `decision_id` (when outcome provided), `decision_trail_saved`, `calibration_note`
+
+---
+
+### Full-mode tools (`npx agent-recall-mcp --full`)
+
+> These tools are available when the server is started with `--full`. Most agents never need them — the default 5 tools carry all compounding memory value. Enable `--full` for project narrative tracking (pipeline), procedural rules (skills), status dashboards, context caching, or first-time bootstrap.
 
 ### `project_board`
 
@@ -479,6 +495,16 @@ Obsidian-compatible. Open `palace/` as a vault to see the knowledge graph.
 | Any MCP client | `command: npx, args: ["-y", "agent-recall-mcp"], transport: stdio` |
 
 All platforms use the same tools. No platform-specific behavior.
+
+---
+
+## Why 5 Default Tools
+
+The Automaticity Law (measured on the live corpus — 44 projects, 221 journals, 81 corrections, 2026-06-12): push channels (`session_start`, `session_end`, correction hooks, ambient recall) showed repeated behavior-changing usage across weeks of real agent sessions. Pull channels — `check_action`, `skill_recall`, `pipeline_*`, `memory_query` — had zero organic calls, including from the agent that built them.
+
+Every extra tool in the default surface burns tool-definition tokens every session for zero behavioral return. The two-verb model (inhale = `session_start`, exhale = `session_end`) carries all compounding memory value. Everything else is available via `--full` for agents and workflows that explicitly need it.
+
+Corollary: wire before write — a primitive without an automatic trigger will not be used.
 
 ---
 

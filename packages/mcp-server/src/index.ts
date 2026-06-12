@@ -80,13 +80,45 @@ if (args.includes("--help") || args.includes("-h")) {
   process.stdout.write(
     `agent-recall-mcp v${VERSION}
 
-AI agent memory — session context, persistent memory, cross-project insights.
+AI agent memory — memory that arrives unasked, behavior that compounds over time.
+
+Two-verb model: inhale (session_start) and exhale (session_end).
+Everything else fires automatically via hooks or is available on demand with --full.
 
 Usage:
-  npx agent-recall-mcp              Start (6 core tools: session_start, remember, recall, session_end, check, memory_query)
-  npx agent-recall-mcp --full       Start with all tools (adds project_board, project_status, digest, bootstrap)
+  npx agent-recall-mcp              Start with 5 default tools (session_start, session_end, remember, recall, check)
+  npx agent-recall-mcp --full       Start with all tools (adds memory_query, check_action, register_rule,
+                                    pipeline_*, skill_*, dashboard_export, session_end_reflect,
+                                    project_board, project_status, digest, bootstrap)
   npx agent-recall-mcp --help       Show this help
-  npx agent-recall-mcp --list-tools List available MCP tools
+  npx agent-recall-mcp --list-tools List available MCP tools (add --full to see full list)
+
+Default tools (5):
+  session_start          Load project context at session start — corrections, insights, warnings
+  session_end            Save journal, insights, trajectory — compounds memory over time
+  remember               Write a memory — auto-routes to the right store
+  recall                 Search all memory — BM25 + vector + RRF fusion + Hopfield rerank
+  check                  Record understanding; returns predictive warnings from past corrections
+
+Full-mode additions (--full):
+  memory_query           Pull-on-demand recall mid-task
+  check_action           Pre-action safety check (publish/push/deploy warnings)
+  register_rule          Save an IF-THEN behavior policy
+  pipeline_open          Open a project narrative phase
+  pipeline_close         Close active phase with reflection
+  pipeline_list          List all narrative phases
+  pipeline_current       Show currently active phase
+  pipeline_show          Render full project narrative spine
+  skill_write            Save a procedural IF-THEN rule
+  skill_recall           Find skills matching an intent
+  skill_list             Browse all skills in a project
+  dashboard_export       Generate agent-readable dashboard.json snapshot
+  session_end_reflect    Park-2023 reflection bundle — distills last N journals
+  project_board          Status board across all projects
+  project_status         Quick project health check
+  digest                 Context cache — store/recall/invalidate pre-computed analysis
+  bootstrap_scan         Discover existing projects on this machine
+  bootstrap_import       Import discovered projects into AgentRecall
 
 Storage: ${getRoot()}
 Legacy:  ${getLegacyRoot()}
@@ -98,65 +130,82 @@ Community: https://t.me/+ywZwoHrg3AM0NDVi
   process.exit(0);
 }
 
-// --full: register all tools including setup/advanced tools
-// Default: 6 core tools only (lower token overhead per session)
+// --full: register all tools including advanced/setup tools
+// Default: 5 core tools only (minimal token overhead per session — Automaticity Law)
 const fullMode = args.includes("--full");
 
 if (args.includes("--list-tools")) {
   const coreTools = [
-    { name: "session_start", description: "Load project context for a new session" },
+    { name: "session_start", description: "Load project context at session start — corrections, insights, watch_for warnings" },
+    { name: "session_end", description: "Save journal, insights, and trajectory — compounds memory over time" },
     { name: "remember", description: "Save a memory — auto-routes to the right store" },
     { name: "recall", description: "Search all memory stores, return ranked results with feedback" },
-    { name: "session_end", description: "Save session summary, insights, and trajectory" },
     { name: "check", description: "Record understanding, get predictive warnings from past corrections" },
-    { name: "memory_query", description: "Pull-on-demand recall — call mid-task before decisions" },
   ];
-  const fullTools = [
-    { name: "project_board", description: "Status board across all projects (use --full to enable)" },
-    { name: "project_status", description: "Quick project health check (use --full to enable)" },
-    { name: "digest", description: "Context cache — store/recall/read/invalidate pre-computed analysis (use --full)" },
-    { name: "bootstrap_scan", description: "Discover existing projects on this machine (use --full to enable)" },
-    { name: "bootstrap_import", description: "Import discovered projects into AgentRecall (use --full to enable)" },
+  const fullOnlyTools = [
+    { name: "memory_query", description: "Pull-on-demand recall mid-task — query before decisions (--full)" },
+    { name: "check_action", description: "Pre-action safety matcher — warns on publish/push/deploy (--full)" },
+    { name: "register_rule", description: "Save an IF-THEN behavior policy (--full)" },
+    { name: "pipeline_open", description: "Open a new project narrative phase (--full)" },
+    { name: "pipeline_close", description: "Close active phase with reflection fields (--full)" },
+    { name: "pipeline_list", description: "List all narrative phases as JSON summaries (--full)" },
+    { name: "pipeline_current", description: "Return content of the currently active phase (--full)" },
+    { name: "pipeline_show", description: "Render project narrative spine — all phases (--full)" },
+    { name: "skill_write", description: "Save a procedural IF-THEN rule (--full)" },
+    { name: "skill_recall", description: "Find skills matching an intent (--full)" },
+    { name: "skill_list", description: "Browse all skills in a project (--full)" },
+    { name: "dashboard_export", description: "Generate agent-readable dashboard.json snapshot (--full)" },
+    { name: "session_end_reflect", description: "Park-2023 reflection bundle — distills last N journals (--full)" },
+    { name: "project_board", description: "Status board across all projects (--full)" },
+    { name: "project_status", description: "Quick project health check (--full)" },
+    { name: "digest", description: "Context cache — store/recall/read/invalidate pre-computed analysis (--full)" },
+    { name: "bootstrap_scan", description: "Discover existing projects on this machine (--full)" },
+    { name: "bootstrap_import", description: "Import discovered projects into AgentRecall (--full)" },
   ];
-  const tools = fullMode ? [...coreTools, ...fullTools] : coreTools;
+  const tools = fullMode ? [...coreTools, ...fullOnlyTools] : coreTools;
   process.stdout.write(JSON.stringify(tools, null, 2) + "\n");
   process.exit(0);
 }
 
-// ── Core tools (always registered) ───────────────────────────────────────────
+// ── Default surface: 5 tools (two verbs + three essentials) ─────────────────
+// Automaticity Law: only memory that arrives unasked gets used.
+// Push channels (session_start/end, hooks) drive behavior; pull channels don't.
+// Every extra tool in the default surface burns tool-definition tokens every session.
 registerSessionStart(server);
+registerSessionEnd(server);
 registerRemember(server);
 registerRecall(server);
-registerSessionEnd(server);
 registerCheck(server);
-registerMemoryQuery(server);
-
-// Pipeline tools — always on, project narrative spine
-registerPipelineOpen(server);
-registerPipelineClose(server);
-registerPipelineList(server);
-registerPipelineCurrent(server);
-registerPipelineShow(server);
-
-// Procedural memory layer (V10)
-registerSkillWrite(server);
-registerSkillRecall(server);
-registerSkillList(server);
-
-// Dashboard + reflection
-registerDashboardExport(server);
-registerSessionEndReflect(server);
-
-// Behavior policies (item 6)
-registerRegisterRule(server);
-
-// Pre-action proactive matcher (items 3 + 5)
-registerCheckAction(server);
 
 // ── Extended tools (--full mode only) ────────────────────────────────────────
-// Use when you need project status boards, context caching, or first-time bootstrap.
+// Use when you need pipeline tracking, skills, dashboards, project boards,
+// context caching, on-demand queries, or first-time bootstrap.
 // Start server with: npx agent-recall-mcp --full
 if (fullMode) {
+  // On-demand recall + pre-action safety
+  registerMemoryQuery(server);
+  registerCheckAction(server);
+
+  // Behavior policies
+  registerRegisterRule(server);
+
+  // Pipeline tools — project narrative spine
+  registerPipelineOpen(server);
+  registerPipelineClose(server);
+  registerPipelineList(server);
+  registerPipelineCurrent(server);
+  registerPipelineShow(server);
+
+  // Procedural memory layer
+  registerSkillWrite(server);
+  registerSkillRecall(server);
+  registerSkillList(server);
+
+  // Dashboard + reflection
+  registerDashboardExport(server);
+  registerSessionEndReflect(server);
+
+  // Project status boards, context caching, bootstrap
   registerProjectBoard(server);
   registerProjectStatus(server);
   registerDigest(server);

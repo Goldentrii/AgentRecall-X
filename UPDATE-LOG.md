@@ -230,6 +230,33 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## V4 Sprint 1+2 — "Memory as Environment" executed (2026-06-12, local only)
+
+Plan: docs/internal/V4-PLAN.md · Perf baseline: docs/internal/PERF-CHECK-2026-06-12.md
+Orchestration: Fable 5 orchestrator + 6 Sonnet workers (2 sprints, file-disjoint parallel)
++ 1 fresh-eyes reviewer. All suites green (consistency 10/10, funnel 18/18). NOT pushed/published.
+
+| Commit | What |
+|---|---|
+| b61541b | Perf check: corpus-measured scorecard (5.5/10) + Automaticity Law + roadmap |
+| 53554df | P0-A recall latency 10.5s→2.5s→ms (timeout+race+breaker) · P0-B outcome loop alive (first KPI data ever) · P0-C retract+gate |
+| 0e703a9 | Sprint 0 review fixes: local-TZ outcome guards (UTC+8 bug), surfaced gate rejection in check, dead discriminant |
+| 5dfc76c | Sprint 1: confirm-first insights (funnel unjam) · triage v2 (11/11 calibration) + 64/81 noise corrections retracted (reversible) · 🎯 Alignment line |
+| (this)  | Sprint 2: default MCP surface 18→5 tools (Automaticity Law) · hook-pretool + ambient precision floor · auto-handoff.md at every session_end |
+
+Outcomes vs north-star (ALIGNMENT = precision × confirmation rate):
+- Correction channel: AgentRecall P0s 6 noisy → 2 real; precision now measured automatically.
+- Funnel: near-duplicates now CONFIRM (containment ≥0.6); cap eviction protects count≥2.
+- Surface: 5 default tools; pull tools behind --full; pretool hook pushes warnings at the moment of risk.
+- Portable memory: projects/<slug>/handoff.md auto-written every save (≤2200 chars).
+
+Known follow-ups: handoff doubled "Intention:" prefix (cosmetic) · re-register the no-push
+redline via register_rule (its correction lived outside this project / was regex-noise) ·
+~/.claude PreToolUse hook entry (orchestrator task, other repo) · Sprint 3 re-measure +
+publish gate (user verifies via ar first; propose v3.5.0).
+
+---
+
 ## Release — v3.4.22 "Trust" (2026-06-11)
 
 **Theme: freeze features, fix consistency.** Triggered by a hands-on external evaluation (Claude agent, raw stdio JSON-RPC, clean Linux sandbox, 2026-06-11) that reproduced four trust-breaking bugs live. The product's core invariant — *anything saved must be acknowledged as existing at orientation time, 100% deterministically* — was broken. This release restores it. No new features.

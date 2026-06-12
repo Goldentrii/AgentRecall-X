@@ -24,6 +24,7 @@ import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
+import { writeHandoff } from "../helpers/handoff.js";
 
 export interface SessionEndInput {
   summary: string;
@@ -101,6 +102,8 @@ export interface SessionEndResult {
   quality_warnings?: InsightQualityWarning[];
   pipeline_closed?: PipelinePhaseAction;
   pipeline_opened?: PipelinePhaseAction;
+  /** Path to the handoff artifact written at session_end. Present on success. */
+  handoff_path?: string;
 }
 
 export function checkInsightQuality(
@@ -473,6 +476,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       : { ok: false, error: r.error };
   }
 
+  // WS-5: Auto-write cross-agent handoff artifact — fire-and-forget.
+  // Only fires when the journal was successfully written (meaningful session).
+  // Never affects result or throws to caller.
+  let handoffPath: string | undefined;
+  if (journalWritten) {
+    try {
+      const h = writeHandoff(slug);
+      handoffPath = h.path;
+    } catch { /* swallow — handoff is best-effort */ }
+  }
+
   return {
     success: journalWritten || awarenessUpdated,
     journal_written: journalWritten,
@@ -489,5 +503,6 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     quality_warnings: qualityWarnings.length > 0 ? qualityWarnings : undefined,
     ...(pipelineClosed ? { pipeline_closed: pipelineClosed } : {}),
     ...(pipelineOpened ? { pipeline_opened: pipelineOpened } : {}),
+    ...(handoffPath ? { handoff_path: handoffPath } : {}),
   };
 }

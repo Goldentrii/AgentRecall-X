@@ -215,6 +215,10 @@ export { isJournalFile } from "./helpers/journal-filter.js";
 export { readAlignmentLog, extractWatchPatterns } from "./helpers/alignment-patterns.js";
 export type { WatchForPattern } from "./helpers/alignment-patterns.js";
 
+// Helpers — handoff artifact
+export { generateHandoff, writeHandoff } from "./helpers/handoff.js";
+export type { HandoffResult } from "./helpers/handoff.js";
+
 // Tool logic functions (extracted from MCP tool handlers)
 export { journalRead, type JournalReadInput, type JournalReadResult } from "./tools-logic/journal-read.js";
 export { journalWrite, type JournalWriteInput, type JournalWriteResult } from "./tools-logic/journal-write.js";
