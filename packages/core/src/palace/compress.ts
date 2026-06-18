@@ -21,9 +21,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { palaceDir } from "../storage/paths.js";
+import { palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { extractKeywords } from "../helpers/auto-name.js";
+import { getRoot } from "../types.js";
 
 export interface CompressEntry {
   date: string;
@@ -62,6 +63,9 @@ function parseEntries(content: string): CompressEntry[] {
     if (!match) continue;
     const date = match[1];
     const rest = match[2];
+    // Skip already-consolidated canonical entries (idempotency guard).
+    // A 2nd run must not re-cluster entries produced by a prior compression.
+    if (rest.includes("consolidated")) continue;
     // Extract source backlink [[journal/...]]
     const linkMatch = rest.match(/\[\[journal\/[^\]]+\]\]/);
     const sourceRef = linkMatch ? linkMatch[0] : `[[journal/${date}]]`;
@@ -155,11 +159,21 @@ export function compressTopic(
   topic: string,
   dryRun = true
 ): CompressResult {
+  // Sanitize inputs to prevent path traversal (CLAUDE.md MCP security rule)
+  const safeRoom = sanitizeSlug(room);
+  const safeTopic = sanitizeSlug(topic);
   const pd = palaceDir(project);
-  const topicPath = path.join(pd, "rooms", room, `${topic}.md`);
+  const topicPath = path.join(pd, "rooms", safeRoom, `${safeTopic}.md`);
+
+  // Assert resolved path stays inside the root (defense-in-depth)
+  const root = getRoot();
+  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+  if (!topicPath.startsWith(rootWithSep) && topicPath !== root) {
+    throw new Error(`Path escape blocked: room=${room} topic=${topic}`);
+  }
 
   const result: CompressResult = {
-    project, room, topic,
+    project, room: safeRoom, topic: safeTopic,
     entriesBefore: 0, entriesAfter: 0,
     clustersFound: 0, clustersMerged: 0,
     archivedEntries: 0, dryRun,
@@ -200,9 +214,16 @@ export function compressTopic(
   }
 
   // Archive originals before modifying (invariant §6.1)
-  const archiveDir = path.join(pd, "rooms", room, "_archive");
+  // Collision-proof naming: append timestamp to prevent same-day clobber.
+  // Never overwrite an existing archive file.
+  const archiveDir = path.join(pd, "rooms", safeRoom, "_archive");
   ensureDir(archiveDir);
-  const archivePath = path.join(archiveDir, `${topic}-${todayISO()}.md`);
+  const ts = Date.now();
+  let archivePath = path.join(archiveDir, `${safeTopic}-${todayISO()}-${ts}.md`);
+  // Belt-and-suspenders: if somehow exists (same ms), never overwrite
+  if (fs.existsSync(archivePath)) {
+    archivePath = path.join(archiveDir, `${safeTopic}-${todayISO()}-${ts}-${Math.random().toString(36).slice(2, 6)}.md`);
+  }
   fs.copyFileSync(topicPath, archivePath);
 
   // Extract the header (everything before the first ### DATE block)
@@ -249,6 +270,7 @@ export function compressRoom(
   for (const file of fs.readdirSync(roomPath)) {
     if (!file.endsWith(".md")) continue;
     if (file === "README.md") continue; // skip room description
+    if (file.startsWith("_")) continue; // skip _archive and other internal files
     const topic = file.replace(/\.md$/, "");
     const r = compressTopic(project, room, topic, dryRun);
     if (r.clustersFound > 0) results.push(r);
@@ -271,6 +293,7 @@ export function compressProject(
 
   const results: CompressResult[] = [];
   for (const room of fs.readdirSync(roomsDir)) {
+    if (room.startsWith("_")) continue; // skip _archive and internal dirs
     const roomPath = path.join(roomsDir, room);
     if (!fs.statSync(roomPath).isDirectory()) continue;
     results.push(...compressRoom(project, room, dryRun));

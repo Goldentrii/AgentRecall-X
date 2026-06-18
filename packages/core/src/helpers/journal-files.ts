@@ -12,8 +12,8 @@ import type { JournalEntry } from "../types.js";
  * List all .md journal files across all directories for a project.
  * Returns sorted array with most recent first.
  */
-export function listJournalFiles(project: string): JournalEntry[] {
-  const dirs = journalDirs(project);
+export function listJournalFiles(project: string, includeArchive = false): JournalEntry[] {
+  const dirs = journalDirs(project, includeArchive);
   const entries: JournalEntry[] = [];
   const seen = new Set<string>();
 
@@ -166,7 +166,8 @@ export function readJournalFile(project: string, date: string): string | null {
   // Validate date format before use in path.join or string matching
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
 
-  const dirs = journalDirs(project);
+  // Include archive for backlink resolution — archived entries must be reachable
+  const dirs = journalDirs(project, true);
   const primaryDir = journalDir(project);
   const allDirs = [primaryDir, ...dirs.filter((d) => d !== primaryDir)];
 
