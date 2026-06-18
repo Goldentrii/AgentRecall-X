@@ -97,6 +97,16 @@ export {
   type KeystoneMatch,
 } from "./palace/keystone.js";
 
+// Palace — compression (dream-cycle dedup)
+export {
+  compressTopic,
+  compressRoom,
+  compressProject,
+  type CompressResult,
+  type CompressEntry,
+  type CompressCluster,
+} from "./palace/compress.js";
+
 // Palace — insights index
 export {
   readInsightsIndex,
