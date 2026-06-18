@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-06-18T14:33:32.370Z",
+  "agentrecall_version": "3.4.27",
+  "test_project": "codex-compat-test",
+  "ar_bin": "/Users/tongwu/.npm-global/bin/ar",
+  "node_version": "v24.14.0",
+  "scenarios": [
+    {
+      "id": "S1",
+      "name": "session_start: project context loads",
+      "tool_mcp": "session_start",
+      "cli_command": "ar cold-start --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"project\": \"codex-compat-test\",\n  \"trajectory\": \"AgentRecall: Next: run clean-project-slugs.mjs --apply to quarantine garbage slugs. Consider v3.5.0 milestone for the improvement plan completion. Wire Hopfield spurious detection into compression pass when embedding prerequisites land.\",\n  \"p0_corrections\": [],\n  \"palace_context\": {\n    \"identity\": null,\n    \"awareness_summary\": \"# Awareness\\n> Last updated: 2026-06-18T09:34:26.676Z\\n\\n## Identity\\nAI-native product builder and agent system a",
+      "pass": true,
+      "duration_ms": 792
+    },
+    {
+      "id": "S2",
+      "name": "remember: stores fact to journal",
+      "tool_mcp": "remember",
+      "cli_command": "ar write codex-compat-fact: sky is blue [2026-06-18T14-33-21] --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"success\": true,\n  \"date\": \"2026-06-18\",\n  \"file\": \"/Users/tongwu/.agent-recall/projects/codex-compat-test/journal/2026-06-18--arsave--none--none--codex-compat-sky.md\",\n  \"palace\": null,\n  \"routing_hint\": null\n}",
+      "pass": true,
+      "duration_ms": 2672
+    },
+    {
+      "id": "S2b",
+      "name": "remember: routes to palace with context hint",
+      "tool_mcp": "remember",
+      "cli_command": "ar palace write architecture codex-compat-arch: MCP tools validated at 2026-06-18T14-33-21 --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"success\": true,\n  \"room\": \"architecture\",\n  \"topic\": \"README\",\n  \"project\": \"codex-compat-test\",\n  \"importance\": \"medium\",\n  \"fan_out\": {\n    \"updated_rooms\": [],\n    \"new_edges\": 0\n  },\n  \"file_path\": \"/Users/tongwu/.agent-recall/projects/codex-compat-test/palace/rooms/architecture/README.md\",\n  \"is_new\": false\n}",
+      "pass": true,
+      "duration_ms": 1726
+    },
+    {
+      "id": "S3",
+      "name": "recall: retrieves fact written by remember",
+      "tool_mcp": "recall",
+      "cli_command": "ar search sky is blue --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"results\": [\n    {\n      \"date\": \"2026-06-18\",\n      \"section\": \"top\",\n      \"excerpt\": \"codex-compat-fact: sky is blue [2026-06-18T14-32-07]\",\n      \"line\": 10\n    },\n    {\n      \"date\": \"2026-06-18\",\n      \"section\": \"next\",\n      \"excerpt\": \"codex-compat-fact: sky is blue [2026-06-18T14-33-21]\",\n      \"line\": 16\n    }\n  ],\n  \"palace_searched\": false,\n  \"_note\": \"Palace rooms were not searched. Add --include-palace (CLI) or include_palace: true (MCP recall) to search palace content.\"\n}",
+      "pass": true,
+      "duration_ms": 701
+    },
+    {
+      "id": "S4",
+      "name": "check: alignment via insight recall",
+      "tool_mcp": "check",
+      "cli_command": "ar recall test compatibility codex --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"query\": \"test compatibility codex\",\n  \"results\": [\n    {\n      \"id\": \"ad54eed3-9a49-4229-b699-b56be52d284d\",\n      \"source\": \"journal\",\n      \"title\": \"2026-06-18 — codex-compat-test\",\n      \"excerpt\": \"# 2026-06-18 — codex-compat-test\\n\\ncodex-compat-fact: sky is blue [2026-06-18T14-32-07]\\n\\n## Next\\n\\ncodex-compat-session-end: Codex compat test run completed at 2026-06-18T14-32-07. All MCP tools exercised via ar CLI. next\\n\\ncodex-compat-fact: sky is blue [2026-06-18T14-33-21]\",\n      \"s",
+      "pass": true,
+      "duration_ms": 1218
+    },
+    {
+      "id": "S5",
+      "name": "session_end: saves journal entry",
+      "tool_mcp": "session_end",
+      "cli_command": "ar write codex-compat-session-end: Codex compat test run completed at 2026-06-18T14-33-21. All MCP tools exercised via ar CLI. --section next --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"success\": true,\n  \"date\": \"2026-06-18\",\n  \"file\": \"/Users/tongwu/.agent-recall/projects/codex-compat-test/journal/2026-06-18--arsave--none--none--codex-compat-sky.md\",\n  \"palace\": null,\n  \"routing_hint\": null\n}",
+      "pass": true,
+      "duration_ms": 1455
+    },
+    {
+      "id": "S6",
+      "name": "cross-session recall: fact persists after session_end",
+      "tool_mcp": "recall",
+      "cli_command": "ar search codex-compat-fact --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"results\": [\n    {\n      \"date\": \"2026-06-18\",\n      \"section\": \"top\",\n      \"excerpt\": \"codex-compat-fact: sky is blue [2026-06-18T14-32-07]\",\n      \"line\": 10\n    },\n    {\n      \"date\": \"2026-06-18\",\n      \"section\": \"next\",\n      \"excerpt\": \"codex-compat-fact: sky is blue [2026-06-18T14-33-21]\",\n      \"line\": 16\n    }\n  ],\n  \"palace_searched\": false,\n  \"_note\": \"Palace rooms were not searched. Add --include-palace (CLI) or include_palace: true (MCP recall) to search palace content.\"\n}",
+      "pass": true,
+      "duration_ms": 528
+    },
+    {
+      "id": "S7a",
+      "name": "digest: store cached analysis result",
+      "tool_mcp": "digest (store)",
+      "cli_command": "ar digest store codex compat mcp verification --scope codex compatibility verification --content MCP tools verified: session_start remember recall check session_end digest all operational --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"success\": true,\n  \"id\": \"digest-1781793210999-604042b3\",\n  \"action\": \"created\",\n  \"token_estimate\": 26,\n  \"expires\": \"2026-06-25T14:33:30.999Z\",\n  \"project\": \"codex-compat-test\"\n}",
+      "pass": true,
+      "duration_ms": 1449
+    },
+    {
+      "id": "S7b",
+      "name": "digest: recall cached result by keyword-aligned query",
+      "tool_mcp": "digest (recall)",
+      "cli_command": "ar digest recall codex compat mcp --project codex-compat-test",
+      "cli_exit_code": 0,
+      "raw_output_excerpt": "{\n  \"query\": \"codex compat mcp\",\n  \"digests\": [\n    {\n      \"id\": \"digest-1781793210999-604042b3\",\n      \"title\": \"codex compat mcp verification\",\n      \"scope\": \"codex compatibility verification\",\n      \"score\": 0.6,\n      \"token_estimate\": 26,\n      \"stale\": false,\n      \"age_hours\": 0,\n      \"excerpt\": \"MCP tools verified: session_start remember recall check session_end digest all operational\",\n      \"project\": \"codex-compat-test\"\n    },\n    {\n      \"id\": \"digest-1781793027971-5c1a57ad\",\n    ",
+      "pass": true,
+      "duration_ms": 462
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "pass_rate": "100%"
+  }
+}
