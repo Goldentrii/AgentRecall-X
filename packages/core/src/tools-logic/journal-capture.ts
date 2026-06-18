@@ -46,8 +46,13 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
   }
 
   // Session-safe log filename: avoids conflicts when multiple sessions capture simultaneously
+  // Pass opts so captureLogFileName uses the new smart-naming format
+  const combined = `${input.question} ${input.answer}`;
   const baseLogPath = path.join(dir, `${date}-log.md`);
-  const logFileName = captureLogFileName(date, fs.existsSync(baseLogPath));
+  const logFileName = captureLogFileName(date, fs.existsSync(baseLogPath), {
+    saveType: "capture",
+    content: combined,
+  });
   const logPath = path.join(dir, logFileName);
   const entryNum = countLogEntries(logPath) + 1;
   const tagStr = input.tags && input.tags.length > 0 ? ` [${input.tags.join(", ")}]` : "";

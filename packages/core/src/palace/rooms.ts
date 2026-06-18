@@ -132,7 +132,12 @@ export function listRooms(project: string): RoomMeta[] {
   const entries = fs.readdirSync(roomsDir);
 
   for (const entry of entries) {
-    const metaPath = path.join(roomsDir, entry, "_room.json");
+    const roomPath = path.join(roomsDir, entry);
+    // Skip non-directory entries (stray files leaked to rooms/ level)
+    try { if (!fs.statSync(roomPath).isDirectory()) continue; } catch { continue; }
+    // Skip dirs without _room.json (not real rooms, e.g. remnant "unnamed/" dirs)
+    const metaPath = path.join(roomPath, "_room.json");
+    if (!fs.existsSync(metaPath)) continue;
     const meta = readJsonSafe<RoomMeta>(metaPath);
     if (meta) rooms.push(meta);
   }

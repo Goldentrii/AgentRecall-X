@@ -66,7 +66,12 @@ function hasRealMemory(slug: string, projectDir: string): boolean {
   try {
     const roomsDir = path.join(projectDir, "palace", "rooms");
     for (const room of fs.readdirSync(roomsDir)) {
-      const files = fs.readdirSync(path.join(roomsDir, room));
+      const roomPath = path.join(roomsDir, room);
+      // Skip non-directory entries (stray files leaked to rooms/ level)
+      try { if (!fs.statSync(roomPath).isDirectory()) continue; } catch { continue; }
+      // Skip dirs without _room.json (not real rooms)
+      if (!fs.existsSync(path.join(roomPath, "_room.json"))) continue;
+      const files = fs.readdirSync(roomPath);
       if (files.some((f) => f.endsWith(".md") && f !== "README.md")) return true;
     }
   } catch {

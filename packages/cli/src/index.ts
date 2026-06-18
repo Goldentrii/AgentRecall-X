@@ -155,6 +155,7 @@ async function main(): Promise<void> {
         section: getFlag("--section", rest),
         palace_room: getFlag("--palace-room", rest),
         project,
+        saveType: "arsave",
       });
       output(result);
       break;
