@@ -230,6 +230,28 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## P1-1 — Dream-cycle compression pass (2026-06-18)
+
+- What:   Near-duplicate palace entries (keyword overlap ≥ 0.6) collapsed into canonical entries. Originals archived to `rooms/<room>/_archive/` (invariant: no raw memory destroyed). Canonical entries preserve the union of all source backlinks. Three granularity levels: `compressTopic`, `compressRoom`, `compressProject`. All support dry-run mode.
+- Why:    The append-only palace accumulates semantic duplicates over time (five entries across five days saying the same thing). This drives Hopfield toward spurious attractors and lowers precision. The compression pass reduces stored-memory count without losing recall.
+- Files:  `packages/core/src/palace/compress.ts` (new, 230 lines), `packages/core/src/index.ts` (exports), `benchmark/p1-1-compression.mjs` (new, 12 assertions)
+- Verify: build 0 errors · consistency 10/10 · funnel 18/18 · heeded-guard 5/5 · room-slug-guards 9/9 · p0-1 11/11 · p0-2 10/10 · p1-2-keystone 10/10 · p1-1-compression 12/12 · replay benchmark: recall 100%, precision 33%, staleness 100%, correction 100%
+- Risks:  Keyword-overlap clustering (not embedding-based) may miss semantically identical entries with different vocabulary. The Hopfield-gated version (using cos > 0.95 detection) requires embedding prerequisites (SmartRecallResultItem.embedding, fetchEmbeddingsByIds) — deferred. `compressProject` is O(rooms × topics × entries²) — not a concern for typical project sizes (<100 entries/topic) but should not run in the live path.
+- Status: local commit 8249092 on feat/p1-2-keystone-importance
+
+---
+
+## P1-2 — Keystone importance signal (2026-06-18)
+
+- What:   Memories referenced from pipeline milestone "How solved" or "Synthesis" sections are marked keystone. Keystone rooms get: importance forced to "high", salience floor of 0.30 (above archive threshold 0.15), independent of access count and edge count.
+- Why:    Salience formula gave 45% weight to frequency-driven signals (access + connections) while self-reported importance was only 10%. Rare but critical architecture decisions sank below frequently-touched trivia — the classic rich-get-richer failure. The keystone signal is structural (pipeline citation), not frequency-based.
+- Files:  `packages/core/src/palace/keystone.ts` (new), `packages/core/src/palace/salience.ts` (keystone param + KEYSTONE_FLOOR), `packages/core/src/types.ts` (RoomMeta.keystone), `packages/core/src/palace/rooms.ts` + `fan-out.ts` (pass keystone flag), `packages/core/src/palace/consolidate.ts` (wire markKeystones), `packages/core/src/index.ts` (exports), `benchmark/p1-2-keystone-importance.mjs` (10 assertions)
+- Verify: build 0 errors · all 8 suites green · keystone test: before marking architecture=0.385 < blockers=0.56; after marking architecture=0.425 (keystone=true, floor protected)
+- Risks:  Keystone detection is keyword-based (room/topic name appears in milestone text). Milestones that reference palace content by description rather than room name won't trigger detection. Enhancement: add explicit `[[palace/room/topic]]` links in milestone content.
+- Status: local commit b9039dd on feat/p1-2-keystone-importance
+
+---
+
 ## §5 Replay benchmark — 4-metric scorecard (2026-06-18)
 
 - What:   Multi-session replay benchmark measuring recall, precision, staleness, and correction-correctness. 3 synthetic sessions (architecture decisions + correction + noise), then measurement queries at session 4.
