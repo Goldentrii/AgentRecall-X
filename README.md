@@ -153,6 +153,29 @@ All layers share one **canonical naming grammar** (`<scope>/<type>/[<topic>/]<te
 
 ---
 
+## 🌙 Dreaming — Nightly Consolidation (optional)
+
+An autonomous overnight agent that runs while you sleep and compounds everything your sessions wrote during the day.
+
+| What it does | Result |
+|---|---|
+| Mine patterns across all projects | Repeated corrections promote to `palace/awareness` |
+| Ebbinghaus salience decay | Low-signal rooms fade; your palace stays sharp |
+| Journal rollups | Entries >30 days compress into summary rooms |
+| Awareness graduation | Corrections confirmed N× times go cross-project |
+| Telegram report | Nightly summary: learned · decayed · crystallized |
+
+**Requires a live Claude Code login.** If the session expires, dream skips with a Telegram alert.
+
+```bash
+# Fix expired login (run this when dreaming stops)
+claude login
+```
+
+Dream reports are saved locally to `~/.agent-recall/dreams/YYYY-MM-DD.md`.
+
+---
+
 ## 🖥️ War Room Dashboard — Download & Deploy
 
 A **local-first visual dashboard** for your memory: an activity calendar, per-project status, corrections, and insights — all rendered from your local `~/.agent-recall/` data. Fully offline (vendored assets), no Node and no build step.

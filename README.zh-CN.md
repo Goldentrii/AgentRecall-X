@@ -153,6 +153,29 @@ const ctx = await memory.recall("rate limiting");
 
 ---
 
+## 🌙 Dreaming —— 夜间自动整合（可选）
+
+一个自主的隔夜 agent，趁你睡觉时把当天所有会话写入的内容复合在一起。
+
+| 做什么 | 结果 |
+|---|---|
+| 跨项目挖掘模式 | 重复纠正晋升至 `palace/awareness` |
+| Ebbinghaus 显著性衰减 | 低价值房间自然消退；palace 保持精炼 |
+| Journal 归档 | 30 天以上的条目压缩为摘要房间 |
+| Awareness 毕业 | 被确认 N 次的纠正跨项目晋升 |
+| Telegram 报告 | 每日摘要：学到了什么 · 衰减了什么 · 结晶了什么 |
+
+**需要有效的 Claude Code 登录。** 如果会话过期，dream 会跳过并通过 Telegram 发送提醒。
+
+```bash
+# 修复过期登录（dreaming 停止时运行这个）
+claude login
+```
+
+每日报告保存在本地 `~/.agent-recall/dreams/YYYY-MM-DD.md`。
+
+---
+
 ## 🖥️ War Room 仪表盘 —— 下载并部署
 
 一个**本地优先的可视化仪表盘**，展示你的记忆：活动日历、各项目状态、纠正记录、insight——全部从你本地的 `~/.agent-recall/` 数据渲染。完全离线（资源已内置），无需 Node、无需构建步骤。
