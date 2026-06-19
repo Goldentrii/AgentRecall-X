@@ -73,6 +73,12 @@ At the end of a session, call session_end to compound what you learned.
 
 ## Quick Start
 
+> **Visual setup guide — all 13 clients, copy-paste prompts:** open [`warroom/install.html`](warroom/install.html) from the repo (or after unzipping the War Room release) in any browser. No server needed.
+
+<p align="center">
+  <img src="warroom/static/install-preview.png" alt="AgentRecall Install Guide" width="900">
+</p>
+
 ### MCP Server — for AI agents
 
 ```bash

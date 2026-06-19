@@ -73,6 +73,12 @@ At the end of a session, call session_end to compound what you learned.
 
 ## 快速开始
 
+> **可视化安装指南 — 13 个客户端，一键复制提示词：** 用浏览器打开仓库中的 [`warroom/install.html`](warroom/install.html)（或解压 War Room 发布包后打开）。无需服务器。
+
+<p align="center">
+  <img src="warroom/static/install-preview.png" alt="AgentRecall 安装指南" width="900">
+</p>
+
 ### MCP Server —— 给 AI agent
 
 ```bash
