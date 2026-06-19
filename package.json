@@ -7,10 +7,10 @@
     "packages/cli"
   ],
   "scripts": {
-    "sync-readme": "cp README.md packages/core/README.md && cp README.md packages/mcp-server/README.md && cp README.md packages/sdk/README.md && cp README.md packages/cli/README.md",
+    "sync-readme": "node -e \"const fs = require('fs'); ['core', 'mcp-server', 'sdk', 'cli'].forEach(p => fs.copyFileSync('README.md', 'packages/' + p + '/README.md'))\"",
     "build": "npm run build -w packages/core && npm run build -w packages/mcp-server && npm run build -w packages/sdk && npm run build -w packages/cli",
     "test": "npm test -w packages/core && npm test -w packages/mcp-server && npm test -w packages/sdk && npm test -w packages/cli",
-    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
+    "clean": "node -e \"const fs = require('fs'); const path = require('path'); ['core', 'mcp-server', 'sdk', 'cli'].forEach(p => { const dist = path.join('packages', p, 'dist'); if (fs.existsSync(dist)) fs.rmSync(dist, { recursive: true, force: true }); const pkgDir = path.join('packages', p); if (fs.existsSync(pkgDir)) fs.readdirSync(pkgDir).forEach(f => { if (f.endsWith('.tsbuildinfo')) fs.rmSync(path.join(pkgDir, f), { force: true }); }); })\"",
     "lint": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli"
   }
 }
