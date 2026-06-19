@@ -271,7 +271,7 @@ meta/tests/codex-compat/run.mjs, result-latest.json — agentrecall_version 3.4.
 package-lock.json                — resynced
 ```
 
-- Status: local on `release/v3.4.30` | NOT YET pushed (push + PR next) | NOT published | awaiting tongwu for `npm publish` ×4 + `v3.4.30` tag + merge to main
+- Status: on `release/v3.4.30` | pushed + PR [#29](https://github.com/Goldentrii/AgentRecall-MCP/pull/29) open | NOT published | awaiting tongwu for `npm publish` ×4 + `v3.4.30` tag + merge to main
 
 ---
 
