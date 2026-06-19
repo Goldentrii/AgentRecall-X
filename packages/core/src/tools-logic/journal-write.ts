@@ -105,7 +105,10 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
   updateIndex(slug);
 
   let palaceResult: JournalWriteResult["palace"] = null;
-  if (input.palace_room) {
+  // Trim-guard: a whitespace-only palace_room is truthy but createRoom now throws on it.
+  // Without the trim check that throw would abort journal_write AFTER the journal entry
+  // was already written to disk above.
+  if (input.palace_room && input.palace_room.trim()) {
     ensurePalaceInitialized(slug);
     if (!roomExists(slug, input.palace_room)) {
       createRoom(slug, input.palace_room, input.palace_room.charAt(0).toUpperCase() + input.palace_room.slice(1), "Auto-created from journal_write", []);

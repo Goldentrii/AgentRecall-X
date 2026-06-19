@@ -41,6 +41,39 @@ export class LocalRecallBackend implements RecallBackend {
 }
 
 // ---------------------------------------------------------------------------
+// Circuit breaker
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-level consecutive failure counter for the remote (Supabase) backend.
+ * After BREAKER_THRESHOLD failures in a row the breaker trips and
+ * getRecallBackend() returns the local backend for the rest of the process.
+ * Logged once to stderr so operators can see it; reset with resetRecallBackend().
+ */
+const BREAKER_THRESHOLD = 2;
+let _consecutiveRemoteFailures = 0;
+let _breakerTripped = false;
+
+/** Record a remote search failure. Returns true if the breaker just tripped. */
+export function recordRemoteFailure(): boolean {
+  _consecutiveRemoteFailures += 1;
+  if (!_breakerTripped && _consecutiveRemoteFailures >= BREAKER_THRESHOLD) {
+    _breakerTripped = true;
+    process.stderr.write(
+      "[agent-recall] recall circuit breaker tripped: remote backend failed " +
+      `${_consecutiveRemoteFailures}x in a row — using local backend for this process\n`
+    );
+    return true;
+  }
+  return false;
+}
+
+/** Record a successful remote search (resets the consecutive counter). */
+export function recordRemoteSuccess(): void {
+  _consecutiveRemoteFailures = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Backend factory
 // ---------------------------------------------------------------------------
 
@@ -49,11 +82,17 @@ let _cachedBackend: RecallBackend | null = null;
 
 /**
  * Get the configured RecallBackend.
- * Returns SupabaseRecallBackend if configured and reachable, else Local.
+ * Returns SupabaseRecallBackend if configured, available, and circuit not tripped.
+ * Falls back to LocalVectorRecallBackend or LocalRecallBackend otherwise.
  * The function is async because the SupabaseRecallBackend module is loaded
  * via dynamic import (avoids pulling Supabase client when not configured).
  */
 export async function getRecallBackend(): Promise<RecallBackend> {
+  // If the breaker is tripped, always return local immediately.
+  if (_breakerTripped) {
+    return new LocalRecallBackend();
+  }
+
   if (_cachedBackend) return _cachedBackend;
 
   try {
@@ -85,7 +124,9 @@ export async function getRecallBackend(): Promise<RecallBackend> {
   return _cachedBackend;
 }
 
-/** Reset cached backend instance (for testing). */
+/** Reset cached backend instance and circuit breaker (for testing). */
 export function resetRecallBackend(): void {
   _cachedBackend = null;
+  _consecutiveRemoteFailures = 0;
+  _breakerTripped = false;
 }

@@ -104,6 +104,31 @@ export async function projectStatus(input: ProjectStatusInput): Promise<ProjectS
   // Sort candidates newest first (by date prefix then reverse alpha for same-day)
   candidateFiles.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
 
+  // 4b. Capture-log fallback — a project with ONLY journal_capture writes (no
+  // committed session_end) still has real on-disk memory. session_start treats
+  // these as non-empty, so project_status must agree: fold capture-log dates
+  // into latestDate when no committed daily journal exists. (Capture logs are
+  // excluded from trajectory extraction above — they have no ## Next section.)
+  if (!latestDate) {
+    for (const dir of dirs) {
+      if (!fs.existsSync(dir)) continue;
+      let files: string[];
+      try {
+        files = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        if (!f.endsWith(".md")) continue;
+        if (!f.includes("-log.") && !f.includes("--capture--")) continue;
+        const dateMatch = f.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (!dateMatch) continue;
+        const d = dateMatch[1];
+        if (!latestDate || d > latestDate) latestDate = d;
+      }
+    }
+  }
+
   // 5. Extract trajectory — scan candidates until ## Next is found (fallback across files)
   let last_trajectory: string | null = null;
   for (const file of candidateFiles) {

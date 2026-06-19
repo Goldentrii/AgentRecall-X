@@ -9,8 +9,10 @@ import * as path from "node:path";
 import { journalWrite } from "./journal-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
 import { promoteConfirmedInsights } from "./insight-promotion.js";
+import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
+import { readCorrections, recordOutcome } from "../storage/corrections.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir } from "../storage/paths.js";
 import { readAwarenessState } from "../palace/awareness.js";
@@ -22,6 +24,7 @@ import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
+import { writeHandoff } from "../helpers/handoff.js";
 
 export interface SessionEndInput {
   summary: string;
@@ -86,6 +89,10 @@ export interface SessionEndResult {
   journal_written: boolean;
   journal_write_error?: string;
   insights_processed: number;
+  /** New insights added to the index (no prior match found). */
+  insights_added: number;
+  /** Existing insights confirmed (near-duplicate title matched, count++). */
+  insights_confirmed: number;
   awareness_updated: boolean;
   awareness_error?: string;
   palace_consolidated: boolean;
@@ -95,6 +102,8 @@ export interface SessionEndResult {
   quality_warnings?: InsightQualityWarning[];
   pipeline_closed?: PipelinePhaseAction;
   pipeline_opened?: PipelinePhaseAction;
+  /** Path to the handoff artifact written at session_end. Present on success. */
+  handoff_path?: string;
 }
 
 export function checkInsightQuality(
@@ -152,6 +161,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       success: false,
       journal_written: false,
       insights_processed: 0,
+      insights_added: 0,
+      insights_confirmed: 0,
       awareness_updated: false,
       palace_consolidated: false,
       card: "Summary too short (minimum 10 characters). Nothing saved.",
@@ -163,6 +174,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   let journalWritten = false;
   let journalWriteError: string | undefined;
   let insightsProcessed = 0;
+  let insightsAdded = 0;
+  let insightsConfirmed = 0;
   let awarenessUpdated = false;
   let awarenessError: string | undefined;
   let palaceConsolidated = false;
@@ -206,9 +219,80 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     journalWriteError = err instanceof Error ? err.message : String(err);
   }
 
-  // 2. Update awareness with insights
+  // 1b. P0-B: auto-record heeded/recurred outcomes for corrections that were
+  // retrieved today (last_retrieved date matches today). This is a default-heeded
+  // heuristic with recurrence detection — coarse but closes the learning loop
+  // automatically without requiring the agent to remember to call recordOutcome.
+  //
+  // Heuristic v1: classify "recurred" only when the session summary contains
+  // ≥ 2 content words from the correction rule (length ≥ 4, lowercased) AND
+  // also contains a recurrence marker. Default to "heeded" when markers absent.
+  // Precision improves when check_action wiring lands in a future sprint.
+  //
+  // Fire-and-forget: outcome tracking must NEVER affect the session_end result.
+  if (journalWritten) {
+    try {
+      // Local-TZ date matching (see session-start.ts guard comment).
+      const todayStr = new Date().toLocaleDateString("sv");
+      const nowISO = new Date().toISOString();
+      // 1/day guard (mirrors the `retrieved` guard in session-start): record at
+      // most ONE outcome per correction per day. Without this, multiple sessions
+      // in a day each fire another "heeded", pushing heeded_count past
+      // retrieved_count (which IS 1/day-guarded) → nonsensical "11/10 heeded".
+      const todays = readCorrections(slug).filter(
+        (c) =>
+          c.last_retrieved &&
+          new Date(c.last_retrieved).toLocaleDateString("sv") === todayStr &&
+          c.active !== false &&
+          !(c.last_outcome && new Date(c.last_outcome).toLocaleDateString("sv") === todayStr)
+      );
+      const recurrenceMarker = /\b(again|recurred|repeated|violat|broke the rule|same mistake)\b/i;
+      const summaryLower = input.summary.toLowerCase();
+      for (const c of todays) {
+        try {
+          // Extract content words (≥ 4 chars) from the rule text
+          const ruleWords = c.rule
+            .toLowerCase()
+            .split(/\W+/)
+            .filter((w) => w.length >= 4);
+          const matchCount = ruleWords.filter((w) => summaryLower.includes(w)).length;
+          const hasRecurrenceMarker = recurrenceMarker.test(input.summary);
+          const violated = matchCount >= 2 && hasRecurrenceMarker;
+          recordOutcome({
+            correction_id: c.id,
+            project: slug,
+            kind: violated ? "recurred" : "heeded",
+            at: nowISO,
+            evidence: violated
+              ? "recurrence markers in session summary"
+              : "no recurrence evidence in session summary",
+          });
+        } catch {
+          // Per-correction errors are swallowed — don't abort the loop
+        }
+      }
+    } catch {
+      // Outcome tracking must NEVER break session_end — swallow all errors
+    }
+  }
+
+  // 2. Update awareness with insights — confirm-first classification
+  // Pre-classify each insight against the current index BEFORE passing to
+  // awarenessUpdate. This ensures the count tallies are accurate even if
+  // awarenessUpdate itself also performs its own similarity check.
   if (input.insights && input.insights.length > 0) {
     try {
+      // Read the current index once for confirm-first classification
+      const currentIndex = readInsightsIndex();
+      for (const insight of input.insights) {
+        const match = findSimilarInsight(insight.title, currentIndex.insights);
+        if (match) {
+          insightsConfirmed++;
+        } else {
+          insightsAdded++;
+        }
+      }
+
       const scopedTrajectory = input.trajectory
         ? `${slug}: ${input.trajectory}`
         : undefined;
@@ -228,6 +312,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       awarenessUpdated = true;
     } catch (err) {
       awarenessError = err instanceof Error ? err.message : String(err);
+      // Reset tallies on error so they don't misreport
+      insightsAdded = 0;
+      insightsConfirmed = 0;
     }
   }
 
@@ -326,7 +413,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     `  Journal       ${jDir.replace(root, "~/.agent-recall")}/`,
     `                └─ ${date}.md                    ${journalWritten ? "[written]" : journalWriteError ? `[FAILED: ${journalWriteError}]` : "[skipped]"}`,
     "",
-    `  Awareness     ${insightsProcessed} insight${insightsProcessed !== 1 ? "s" : ""} added  (${totalInsights} total)`,
+    `  Awareness     ${insightsAdded} added, ${insightsConfirmed} confirmed  (${totalInsights} total)`,
     ...(awarenessError ? [`  [WARN: awareness update failed: ${awarenessError}]`] : []),
     ...(palaceError ? [`  [WARN: palace consolidation failed: ${palaceError}]`] : []),
     "",
@@ -397,11 +484,24 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       : { ok: false, error: r.error };
   }
 
+  // WS-5: Auto-write cross-agent handoff artifact — fire-and-forget.
+  // Only fires when the journal was successfully written (meaningful session).
+  // Never affects result or throws to caller.
+  let handoffPath: string | undefined;
+  if (journalWritten) {
+    try {
+      const h = writeHandoff(slug);
+      handoffPath = h.path;
+    } catch { /* swallow — handoff is best-effort */ }
+  }
+
   return {
     success: journalWritten || awarenessUpdated,
     journal_written: journalWritten,
     ...(journalWriteError ? { journal_write_error: journalWriteError } : {}),
     insights_processed: insightsProcessed,
+    insights_added: insightsAdded,
+    insights_confirmed: insightsConfirmed,
     awareness_updated: awarenessUpdated,
     ...(awarenessError ? { awareness_error: awarenessError } : {}),
     palace_consolidated: palaceConsolidated,
@@ -411,5 +511,6 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     quality_warnings: qualityWarnings.length > 0 ? qualityWarnings : undefined,
     ...(pipelineClosed ? { pipeline_closed: pipelineClosed } : {}),
     ...(pipelineOpened ? { pipeline_opened: pipelineOpened } : {}),
+    ...(handoffPath ? { handoff_path: handoffPath } : {}),
   };
 }

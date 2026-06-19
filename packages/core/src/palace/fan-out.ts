@@ -143,6 +143,7 @@ export function fanOut(
       lastUpdated: meta.updated,
       accessCount: meta.access_count,
       connectionCount: connCount,
+      keystone: meta.keystone,
     });
 
     updateRoomMeta(project, room, { salience: newSalience });

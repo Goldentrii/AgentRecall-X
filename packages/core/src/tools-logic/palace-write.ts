@@ -44,6 +44,11 @@ function stripFrontmatterFromContent(rawContent: string): string {
 }
 
 export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteResult> {
+  if (!input.room || !input.room.trim()) {
+    throw new Error(
+      `palace_write: 'room' is required and cannot be empty. Pass a room slug like 'goals' or 'architecture'. agent_instruction: retry with a concrete room name.`
+    );
+  }
   const slug = await resolveProject(input.project);
   const importance: Importance = input.importance ?? "medium";
   const content = stripFrontmatterFromContent(input.content);
@@ -96,25 +101,36 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
       fs.writeFileSync(targetFile, existing + entry, "utf-8");
     } else {
       const fm = generateFrontmatter({ room: input.room, topic: targetTopic, created: timestamp, importance, tags: input.tags ?? [] });
-      fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${content}\n`, "utf-8");
+      // Wrap the first write in a `### DATE — importance` entry block (same as the
+      // append path + README path). Without this, countRoomEntries() — which counts
+      // `### ` headers — would report 0 for a brand-new topic file, sorting a room
+      // with real content as "empty" and zeroing its salience.
+      const entry = `### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`;
+      fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${entry}`, "utf-8");
     }
   }
 
-  updateRoomMeta(slug, input.room, { updated: timestamp });
-  recordAccess(slug, input.room);
+  // Use the sanitized slug for all routing + the returned result so it matches what
+  // createRoom persisted to _room.json (meta.slug = sanitizeSlug(slug)). Passing the
+  // raw input.room here re-sanitizes downstream (no-op for clean slugs) but would
+  // surface an inconsistent slug to the agent for slugs containing rewritten chars.
+  updateRoomMeta(slug, safeRoom, { updated: timestamp });
+  // Propagate the real importance of this write into the salience formula so
+  // --importance high measurably raises the room's salience (not always medium).
+  recordAccess(slug, safeRoom, importance);
 
   // Async sync to Supabase (non-blocking)
   const writtenContent = fs.readFileSync(targetFile, "utf-8");
-  syncToSupabase(targetFile, writtenContent, slug, "palace", input.room);
+  syncToSupabase(targetFile, writtenContent, slug, "palace", safeRoom);
 
-  const fanOutResult = fanOut(slug, input.room, targetTopic, content, input.connections ?? [], importance);
+  const fanOutResult = fanOut(slug, safeRoom, targetTopic, content, input.connections ?? [], importance);
   updatePalaceIndex(slug);
 
-  appendToLog(slug, "palace_write", { room: input.room, topic: targetTopic, importance, fan_out_rooms: fanOutResult.updatedRooms });
+  appendToLog(slug, "palace_write", { room: safeRoom, topic: targetTopic, importance, fan_out_rooms: fanOutResult.updatedRooms });
 
   return {
     success: true,
-    room: input.room,
+    room: safeRoom,
     topic: targetTopic,
     project: slug,
     importance,

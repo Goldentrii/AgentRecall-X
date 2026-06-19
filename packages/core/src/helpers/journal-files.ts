@@ -12,8 +12,8 @@ import type { JournalEntry } from "../types.js";
  * List all .md journal files across all directories for a project.
  * Returns sorted array with most recent first.
  */
-export function listJournalFiles(project: string): JournalEntry[] {
-  const dirs = journalDirs(project);
+export function listJournalFiles(project: string, includeArchive = false): JournalEntry[] {
+  const dirs = journalDirs(project, includeArchive);
   const entries: JournalEntry[] = [];
   const seen = new Set<string>();
 
@@ -62,6 +62,103 @@ export function listJournalFiles(project: string): JournalEntry[] {
   return entries;
 }
 
+/** A single capture-log entry surfaced before a session_end commit. */
+export interface CaptureLogEntry {
+  date: string;
+  question: string;
+  answer: string;
+}
+
+/**
+ * True when at least one capture-log file with a real `### Q…` entry exists
+ * for the project. Capture-log files (`*-log.md`, `--capture--`) are written by
+ * `journal_capture` BEFORE any `session_end`, so the orientation path must treat
+ * them as real on-disk memory rather than waiting for a session to be committed.
+ *
+ * Pure fs — no global binaries. Never throws: unreadable files are skipped.
+ */
+export function hasCaptureLogs(project: string): boolean {
+  const dirs = journalDirs(project);
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      continue; // unreadable dir — treat as empty, never throw
+    }
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      if (!file.includes("-log.md") && !file.includes("--capture--")) continue;
+      let content: string;
+      try {
+        content = fs.readFileSync(path.join(dir, file), "utf-8");
+      } catch {
+        continue;
+      }
+      // A real entry is a `### Q<n>` block — scaffold/frontmatter-only logs don't count.
+      if (/^### Q\d+/m.test(content)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Read the most recent capture-log entries (newest file, newest entry first)
+ * for a project, up to `limit`. Returns [] when no capture logs exist.
+ *
+ * Used to surface "Recent captures (unsaved session)" at session_start so an
+ * agent sees in-flight captures instead of "No memory found".
+ */
+export function readRecentCaptures(project: string, limit = 5): CaptureLogEntry[] {
+  const dirs = journalDirs(project);
+  const captureFiles: Array<{ date: string; path: string }> = [];
+
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      if (!file.includes("-log.md") && !file.includes("--capture--")) continue;
+      const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (!dateMatch) continue;
+      captureFiles.push({ date: dateMatch[1], path: path.join(dir, file) });
+    }
+  }
+
+  // Newest date first, then newest filename first (stable within a day).
+  captureFiles.sort((a, b) => b.date.localeCompare(a.date) || path.basename(b.path).localeCompare(path.basename(a.path)));
+
+  const entries: CaptureLogEntry[] = [];
+  for (const cf of captureFiles) {
+    if (entries.length >= limit) break;
+    let content: string;
+    try {
+      content = fs.readFileSync(cf.path, "utf-8");
+    } catch {
+      continue;
+    }
+    // Split into `### Q…` blocks, newest (bottom of file) first.
+    const blocks = content.split(/^### Q\d+/m).slice(1).reverse();
+    for (const block of blocks) {
+      if (entries.length >= limit) break;
+      const qMatch = block.match(/\*\*Q:\*\*\s*(.+?)(?:\n|$)/);
+      const aMatch = block.match(/\*\*A:\*\*\s*([\s\S]+?)(?:\n###|\n---|\n*$)/);
+      const question = qMatch ? qMatch[1].trim() : "";
+      const answer = aMatch ? aMatch[1].trim().replace(/\s+/g, " ") : "";
+      if (question || answer) {
+        entries.push({ date: cf.date, question, answer });
+      }
+    }
+  }
+  return entries;
+}
+
 /**
  * Read a journal file. Checks primary dir first, then legacy.
  */
@@ -69,7 +166,8 @@ export function readJournalFile(project: string, date: string): string | null {
   // Validate date format before use in path.join or string matching
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
 
-  const dirs = journalDirs(project);
+  // Include archive for backlink resolution — archived entries must be reachable
+  const dirs = journalDirs(project, true);
   const primaryDir = journalDir(project);
   const allDirs = [primaryDir, ...dirs.filter((d) => d !== primaryDir)];
 

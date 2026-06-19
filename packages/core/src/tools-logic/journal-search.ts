@@ -61,7 +61,8 @@ function firstMatchIndex(line: string, keywords: string[]): number {
 
 export async function journalSearch(input: JournalSearchInput): Promise<JournalSearchResult> {
   const slug = await resolveProject(input.project);
-  const dirs = journalDirs(slug);
+  // Include archive so recall reaches rollup-archived entries (P0-2)
+  const dirs = journalDirs(slug, true);
   const keywords = queryKeywords(input.query);
   const limit = input.limit ?? 25;
   const sinceCutoff = input.since ? parseSinceDate(input.since) : null;

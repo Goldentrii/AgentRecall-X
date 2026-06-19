@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
   <a href="https://github.com/Goldentrii/AgentRecall/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
   <a href="https://lobehub.com/mcp/goldentrii-agentrecall"><img src="https://lobehub.com/badge/mcp/goldentrii-agentrecall" alt="MCP Badge"></a>
-  <img src="https://img.shields.io/badge/MCP-18_tools-orange?style=flat-square" alt="Tools">
+  <img src="https://img.shields.io/badge/MCP-5_tools_default-orange?style=flat-square" alt="Tools">
   <img src="https://img.shields.io/badge/memory_layers-5-7C3AED?style=flat-square" alt="5 layers">
   <img src="https://img.shields.io/badge/cloud-zero-blue?style=flat-square" alt="Zero Cloud">
   <img src="https://img.shields.io/badge/Obsidian-compatible-7C3AED?style=flat-square" alt="Obsidian">
@@ -26,7 +26,7 @@
   <a href="#what-why--什么和为什么">Why</a> ·
   <a href="#5-memory-layers--五层记忆模型">Memory</a> ·
   <a href="#quick-start--快速开始">Install</a> ·
-  <a href="#18-mcp-tools--18-个-mcp-工具">Tools</a> ·
+  <a href="#mcp-tools">Tools</a> ·
   <a href="#how-memory-compounds--记忆如何复合">Compounding</a> ·
   <a href="#whats-new-in-phase-6--phase-6-新增">Phase 6</a> ·
   <a href="#sdk-api">SDK</a> ·
@@ -37,7 +37,7 @@
   <a href="#what-why--什么和为什么">什么</a> ·
   <a href="#5-memory-layers--五层记忆模型">记忆模型</a> ·
   <a href="#quick-start--快速开始">安装</a> ·
-  <a href="#18-mcp-tools--18-个-mcp-工具">工具</a> ·
+  <a href="#mcp-tools">工具</a> ·
   <a href="#how-memory-compounds--记忆如何复合">复合</a> ·
   <a href="#whats-new-in-phase-6--phase-6-新增">新增</a>
 </p>
@@ -282,7 +282,7 @@ npx agent-recall-cli palace walk --depth active
 
 ---
 
-## 18 MCP Tools · 18 个 MCP 工具
+## MCP Tools
 
 <table>
 <tr>
@@ -291,16 +291,17 @@ npx agent-recall-cli palace walk --depth active
 <th>EN — What it does</th>
 <th>中文 — 做什么</th>
 </tr>
-<tr><td rowspan="6"><b>Core session</b><br/>核心会话</td>
-    <td><code>session_start</code></td><td>Load context at session start (full or <code>mode:"lite"</code> ≤500 tokens).</td><td>会话开始时加载上下文（完整或 <code>mode:"lite"</code> ≤500 tokens）。</td></tr>
-<tr><td><code>session_end</code></td><td>Save journal + insights; optionally close/open a pipeline phase in same call.</td><td>保存 journal + insights；可在同一次调用中关闭/开启 pipeline 阶段。</td></tr>
-<tr><td><code>session_end_reflect</code></td><td>Park-2023 reflection bundle — distills last N journals into reusable insights.</td><td>Park-2023 反思包——把最近 N 篇 journal 蒸馏成可复用的 insight。</td></tr>
+<tr><td rowspan="5"><b>Default (5)</b><br/>默认（5 个）<br/><i>Two verbs + three essentials</i></td>
+    <td><code>session_start</code></td><td>Inhale — load context at session start (corrections, insights, watch_for warnings).</td><td>吸入——会话开始时加载上下文（纠正记录、insights、预测警告）。</td></tr>
+<tr><td><code>session_end</code></td><td>Exhale — save journal + insights + trajectory; compounds memory over time.</td><td>呼出——保存 journal + insights + trajectory；随时间复合记忆。</td></tr>
 <tr><td><code>remember</code></td><td>Write a memory, auto-routes to the right palace room.</td><td>写入一条记忆，自动路由到合适的 palace 房间。</td></tr>
 <tr><td><code>recall</code></td><td>Search all memory (BM25 + vector with RRF fusion + Hopfield rerank).</td><td>搜索所有记忆（BM25 + 向量 + RRF 融合 + Hopfield 重排）。</td></tr>
-<tr><td><code>memory_query</code></td><td>Pull-on-demand recall mid-task. Supports file-scoped queries.</td><td>任务中按需召回。支持按文件范围查询。</td></tr>
-<tr><td rowspan="2"><b>Calibration</b><br/>校准</td>
-    <td><code>check</code></td><td>Record agent understanding; system returns predictive warnings from past corrections.</td><td>记录 agent 的理解；系统返回从过去纠正得出的预测性警告。</td></tr>
-<tr><td><code>dashboard_export</code></td><td>Generate agent-readable <code>dashboard.json</code> with all-project memory snapshot + naming index.</td><td>生成 agent 可读的 <code>dashboard.json</code>，包含所有项目记忆快照 + 命名索引。</td></tr>
+<tr><td><code>check</code></td><td>Record agent understanding; returns predictive warnings from past corrections.</td><td>记录 agent 的理解；返回从过去纠正得出的预测性警告。</td></tr>
+<tr><td colspan="4" style="text-align:center;padding:6px 0"><b>— Full mode (<code>npx agent-recall-mcp --full</code>) —</b>&nbsp;&nbsp;|&nbsp;&nbsp;<b>— 完整模式 —</b></td></tr>
+<tr><td rowspan="3"><b>On-demand + safety</b><br/>按需 + 安全</td>
+    <td><code>memory_query</code></td><td>Pull-on-demand recall mid-task. Supports file-scoped queries.</td><td>任务中按需召回。支持按文件范围查询。</td></tr>
+<tr><td><code>check_action</code></td><td>Pre-action matcher — warns before publish/push/deploy/DROP TABLE.</td><td>操作前匹配器——publish/push/deploy 前给出警告。</td></tr>
+<tr><td><code>register_rule</code></td><td>Save an IF-THEN behavior policy (always-loaded rules channel).</td><td>保存一条 IF-THEN 行为策略（常驻加载规则通道）。</td></tr>
 <tr><td rowspan="5"><b>Pipeline</b><br/>叙事</td>
     <td><code>pipeline_open</code></td><td>Open a new project phase (Goal/Hard/Solved/Synthesis).</td><td>开启新的项目阶段（目标/难点/解决/提炼）。</td></tr>
 <tr><td><code>pipeline_close</code></td><td>Close active phase with reflection fields. Status: closed / abandoned / pivoted.</td><td>关闭当前阶段并填反思字段。状态：closed / abandoned / pivoted。</td></tr>
@@ -311,9 +312,20 @@ npx agent-recall-cli palace walk --depth active
     <td><code>skill_write</code></td><td>Save an IF-THEN production rule (trigger / preconditions / steps / postconditions / pitfalls).</td><td>保存一条 IF-THEN 产生式规则（触发条件/前提/步骤/后置条件/陷阱）。</td></tr>
 <tr><td><code>skill_recall</code></td><td>Find skills matching an intent (deterministic trigger-keyword ranking).</td><td>按意图找到匹配的 skill（基于触发关键词的确定性排序）。</td></tr>
 <tr><td><code>skill_list</code></td><td>Browse all skills in a project.</td><td>浏览项目中所有 skill。</td></tr>
-<tr><td><b>Setup</b><br/>初始化</td>
-    <td><code>bootstrap_scan</code> + <code>bootstrap_import</code></td><td>Discover existing projects on this machine and import in bulk.</td><td>发现本机已有项目并批量导入。</td></tr>
+<tr><td rowspan="2"><b>Reflection</b><br/>反思</td>
+    <td><code>dashboard_export</code></td><td>Generate agent-readable <code>dashboard.json</code> with all-project memory snapshot.</td><td>生成 agent 可读的 <code>dashboard.json</code>，包含所有项目记忆快照。</td></tr>
+<tr><td><code>session_end_reflect</code></td><td>Park-2023 reflection bundle — distills last N journals into reusable insights.</td><td>Park-2023 反思包——把最近 N 篇 journal 蒸馏成可复用的 insight。</td></tr>
+<tr><td rowspan="2"><b>Status boards</b><br/>状态看板</td>
+    <td><code>project_board</code></td><td>Status board across all projects — last activity, pending work, blockers.</td><td>所有项目的状态看板——最近活动、待办、阻塞。</td></tr>
+<tr><td><code>project_status</code></td><td>Quick health check for one project — lighter than session_start.</td><td>单项目快速健康检查——比 session_start 轻量。</td></tr>
+<tr><td rowspan="2"><b>Setup</b><br/>初始化</td>
+    <td><code>digest</code></td><td>Context cache — store/recall/read/invalidate pre-computed analysis.</td><td>上下文缓存——存储/召回/读取/失效预计算分析。</td></tr>
+<tr><td><code>bootstrap_scan</code> + <code>bootstrap_import</code></td><td>Discover existing projects on this machine and import in bulk.</td><td>发现本机已有项目并批量导入。</td></tr>
 </table>
+
+> **Why only 5 by default?** The Automaticity Law (measured on the live corpus, 2026-06-12): push channels — `session_start`, `session_end`, correction hooks — show repeated behavior-changing usage. Pull channels (`check_action`, `skill_recall`, `pipeline_*`, `memory_query`) had zero organic calls in 44 projects over weeks of real use, including from the agent that built them. Every extra tool in the default surface burns tool-definition tokens every session for zero behavioral return. The two-verb model (inhale/exhale) carries all compounding value; everything else is opt-in via `--full`.
+>
+> **为什么默认只有 5 个工具？** 自动化定律（基于真实语料库测量，2026-06-12）：推送通道（`session_start`、`session_end`、纠正 hooks）有持续的行为改变使用记录；拉取通道（`check_action`、`skill_recall`、`pipeline_*`、`memory_query`）在 44 个项目、数周真实使用中有零次有机调用——包括构建它们的 agent 本身。默认工具面每多一个工具就会在每次会话燃烧 tool-definition tokens，但零行为回报。双动词模型（吸入/呼出）承载了所有复合价值；其余功能通过 `--full` 按需开启。
 
 ---
 

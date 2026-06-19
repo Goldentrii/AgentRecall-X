@@ -77,18 +77,41 @@ export function computeSalience(params: {
   urgency?: Urgency;
   category?: MemoryCategory;
   pin?: PinStatus;
+  /**
+   * Keystone memories occupy load-bearing structural positions — they are
+   * referenced from pipeline milestone "How solved" or "Synthesis" sections.
+   * When true, importance is forced to "high" and a salience floor of
+   * KEYSTONE_FLOOR is applied, independent of access or edge frequency.
+   * This prevents the rich-get-richer bias where rare but critical decisions
+   * sink below frequently-touched trivia.
+   */
+  keystone?: boolean;
 }): number {
   // Pinned items always return maximum salience
   if (params.pin?.pinned) return 1.0;
 
-  const imp = IMPORTANCE_WEIGHTS[params.importance] * 0.10;
+  // Keystone: force high importance, ignore frequency-driven depression
+  const effectiveImportance = params.keystone ? "high" : params.importance;
+
+  const imp = IMPORTANCE_WEIGHTS[effectiveImportance] * 0.10;
   const rec = recencyScore(params.lastUpdated, params.category) * 0.30;
   const acc = accessScore(params.accessCount) * 0.25;
   const con = connectionScore(params.connectionCount) * 0.20;
   const urg = URGENCY_WEIGHTS[params.urgency ?? "none"] * 0.15;
 
-  return Math.round((imp + rec + acc + con + urg) * 1000) / 1000;
+  const raw = Math.round((imp + rec + acc + con + urg) * 1000) / 1000;
+
+  // Keystone floor: never archive a keystone memory regardless of frequency
+  return params.keystone ? Math.max(raw, KEYSTONE_FLOOR) : raw;
 }
+
+/**
+ * Salience floor for keystone memories. Set above ARCHIVE_THRESHOLD (0.15)
+ * so keystones never become archive candidates. Below the midrange (0.5)
+ * so they don't artificially dominate — they earn top rank through
+ * structural importance, not inflated score.
+ */
+export const KEYSTONE_FLOOR = 0.30;
 
 export const ARCHIVE_THRESHOLD = 0.15;
 export const AUTO_ARCHIVE_THRESHOLD = 0.05;

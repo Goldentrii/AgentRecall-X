@@ -51,11 +51,24 @@ export function journalDir(project: string): string {
 
 /**
  * Find all journal directories for a project (new + legacy fallback).
+ *
+ * @param includeArchive — when true, includes journal/archive/ so recall
+ * and backlink resolution can reach rollup-archived entries (P0-2 fix).
+ * Defaults to false so counting paths (session_start, dashboard_export)
+ * don't inflate session counts with archived entries (v3.4.26 fix).
  */
-export function journalDirs(project: string): string[] {
+export function journalDirs(project: string, includeArchive = false): string[] {
   const dirs: string[] = [];
   const primary = journalDir(project);
   if (fs.existsSync(primary)) dirs.push(primary);
+
+  // Archive: journal/archive/ holds entries moved by journalRollup.
+  // Only included when caller explicitly requests it (recall, readJournalFile,
+  // journalSearch). Excluded by default so session counting doesn't inflate.
+  if (includeArchive) {
+    const archiveDir = path.join(primary, "archive");
+    if (fs.existsSync(archiveDir)) dirs.push(archiveDir);
+  }
 
   // Legacy: ~/.claude/projects/*/memory/journal/
   const legacyRoot = getLegacyRoot();

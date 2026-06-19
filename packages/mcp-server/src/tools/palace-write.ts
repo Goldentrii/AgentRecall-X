@@ -9,7 +9,11 @@ export function register(server: McpServer): void {
       "Write a memory to a palace room. Triggers fan-out: cross-references are updated in connected rooms. " +
       "Use [[wikilinks]] in content to create connections, or pass explicit connections.",
     inputSchema: {
-      room: z.string().describe("Target room slug (e.g., 'goals', 'architecture'). Auto-created if doesn't exist."),
+      room: z
+        .string()
+        .min(1)
+        .regex(/[a-zA-Z0-9]/, "room must contain at least one alphanumeric character")
+        .describe("Target room slug (e.g., 'goals', 'architecture'). Auto-created if doesn't exist."),
       topic: z.string().optional().describe("Topic file within the room (e.g., 'decisions'). Omit to append to README."),
       content: z.string().describe("Markdown content to write. Use [[room/topic]] for cross-references."),
       connections: z.array(z.string()).optional().describe("Explicit room connections (e.g., ['goals', 'blockers'])"),

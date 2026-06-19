@@ -230,6 +230,265 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Release — v3.4.27 (2026-06-18) — reviewed naming + safety
+
+**Bundles v3.4.26 safety patches + naming system cleanup + reviewer MEDIUM fix.**
+Orchestrator (Opus) fresh-eyes reviewed both branches — APPROVE with 1 MEDIUM.
+This is the first release where the implementer did NOT push/publish; human runs the irreversibles after review.
+
+### What's new (vs v3.4.25 on npm)
+
+| Area | What changed | Why it matters |
+|------|-------------|----------------|
+| **Safety: session count** | `journalDirs(includeArchive)` — default `false` | v3.4.25 inflated session counts by including archived entries. Now only recall paths see archive. |
+| **Safety: archive clobber** | Collision-proof naming (`Date.now()` suffix) + idempotency guard (skip "consolidated" entries) | Running compress twice same day no longer overwrites the backup. Core safety promise restored. |
+| **Safety: path injection** | `sanitizeSlug()` + `assertInsideRoot()` at `compressTopic` entry | Blocks `../../evil` room/topic from escaping palace directory. |
+| **Naming: slug gate** | `isValidProjectSlug()` in `resolveProject()` | Rejects UUIDs, `.md` suffix, `_`/`.` prefix, denylist words, path traversal. Prevents new garbage projects. Existing dirs still readable. |
+| **Naming: palace rooms** | `_room.json` existence guard in `listRooms()` + dashboard | Stray files (like `health-baseline-*.md`) and dirs without meta no longer count as rooms. |
+| **Naming: journal format** | All write paths now pass `saveType` to produce new-format filenames | `journal_write` MCP, `ar write` CLI, `journal_capture` all produce `{date}--{type}--{sig}--{theme}--{slug}.md` instead of `{date}.md`. Old files still readable. |
+| **Naming: cleanup tool** | `scripts/clean-project-slugs.mjs` | Dry-run by default. `--apply` quarantines invalid slugs to `_quarantine/`. Idempotent. |
+| **Reviewer fix** | Dot-prefix check added to `isValidProjectSlug` | Cleanup script rejected `.DS_Store` but core didn't — inconsistency fixed. |
+
+### Orchestrator review findings
+
+| Severity | Finding | Status |
+|----------|---------|--------|
+| MEDIUM | `isValidProjectSlug` missing dot-prefix check (`.DS_Store`, `.aam` pass validation) | ✅ Fixed |
+| LOW | `consolidate.ts:107` — `route.room` unsanitized in `path.join` (pre-existing, not introduced here) | Noted for future |
+| LOW | Idempotency relies on "consolidated" string — manual edit removes the guard | Acceptable — manual edit = intentional override |
+
+### Process change (permanent)
+- Implementer stops at local commit. Push + publish = human-only after orchestrator review.
+- This release is the first to follow the new governance model.
+
+### Verification
+- Build: 0 errors
+- 9 suites: consistency 10/10, funnel 18/18, heeded-guard 5/5, room-slug-guards 9/9, p0-1 11/11, p0-2 10/10, p1-2 10/10, p1-1 12/12, replay 100/33/100/100
+- Total: 85 assertions, 0 failures
+
+### Files changed (vs v3.4.25)
+```
+packages/core/src/storage/paths.ts          — journalDirs includeArchive param
+packages/core/src/storage/project.ts        — isValidProjectSlug + resolveProject gate
+packages/core/src/palace/compress.ts        — 3 safety fixes (clobber, sanitize, skip _archive)
+packages/core/src/palace/rooms.ts           — _room.json guard
+packages/core/src/helpers/journal-files.ts  — listJournalFiles includeArchive, readJournalFile archive=true
+packages/core/src/tools-logic/journal-capture.ts   — smartname opts
+packages/core/src/tools-logic/journal-search.ts    — includeArchive=true
+packages/core/src/tools-logic/journal-read.ts      — includeArchive=true
+packages/core/src/tools-logic/context-synthesize.ts — includeArchive=true
+packages/core/src/tools-logic/dashboard-export.ts  — _room.json guard
+packages/core/src/types.ts                  — VERSION 3.4.27
+packages/core/src/index.ts                  — export isValidProjectSlug
+packages/mcp-server/src/tools/journal-write.ts — saveType: "arsave"
+packages/cli/src/index.ts                   — saveType: "arsave"
+SKILL.md                                    — version 3.4.27
+benchmark/replay-benchmark.mjs              — version stamp
+scripts/clean-project-slugs.mjs             — NEW: quarantine tool
+```
+
+- Status: local on main | NOT pushed | NOT published | awaiting tongwu
+
+---
+
+## Release — v3.4.26 (2026-06-18) — post-review patch
+
+**Fixes 3 HIGH bugs found by fresh-eyes orchestrator review of v3.4.25.** This release validates the governance model: green suites ≠ correct; independent review catches what self-verification misses.
+
+| # | Severity | Bug | Fix |
+|---|----------|-----|-----|
+| HIGH-1 | session count inflation | P0-2's `journalDirs()` fix included `archive/` unconditionally → `listJournalFiles` counted archived entries as sessions (30 archived + 10 active = 40 displayed) | `journalDirs(project, includeArchive)` param. Default `false` (counting paths). `true` only for recall, readJournalFile, journalSearch, contextSynthesize. |
+| HIGH-2 | archive clobber on 2nd run | `compressTopic` used `${topic}-${today}.md` → same-day re-run overwrites the only backup of originals | Collision-proof naming: `${topic}-${today}-${Date.now()}.md` + never-overwrite guard. Idempotency: `parseEntries` skips entries marked `(consolidated)`. |
+| HIGH-3 | unsanitized path.join | `compress.ts` passed raw `room`/`topic` to `path.join` without `sanitizeSlug()` → `../../evil` escapes palace dir | `sanitizeSlug()` at entry + `assertInsideRoot` defense-in-depth. |
+| MED | _archive traversal | `compressRoom`/`compressProject` could recurse into `_archive` dirs | Skip dirs/files starting with `_`. |
+
+### Version hygiene
+- `SKILL.md` 3.4.22 → 3.4.26 (was 3 releases stale)
+- `replay-benchmark.mjs` version stamp → 3.4.26
+- All 4 packages + `VERSION` constant → 3.4.26
+
+### Process change
+Implementer no longer runs `git push` or `npm publish`. Stops at "committed + logged, awaiting review." Human runs the irreversible commands after orchestrator review.
+
+- Status: local commit 4901ba6 on fix/v3.4.26-compression-safety | NOT pushed | NOT published
+
+---
+
+## Release — v3.4.25 (2026-06-18)
+
+**Memory quality + trust integrity release.** Two trust fixes (P0), one measurement framework (§5), two memory-quality features (P1). 919 lines added, 43 new benchmark assertions, 9 suites all green.
+
+### Published
+| Package | npm |
+|---|---|
+| `agent-recall-core` | 3.4.25 |
+| `agent-recall-mcp` | 3.4.25 |
+| `agent-recall-sdk` | 3.4.25 |
+| `agent-recall-cli` | 3.4.25 |
+
+### What ships under v3.4.25
+
+| Area | Change |
+|---|---|
+| P0-1 (investigated) | Incremental-write visibility — confirmed NOT broken in v3.4.24. 11/11 repro test committed as regression guard. |
+| P0-2 (fixed) | Archive reachability — `journalDirs()` now includes `journal/archive/` so recall + backlink resolution reach rollup-archived entries. Was 6/10, now 10/10. |
+| §5 benchmark | 4-metric replay scorecard (recall/precision/staleness/correction-correctness). Baseline: 100%/33%/100%/100%. Gates all P1 work. |
+| P1-2 keystone | Structural-position importance signal. Pipeline-cited rooms get `keystone: true` + salience floor 0.30, independent of access frequency. Prevents rich-get-richer bias where rare decisions sink below trivia. |
+| P1-1 compression | Dream-cycle dedup: keyword-overlap ≥0.6 clusters collapsed to canonical entries. Originals archived to `_archive/` (never destroyed). `compressTopic` / `compressRoom` / `compressProject` with dry-run support. |
+
+### New files
+- `packages/core/src/palace/keystone.ts` — keystone detection + marking
+- `packages/core/src/palace/compress.ts` — near-duplicate compression
+- `benchmark/p0-1-incremental-visibility.mjs` (11 assertions)
+- `benchmark/p0-2-archive-reachability.mjs` (10 assertions)
+- `benchmark/p1-2-keystone-importance.mjs` (10 assertions)
+- `benchmark/p1-1-compression.mjs` (12 assertions)
+- `benchmark/replay-benchmark.mjs` + `replay-results.json`
+
+### Migration
+Zero-break:
+- `RoomMeta.keystone` is optional (defaults to `undefined`/falsy for existing rooms)
+- `KEYSTONE_FLOOR` exported from `palace/salience.ts`
+- `compressTopic/compressRoom/compressProject` are additive exports
+- `journalDirs()` returning `archive/` is backward-compatible (readers already handle multiple dirs)
+
+---
+
+## P1-1 — Dream-cycle compression pass (2026-06-18)
+
+- What:   Near-duplicate palace entries (keyword overlap ≥ 0.6) collapsed into canonical entries. Originals archived to `rooms/<room>/_archive/` (invariant: no raw memory destroyed). Canonical entries preserve the union of all source backlinks. Three granularity levels: `compressTopic`, `compressRoom`, `compressProject`. All support dry-run mode.
+- Why:    The append-only palace accumulates semantic duplicates over time (five entries across five days saying the same thing). This drives Hopfield toward spurious attractors and lowers precision. The compression pass reduces stored-memory count without losing recall.
+- Files:  `packages/core/src/palace/compress.ts` (new, 230 lines), `packages/core/src/index.ts` (exports), `benchmark/p1-1-compression.mjs` (new, 12 assertions)
+- Verify: build 0 errors · consistency 10/10 · funnel 18/18 · heeded-guard 5/5 · room-slug-guards 9/9 · p0-1 11/11 · p0-2 10/10 · p1-2-keystone 10/10 · p1-1-compression 12/12 · replay benchmark: recall 100%, precision 33%, staleness 100%, correction 100%
+- Risks:  Keyword-overlap clustering (not embedding-based) may miss semantically identical entries with different vocabulary. The Hopfield-gated version (using cos > 0.95 detection) requires embedding prerequisites (SmartRecallResultItem.embedding, fetchEmbeddingsByIds) — deferred. `compressProject` is O(rooms × topics × entries²) — not a concern for typical project sizes (<100 entries/topic) but should not run in the live path.
+- Status: local commit 8249092 on feat/p1-2-keystone-importance
+
+---
+
+## P1-2 — Keystone importance signal (2026-06-18)
+
+- What:   Memories referenced from pipeline milestone "How solved" or "Synthesis" sections are marked keystone. Keystone rooms get: importance forced to "high", salience floor of 0.30 (above archive threshold 0.15), independent of access count and edge count.
+- Why:    Salience formula gave 45% weight to frequency-driven signals (access + connections) while self-reported importance was only 10%. Rare but critical architecture decisions sank below frequently-touched trivia — the classic rich-get-richer failure. The keystone signal is structural (pipeline citation), not frequency-based.
+- Files:  `packages/core/src/palace/keystone.ts` (new), `packages/core/src/palace/salience.ts` (keystone param + KEYSTONE_FLOOR), `packages/core/src/types.ts` (RoomMeta.keystone), `packages/core/src/palace/rooms.ts` + `fan-out.ts` (pass keystone flag), `packages/core/src/palace/consolidate.ts` (wire markKeystones), `packages/core/src/index.ts` (exports), `benchmark/p1-2-keystone-importance.mjs` (10 assertions)
+- Verify: build 0 errors · all 8 suites green · keystone test: before marking architecture=0.385 < blockers=0.56; after marking architecture=0.425 (keystone=true, floor protected)
+- Risks:  Keystone detection is keyword-based (room/topic name appears in milestone text). Milestones that reference palace content by description rather than room name won't trigger detection. Enhancement: add explicit `[[palace/room/topic]]` links in milestone content.
+- Status: local commit b9039dd on feat/p1-2-keystone-importance
+
+---
+
+## §5 Replay benchmark — 4-metric scorecard (2026-06-18)
+
+- What:   Multi-session replay benchmark measuring recall, precision, staleness, and correction-correctness. 3 synthetic sessions (architecture decisions + correction + noise), then measurement queries at session 4.
+- Why:    Gates all P1 work. Changes must not lower recall or correction-correctness. Precision baseline (33%) quantifies the P1-1 compression target.
+- Files:  `benchmark/replay-benchmark.mjs` (new), `benchmark/replay-results.json` (baseline)
+- Verify: build 0 errors · consistency 10/10 · funnel 18/18 · heeded-guard 5/5 · room-slug-guards 9/9 · replay-benchmark: recall 100%, precision 33%, staleness 100%, correction 100%
+- Risks:  Precision metric depends on recall result ordering which is keyword-based (BM25) — may shift with vector backend enabled. Staleness metric has only 1 test case; expand when more supersession patterns emerge.
+- Status: local commit 4d6f472 on feat/replay-benchmark
+
+---
+
+## P0-1 / P0-2 — Incremental visibility + archive reachability (2026-06-18)
+
+- What:   P0-1 (incremental-write visibility after smart_remember without session_end) — investigated and found NOT broken in v3.4.24. All 4 routes (palace_write, journal_capture, knowledge_write, awareness_update) write to surfaces session_start reads. 11/11 repro test passes. One false alarm: awareness insights rejected by quality gate when title < 3 words — a test artifact, not a visibility bug.
+          P0-2 (archive reachability after journal rollup) — CONFIRMED and FIXED. `journalDirs()` returned only the top-level `journal/` dir, never `journal/archive/`. After rollup, `readJournalFile` returned null for archived dates and `smartRecall` found 0 results for archived content. Fix: added `journal/archive/` to `journalDirs()` when the directory exists — single-point fix, all downstream readers (listJournalFiles, readJournalFile, readRecentCaptures, smartRecall via journalSearch) automatically traverse archived entries.
+- Why:    Trust integrity — memories moved by rollup must remain reachable by recall and backlink resolution. Invariant: no raw memory is ever invisible after archival.
+- Files:  `packages/core/src/storage/paths.ts` (3-line fix in journalDirs), `benchmark/p0-1-incremental-visibility.mjs` (new, 11 assertions), `benchmark/p0-2-archive-reachability.mjs` (new, 10 assertions)
+- Verify: build 0 errors · consistency 10/10 · funnel 18/18 · heeded-guard 5/5 · room-slug-guards 9/9 · p0-1 11/11 · p0-2 10/10 (was 6/10 before fix)
+- Risks:  `journalDirs` now returns archive dir as a peer of the primary dir — any consumer that assumes "all dirs are top-level" would need auditing (none found). Rollup's `updateIndex` already calls `listJournalFiles` which will now include archived entries in the index — this is correct behavior (archived entries should be indexed).
+- Status: local commit 89b00e3 on fix/p0-1-incremental-write-visibility
+
+---
+
+## Release — v3.4.23 (2026-06-12)
+
+**Ships the entire V4 "Memory as Environment" execution** (perf-check P0s + Sprints 0-2)
+as one patch release, per no-version-inflation policy. Published: agent-recall-{core,mcp,sdk,cli}@3.4.23.
+
+| Area | Change |
+|---|---|
+| Recall latency | 10.5s → 2.5s worst-case → ms after circuit breaker (2s embed timeout + parallel local fallback + honest `degraded` field) |
+| Learning loop | Outcome events fully automatic: `retrieved` at session_start (1/day, local-TZ), `heeded`/`recurred` heuristic at session_end. First KPI data in product history |
+| North-star | 🎯 Alignment line (N% corrections heeded) at top of session_start + dashboard `alignment_precision`. Null until real data — no fake claims |
+| Insight funnel | Confirm-first: near-duplicates (containment ≥0.6) CONFIRM instead of re-add; cap eviction protects count≥2. benchmark/funnel.mjs 18/18 |
+| Correction hygiene | `retractCorrection` + write-time quality gate (rule-only classification, 11/11 calibration) + triage script; 64/81 legacy noise corrections retracted (reversible) |
+| Tool surface | Default MCP registration 18 → 5 (session_start, session_end, remember, recall, check); 13 pull tools behind `--full` (Automaticity Law) |
+| Moment hooks | `ar hook-pretool` (advisory checkAction on publish/push/rm -rf/--force/deploy) + `hook-ambient` precision floor (silence below threshold) |
+| Portable memory | `projects/<slug>/handoff.md` auto-written at every session_end (≤2200 chars, cross-agent briefing); doubled-Intention prefix fixed this release |
+| Review fixes | Local-TZ outcome guards (UTC+8 bug), surfaced correction-gate rejection in `check`, dead degraded-reason discriminant removed |
+
+Full traceback: docs/internal/PERF-CHECK-2026-06-12.md (measured baseline) + docs/internal/V4-PLAN.md
+(sprint briefs) + the "V4 Sprint 1+2 executed" entry below. Suites: consistency 10/10 · funnel 18/18.
+
+---
+
+## V4 Sprint 1+2 — "Memory as Environment" executed (2026-06-12, local only)
+
+Plan: docs/internal/V4-PLAN.md · Perf baseline: docs/internal/PERF-CHECK-2026-06-12.md
+Orchestration: Fable 5 orchestrator + 6 Sonnet workers (2 sprints, file-disjoint parallel)
++ 1 fresh-eyes reviewer. All suites green (consistency 10/10, funnel 18/18). NOT pushed/published.
+
+| Commit | What |
+|---|---|
+| b61541b | Perf check: corpus-measured scorecard (5.5/10) + Automaticity Law + roadmap |
+| 53554df | P0-A recall latency 10.5s→2.5s→ms (timeout+race+breaker) · P0-B outcome loop alive (first KPI data ever) · P0-C retract+gate |
+| 0e703a9 | Sprint 0 review fixes: local-TZ outcome guards (UTC+8 bug), surfaced gate rejection in check, dead discriminant |
+| 5dfc76c | Sprint 1: confirm-first insights (funnel unjam) · triage v2 (11/11 calibration) + 64/81 noise corrections retracted (reversible) · 🎯 Alignment line |
+| (this)  | Sprint 2: default MCP surface 18→5 tools (Automaticity Law) · hook-pretool + ambient precision floor · auto-handoff.md at every session_end |
+
+Outcomes vs north-star (ALIGNMENT = precision × confirmation rate):
+- Correction channel: AgentRecall P0s 6 noisy → 2 real; precision now measured automatically.
+- Funnel: near-duplicates now CONFIRM (containment ≥0.6); cap eviction protects count≥2.
+- Surface: 5 default tools; pull tools behind --full; pretool hook pushes warnings at the moment of risk.
+- Portable memory: projects/<slug>/handoff.md auto-written every save (≤2200 chars).
+
+Known follow-ups: handoff doubled "Intention:" prefix (cosmetic) · re-register the no-push
+redline via register_rule (its correction lived outside this project / was regex-noise) ·
+~/.claude PreToolUse hook entry (orchestrator task, other repo) · Sprint 3 re-measure +
+publish gate (user verifies via ar first; propose v3.5.0).
+
+---
+
+## Release — v3.4.22 "Trust" (2026-06-11)
+
+**Theme: freeze features, fix consistency.** Triggered by a hands-on external evaluation (Claude agent, raw stdio JSON-RPC, clean Linux sandbox, 2026-06-11) that reproduced four trust-breaking bugs live. The product's core invariant — *anything saved must be acknowledged as existing at orientation time, 100% deterministically* — was broken. This release restores it. No new features.
+
+### Published
+| Package | npm |
+|---|---|
+| `agent-recall-core` | 3.4.22 |
+| `agent-recall-mcp` | 3.4.22 |
+| `agent-recall-sdk` | 3.4.22 |
+| `agent-recall-cli` | 3.4.22 |
+
+### P0 consistency fixes (all shipped together)
+
+| # | Bug | Root cause | Fix |
+|---|---|---|---|
+| **P0-1** | `session_start` returned "No memory found" despite 4 writes on disk | `isEmpty` keyed on `session_end` artifacts (journal briefs/resume/corrections) — ignored palace content AND CLI capture logs | `isEmpty` now folds in `hasCaptures` (capture-log scan) + `hasPalaceContent` (`countRoomEntries > 0`). New `recent_captures` field renders uncommitted captures as "Recent captures (unsaved session)". `session-start.ts` + `journal-files.ts` + `project-status.ts` |
+| **P0-2** | Empty default rooms (salience 0.5) outranked content rooms (0.41); `memory_count` stuck at 0 | (a) `memory_count` counted non-README files, but default writes land in README.md → always 0. (b) default 0.5 > computed fresh-room salience | `countRoomEntries()` counts `### ` entry blocks as disk truth. Hard invariant in `listRooms` comparator: **content room always sorts above empty room** (not emergent from the formula). Empty rooms get salience floor 0. `--importance high` propagates into the salience calc. `rooms.ts` + `index-manager.ts` + `palace-write.ts` |
+| **P0-3** | Session-1 insight invisible at session-2 | Global awareness only receives an index insight after `promoteConfirmedInsights` fires (confirmed_count ≥ 3); a fresh count-1 insight lived only in the project-scoped index, never rendered | Merge project-scoped index insights into the render with an **independent budget** (up to 2 reserved slots on top of awareness top-3), so a fresh insight surfaces even when awareness is already full. Threshold now controls order/verbosity, never existence. `session-start.ts` |
+| **P0-4** | `💬 Community: https://t.me/...` in every `session_start` response | Promotional trailer in `formatTerse` | Removed from all tool output. (Acceptable in `ar --help`/README/postinstall.) Regression test asserts no `t.me`/telegram URL in payload. `mcp-server/.../session-start.ts` |
+
+### P1 folded in (same render path / trivial)
+- **P1-1** — markdown leak (`Trajectory: ## Next`): `stripMarkdownHeaders()` drops full ATX-heading lines before embedding journal fragments into card fields.
+- **P1-5** — repo hygiene: moved `README.md.bak`, `REVIEW-BRIEF.md`, `SESSION-REPORT-*.md`, `PLAN-AGENT-EXPERIENCE-V2.md`, `TEST-PROMPT.md`, `HANDOFF-warroom-design.md` → `docs/internal/`.
+
+### Reviewer-loop findings (fresh-eyes code-review caught 2 HIGH the happy-path suite missed)
+- **HIGH-1** — named-topic first write (`palace write <room> --topic X`) took a code path that omitted the `### ` entry header → `countRoomEntries` saw 0 → room sorted empty + salience zeroed. Fixed: first write to a new topic file now wraps content in a `### DATE — importance` block, consistent with the README + append paths.
+- **HIGH-2** — P0-3 fix was a no-op for established projects: the shared 3-cap filled from awareness before the project-index merge loop ran. Fixed with the independent 2-slot project budget above.
+- **MEDIUM** — `listRooms` was called twice + `hasPalaceContent` re-scanned: collapsed to one `listRooms` call. `updatePalaceIndex` now wrapped in `withLock` to prevent concurrent-write `memory_count` loss. Case-insensitive archived-title filter.
+
+### Regression suite
+`benchmark/consistency.mjs` — replays the **exact** live-eval sequence + the two reviewer HIGH cases. 10/10 assertions pass. Run: `node benchmark/consistency.mjs` (exit 1 on any regression). This is the permanent guard against the trust-break ever returning.
+
+### Multi-agent process used (recorded for reuse)
+Orchestrator + 2 parallel workers (file-disjoint: palace-ranking files vs session-start files) → central build → fresh-eyes `code-reviewer` (no prior context) → consistency verifier → orchestrator integrates findings. The reviewer found 2 HIGH bugs the workers' own happy-path checks structurally could not — validating the never-self-review rule.
+
+### Deferred to roadmap (explicitly NOT in this release — "freeze features")
+P1-2 (journal fragmentation/merge story), P1-3 (token-budget benchmark), P1-4 (document enums in SKILL.md + tool descriptions), P1-6 (`ar correction list/retract` + per-project scoping). All of Phase 3 / P2 (epistemic typing, contradiction detection, negative-knowledge recall, local semantic search, progressive disclosure, `handoff()`, `ar review`, MCP resources). Open question Q2 (lazy room creation vs default rooms) deferred — current fix makes the salience-inversion class impossible regardless. `ar doctor` index-rebuild backstop deferred (the isEmpty fix removes the need; doctor becomes belt-and-suspenders).
+
+---
+
 ## Release — v3.4.21 (2026-06-03)
 
 **Patch release shipping the 7-item real-usage feedback pass.** Same conservative
@@ -451,6 +710,70 @@ The 4-family math survey produced 4 ready-to-implement primitives. Hopfield (6k)
 | `hopfieldRecall(query, X, β=8)` | Energy-based | `ξ_new = X·softmax(β·X^⊤·ξ)` | ✅ Built (6k) + reviewed + hardened (6k.1) |
 | `estimateCompressionHealth(palace, source)` | Info theory / MDL | gzip-based two-part code | Designed, not built; **needs severity-weighting before ship** |
 | `shouldAutoSurface(insight, now)` | MEMORIZE / optimal control | `u*(t) = (1/√q)·(1-m(t))` | Designed, not built |
+
+---
+
+## War Room dashboard — production hardening + empty-room routing fix (2026-06-13/14)
+
+Took the `claude-design` war-room dashboard from a 100%-mock mockup to a real-data, fully-offline, accessible operations dashboard — and, in the process, surfaced and fixed a real memory-routing bug in the palace layer.
+
+### Track 1 — exporter feeds (committed 8633f60, prior)
+`dashboard-export.ts` grew 4 missing panel feeds (14-day dream-health heatmap, `recent_activity[]`, `palace_edges[]`, per-project `alignment{}`) + `activity-feed.ts`. Precision clamped to [0,1] (a per-session `heeded` increment could exceed the 1/day-guarded `retrieved`, yielding precision > 1.0).
+
+### Track 2 — dashboard HTML (this session)
+Worker (Sonnet) + two fresh-eyes review rounds (code-reviewer, never self-review) + live headless verification in the user's Chrome.
+
+| Fix | Severity | What |
+|-----|----------|------|
+| Offline | P0 | Vendored ECharts 5.4.3, Cytoscape 3.26.0, Nunito + JetBrains-Mono → local `static/` (11 woff2 + 2 JS + fonts.css). **0 network resource loads.** Kills the zero-cloud/privacy contradiction. |
+| Real data | P0 | `fetch('./dashboard.json')` + 5s poll bound to the verified schema; MOCK demoted to a labeled cold-start fallback. |
+| States | P0 | Loading / fetch-error / per-panel empty states; `safeNum`/`safePct` guards — **no NaN/null/undefined reaches the DOM**. |
+| `0 \|\| fallback` bug | HIGH | Falsy-coalesce let a real `0` retrieved/heeded fall through to the kpis value → explicit null checks. |
+| NaN at source | HIGH | `precision` normalized to null once after resolve, instead of relying on every downstream guard. |
+| ResizeObserver leak | HIGH | Observer was stored on the freshly-disposed ECharts instance → one leaked per 5s poll. Moved to a module-level ref, disconnected before re-render. (Verified: 8 renders → 1 live observer.) |
+| Reduced-motion | P1 | Now gates ECharts entrance animation + Cytoscape layout, not just CSS. |
+| a11y | P1 | `role`/`aria-label` per panel, `aria-live` banners, keyboard-focusable cards, color+glyph status redundancy (✓/✗/·). |
+| Agent contract | P1 | `⤓ JSON` copy button + HTML comment pointing agents at `~/.agent-recall/dashboard.json` (read JSON, don't scrape DOM). |
+| Clipboard on file:// | MED | Guarded `navigator.clipboard` undefined in non-secure context. |
+| Scale | P2 | Cytoscape capped to top-30 rooms by salience. |
+
+Installed to runtime `~/.agent-recall/{dashboard.html,static/}` (old → `dashboard-legacy.html`) and shipped copy in `scripts/`.
+
+### Track 3 — empty-slug palace room bug (root cause, found via the dashboard crash)
+The Cytoscape palace graph crashed on the **AgentRecall** project with `Can not create element with invalid string ID ''`. Root cause was a real memory bug, not a dashboard bug:
+
+- `palace_write` accepted an empty `room` arg with no guard. `sanitizeSlug("")` returns `"unnamed"`, so the on-disk dir was `unnamed/`, but `createRoom` persisted the **raw** slug `""` into `_room.json` — meta desynced from disk.
+- Over time **216 writes** routed to this nameless room.
+
+Fixes (all green: build 0 errors, consistency 10/10, funnel 18/18, new `room-slug-guards.mjs` 9/9):
+
+| Layer | Fix | File |
+|-------|-----|------|
+| Root cause | `createRoom` throws on empty/whitespace slug; persists `sanitizeSlug(slug)` into meta (slug now always matches dir) | `palace/rooms.ts` |
+| Boundary | `palaceWrite` throws on empty/whitespace `room` before any side effect | `tools-logic/palace-write.ts` |
+| Boundary | MCP `room` schema: `z.string().min(1).regex(/[a-zA-Z0-9]/)` (per the CLAUDE.md `z.string()`→`path.join` rule) | `mcp-server/.../palace-write.ts` |
+| Regression (caught in review) | whitespace-only `palace_room` is truthy → trim-guard in `journal-write`/`journal-capture` so the new throw can't abort a journal write that already hit disk | `tools-logic/journal-*.ts` |
+| Consistency | `palaceWrite` routes + returns `safeRoom` (matches persisted meta.slug) | `tools-logic/palace-write.ts` |
+| Data repair | existing blank `unnamed/_room.json` repaired to `slug:"unnamed"` (non-destructive; 216-access history preserved for user to delete via `ar`) | runtime data |
+| Defense-in-depth | dashboard filters empty-slug rooms before building Cytoscape nodes | `dashboard.html` |
+
+**Verification:** AgentRecall palace now renders all 12 rooms (incl. repaired `unnamed`), 48 projects, 0 console errors, fonts load offline, DOM clean.
+
+---
+
+## War-room dashboard — demo-hardening (2026-06-15)
+
+Pre-demo review (boss/external audience) of the war-room dashboard surfaced 4 credibility blemishes + 1 metric bug. All fixed and verified live (Chrome, 0 console errors); suites green (consistency 10/10, funnel 18/18, new `heeded-guard.mjs` 5/5).
+
+| Issue | Fix | File |
+|-------|-----|------|
+| Dashboard listed 48 "projects" incl. junk (`.aam`, `..-..`, `_archived_*`, a `.md` leak, a UUID dir, empty scaffolds) | New `isRealProjectSlug` (no dot/underscore/`.md`/UUID/denylist) + `hasRealMemory` gate (≥1 journal entry OR ≥1 palace topic). 48 → 18, matching the `arstatus` CLI (consistency anchor). Palace-only projects still show (correct for other npm users); broken-symlink `statSync` guarded | `tools-logic/dashboard-export.ts` |
+| Pipeline panel empty for all projects (narrative layer unused) | Repurposed → **Memory Composition**: real per-project stats (sessions/rooms/topics/skills/corrections/links + "memory since" span) | `scripts/dashboard.html` |
+| Stale banner conflated data-age with "dream cron stuck" | Banner copy fixed to "Dashboard data N old — re-run dashboard_export" | `scripts/dashboard.html` |
+| Synthetic sine "sparkline" posing as real precision history | Replaced with honest "precision trend · tracking from now" placeholder | `scripts/dashboard.html` |
+| Metric bug: "11/10 heeded" (heeded_count > retrieved_count) | Root cause: session_end recorded a `heeded` outcome on EVERY same-day call while `retrieved` is 1/day-guarded. Added matching 1/day guard via `last_outcome`; reconciled 3 existing inflated counters (cap heeded ≤ retrieved) | `tools-logic/session-end.ts` + runtime data |
+
+Reviewed by fresh-eyes code-reviewer (GO). Local-only — no push/publish/version-bump per REDLINE.
 
 ---
 

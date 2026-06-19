@@ -107,7 +107,8 @@ HOOKS (auto-fired by Claude Code hooks — no agent discipline needed):
   ar hook-start          Session start: load context, show watch_for warnings
   ar hook-end            Session end: auto-save journal if not already saved today
   ar hook-correction     Read UserPromptSubmit JSON from stdin, capture corrections silently
-  ar hook-ambient        Read UserPromptSubmit JSON from stdin, inject relevant memories into context
+  ar hook-ambient        Read UserPromptSubmit JSON from stdin, inject relevant memories into context (precision-floored: ≥2 word overlap)
+  ar hook-pretool        Read PreToolUse JSON from stdin, warn if command matches risky patterns (npm publish, git push, rm -rf, deploy, DROP TABLE)
   ar hook-save           Read UserPromptSubmit JSON from stdin, detect "save session"/"retain" phrases, prompt agent to call session_end()
   ar correct --goal "g" --correction "c" [--delta "d"]  Manually record a correction
   ar merge <target> <source>   Merge two journal files (append source into target, backup source)
@@ -154,6 +155,7 @@ async function main(): Promise<void> {
         section: getFlag("--section", rest),
         palace_room: getFlag("--palace-room", rest),
         project,
+        saveType: "arsave",
       });
       output(result);
       break;
@@ -943,8 +945,44 @@ async function main(): Promise<void> {
 
         const recalled = await core.smartRecall({ query: keywords.join(" "), project, limit: 3 });
 
-        // Format output — filter below minimum relevance threshold (silence over noise)
-        const allItems = (recalled.results ?? []).filter(item => item.score >= 0.03);
+        // Ambient precision floor: require ≥2 overlapping content words (≥4 chars,
+        // non-stopwords) between the query tokens and the result title+excerpt.
+        // This kills the ~90% low-relevance noise that fires on every message.
+        // score >= 0.03 was too weak a gate; word-overlap is content-based.
+        const AMBIENT_STOPWORDS = new Set([
+          "the","a","an","and","or","but","is","are","was","were","be","been","being",
+          "have","has","had","do","does","did","will","would","should","could","may",
+          "might","must","shall","can","to","of","in","on","at","by","for","with",
+          "about","from","up","this","that","these","those","i","you","he","she","it",
+          "we","they","them","their","what","which","who","how","all","any","some",
+          "my","your","our","let","make","made","go","want","need","use","just","also",
+          "into","then","than","when","where","if","not","no","so","as","more","other",
+        ]);
+        function ambientTokens(text: string): string[] {
+          return text
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, " ")
+            .split(/\s+/)
+            .filter((w) => w.length >= 4 && !AMBIENT_STOPWORDS.has(w));
+        }
+        const queryTokenSet = new Set(ambientTokens(keywords.join(" ")));
+
+        function wordOverlap(item: { title?: string; excerpt?: string }): number {
+          if (queryTokenSet.size === 0) return 0;
+          const itemText = ((item.title ?? "") + " " + (item.excerpt ?? "")).toLowerCase();
+          const itemTokens = ambientTokens(itemText);
+          let hits = 0;
+          for (const t of itemTokens) {
+            if (queryTokenSet.has(t)) hits++;
+          }
+          return hits;
+        }
+
+        // Require ≥2 overlapping content words AND a meaningful score floor.
+        // Silence (empty output) is always preferred over low-relevance noise.
+        const allItems = (recalled.results ?? []).filter(item =>
+          item.score >= 0.03 && wordOverlap(item) >= 2
+        );
         if (allItems.length === 0) process.exit(0);
 
         // Dedup window: filter out items already surfaced in recent fires
@@ -982,6 +1020,109 @@ async function main(): Promise<void> {
         } catch { /* non-blocking */ }
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-ambient] ${String(e)}\n`);
+      }
+      process.exit(0);
+    }
+
+    case "hook-pretool": {
+      // Reads PreToolUse JSON from stdin (Claude Code hook format).
+      // If the command string matches a risky pattern, runs checkAction() and prints
+      // a compact warning (≤6 lines). Otherwise prints nothing.
+      // ALWAYS exits 0 — advisory only, never blocking. Any error → silent exit 0.
+      //
+      // Trigger regex: /\b(npm publish|git push|rm -rf|--force|DROP TABLE|deploy)\b/i
+      // Defensive parse: handles empty stdin, malformed JSON, missing fields gracefully.
+      const PRETOOL_DANGER_RE = /\b(npm\s+publish|git\s+push|rm\s+-rf|--force|DROP\s+TABLE|deploy)\b/i;
+
+      try {
+        const ptChunks: Buffer[] = [];
+        for await (const chunk of process.stdin) ptChunks.push(chunk as Buffer);
+        const ptRaw = Buffer.concat(ptChunks).toString("utf-8").trim();
+
+        // Empty stdin → silent exit (e.g. echo '{}' test case)
+        if (!ptRaw) process.exit(0);
+
+        // Defensive JSON parse — malformed input exits silently
+        let ptInput: unknown;
+        try {
+          ptInput = JSON.parse(ptRaw);
+        } catch {
+          process.exit(0);
+        }
+
+        // Extract command string defensively — may live in various shapes:
+        // { tool_input: { command: "..." } }  — Bash tool
+        // { tool_input: { ... } }             — other tools (check all string values)
+        // { command: "..." }                  — simplified shape
+        let commandStr = "";
+        if (ptInput !== null && typeof ptInput === "object") {
+          const obj = ptInput as Record<string, unknown>;
+          const toolInput = obj["tool_input"];
+          if (toolInput !== null && typeof toolInput === "object") {
+            const ti = toolInput as Record<string, unknown>;
+            // Prefer explicit "command" field, fall back to all string values joined
+            if (typeof ti["command"] === "string") {
+              commandStr = ti["command"];
+            } else {
+              // Check all string-valued fields (e.g. "description", "file_path" that could contain commands)
+              commandStr = Object.values(ti)
+                .filter((v): v is string => typeof v === "string")
+                .join(" ");
+            }
+          }
+          // Also check top-level command field as fallback
+          if (!commandStr && typeof obj["command"] === "string") {
+            commandStr = obj["command"];
+          }
+        }
+
+        // If no command string could be extracted, or it doesn't match, exit silently
+        if (!commandStr || !PRETOOL_DANGER_RE.test(commandStr)) {
+          process.exit(0);
+        }
+
+        // Matched — run checkAction() to find relevant rules/corrections
+        let warningLines: string[] = [];
+        try {
+          const result = await core.checkAction({
+            action_description: commandStr.slice(0, 300),
+            project: project ?? "auto",
+          });
+
+          if (result.warning) {
+            // Compact format: header + top matches, max 6 lines total
+            warningLines.push(`[AgentRecall] ⚠️  Pre-action check: ${commandStr.slice(0, 80)}`);
+
+            // Top correction (P0 first)
+            const topCorrections = result.matching_corrections
+              .sort((a, b) => (a.severity === "p0" ? -1 : b.severity === "p0" ? 1 : 0))
+              .slice(0, 2);
+            for (const c of topCorrections) {
+              warningLines.push(`  [${c.severity.toUpperCase()}] ${c.rule.slice(0, 100)}`);
+            }
+
+            // Top rule
+            const topRule = result.matching_rules[0];
+            if (topRule) {
+              warningLines.push(`  [rule] ${topRule.name}: ${topRule.do.slice(0, 80)}`);
+            }
+
+            // Top insight
+            const topInsight = result.matching_insights[0];
+            if (topInsight) {
+              warningLines.push(`  [insight×${topInsight.confirmations}] ${topInsight.title.slice(0, 80)}`);
+            }
+
+            // Ensure we never exceed 6 lines
+            warningLines = warningLines.slice(0, 6);
+            process.stdout.write(warningLines.join("\n") + "\n");
+          }
+          // If result.warning is null (no matches), print nothing
+        } catch {
+          // checkAction error → silent exit (best-effort, never blocking)
+        }
+      } catch {
+        // Any outer error → silent exit
       }
       process.exit(0);
     }

@@ -100,12 +100,21 @@ function scoreLabel(score: number): string {
   return "weak";
 }
 
+export interface SmartRecallDegraded {
+  // Errors and timeouts intentionally collapse to "timeout" (withTimeout
+  // swallows both); a distinct "error" reason was a dead discriminant.
+  reason: "timeout";
+  backend: string;
+}
+
 export interface SmartRecallResult {
   query: string;
   results: SmartRecallResultItem[];
   total_searched: number;
   sources_queried: string[];
   guidance?: string;
+  /** Present when semantic backend timed out or errored and local fallback was used. */
+  degraded?: SmartRecallDegraded;
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +495,26 @@ export async function localRecallSearch(
   return deduped;
 }
 
+/**
+ * Budget for the semantic (remote) backend in ms.
+ * Overridable via AGENT_RECALL_RECALL_BUDGET_MS for tuning / tests.
+ */
+const RECALL_BUDGET_MS = parseInt(process.env.AGENT_RECALL_RECALL_BUDGET_MS ?? "2500", 10);
+
+/**
+ * Wrap a promise with a wall-clock timeout.
+ * Resolves to null (never throws) when the deadline passes.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(null); }
+    );
+  });
+}
+
 export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallResult> {
   // Process feedback first; reuse the returned log to avoid a second disk read
   const feedbackLog = (input.feedback && input.feedback.length > 0)
@@ -495,20 +524,47 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   const limit = input.limit ?? 10;
   const queryWords = expandQuery(input.query.toLowerCase().split(/\s+/).filter((w) => w.length > 2));
 
-  // Use configured backend (Supabase or Local)
-  const { getRecallBackend } = await import("./recall-backend.js");
-  const backend = await getRecallBackend();
-  // Pass `since` to localRecallSearch when using the local backend.
-  // For other backends, a post-filter is applied after the search.
   let results: SmartRecallResultItem[];
+  let degraded: SmartRecallDegraded | undefined;
+
   if (input.since) {
-    // Always use localRecallSearch when `since` is set — it pre-filters journal files.
+    // `since` filter is only supported by localRecallSearch — always use local.
     results = await localRecallSearch(input.query, input.project, limit, input.since);
   } else {
-    results = await backend.search(input.query, input.project, limit);
-    // If the vector backend returned nothing (index not yet populated), fall back to keyword search.
-    if (results.length === 0 && backend.constructor?.name === "LocalVectorRecallBackend") {
-      results = await localRecallSearch(input.query, input.project, limit);
+    const { getRecallBackend, recordRemoteFailure, recordRemoteSuccess } = await import("./recall-backend.js");
+    const backend = await getRecallBackend();
+    const backendName = backend.constructor?.name ?? "unknown";
+    const isRemote = backendName === "SupabaseRecallBackend";
+
+    if (!isRemote) {
+      // Pure-local path: no budget needed.
+      results = await backend.search(input.query, input.project, limit);
+      // If the vector backend returned nothing (index not yet populated), fall back to keyword search.
+      if (results.length === 0 && backendName === "LocalVectorRecallBackend") {
+        results = await localRecallSearch(input.query, input.project, limit);
+      }
+    } else {
+      // Remote path: run local keyword search in parallel from the start.
+      // Use semantic results if they arrive within RECALL_BUDGET_MS; otherwise
+      // use local results (already computed — zero extra wait).
+      const localPromise = localRecallSearch(input.query, input.project, limit);
+      const remotePromise = backend.search(input.query, input.project, limit);
+
+      const [localResults, remoteResults] = await Promise.all([
+        localPromise,
+        withTimeout(remotePromise, RECALL_BUDGET_MS),
+      ]);
+
+      if (remoteResults !== null) {
+        // Semantic results arrived in time — use them.
+        recordRemoteSuccess();
+        results = remoteResults.length > 0 ? remoteResults : localResults;
+      } else {
+        // Timed out (or errored inside withTimeout) — fall back to local.
+        recordRemoteFailure();
+        degraded = { reason: "timeout", backend: backendName };
+        results = localResults;
+      }
     }
   }
 
@@ -533,6 +589,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     results: finalResults,
     total_searched: results.length,
     sources_queried: [...new Set(results.map((r) => r.source))],
+    ...(degraded ? { degraded } : {}),
     ...(finalResults.length === 0
       ? { guidance: "No results found. Try `session_start` to initialize this project, or `bootstrap_scan` to import existing context." }
       : {}),

@@ -42,6 +42,7 @@ export {
   recordAccess,
   touchRoom,
   isRoomStale,
+  countRoomEntries,
 } from "./palace/rooms.js";
 
 // Palace — graph
@@ -85,7 +86,26 @@ export {
   AUTO_ARCHIVE_THRESHOLD,
   CATEGORY_DECAY,
   URGENCY_WEIGHTS,
+  KEYSTONE_FLOOR,
 } from "./palace/salience.js";
+
+// Palace — keystone detection
+export {
+  scanKeystoneMemories,
+  isKeystone,
+  markKeystones,
+  type KeystoneMatch,
+} from "./palace/keystone.js";
+
+// Palace — compression (dream-cycle dedup)
+export {
+  compressTopic,
+  compressRoom,
+  compressProject,
+  type CompressResult,
+  type CompressEntry,
+  type CompressCluster,
+} from "./palace/compress.js";
 
 // Palace — insights index
 export {
@@ -93,6 +113,9 @@ export {
   writeInsightsIndex,
   addIndexedInsight,
   recallInsights,
+  findSimilarInsight,
+  normalizeTitle,
+  tokenOverlap,
 } from "./palace/insights-index.js";
 export type {
   IndexedInsight,
@@ -123,7 +146,7 @@ export type { ConsolidationResult } from "./palace/consolidate.js";
 // Storage
 export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
-export { detectProject, resolveProject, listAllProjects } from "./storage/project.js";
+export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
 export { getDreamHealth } from "./storage/dream-health.js";
@@ -154,8 +177,19 @@ export type { SaveType, SmartNameOpts } from "./storage/session.js";
 export { acquireLock, withLock } from "./storage/filelock.js";
 
 // Storage — corrections
-export { writeCorrection, readCorrections, readActiveCorrections, readP0Corrections } from "./storage/corrections.js";
-export type { CorrectionRecord } from "./storage/corrections.js";
+export {
+  writeCorrection,
+  readCorrections,
+  readActiveCorrections,
+  readP0Corrections,
+  retractCorrection,
+  isLikelyRealCorrection,
+} from "./storage/corrections.js";
+export type {
+  CorrectionRecord,
+  WriteCorrectionResult,
+  RetractCorrectionResult,
+} from "./storage/corrections.js";
 
 // Helpers
 export {
@@ -200,6 +234,10 @@ export { isJournalFile } from "./helpers/journal-filter.js";
 export { readAlignmentLog, extractWatchPatterns } from "./helpers/alignment-patterns.js";
 export type { WatchForPattern } from "./helpers/alignment-patterns.js";
 
+// Helpers — handoff artifact
+export { generateHandoff, writeHandoff } from "./helpers/handoff.js";
+export type { HandoffResult } from "./helpers/handoff.js";
+
 // Tool logic functions (extracted from MCP tool handlers)
 export { journalRead, type JournalReadInput, type JournalReadResult } from "./tools-logic/journal-read.js";
 export { journalWrite, type JournalWriteInput, type JournalWriteResult } from "./tools-logic/journal-write.js";
@@ -231,7 +269,7 @@ export { journalMerge, type JournalMergeInput, type MergeReceipt } from "./tools
 // Tool logic — smart routing
 export { smartRemember, type SmartRememberInput, type SmartRememberResult } from "./tools-logic/smart-remember.js";
 export { smartRemember as remember } from "./tools-logic/smart-remember.js";
-export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem } from "./tools-logic/smart-recall.js";
+export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded } from "./tools-logic/smart-recall.js";
 
 // Tool logic — v3.4 composite tools (5-tool surface)
 export { sessionStart, type SessionStartInput, type SessionStartResult } from "./tools-logic/session-start.js";
@@ -295,7 +333,7 @@ export { syncToSupabase, backfill, contentHash, parseMemoryFile, deriveSlug, log
 export type { ParsedMemoryFile } from "./supabase/sync.js";
 
 // RecallBackend
-export { LocalRecallBackend, getRecallBackend, resetRecallBackend } from "./tools-logic/recall-backend.js";
+export { LocalRecallBackend, getRecallBackend, resetRecallBackend, recordRemoteFailure, recordRemoteSuccess } from "./tools-logic/recall-backend.js";
 export type { RecallBackend } from "./tools-logic/recall-backend.js";
 
 // Supabase — recall backend
@@ -411,4 +449,10 @@ export type {
   DashboardExportResult,
   DashboardSnapshot,
   DashboardProjectSnapshot,
+  DashboardDreamHealth,
+  DreamHealthCell,
 } from "./tools-logic/dashboard-export.js";
+
+// Helpers — activity feed
+export { buildRecentActivity } from "./helpers/activity-feed.js";
+export type { ActivityEvent } from "./helpers/activity-feed.js";

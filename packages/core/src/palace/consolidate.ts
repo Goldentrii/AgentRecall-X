@@ -21,6 +21,7 @@ import { fanOut } from "./fan-out.js";
 import { generateFrontmatter } from "./obsidian.js";
 import { updatePalaceIndex } from "./index-manager.js";
 import { appendToLog } from "./log.js";
+import { markKeystones } from "./keystone.js";
 
 export interface ConsolidationResult {
   entriesProcessed: number;
@@ -176,11 +177,22 @@ export function consolidateJournalToPalace(
   // Update palace index
   updatePalaceIndex(project);
 
+  // Stamp keystone flag on rooms referenced by pipeline milestones.
+  // Runs here (consolidation) not on every write — milestone scan is O(rooms×milestones).
+  // Best-effort: failure does not break consolidation.
+  let keystonesMarked = 0;
+  try {
+    keystonesMarked = markKeystones(project);
+  } catch {
+    // Keystone marking is best-effort — never breaks consolidation
+  }
+
   // Log the operation
   appendToLog(project, "consolidate", {
     entries_processed: result.entriesProcessed,
     rooms_updated: result.roomsUpdated,
     memories_created: result.memoriesCreated,
+    keystones_marked: keystonesMarked,
   });
 
   return result;

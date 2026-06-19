@@ -22,7 +22,7 @@ export async function journalRead(input: JournalReadInput): Promise<JournalReadR
   let targetDate = input.date ?? "latest";
 
   if (targetDate === "latest") {
-    const allEntries = listJournalFiles(slug);
+    const allEntries = listJournalFiles(slug, true);
     if (allEntries.length === 0) {
       return { content: "", date: "", project: slug, error: `No journal entries found for project '${slug}'` };
     }

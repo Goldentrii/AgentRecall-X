@@ -29,7 +29,8 @@ export interface ContextSynthesizeResult {
 
 export async function contextSynthesize(input: ContextSynthesizeInput): Promise<ContextSynthesizeResult> {
   const slug = await resolveProject(input.project);
-  const journalEntries = listJournalFiles(slug);
+  // Include archive for full context synthesis
+  const journalEntries = listJournalFiles(slug, true);
   const count = input.entries ?? 5;
   const focus = input.focus ?? "full";
 

@@ -1,0 +1,10 @@
+# Code owners — every PR auto-requests a review from the owner(s) listed here.
+# Combined with branch protection ("require review from Code Owners"), this means
+# nothing merges to main without the maintainer's approval.
+#
+# ⚠️  REPLACE the handle below with your EXACT GitHub username or org team.
+#     If it's wrong, GitHub silently won't request the review. Verify at:
+#     https://github.com/NovadaLabs/AgentRecall/settings/access
+#     (e.g. @Goldentrii  — or a team like @NovadaLabs/maintainers)
+
+* @Goldentrii

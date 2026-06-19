@@ -37,6 +37,9 @@ export interface CorrectionRecord {
   precision?: number;         // heeded / retrieved (cached, recomputed on outcome)
   last_retrieved?: string;    // ISO timestamp
   last_outcome?: string;      // ISO timestamp of most recent heeded/recurrence event
+  /** Set when retractCorrection() soft-deletes this record. */
+  retracted_at?: string;      // ISO timestamp of retraction
+  retract_reason?: string;    // Free-text reason (e.g. "triage-2026-06-12: capture noise")
 }
 
 export interface CorrectionOutcome {
@@ -126,10 +129,112 @@ function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string
 // ---------------------------------------------------------------------------
 
 /**
+ * Capture-quality gate — rejects context-free fragments, pure acknowledgments,
+ * and text that carries no actionable signal.
+ *
+ * v2 (2026-06-12): classifies on the RULE field only (context param reserved for
+ * future use but never classified on — prevents long context from bypassing the
+ * acknowledgment gate).
+ *
+ * Gates (in order):
+ *  1. Must be >= 12 chars after trim.
+ *  2. Must NOT be a pure acknowledgment/fragment — applied unconditionally (no
+ *     length cap — v1 60-char cap allowed long-context bypass).
+ *  3. Reject system/tool fragments: starts with '<', is a pure number, or is a
+ *     bare file path (no spaces, contains path separator, no verb-ish content).
+ *  4. PASS if any of:
+ *     a) imperative/modal marker present
+ *     b) preference statement ("user wants/prefers/likes/needs", CJK equiv.)
+ *     c) substantive rule: len >= 40 AND >= 2 words of >= 5 chars AND verb-ish
+ *  5. else reject: "no actionable signal"
+ *
+ * Returns { ok: true } when the text passes all gates, or { ok: false, reason }
+ * explaining which gate fired. Callers may surface the reason in a warning.
+ */
+export function isLikelyRealCorrection(rule: string, _context?: string): { ok: boolean; reason?: string } {
+  // NOTE: _context is accepted for forward-compat but NEVER classified on.
+  const r = rule.trim();
+
+  // Gate 1 — minimum length
+  if (r.length < 12) {
+    return { ok: false, reason: "too short" };
+  }
+
+  // Gate 2 — pure acknowledgment / fragment patterns (NO length cap — applied always).
+  // Matches strings that start with an acknowledgment word and trail with only filler content
+  // up to 80 extra chars. The 80-char trailing budget covers e.g.
+  // "Ok good, then we don't change anything. let's focus on novada-mcp" (67 total)
+  // without catching real rules that happen to open with "ok" or "yes" (those tend to be
+  // much longer and/or contain definitive nouns + verbs checked in gate 4).
+  const acknowledgmentPattern =
+    /^(no[,.]?\s*(that'?s\s+wrong[.!]?)?|ok(ay)?\b|good\b|great\b|nice\b|yes\b|yeah\b|right\b|wait\b|hmm+\b|sure\b|thanks?\b)[\s\S]{0,80}$/i;
+  if (acknowledgmentPattern.test(r)) {
+    return { ok: false, reason: "pure acknowledgment or fragment — no rule content" };
+  }
+
+  // Gate 3 — system/tool fragments
+  if (r.startsWith("<")) {
+    return { ok: false, reason: "system/tool fragment (starts with '<')" };
+  }
+  if (/^\d+$/.test(r)) {
+    return { ok: false, reason: "pure number — no rule content" };
+  }
+  // Bare file path: no spaces, contains at least one '/' or '\', no alphanumeric verb words
+  if (!/\s/.test(r) && /[/\\]/.test(r) && !/\b[a-zA-Z]{4,}\b/.test(r)) {
+    return { ok: false, reason: "looks like a bare file path — no rule content" };
+  }
+
+  // Gate 4 — must carry actionable signal (pass if ANY of a/b/c)
+
+  // (a) imperative/modal marker
+  const imperativePattern =
+    /\b(never|always|don'?t|do not|must|should|use|stop|avoid|prefer|instead|make sure|remember to)\b/i;
+  if (imperativePattern.test(r)) {
+    return { ok: true };
+  }
+
+  // (b) preference statement
+  const preferencePattern =
+    /\b(user\s+(wants?|prefers?|likes?|needs?)|the\s+user\s+is|偏好|喜欢|要求)\b/i;
+  if (preferencePattern.test(r)) {
+    return { ok: true };
+  }
+
+  // (c) substantive rule: len >= 40, >= 2 words of >= 5 alphanum chars, has verb-ish token
+  if (r.length >= 40) {
+    const longWords = (r.match(/\b[a-zA-Z0-9]{5,}\b/g) ?? []).length;
+    const verbIsh =
+      /\b(bump|consolidate|release|phase|version|publish|push|format|palette|font|round|warm|side.by.side|bilingual|batch|clean|parse|build|compile|deploy|migrate|export|import|store|handle|return|check|verify|ensure)\b/i;
+    if (longWords >= 2 && verbIsh.test(r)) {
+      return { ok: true };
+    }
+  }
+
+  return { ok: false, reason: "no actionable signal — rule lacks imperative/modal marker, preference statement, or substantive content" };
+}
+
+export interface WriteCorrectionResult {
+  written: boolean;
+  reason?: string;
+}
+
+/**
  * Write a correction to persistent storage.
  * Auto-detects severity from the rule/context text.
+ *
+ * Applies the capture-quality gate before writing. Returns { written: false, reason }
+ * if the gate rejects the text — callers that previously ignored the void return
+ * are unaffected (the return value was void, now it is an object; ignoring it
+ * still compiles and runs correctly).
  */
-export function writeCorrection(project: string, correction: CorrectionRecord): void {
+export function writeCorrection(project: string, correction: CorrectionRecord): WriteCorrectionResult {
+  // Capture-quality gate — reject noise before touching disk.
+  // v2: classify on rule field only (context is for future use, never gate-input).
+  const gate = isLikelyRealCorrection(correction.rule ?? "");
+  if (!gate.ok) {
+    return { written: false, reason: gate.reason };
+  }
+
   const dir = correctionsDir(project);
   ensureDir(dir);
 
@@ -144,6 +249,8 @@ export function writeCorrection(project: string, correction: CorrectionRecord): 
   const tmp = `${filepath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(record, null, 2), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filepath);
+
+  return { written: true };
 }
 
 /**
@@ -187,6 +294,44 @@ export function readP0Corrections(project: string): CorrectionRecord[] {
   return readCorrections(project).filter((r) => r.severity === "p0" && r.active !== false);
 }
 
+export interface RetractCorrectionResult {
+  success: boolean;
+  id?: string;
+  error?: string;
+}
+
+/**
+ * Retract (soft-delete) a correction by setting active:false.
+ * The file is rewritten atomically — never deleted. The record remains in
+ * _outcomes.jsonl history and can be manually reactivated by editing the JSON.
+ */
+export function retractCorrection(project: string, id: string, reason?: string): RetractCorrectionResult {
+  const dir = correctionsDir(project);
+
+  // Find the correction record by id
+  const all = readCorrections(project);
+  const target = all.find((r) => r.id === id);
+  if (!target) {
+    return { success: false, error: `correction not found: ${id}` };
+  }
+
+  const updated: CorrectionRecord = {
+    ...target,
+    active: false,
+    retracted_at: new Date().toISOString(),
+    ...(reason !== undefined ? { retract_reason: reason } : {}),
+  };
+
+  const filename = `${updated.date}-${slugify(updated.rule || updated.id)}.json`;
+  const filepath = path.join(dir, filename);
+  // Atomic rewrite — tmp + rename, mode 0600
+  const tmp = `${filepath}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { encoding: "utf-8", mode: 0o600 });
+  fs.renameSync(tmp, filepath);
+
+  return { success: true, id };
+}
+
 /**
  * Record an outcome event for a correction (retrieved / heeded / recurred).
  * Appends to _outcomes.jsonl and also updates the correction JSON's counters
@@ -221,7 +366,11 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
     updated.last_outcome = outcome.at;
   }
   const r = updated.retrieved_count ?? 0;
-  updated.precision = r > 0 ? Number(((updated.heeded_count ?? 0) / r).toFixed(3)) : undefined;
+  // Clamp to [0,1]: `retrieved` is guarded 1/day but `heeded` can fire on every
+  // session_end, so raw heeded/retrieved can exceed 1.0 ("150% heeded" is
+  // nonsense). min(1, …) keeps the metric honest. (Root-cause follow-up: apply
+  // the same 1/day guard to heeded as retrieved has, for finer resolution.)
+  updated.precision = r > 0 ? Math.min(1, Number(((updated.heeded_count ?? 0) / r).toFixed(3))) : undefined;
 
   // Re-write the JSON file atomically (tmp + rename — prevents truncation on SIGTERM).
   const filename = `${updated.date}-${slugify(updated.rule || updated.id)}.json`;
@@ -264,7 +413,7 @@ export function getCorrectionKPIs(project: string): CorrectionKPI {
     retrieved,
     heeded,
     recurred,
-    precision: retrieved > 0 ? Number((heeded / retrieved).toFixed(3)) : NaN,
+    precision: retrieved > 0 ? Math.min(1, Number((heeded / retrieved).toFixed(3))) : NaN,
     noise_candidates: noise,
     high_signal: hot,
   };

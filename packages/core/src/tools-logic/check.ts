@@ -65,6 +65,12 @@ export interface CheckResult {
   decision_id?: string;
   decision_trail_saved?: boolean;
   calibration_note?: string;
+  /**
+   * Set when the correction quality gate rejected the human_correction
+   * (Sprint-0 review: silent gate rejection = invisible data loss). The
+   * caller should rephrase as an actionable rule and retry.
+   */
+  correction_gate_rejected?: string;
 }
 
 function alignmentLogPath(project: string): string {
@@ -99,6 +105,10 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   const trimmed = log.slice(-50);
   writeAlignmentLog(slug, trimmed);
 
+  // Set when the correction quality gate rejects a human_correction (surfaced
+  // in the result so the rejection is never silent).
+  let gateRejection: string | undefined;
+
   // 1b. If there's a human correction, also write to the corrections store
   if (input.human_correction) {
     try {
@@ -112,7 +122,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       const p0Patterns = /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b/i;
       const severity: "p0" | "p1" = p0Patterns.test(corrText) ? "p0" : "p1";
       const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
-      writeCorrection(slug, {
+      const writeResult = writeCorrection(slug, {
         id: corrId,
         date: corrDate,
         severity,
@@ -121,6 +131,11 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         context: corrText,
         tags: corrTags,
       });
+      if (!writeResult.written) {
+        // Surface the gate rejection instead of silently dropping the
+        // correction — the agent must know it was NOT stored.
+        gateRejection = writeResult.reason ?? "rejected by correction quality gate";
+      }
     } catch {
       // Best effort — never block the check flow
     }
@@ -291,5 +306,6 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     decision_id: decisionId,
     decision_trail_saved: decisionTrailSaved || undefined,
     calibration_note: calibrationNote,
+    correction_gate_rejected: gateRejection,
   };
 }

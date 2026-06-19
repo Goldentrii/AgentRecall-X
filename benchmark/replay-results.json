@@ -1,0 +1,24 @@
+{
+  "date": "2026-06-18",
+  "version": "3.4.27",
+  "recall": {
+    "score": 3,
+    "total": 3,
+    "pct": 1
+  },
+  "precision": {
+    "score": 2,
+    "total": 6,
+    "pct": 0.3333333333333333
+  },
+  "staleness": {
+    "score": 1,
+    "total": 1,
+    "pct": 1
+  },
+  "correction_correctness": {
+    "score": 2,
+    "total": 2,
+    "pct": 1
+  }
+}

@@ -1,0 +1,43 @@
+name: CI
+
+# Runs on every PR into main (incl. from forks) and on pushes to main.
+# SECURITY: uses `pull_request` (NOT `pull_request_target`), so PRs from forks
+# run with a READ-ONLY token and NO access to repository secrets. A fork PR can
+# only propose changes and have them tested — it cannot read secrets, write to
+# the repo, or affect main. Merging still requires your approval + branch protection.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read          # minimal token; no write scope
+
+concurrency:              # cancel superseded runs on the same ref
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install (clean, from lockfile)
+        run: npm ci
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Regression suites
+        run: |
+          node benchmark/consistency.mjs
+          node benchmark/funnel.mjs
+          node benchmark/heeded-guard.mjs
+          node benchmark/room-slug-guards.mjs

@@ -20,6 +20,55 @@ const BLOCKED_SLUGS = new Set([
   "tmp", "node_modules", "dist", "src", ".aam", "phase-1",
 ]);
 
+// ── Slug validation ──────────────────────────────────────────────────────────
+
+/**
+ * Deny-list of generic words that are clearly not project names.
+ * Checked case-insensitively.
+ */
+const SLUG_DENY_LIST = new Set([
+  "build", "runtime", "palace", "mcp", "default",
+  "phase-1", "monitor", "test",
+]);
+
+/**
+ * Validate whether a string is a legitimate project slug.
+ *
+ * Returns `false` for:
+ *  - UUIDs (8-4-4-4-12 hex)
+ *  - `.md` suffix
+ *  - `_` prefix (internal / archive dirs)
+ *  - Generic words on the deny-list
+ *  - Path traversal artifacts (`..`, `/`, `\`)
+ *  - Strings without any letter
+ */
+export function isValidProjectSlug(slug: string): boolean {
+  if (!slug) return false;
+
+  // Reject UUIDs (8-4-4-4-12 hex pattern)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug)) return false;
+
+  // Reject .md suffix
+  if (slug.endsWith(".md")) return false;
+
+  // Reject _ prefix (internal/archive dirs)
+  if (slug.startsWith("_")) return false;
+
+  // Reject . prefix (hidden dirs like .DS_Store, .aam)
+  if (slug.startsWith(".")) return false;
+
+  // Reject deny-listed generic words
+  if (SLUG_DENY_LIST.has(slug.toLowerCase())) return false;
+
+  // Reject path traversal artifacts
+  if (slug.includes("..") || slug.includes("/") || slug.includes("\\")) return false;
+
+  // Must contain at least one letter
+  if (!/[a-zA-Z]/.test(slug)) return false;
+
+  return true;
+}
+
 /**
  * Auto-detect project slug from environment, git, or cwd.
  * No caching — each call re-detects from the current environment.
@@ -114,11 +163,43 @@ export async function detectProject(): Promise<string> {
  * same directory route correctly without needing the explicit slug. This is
  * the migration path for existing projects — the allowlist fills itself over
  * normal use.
+ *
+ * Slug validation: if an explicit slug fails `isValidProjectSlug()` AND no
+ * project directory already exists for it, resolution throws — preventing
+ * garbage slugs from creating new directories. Existing (already-on-disk)
+ * invalid slugs still resolve so reads of legacy data don't break.
  */
 export async function resolveProject(project: string | undefined): Promise<string> {
   if (!project || project === "auto") {
-    return await detectProject();
+    const detected = await detectProject();
+    // Gate: block auto-detected slugs from creating new dirs if invalid
+    if (!isValidProjectSlug(detected)) {
+      const projectDir = path.join(getRoot(), "projects", detected);
+      if (!fs.existsSync(projectDir)) {
+        throw new Error(
+          `Auto-detected project slug "${detected}" is invalid (UUID, system dir, or deny-listed). ` +
+          `Set AGENT_RECALL_PROJECT env var or pass project explicitly.`
+        );
+      }
+      // Existing dir — allow read but don't register into allowlist
+    }
+    return detected;
   }
+
+  // Explicit slug: validate before allowing new directory creation
+  if (!isValidProjectSlug(project)) {
+    const projectDir = path.join(getRoot(), "projects", project);
+    if (!fs.existsSync(projectDir)) {
+      throw new Error(
+        `Invalid project slug "${project}". Slugs must contain at least one letter ` +
+        `and cannot be UUIDs, end with .md, start with _, or be a reserved word ` +
+        `(${[...SLUG_DENY_LIST].join(", ")}).`
+      );
+    }
+    // Existing dir — allow resolution for backward compat but skip allowlist registration
+    return project;
+  }
+
   try {
     const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
     addCwdToAllowlist(project, process.cwd());

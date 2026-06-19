@@ -27,7 +27,7 @@ export function register(server: McpServer): void {
         .describe("Project slug. Defaults to auto-detect."),
     },
   }, async ({ content, section, palace_room, project }) => {
-    const result = await journalWrite({ content, section, palace_room, project });
+    const result = await journalWrite({ content, section, palace_room, project, saveType: "arsave" });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   });
 }

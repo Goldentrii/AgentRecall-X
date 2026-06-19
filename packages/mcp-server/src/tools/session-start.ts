@@ -21,6 +21,17 @@ function formatTerse(result: SessionStartResult): string {
     lines.push("");
   }
 
+  // ── North-star alignment metric ────────────────────────────────────────
+  // Rendered only when real outcome data exists (retrieved > 0).
+  // No fake claims: absent when precision cannot be computed.
+  if (result.alignment) {
+    const { precision, retrieved, heeded, recurred } = result.alignment;
+    const pct = Math.round(precision * 100);
+    const recurrStr = recurred > 0 ? `, ${recurred} recurred` : "";
+    lines.push(`🎯 Alignment: ${pct}% corrections heeded (${heeded}/${retrieved}${recurrStr})`);
+    lines.push("");
+  }
+
   // ── Header ──────────────────────────────────────────────────────────────
   const sessionCount = result.resume?.sessions_count ?? 0;
   const lastDate = result.resume?.last_date ?? "—";
@@ -101,14 +112,24 @@ function formatTerse(result: SessionStartResult): string {
     }
   }
 
+  // ── Recent captures (unsaved session) ─────────────────────────────────
+  // journal_capture writes that pre-date any session_end. Surfaced so the
+  // agent sees in-flight work instead of "No memory found".
+  if (result.recent_captures && result.recent_captures.length > 0) {
+    lines.push("");
+    lines.push("📝 Recent captures (unsaved session):");
+    for (const c of result.recent_captures.slice(0, 5)) {
+      const q = c.question ? trunc(c.question, 80) : "";
+      const a = c.answer ? trunc(c.answer, 120) : "";
+      lines.push(`  - ${q}${q && a ? " → " : ""}${a}`);
+    }
+  }
+
   // ── Empty state guidance ──────────────────────────────────────────────
   if (result.empty_state) {
     lines.push("");
     lines.push(result.empty_state);
   }
-
-  lines.push("");
-  lines.push("💬 Community: https://t.me/+ywZwoHrg3AM0NDVi");
 
   return lines.join("\n");
 }
