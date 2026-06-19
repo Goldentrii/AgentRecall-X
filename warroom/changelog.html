@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,103 +7,78 @@
 <link rel="stylesheet" href="static/fonts.css">
 <style>
   :root{
-    --bg:#FAF7F0; --surface:#F1ECDD; --surface-2:#E8E1CC; --ink:#2B2520;
-    --ink-soft:#5A4E3F; --ink-faint:#8C7F6B; --rule:#DCD1B5; --rule-soft:#E6DFC8;
-    --accent:#8A6A3F; --accent-soft:#C9A56C; --accent-dim:rgba(138,106,63,.10);
-    --ok:#4F7A48; --warn:#BD7C2D; --bad:#B7472A;
-    --ok-dim:rgba(79,122,72,.12); --warn-dim:rgba(189,124,45,.12); --bad-dim:rgba(183,71,42,.10);
-    --canvas:#1A1814; --canvas-ink:#E8E0D0; --canvas-line:#3A332B;
+    --bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;
+    --ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;
+    --accent-dim:rgba(138,106,63,.10);--canvas:#1A1814;--canvas-ink:#E8E0D0;--canvas-line:#3A332B;
     --shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.06);
     --shadow-lift:0 4px 12px rgba(43,37,32,.10),0 20px 48px rgba(43,37,32,.14);
   }
-  @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#15120E; --surface:#1E1A14; --surface-2:#28231B; --ink:#ECE3D2;
-      --ink-soft:#BBAE97; --ink-faint:#897C68; --rule:#322B21; --rule-soft:#261F18;
-      --accent:#C9A56C; --accent-soft:#E0C088; --accent-dim:rgba(201,165,108,.12);
-      --ok:#6FA565; --warn:#D9A23F; --bad:#D9684A;
-      --ok-dim:rgba(111,165,101,.14); --warn-dim:rgba(217,162,63,.14); --bad-dim:rgba(217,104,74,.12);
-      --canvas:#100E0B; --canvas-ink:#E8E0D0; --canvas-line:#2E2820;
-      --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
-      --shadow-lift:0 4px 12px rgba(0,0,0,.4),0 20px 48px rgba(0,0,0,.5);
-    }
-  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;
+    --ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;
+    --accent-dim:rgba(201,165,108,.12);--canvas:#100E0B;--canvas-ink:#E8E0D0;--canvas-line:#2E2820;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+    --shadow-lift:0 4px 12px rgba(0,0,0,.4),0 20px 48px rgba(0,0,0,.5);
+  }}
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-  body{
-    background:var(--bg); color:var(--ink);
-    font-family:'Nunito','Segoe UI',system-ui,sans-serif; font-size:15px; line-height:1.6;
-    -webkit-font-smoothing:antialiased; padding:48px 20px 80px;
-  }
-  .wrap{max-width:860px;margin:0 auto;}
-  .display{font-family:'Baloo 2','Nunito',sans-serif;font-weight:700;}
+  body{background:var(--bg);color:var(--ink);font-family:'Nunito','Segoe UI',system-ui,sans-serif;
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;padding:40px 20px 80px;}
+  .wrap{max-width:880px;margin:0 auto;}
+  h1,h2,h3,.display{font-family:'Baloo 2','Nunito',sans-serif;font-weight:700;}
   .mono{font-family:'JetBrains Mono',ui-monospace,monospace;}
+  code{font-family:'JetBrains Mono';font-size:.85em;background:var(--surface-2);color:var(--accent);padding:1px 5px;border-radius:5px;}
 
-  /* header */
-  .top{display:flex;align-items:center;gap:14px;margin-bottom:6px;}
+  /* language toggle */
+  html[data-lang="en"] .zh{display:none;}
+  html[data-lang="zh"] .en{display:none;}
+  .topbar{display:flex;align-items:center;gap:14px;margin-bottom:6px;}
   .logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(140deg,var(--accent-soft),var(--accent));
     display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Baloo 2';font-weight:800;font-size:24px;
     box-shadow:var(--shadow);flex-shrink:0;}
   h1.title{font-family:'Baloo 2';font-size:30px;color:var(--ink);line-height:1;}
-  .sub{font-size:14px;color:var(--ink-faint);margin:2px 0 0;}
-  .lede{font-size:14px;color:var(--ink-soft);max-width:620px;margin:18px 0 34px;line-height:1.6;}
+  .sub{font-size:13px;color:var(--ink-faint);margin-top:2px;}
+  .lang{margin-left:auto;display:flex;border:1px solid var(--rule);border-radius:999px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow);}
+  .lang button{font-family:'Nunito';font-weight:800;font-size:12.5px;color:var(--ink-faint);padding:7px 15px;background:none;border:none;cursor:pointer;transition:all .15s;}
+  .lang button.active{background:var(--accent);color:#fff;}
+  .lede{font-size:14px;color:var(--ink-soft);max-width:640px;margin:18px 0 32px;}
 
-  /* hero / major release */
-  .hero{position:relative;border:1px solid var(--rule);border-radius:20px;overflow:hidden;
-    background:var(--surface);box-shadow:var(--shadow-lift);margin-bottom:40px;}
-  .hero::before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;
-    background:linear-gradient(180deg,var(--accent-soft),var(--accent));}
+  /* hero */
+  .hero{position:relative;border:1px solid var(--rule);border-radius:20px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow-lift);margin-bottom:40px;}
+  .hero::before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:linear-gradient(180deg,var(--accent-soft),var(--accent));}
   .hero-head{padding:26px 30px 20px 34px;border-bottom:1px solid var(--rule-soft);}
   .tagrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
-  .vbadge{font-family:'Baloo 2';font-weight:800;font-size:15px;color:#fff;
-    background:linear-gradient(140deg,var(--accent-soft),var(--accent));
-    padding:5px 14px;border-radius:999px;letter-spacing:.01em;box-shadow:var(--shadow);}
-  .major{font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
-    color:var(--accent);background:var(--accent-dim);padding:5px 11px;border-radius:999px;}
+  .vbadge{font-family:'Baloo 2';font-weight:800;font-size:15px;color:#fff;background:linear-gradient(140deg,var(--accent-soft),var(--accent));padding:5px 14px;border-radius:999px;box-shadow:var(--shadow);}
+  .vbadge.sm{font-size:13px;padding:3px 11px;}
+  .major{font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);background:var(--accent-dim);padding:5px 11px;border-radius:999px;}
   .date{font-size:12px;color:var(--ink-faint);font-weight:700;margin-left:auto;}
-  .mono.date{font-family:'JetBrains Mono';}
-  h2.hero-title{font-family:'Baloo 2';font-size:27px;color:var(--ink);line-height:1.12;margin-bottom:8px;}
-  .hero-lede-en{font-size:15px;color:var(--ink-soft);line-height:1.6;}
-  .hero-lede-zh{font-size:13.5px;color:var(--ink-faint);line-height:1.7;margin-top:6px;}
-
-  /* change cards */
+  h2.hero-title{font-family:'Baloo 2';font-size:26px;color:var(--ink);line-height:1.12;margin-bottom:8px;}
+  .hero-lede{font-size:15px;color:var(--ink-soft);line-height:1.6;}
   .grid{padding:22px 30px 8px 34px;display:grid;grid-template-columns:1fr 1fr;gap:14px;}
   @media (max-width:680px){.grid{grid-template-columns:1fr;padding:20px 20px 6px 24px;}}
   .card{background:var(--bg);border:1px solid var(--rule-soft);border-radius:14px;padding:15px 16px;}
   .card.flag{border-color:var(--accent);background:var(--accent-dim);}
   .card .ic{font-size:19px;line-height:1;margin-bottom:8px;display:block;}
-  .card h3{font-family:'Baloo 2';font-size:15px;color:var(--ink);margin-bottom:5px;font-weight:700;}
+  .card h3{font-family:'Baloo 2';font-size:15px;color:var(--ink);margin-bottom:5px;}
   .card p{font-size:13px;color:var(--ink-soft);line-height:1.55;}
-  .card .why{font-size:12px;color:var(--ink-faint);margin-top:7px;line-height:1.5;}
-  .card .zh{font-size:12px;color:var(--ink-faint);margin-top:7px;line-height:1.6;border-top:1px dashed var(--rule);padding-top:7px;}
-  .card .why b,.card p b{color:var(--accent);font-weight:700;}
-  code{font-family:'JetBrains Mono';font-size:.86em;background:var(--surface-2);color:var(--accent);
-    padding:1px 5px;border-radius:5px;}
+  .card .why{font-size:12px;color:var(--ink-faint);margin-top:7px;}
+  .card .why b,.card p b{color:var(--accent);}
+  .verify{margin:6px 30px 24px 34px;padding:14px 16px;background:var(--canvas);border-radius:13px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;}
+  .verify .vlabel{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-soft);}
+  .pill{font-family:'JetBrains Mono';font-size:11px;color:#8FCF82;background:rgba(143,207,130,.08);border:1px solid rgba(143,207,130,.28);border-radius:7px;padding:3px 9px;}
+  .shipped{margin:0 30px 26px 34px;font-size:12.5px;color:var(--ink-soft);line-height:1.6;background:var(--accent-dim);border:1px solid rgba(138,106,63,.25);border-radius:11px;padding:12px 15px;}
+  .shipped b{color:var(--accent);}
 
-  /* verification strip */
-  .verify{margin:6px 30px 26px 34px;padding:14px 16px;background:var(--canvas);border-radius:13px;
-    display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;}
-  .verify .vlabel{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-soft);margin-right:4px;}
-  .pill{font-family:'JetBrains Mono';font-size:11.5px;color:var(--canvas-ink);background:rgba(255,255,255,.06);
-    border:1px solid var(--canvas-line);border-radius:7px;padding:3px 9px;}
-  .pill.ok{color:#8FCF82;border-color:rgba(143,207,130,.3);}
+  /* prior releases */
+  .sech{font-family:'Baloo 2';font-size:13px;font-weight:800;letter-spacing:.04em;color:var(--ink-faint);text-transform:uppercase;margin:8px 0 18px;}
+  .rel-card{border:1px solid var(--rule);border-radius:16px;background:var(--surface);box-shadow:var(--shadow);padding:20px 24px;margin-bottom:18px;}
+  .rel-head{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-bottom:10px;}
+  .rel-title{font-family:'Baloo 2';font-size:18px;color:var(--ink);line-height:1.15;}
+  .rel-sum{font-size:13.5px;color:var(--ink-soft);line-height:1.6;margin-bottom:12px;padding-bottom:12px;border-bottom:1px dashed var(--rule);}
+  ul.pts{list-style:none;display:flex;flex-direction:column;gap:9px;}
+  ul.pts li{position:relative;padding-left:20px;font-size:13px;color:var(--ink-soft);line-height:1.55;}
+  ul.pts li::before{content:'';position:absolute;left:4px;top:8px;width:6px;height:6px;border-radius:50%;background:var(--accent-soft);}
 
-  .held{margin:0 30px 26px 34px;font-size:12.5px;color:var(--ink-faint);line-height:1.6;
-    background:var(--warn-dim);border:1px solid rgba(189,124,45,.25);border-radius:11px;padding:12px 15px;}
-  .held b{color:var(--warn);}
-
-  /* timeline */
-  .sech{font-family:'Baloo 2';font-size:13px;font-weight:800;letter-spacing:.04em;color:var(--ink-faint);
-    text-transform:uppercase;margin:6px 0 16px;}
-  .tl{border-left:2px solid var(--rule);margin-left:8px;padding-left:22px;}
-  .rel{position:relative;margin-bottom:18px;}
-  .rel::before{content:'';position:absolute;left:-29px;top:5px;width:11px;height:11px;border-radius:50%;
-    background:var(--surface);border:2px solid var(--accent-soft);}
-  .rel .rv{font-family:'JetBrains Mono';font-weight:700;font-size:13px;color:var(--accent);}
-  .rel .rd{font-size:11px;color:var(--ink-faint);margin-left:8px;}
-  .rel .rt{font-size:13.5px;color:var(--ink-soft);margin-top:2px;}
-
-  footer{margin-top:46px;padding-top:22px;border-top:1px solid var(--rule);
-    font-size:12.5px;color:var(--ink-faint);text-align:center;line-height:1.7;}
+  footer{margin-top:40px;padding-top:22px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink-faint);text-align:center;line-height:1.7;}
   footer a{color:var(--accent);font-weight:700;text-decoration:none;}
   footer a:hover{text-decoration:underline;}
 </style>
@@ -111,138 +86,222 @@
 <body>
 <div class="wrap">
 
-  <div class="top">
+  <div class="topbar">
     <div class="logo">A</div>
     <div>
       <h1 class="title">AgentRecall · Changelog</h1>
-      <p class="sub">Release history &amp; what changed · 版本历史与更新内容</p>
+      <div class="sub"><span class="en ">Release history &amp; what changed</span><span class="zh ">版本历史与更新内容</span></div>
+    </div>
+    <div class="lang" id="lang">
+      <button data-set="en" class="active">EN</button>
+      <button data-set="zh">中文</button>
     </div>
   </div>
-  <p class="lede">Correction-first persistent memory for AI agents. Every release is reviewed before it ships. Below: the current major release in full, then the trail behind it.</p>
+  <p class="lede"><span class="en ">Correction-first persistent memory for AI agents. Every release is reviewed before it ships. The current major release in full, then the complete trail behind it.</span><span class="zh ">面向 AI agent 的纠正优先持久记忆系统。每个版本发布前都经过评审。下面是当前主版本的完整内容，以及此前每个版本的完整记录。</span></p>
 
-  <!-- ===================== MAJOR: v3.4.30 ===================== -->
+  <!-- MAJOR: v3.4.30 -->
   <section class="hero">
     <div class="hero-head">
       <div class="tagrow">
         <span class="vbadge">v3.4.30</span>
-        <span class="major">★ Major release</span>
+        <span class="major"><span class="en ">★ Major release</span><span class="zh ">★ 重大版本</span></span>
         <span class="date mono">2026-06-19</span>
       </div>
-      <h2 class="hero-title">Onboarding &amp; Distribution</h2>
-      <p class="hero-lede-en">The biggest non-code release yet — a ground-up rework of how people <b>discover, install, and run</b> AgentRecall, for humans and agents alike. Plus a real security fix folded in from the community.</p>
-      <p class="hero-lede-zh">迄今最大的"非代码"版本 —— 从头重做了人与 agent <b>发现、安装、运行</b> AgentRecall 的整条路径，并合入了一个来自社区的真实安全修复。</p>
+      <h2 class="hero-title"><span class="en ">Onboarding &amp; Distribution</span><span class="zh ">上手与分发</span></h2>
+      <p class="hero-lede"><span class="en ">The biggest non-code release yet — a ground-up rework of how people <b>discover, install, and run</b> AgentRecall, for humans and agents alike. Plus a real security fix folded in from the community.</span><span class="zh ">迄今最大的"非代码"版本 —— 从头重做了人与 agent <b>发现、安装、运行</b> AgentRecall 的整条路径，并合入了一个来自社区的真实安全修复。</span></p>
     </div>
-
     <div class="grid">
-
       <div class="card">
         <span class="ic">📖</span>
-        <h3>README, rewritten</h3>
-        <p>Root README cut <b>579 → 198 lines</b> — a scannable English landing page. The full reference is preserved verbatim as <code>README.full.md</code>.</p>
-        <p class="why">Why: a landing page should convert in 30 seconds; the deep dive stays one click away.</p>
-        <p class="zh">中文：README 从 579 行精简到 198 行，做成可快速浏览的落地页；完整版原样保留为 <code>README.full.md</code>。</p>
+        <h3><span class="en ">README, rewritten</span><span class="zh ">README 重写</span></h3>
+        <p><span class="en ">Root README cut <code>579 → 198 lines</code> — a scannable English landing page. The full reference is preserved verbatim as <code>README.full.md</code>.</span><span class="zh ">README 从 <code>579 → 198 行</code>，做成可快速浏览的英文落地页；完整版原样保留为 <code>README.full.md</code>。</span></p>
+        <p class="why"><span class="en ">Why: a landing page should convert in 30 seconds; the deep dive stays one click away.</span><span class="zh ">为什么：落地页要在 30 秒内打动人，深入内容留在一键之外。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">🌐</span>
-        <h3>Bilingual docs</h3>
-        <p>New <code>README.zh-CN.md</code> mirror with a one-click <b>English · 中文</b> switch at the top of each file.</p>
-        <p class="why">Why: first-class Chinese onboarding, not an afterthought.</p>
-        <p class="zh">中文：新增 <code>README.zh-CN.md</code> 镜像，顶部一键切换中英文。</p>
+        <h3><span class="en ">Bilingual docs</span><span class="zh ">双语文档</span></h3>
+        <p><span class="en ">New <code>README.zh-CN.md</code> mirror with a one-click <code>English · 中文</code> switch at the top of each file.</span><span class="zh ">新增 <code>README.zh-CN.md</code> 镜像，每个文件顶部一键切换 <code>English · 中文</code>。</span></p>
+        <p class="why"><span class="en ">Why: first-class Chinese onboarding, not an afterthought.</span><span class="zh ">为什么：让中文上手成为一等公民，而非事后补丁。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">🖥️</span>
-        <h3>War Room in the repo — fully offline</h3>
-        <p>The multi-page dashboard now lives at <code>warroom/</code>. ECharts, Cytoscape, 3 fonts and 8 brand icons are <b>vendored</b> — zero external requests.</p>
-        <p class="why">Why: download → unzip → <code>python3 -m http.server</code> → open. No Node, no internet.</p>
-        <p class="zh">中文：仪表盘进仓库 <code>warroom/</code>，图表库/字体/图标全部本地化，完全离线可跑。</p>
+        <h3><span class="en ">War Room in the repo — fully offline</span><span class="zh ">War Room 进仓库 — 完全离线</span></h3>
+        <p><span class="en ">The multi-page dashboard now lives at <code>warroom/</code>. ECharts, Cytoscape, 3 fonts and 8 brand icons are vendored — zero external requests.</span><span class="zh ">多页仪表盘进入仓库 <code>warroom/</code>；ECharts、Cytoscape、3 款字体和 8 个品牌图标全部本地化 —— 零外部请求。</span></p>
+        <p class="why"><span class="en ">Why: download → unzip → <code>python3 -m http.server</code> → open. No Node, no internet.</span><span class="zh ">为什么：下载 → 解压 → <code>python3 -m http.server</code> → 打开。无需 Node，无需联网。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">📦</span>
-        <h3>Release pipeline</h3>
-        <p><code>release.yml</code> zips <code>warroom/</code> on every <code>v*</code> tag and attaches <code>ar-warroom-vX.Y.Z.zip</code> to a GitHub Release (tag via env var, actions SHA-pinned).</p>
-        <p class="why">Why: a versioned, downloadable dashboard for every release — the recommended path for Hermes / OpenClaw / OpenCode.</p>
-        <p class="zh">中文：打 <code>v*</code> tag 自动打包仪表盘为 zip 并挂到 Release，给每个版本一个可下载的离线面板。</p>
+        <h3><span class="en ">Release pipeline</span><span class="zh ">发布流水线</span></h3>
+        <p><span class="en "><code>release.yml</code> zips <code>warroom/</code> on every <code>v*</code> tag and attaches <code>ar-warroom-vX.Y.Z.zip</code> to a GitHub Release (tag via env var, actions SHA-pinned).</span><span class="zh "><code>release.yml</code> 在每个 <code>v*</code> tag 上打包 <code>warroom/</code>，把 <code>ar-warroom-vX.Y.Z.zip</code> 挂到 GitHub Release（tag 经环境变量传入，actions 锁定 SHA）。</span></p>
+        <p class="why"><span class="en ">Why: a versioned, downloadable dashboard for every release — recommended for Hermes / OpenClaw / OpenCode.</span><span class="zh ">为什么：每个版本都有可下载的离线面板 —— 推荐给 Hermes / OpenClaw / OpenCode 用户。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">🧹</span>
-        <h3>Repo tidy</h3>
-        <p>7 internal / QA folders (agent-prompts, eval, integrations, tests, wiki, workspace, scripts) consolidated under <code>meta/</code>.</p>
-        <p class="why">Why: the GitHub root now shows only meaningful folders — <code>.github · benchmark · commands · docs · packages · warroom · meta</code>.</p>
-        <p class="zh">中文：7 个内部/QA 目录收进 <code>meta/</code>，仓库根目录只剩有意义的文件夹。</p>
+        <h3><span class="en ">Repo tidy</span><span class="zh ">仓库整理</span></h3>
+        <p><span class="en ">7 internal / QA folders (agent-prompts, eval, integrations, tests, wiki, workspace, scripts) consolidated under <code>meta/</code>.</span><span class="zh ">7 个内部 / QA 目录（agent-prompts、eval、integrations、tests、wiki、workspace、scripts）收进 <code>meta/</code>。</span></p>
+        <p class="why"><span class="en ">Why: the GitHub root now shows only meaningful folders — <code>.github · benchmark · commands · docs · packages · warroom · meta</code>.</span><span class="zh ">为什么：GitHub 根目录现在只剩有意义的文件夹 —— <code>.github · benchmark · commands · docs · packages · warroom · meta</code>。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">🔢</span>
-        <h3>Version sync</h3>
-        <p><b>3.4.27 → 3.4.30</b> everywhere: all 4 packages + internal deps + <code>types.ts</code> VERSION + SKILL.md + benchmark + codex-compat.</p>
-        <p class="why">Why: one consistent version, no drift between manifest, code, and docs.</p>
-        <p class="zh">中文：版本号在所有包、依赖、源码常量、SKILL、benchmark 中统一为 3.4.30。</p>
+        <h3><span class="en ">Version sync</span><span class="zh ">版本统一</span></h3>
+        <p><span class="en "><code>3.4.27 → 3.4.30</code> everywhere: all 4 packages + internal deps + <code>types.ts</code> VERSION + SKILL.md + benchmark + codex-compat.</span><span class="zh "><code>3.4.27 → 3.4.30</code> 全量统一：4 个包 + 内部依赖 + <code>types.ts</code> VERSION + SKILL.md + benchmark + codex-compat。</span></p>
+        <p class="why"><span class="en ">Why: one consistent version, no drift between manifest, code, and docs.</span><span class="zh ">为什么：版本号在清单、代码、文档之间不再漂移。</span></p>
       </div>
-
       <div class="card flag">
         <span class="ic">🔐</span>
-        <h3>Security fix — community PR #18</h3>
-        <p>Removed a <b>hardcoded Supabase URL + anon key</b> shipped as a default fallback in <code>awareness.ts</code>. It now gates on <code>readSupabaseConfig()</code> and returns nothing when unconfigured.</p>
-        <p class="why">Why: unconfigured users were silently reading from a baked-in backend. Thanks to <b>@leirt97</b>.</p>
-        <p class="zh">中文：删除 <code>awareness.ts</code> 里写死的 Supabase 地址与 anon key —— 未配置的用户不再悄悄连到内置后端。</p>
+        <h3><span class="en ">Security fix — community PR #18</span><span class="zh ">安全修复 — 社区 PR #18</span></h3>
+        <p><span class="en ">Removed a hardcoded Supabase URL + anon key shipped as a default fallback in <code>awareness.ts</code>. It now gates on <code>readSupabaseConfig()</code> and returns nothing when unconfigured.</span><span class="zh ">删除 <code>awareness.ts</code> 中作为默认回退写死的 Supabase 地址与 anon key，改为先经 <code>readSupabaseConfig()</code> 判断，未配置时不返回任何内容。</span></p>
+        <p class="why"><span class="en ">Why: unconfigured users were silently reading from a baked-in backend. Thanks to @leirt97.</span><span class="zh ">为什么：未配置的用户此前会悄悄连到内置后端。感谢 @leirt97。</span></p>
       </div>
-
       <div class="card">
         <span class="ic">✅</span>
-        <h3>Reviewed before shipping</h3>
-        <p>A <b>5-agent round table</b> reviewed the diff and caught 7 defects — including a <b>shell-injection</b> in the release workflow — all fixed before push.</p>
-        <p class="why">Why: green CI ≠ correct. Independent review catches what self-verification misses.</p>
-        <p class="zh">中文：5 个 agent 圆桌评审，发现并修复 7 个问题（含 release 工作流的 shell 注入）后才推送。</p>
+        <h3><span class="en ">Reviewed before shipping</span><span class="zh ">发布前评审</span></h3>
+        <p><span class="en ">A 5-agent round table reviewed the diff and caught 7 defects — including a shell-injection in the release workflow — all fixed before push.</span><span class="zh ">5 个 agent 组成圆桌评审 diff，发现 7 个缺陷 —— 包括发布工作流里的 shell 注入 —— 全部在推送前修复。</span></p>
+        <p class="why"><span class="en ">Why: green CI ≠ correct. Independent review catches what self-verification misses.</span><span class="zh ">为什么：CI 全绿 ≠ 正确。独立评审能抓到自检漏掉的问题。</span></p>
       </div>
-
     </div>
-
     <div class="verify">
-      <span class="vlabel">Verified</span>
-      <span class="pill ok">build · 0 errors</span>
-      <span class="pill ok">consistency 10/10</span>
-      <span class="pill ok">funnel 18/18</span>
-      <span class="pill ok">heeded-guard 5/5</span>
-      <span class="pill ok">room-slug-guards 9/9</span>
-      <span class="pill ok">offline · 0 CDN refs</span>
+      <span class="vlabel"><span class="en ">Verified</span><span class="zh ">已验证</span></span>
+      <span class="pill">build · 0 errors</span>
+      <span class="pill">consistency 10/10</span>
+      <span class="pill">funnel 18/18</span>
+      <span class="pill">heeded-guard 5/5</span>
+      <span class="pill">room-slug-guards 9/9</span>
+      <span class="pill">offline · 0 CDN</span>
     </div>
-
-    <div class="held">
-      <b>Governance:</b> this release is staged on a pushed branch + PR. The irreversibles — <code>npm publish</code> ×4, the <code>v3.4.30</code> tag, and the merge to <code>main</code> — are run by a human after review. Until the tag is pushed, the README's <i>releases/latest</i> download link points to an earlier release.
-    </div>
+    <div class="shipped"><span class="en "><b>Shipped 2026-06-19:</b> PR #29 merged to <code>main</code>; all 4 packages published to npm <b>@3.4.30</b>; tag <code>v3.4.30</code> pushed → GitHub Release is Latest with <code>ar-warroom-v3.4.30.zip</code> attached.</span><span class="zh "><b>2026-06-19 已发布：</b>PR #29 合并入 <code>main</code>；4 个包均以 <b>@3.4.30</b> 发布到 npm；推送 <code>v3.4.30</code> tag → GitHub Release 成为 Latest 并附带 <code>ar-warroom-v3.4.30.zip</code>。</span></div>
   </section>
 
-  <!-- ===================== TIMELINE ===================== -->
-  <div class="sech">Previous releases</div>
-  <div class="tl">
-    <div class="rel"><span class="rv">v3.4.27</span><span class="rd mono">2026-06-18</span>
-      <div class="rt">Reviewed naming + safety — slug validation, palace-room guards, new journal filename format; bundled the v3.4.26 safety patches.</div></div>
-    <div class="rel"><span class="rv">v3.4.26</span><span class="rd mono">2026-06-18</span>
-      <div class="rt">Post-review patch — 3 HIGH bugs caught by fresh-eyes review (session-count inflation, archive clobber, path injection in compress).</div></div>
-    <div class="rel"><span class="rv">v3.4.25</span><span class="rd mono">2026-06-18</span>
-      <div class="rt">Memory quality + trust integrity — incremental-write visibility regression guard (11/11).</div></div>
-    <div class="rel"><span class="rv">v3.4.24</span><span class="rd mono">2026-06-17</span>
-      <div class="rt">Orchestration docs + version bump.</div></div>
-    <div class="rel"><span class="rv">v3.4.23</span><span class="rd mono">2026-06-12</span>
-      <div class="rt">Patch release — published agent-recall-{core,mcp,sdk,cli}@3.4.23.</div></div>
-    <div class="rel"><span class="rv">v3.4.22 "Trust"</span><span class="rd mono">2026-06-11</span>
-      <div class="rt">Read/write consistency hardening across all stores.</div></div>
-    <div class="rel"><span class="rv">v3.4.21</span><span class="rd mono">2026-06-03</span>
-      <div class="rt">7-item real-usage feedback pass.</div></div>
-    <div class="rel"><span class="rv">v3.4.20</span><span class="rd mono">2026-06-01</span>
-      <div class="rt">Phase 6 foundation + arsaveall / bootstrap fixes; repo renamed to AgentRecall-MCP.</div></div>
-  </div>
+  <!-- PRIOR RELEASES (full) -->
+  <div class="sech"><span class="en ">Previous releases — in full</span><span class="zh ">此前版本 — 完整记录</span></div>
+  
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.27</span>
+      <h2 class="rel-title"><span class="en ">Reviewed naming + safety</span><span class="zh ">命名系统整理 + 安全加固（经 Orchestrator 评审通过）</span></h2>
+      <span class="date mono">2026-06-18</span>
+    </div>
+    <p class="rel-sum"><span class="en ">Bundles v3.4.26 safety patches with a comprehensive naming system cleanup, reviewed and approved (with one MEDIUM fix) by an Opus orchestrator. First release to follow the new governance model where the implementer stops at local commit and push/publish are human-only irreversibles.</span><span class="zh ">将 v3.4.26 安全补丁与命名系统全面清理打包发布，经 Opus Orchestrator 新鲜视角评审并 APPROVE（修复一个 MEDIUM 问题）。本次是首个严格遵循新治理模型的版本：实现者止步于本地提交，推送与发布由人工执行。</span></p>
+    <ul class="pts">
+      <li><span class="en ">Safety — session count fix: <code>journalDirs(includeArchive)</code> now defaults to <code>false</code>, preventing archived entries from inflating session counts; only recall paths access the archive.</span><span class="zh ">安全修复——会话计数：<code>journalDirs(includeArchive)</code> 默认改为 <code>false</code>，归档条目不再虚增会话数，只有 recall 路径会访问归档。</span></li>
+      <li><span class="en ">Safety — archive clobber fix in <code>compress.ts</code>: collision-proof naming via <code>Date.now()</code> suffix plus idempotency guard that skips entries already marked "consolidated", so running compress twice on the same day no longer overwrites the backup.</span><span class="zh ">安全修复——归档覆盖：<code>compress.ts</code> 对归档文件名追加 <code>Date.now()</code> 后缀，并跳过已标记为 "consolidated" 的条目，同日两次压缩不再覆盖备份，核心安全承诺得以恢复。</span></li>
+      <li><span class="en ">Safety — path injection: <code>sanitizeSlug()</code> + <code>assertInsideRoot()</code> added at the <code>compressTopic</code> entry point, blocking <code>../../evil</code> style room/topic paths from escaping the palace directory.</span><span class="zh ">安全修复——路径注入：在 <code>compressTopic</code> 入口处增加 <code>sanitizeSlug()</code> + <code>assertInsideRoot()</code>，阻止 <code>../../evil</code> 形式的 room/topic 路径逃逸 palace 目录。</span></li>
+      <li><span class="en ">Naming — slug gate: <code>isValidProjectSlug()</code> added to <code>resolveProject()</code> rejects UUIDs, <code>.md</code> suffixes, <code>_</code>/<code>.</code> prefixes, denylist words, and path traversal attempts; existing directories remain readable.</span><span class="zh ">命名——slug 门控：<code>resolveProject()</code> 中引入 <code>isValidProjectSlug()</code>，拒绝 UUID、<code>.md</code> 后缀、<code>_</code>/<code>.</code> 前缀、黑名单词及路径穿越；已有目录仍可正常读取。</span></li>
+      <li><span class="en ">Naming — journal filename format: all write paths (<code>journal_write</code> MCP, <code>ar write</code> CLI, <code>journal_capture</code>) now pass <code>saveType</code> to produce <code>{date}--{type}--{sig}--{theme}--{slug}.md</code> instead of the old <code>{date}.md</code>; old files remain readable.</span><span class="zh ">命名——日志文件名格式：所有写入路径（<code>journal_write</code> MCP、<code>ar write</code> CLI、<code>journal_capture</code>）现在均传入 <code>saveType</code>，生成 <code>{date}--{type}--{sig}--{theme}--{slug}.md</code> 格式文件名，替代旧版 <code>{date}.md</code>；旧文件仍可读。</span></li>
+      <li><span class="en ">Naming — new <code>scripts/clean-project-slugs.mjs</code> quarantine tool: dry-run by default, <code>--apply</code> quarantines invalid slugs to <code>_quarantine/</code>; idempotent. Reviewer MEDIUM fix also added dot-prefix check to <code>isValidProjectSlug</code> so <code>.DS_Store</code>/<code>.aam</code> are now rejected consistently.</span><span class="zh ">命名——新增 <code>scripts/clean-project-slugs.mjs</code> 清理工具：默认干跑，<code>--apply</code> 将无效 slug 隔离至 <code>_quarantine/</code>，操作幂等。同时修复 Reviewer 指出的 MEDIUM 问题：<code>isValidProjectSlug</code> 补充点前缀检查，<code>.DS_Store</code>/<code>.aam</code> 现可被一致拒绝。</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.26</span>
+      <h2 class="rel-title"><span class="en ">Post-review patch: compression safety + session count fixes</span><span class="zh ">事后审查补丁：压缩安全性与会话计数修复</span></h2>
+      <span class="date mono">2026-06-18</span>
+    </div>
+    <p class="rel-sum"><span class="en ">Three HIGH bugs caught by an independent orchestrator review of v3.4.25 — none caught by green test suites. The release fixes session count inflation, archive clobber on same-day re-runs, and an unsanitized path traversal vulnerability in <code>compress.ts</code>.</span><span class="zh ">通过独立 orchestrator 审查 v3.4.25 发现三个 HIGH 级 bug——均未被绿色测试套件捕获。本版本修复了会话计数虚高、同日重复运行覆盖归档备份，以及 <code>compress.ts</code> 中未做路径清洗的路径穿越漏洞。</span></p>
+    <ul class="pts">
+      <li><span class="en ">HIGH-1 — session count inflation: <code>journalDirs()</code> unconditionally included <code>archive/</code>, causing <code>listJournalFiles</code> to count archived entries as active sessions (e.g. 30 archived + 10 active = 40 displayed). Fixed by adding <code>journalDirs(project, includeArchive)</code> param, defaulting to <code>false</code> for counting paths and <code>true</code> only for recall, <code>readJournalFile</code>, <code>journalSearch</code>, and <code>contextSynthesize</code>.</span><span class="zh ">HIGH-1 — 会话计数虚高：<code>journalDirs()</code> 无条件包含 <code>archive/</code> 目录，导致 <code>listJournalFiles</code> 将已归档条目算作活跃会话（如 30 条归档 + 10 条活跃 = 显示 40）。修复方式：为 <code>journalDirs(project, includeArchive)</code> 新增参数，计数路径时默认 <code>false</code>，仅在 recall、<code>readJournalFile</code>、<code>journalSearch</code> 和 <code>contextSynthesize</code> 场景传 <code>true</code>。</span></li>
+      <li><span class="en ">HIGH-2 — archive clobber on same-day re-run: <code>compressTopic</code> used <code>${topic}-${today}.md</code> as the archive filename, so running it twice in one day silently overwrote the only backup of the originals. Fixed with collision-proof naming <code>${topic}-${today}-${Date.now()}.md</code>, a never-overwrite guard, and idempotency via <code>parseEntries</code> skipping entries already marked <code>(consolidated)</code>.</span><span class="zh ">HIGH-2 — 同日重复运行覆盖归档：<code>compressTopic</code> 使用 <code>${topic}-${today}.md</code> 命名归档文件，同一天执行两次会静默覆盖原始备份。修复方式：改用防碰撞命名 <code>${topic}-${today}-${Date.now()}.md</code>，加入禁止覆盖守卫，并通过 <code>parseEntries</code> 跳过已标记 <code>(consolidated)</code> 的条目实现幂等性。</span></li>
+      <li><span class="en ">HIGH-3 — unsanitized path traversal in <code>compress.ts</code>: raw <code>room</code>/<code>topic</code> values were passed directly to <code>path.join</code> without <code>sanitizeSlug()</code>, allowing inputs like <code>../../evil</code> to escape the palace directory. Fixed by calling <code>sanitizeSlug()</code> at entry point plus <code>assertInsideRoot</code> as defense-in-depth.</span><span class="zh ">HIGH-3 — <code>compress.ts</code> 路径穿越漏洞：<code>room</code>/<code>topic</code> 原始值未经 <code>sanitizeSlug()</code> 处理直接传入 <code>path.join</code>，形如 <code>../../evil</code> 的输入可逃逸 palace 目录。修复方式：入口处调用 <code>sanitizeSlug()</code>，并以 <code>assertInsideRoot</code> 作纵深防御。</span></li>
+      <li><span class="en ">MED — <code>_archive</code> traversal: <code>compressRoom</code> and <code>compressProject</code> could recurse into <code>_archive</code> subdirectories. Fixed by skipping any dirs or files whose names start with <code>_</code>.</span><span class="zh ">MED — <code>_archive</code> 目录遍历：<code>compressRoom</code> 和 <code>compressProject</code> 可能递归进入 <code>_archive</code> 子目录。修复方式：跳过所有名称以 <code>_</code> 开头的目录和文件。</span></li>
+      <li><span class="en ">Version hygiene sweep: <code>SKILL.md</code> updated from 3.4.22 → 3.4.26 (was three releases stale), <code>replay-benchmark.mjs</code> version stamp bumped to 3.4.26, and all four packages plus the <code>VERSION</code> constant aligned to 3.4.26.</span><span class="zh ">版本整理：<code>SKILL.md</code> 从 3.4.22 更新至 3.4.26（落后三个版本），<code>replay-benchmark.mjs</code> 版本戳更新为 3.4.26，全部四个包及 <code>VERSION</code> 常量统一至 3.4.26。</span></li>
+      <li><span class="en ">Process change: the implementer no longer runs <code>git push</code> or <code>npm publish</code>; the workflow stops at 'committed + logged, awaiting review.' All irreversible commands are reserved for the human after orchestrator sign-off. (Commit <code>4901ba6</code> on <code>fix/v3.4.26-compression-safety</code> — not pushed, not published at release time.)</span><span class="zh ">流程变更：实现者不再执行 <code>git push</code> 或 <code>npm publish</code>，工作流止步于「已提交 + 已记录，等待审查」。所有不可逆命令均由人类在 orchestrator 确认后执行。（提交 <code>4901ba6</code>，分支 <code>fix/v3.4.26-compression-safety</code>——发布时未推送、未发布。）</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.25</span>
+      <h2 class="rel-title"><span class="en ">Memory quality + trust integrity</span><span class="zh ">记忆质量与信任完整性</span></h2>
+      <span class="date mono">2026-06-18</span>
+    </div>
+    <p class="rel-sum"><span class="en ">v3.4.25 delivers two trust-integrity fixes (one P0 confirmed-not-broken with a regression guard, one P0 confirmed-and-fixed), a 4-metric replay benchmark that gates all quality work, and two memory-quality features: keystone importance signals and dream-cycle deduplication compression. 919 lines added, 43 new benchmark assertions, 9 suites all green.</span><span class="zh ">v3.4.25 包含两项信任完整性修复（一项 P0 确认未损坏并提交回归测试，一项 P0 确认存在并已修复）、一套作为所有质量工作门控的 4 指标回放基准，以及两项记忆质量特性：keystone 重要性信号与梦境周期去重压缩。共新增 919 行代码、43 条基准断言，9 个测试套件全部通过。</span></p>
+    <ul class="pts">
+      <li><span class="en ">P0-2 archive reachability fixed: <code>journalDirs()</code> in <code>packages/core/src/storage/paths.ts</code> was returning only the top-level <code>journal/</code> directory, silently dropping all rollup-archived entries from <code>smartRecall</code> and backlink resolution. A 3-line fix adds <code>journal/archive/</code> when it exists, restoring coverage across all downstream readers — score improved from 6/10 to 10/10.</span><span class="zh ">P0-2 归档可达性已修复：<code>packages/core/src/storage/paths.ts</code> 中的 <code>journalDirs()</code> 此前只返回顶层 <code>journal/</code> 目录，导致所有经 rollup 归档的条目在 <code>smartRecall</code> 和反向链接解析中静默消失。三行修复在目录存在时将 <code>journal/archive/</code> 纳入返回值，所有下游读取器自动受益——测试得分从 6/10 恢复至 10/10。</span></li>
+      <li><span class="en ">P0-1 incremental-write visibility investigated and confirmed NOT broken in v3.4.24: all 4 write routes (<code>palace_write</code>, <code>journal_capture</code>, <code>knowledge_write</code>, <code>awareness_update</code>) correctly surface to <code>session_start</code>. The one apparent failure was a test artifact — the quality gate rejecting awareness insights with a title shorter than 3 words. Committed as 11-assertion regression guard in <code>benchmark/p0-1-incremental-visibility.mjs</code>.</span><span class="zh ">P0-1 增量写入可见性经调查确认在 v3.4.24 中并未损坏：四条写入路径（<code>palace_write</code>、<code>journal_capture</code>、<code>knowledge_write</code>、<code>awareness_update</code>）均能在 <code>session_start</code> 时正确呈现。唯一的表面失败是测试构造问题——质量门控拒绝了标题不足 3 个词的 awareness insight。已以 11 条断言的回归测试形式提交至 <code>benchmark/p0-1-incremental-visibility.mjs</code>。</span></li>
+      <li><span class="en ">Section 5 replay benchmark introduced: <code>benchmark/replay-benchmark.mjs</code> replays 3 synthetic sessions (architecture decisions, a correction, and noise) then runs measurement queries at session 4, producing a 4-metric scorecard (recall, precision, staleness, correction-correctness). Baseline: 100%/33%/100%/100%. Precision at 33% quantifies the compression target; the benchmark gates all P1 work going forward.</span><span class="zh ">新增第 5 节回放基准：<code>benchmark/replay-benchmark.mjs</code> 回放 3 个合成会话（架构决策、纠错、噪声），然后在第 4 个会话执行测量查询，产出 4 指标评分卡（召回率、精确率、过时率、纠错正确率）。基线为 100%/33%/100%/100%。精确率 33% 量化了压缩目标；该基准作为后续所有 P1 工作的门控条件。</span></li>
+      <li><span class="en ">P1-2 keystone importance signal: memories referenced from pipeline milestone 'How solved' or 'Synthesis' sections are marked <code>keystone: true</code> in <code>RoomMeta</code>, their importance is forced to 'high', and a salience floor of 0.30 is applied — well above the archive threshold of 0.15 — independent of access count or edge count. Addresses the rich-get-richer failure where rare but critical architecture decisions sank below frequently-touched trivia because frequency signals held 45% salience weight vs. 10% for self-reported importance. New files: <code>packages/core/src/palace/keystone.ts</code>, salience changes in <code>palace/salience.ts</code>.</span><span class="zh ">P1-2 keystone 重要性信号：凡是在 pipeline 里程碑 'How solved' 或 'Synthesis' 章节中被引用的记忆，其 <code>RoomMeta.keystone</code> 被标记为 <code>true</code>，重要性强制置为 'high'，显著度下限设为 0.30（远高于归档阈值 0.15），不受访问次数或边数影响。此举解决了富者愈富问题——原先频率信号占显著度权重的 45%，自报重要性仅占 10%，导致罕见但关键的架构决策显著度低于频繁访问的琐碎条目。新增文件：<code>packages/core/src/palace/keystone.ts</code>，并修改了 <code>palace/salience.ts</code>。</span></li>
+      <li><span class="en ">P1-1 dream-cycle compression: <code>packages/core/src/palace/compress.ts</code> (230 lines) clusters near-duplicate palace entries by keyword overlap &gt;= 0.6, collapses them to a canonical entry that unions all source backlinks, and archives originals to <code>rooms/&lt;room&gt;/_archive/</code> — raw memories are never destroyed. Exposes <code>compressTopic</code>, <code>compressRoom</code>, and <code>compressProject</code> with dry-run support. Reduces spurious attractor formation in the Hopfield retrieval layer by lowering stored-memory count without sacrificing recall.</span><span class="zh ">P1-1 梦境周期压缩：<code>packages/core/src/palace/compress.ts</code>（230 行）按关键词重叠度 &gt;= 0.6 对近重复的 palace 条目进行聚类，合并为合并所有来源反向链接的规范条目，原始条目归档至 <code>rooms/&lt;room&gt;/_archive/</code>（原始记忆永不销毁）。对外暴露 <code>compressTopic</code>、<code>compressRoom</code>、<code>compressProject</code>，均支持 dry-run 模式。通过降低存储条目数减少 Hopfield 检索层中的伪吸引子，同时不损失召回率。</span></li>
+      <li><span class="en ">Zero-break migration: <code>RoomMeta.keystone</code> is optional (defaults to undefined/falsy for existing rooms); <code>KEYSTONE_FLOOR</code> is exported from <code>palace/salience.ts</code>; <code>compressTopic/compressRoom/compressProject</code> are additive exports; <code>journalDirs()</code> returning <code>archive/</code> is backward-compatible because all readers already handle multiple directories.</span><span class="zh ">零破坏性迁移：<code>RoomMeta.keystone</code> 为可选字段（现有 room 默认为 undefined/falsy）；<code>KEYSTONE_FLOOR</code> 从 <code>palace/salience.ts</code> 导出；<code>compressTopic/compressRoom/compressProject</code> 均为增量导出；<code>journalDirs()</code> 返回 <code>archive/</code> 向后兼容，因为所有读取器本已支持多目录遍历。</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.23</span>
+      <h2 class="rel-title"><span class="en ">Memory as Environment — V4 full execution</span><span class="zh ">Memory as Environment — V4 全量落地</span></h2>
+      <span class="date mono">2026-06-12</span>
+    </div>
+    <p class="rel-sum"><span class="en ">Ships the entire V4 "Memory as Environment" execution (perf-check P0s + Sprints 0-2) as one patch release per no-version-inflation policy, publishing agent-recall-{core,mcp,sdk,cli}@3.4.23. All test suites pass: consistency 10/10, funnel 18/18.</span><span class="zh ">按不膨胀版本号策略，将 V4 "Memory as Environment" 的全部执行成果（性能检查 P0 项 + Sprint 0-2）打包为单个补丁发布，同步发布 agent-recall-{core,mcp,sdk,cli}@3.4.23。所有测试套件通过：consistency 10/10，funnel 18/18。</span></p>
+    <ul class="pts">
+      <li><span class="en ">Recall latency cut from 10.5s worst-case to 2.5s, then to milliseconds after circuit breaker fires — achieved via a 2s embed timeout, parallel local fallback, and an honest <code>degraded</code> field surfaced to callers.</span><span class="zh ">召回延迟从最坏情况 10.5s 降至 2.5s，熔断器触发后进一步降至毫秒级——通过 2s embed 超时、并行本地降级回退以及向调用方暴露真实的 <code>degraded</code> 字段实现。</span></li>
+      <li><span class="en ">Learning loop made fully automatic: <code>retrieved</code> outcome event fires at session_start (once per day, local-TZ), <code>heeded</code>/<code>recurred</code> heuristics fire at session_end — delivering the first KPI data in product history.</span><span class="zh ">学习循环完全自动化：<code>retrieved</code> 结果事件在 session_start 触发（每日一次，按本地时区），<code>heeded</code>/<code>recurred</code> 启发式在 session_end 触发——产品史上首次产生真实 KPI 数据。</span></li>
+      <li><span class="en ">North-star alignment line added: an N% corrections-heeded metric appears at the top of session_start and as <code>alignment_precision</code> on the dashboard; field is null until real data exists — no fabricated claims.</span><span class="zh ">新增北极星对齐指示线：N% 修正采纳率指标显示在 session_start 顶部，并作为 <code>alignment_precision</code> 出现在 dashboard；字段在积累到真实数据前保持 null，不虚报。</span></li>
+      <li><span class="en ">Insight funnel unblocked with confirm-first logic: near-duplicates with containment ≥ 0.6 now trigger CONFIRM instead of re-add; cap eviction protects entries with count ≥ 2. Validated by benchmark/funnel.mjs 18/18.</span><span class="zh ">洞察漏斗通过「先确认」逻辑疏通：包含度 ≥ 0.6 的近似重复项现在触发 CONFIRM 而非重复添加；容量淘汰机制保护 count ≥ 2 的条目。经 benchmark/funnel.mjs 18/18 验证。</span></li>
+      <li><span class="en ">Correction hygiene tightened: <code>retractCorrection</code> added, a write-time quality gate with rule-only classification (11/11 calibration) gates new writes, and 64/81 legacy noise corrections were retracted reversibly via triage script.</span><span class="zh ">修正质量管控加强：新增 <code>retractCorrection</code>，写入时质量门禁采用纯规则分类（11/11 校准），历史噪声修正中的 64/81 条通过 triage 脚本可逆地撤回。</span></li>
+      <li><span class="en ">Default MCP tool surface reduced from 18 to 5 (session_start, session_end, remember, recall, check) per Automaticity Law; the remaining 13 pull tools are now behind <code>--full</code>. Auto-generated projects/&lt;slug&gt;/handoff.md at every session_end (≤ 2200 chars) provides cross-agent briefing; a doubled "Intention:" prefix cosmetic bug was fixed in this release.</span><span class="zh ">默认 MCP 工具数量按自动化定律从 18 缩减至 5（session_start、session_end、remember、recall、check），其余 13 个拉取工具移至 <code>--full</code> 模式。每次 session_end 自动生成 projects/&lt;slug&gt;/handoff.md（≤ 2200 字符）供跨 agent 交接；本版本同步修复了双写「Intention:」前缀的外观 bug。</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.22</span>
+      <h2 class="rel-title"><span class="en ">Trust: P0 Consistency Fixes</span><span class="zh ">Trust：P0 一致性修复</span></h2>
+      <span class="date mono">2026-06-11</span>
+    </div>
+    <p class="rel-sum"><span class="en ">v3.4.22 "Trust" was triggered by a live external evaluation (Claude agent, raw stdio JSON-RPC, clean Linux sandbox) that reproduced four trust-breaking bugs. The release freezes all new features and restores the core invariant: anything saved must be acknowledged as existing at orientation time, 100% deterministically.</span><span class="zh ">v3.4.22 "Trust" 由一次外部真实评估（Claude agent、原始 stdio JSON-RPC、干净 Linux 沙箱）触发，现场复现了四个破坏信任的 bug。本版本冻结所有新功能，专注恢复核心不变式：任何已保存的内容必须在 orientation 时被 100% 确定性地识别为存在。</span></p>
+    <ul class="pts">
+      <li><span class="en ">P0-1: session_start returned "No memory found" despite 4 writes on disk — isEmpty only keyed on session_end artifacts and ignored palace content and CLI capture logs. Fixed by folding in hasCaptures (capture-log scan) and hasPalaceContent (countRoomEntries &gt; 0); added a recent_captures field to surface uncommitted captures. Files: session-start.ts, journal-files.ts, project-status.ts.</span><span class="zh ">P0-1：磁盘已有 4 条写入，session_start 却返回 No memory found——isEmpty 只依赖 session_end 产物，完全忽略 palace 内容和 CLI capture log。修复：将 hasCaptures（扫描 capture log）和 hasPalaceContent（countRoomEntries &gt; 0）纳入判断，并新增 recent_captures 字段展示未提交的捕获内容。涉及文件：session-start.ts、journal-files.ts、project-status.ts。</span></li>
+      <li><span class="en ">P0-2: Empty default rooms (salience 0.5) outranked content rooms (0.41) and memory_count was stuck at 0 — default writes land in README.md but memory_count only counted non-README files; the 0.5 default beat computed fresh-room salience. Fixed: countRoomEntries() now counts ### entry blocks as disk truth; a hard invariant in the listRooms comparator ensures content rooms always sort above empty ones (not emergent from the formula); empty-room salience floored at 0; --importance high propagates into the salience calc. Files: rooms.ts, index-manager.ts, palace-write.ts.</span><span class="zh ">P0-2：空默认 room（salience 0.5）排名高于有内容的 room（0.41），且 memory_count 始终为 0——默认写入落在 README.md，但统计却排除 README 文件；0.5 默认值高于新鲜 room 的计算 salience。修复：countRoomEntries() 以 ### 条目块作为磁盘真相；在 listRooms 比较器中写入硬不变式（有内容的 room 必须排在空 room 之前，不依赖公式涌现）；空 room 的 salience 下限归零；--importance high 传入 salience 计算。涉及文件：rooms.ts、index-manager.ts、palace-write.ts。</span></li>
+      <li><span class="en ">P0-3: Session-1 insight was invisible at session-2 — global awareness only receives an insight after promoteConfirmedInsights fires (confirmed_count &gt;= 3), so a count-1 insight lived only in the project-scoped index and was never rendered. Fixed by merging project-scoped index insights with an independent budget (up to 2 reserved slots on top of awareness top-3), so a fresh insight surfaces even when awareness is full. Threshold now controls order/verbosity, never existence. File: session-start.ts.</span><span class="zh ">P0-3：第 1 个 session 写入的 insight 在第 2 个 session 不可见——全局 awareness 只在 promoteConfirmedInsights 触发后（confirmed_count &gt;= 3）才接收 insight，count 为 1 的 insight 仅存于项目级索引，从不渲染。修复：将项目级索引 insights 以独立预算（awareness top-3 之外额外预留最多 2 个槽位）合并到渲染结果，即使 awareness 已满，新鲜 insight 也能浮出。阈值现在只控制顺序与详略，不再决定存在与否。涉及文件：session-start.ts。</span></li>
+      <li><span class="en ">P0-4: A promotional trailer appeared in every session_start response — "Community: https://t.me/..." was embedded in formatTerse. Removed from all tool output (acceptable only in ar --help, README, and postinstall). A regression test now asserts no t.me/Telegram URL appears in the payload. File: mcp-server/.../session-start.ts.</span><span class="zh ">P0-4：每次 session_start 响应中都携带推广尾缀（Community: https://t.me/...）——该内容硬编码在 formatTerse 中。已从所有工具输出中移除（仅允许出现在 ar --help、README 和 postinstall 中）。新增回归测试断言 payload 中不含 t.me/Telegram URL。涉及文件：mcp-server/.../session-start.ts。</span></li>
+      <li><span class="en ">Two HIGH bugs were caught by the fresh-eyes code-reviewer that the workers' happy-path suite missed: HIGH-1 — named-topic first write (palace write &lt;room&gt; --topic X) omitted the ### entry header, causing countRoomEntries to see 0 and the room to sort as empty; HIGH-2 — the P0-3 fix was a no-op for established projects because the shared 3-cap filled from awareness before the project-index merge loop ran, corrected with the independent 2-slot project budget. A MEDIUM fix collapsed duplicate listRooms calls and wrapped updatePalaceIndex in withLock to prevent concurrent-write memory_count loss.</span><span class="zh ">无先验上下文的 code-reviewer 发现了 2 个 happy-path 套件结构性无法发现的 HIGH 级 bug：HIGH-1——命名 topic 首次写入（palace write &lt;room&gt; --topic X）缺少 ### 条目头，导致 countRoomEntries 返回 0，该 room 被排序为空；HIGH-2——P0-3 的修复对已有项目无效，因为共享 3-cap 在项目索引合并循环运行前就被 awareness 填满，通过独立 2-slot 项目预算修正。一个 MEDIUM 级修复合并了重复的 listRooms 调用，并将 updatePalaceIndex 包裹在 withLock 中，防止并发写入导致 memory_count 丢失。</span></li>
+      <li><span class="en ">benchmark/consistency.mjs was added as a permanent regression guard — it replays the exact live-eval sequence plus the two reviewer HIGH cases (10/10 assertions pass; exits 1 on any regression). The multi-agent process (orchestrator + 2 parallel file-disjoint workers + fresh-eyes code-reviewer + consistency verifier) is recorded for reuse; the reviewer finding 2 HIGH bugs the workers missed validated the never-self-review rule.</span><span class="zh ">新增 benchmark/consistency.mjs 作为永久回归守卫——完整回放真实评估序列及两个 reviewer HIGH 用例（10/10 断言通过；任意回归则 exit 1 退出）。所用多 agent 流程（orchestrator + 2 个并行文件不重叠 worker + 无上下文 code-reviewer + 一致性 verifier）已记录以备复用；reviewer 发现了 worker 结构性无法发现的 2 个 HIGH bug，验证了「永不自审」原则。</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.21</span>
+      <h2 class="rel-title"><span class="en ">Real-usage feedback pass — routing, proactive recall, behavior rules</span><span class="zh ">真实使用反馈专项修复——路由、主动召回与行为规则</span></h2>
+      <span class="date mono">2026-06-03</span>
+    </div>
+    <p class="rel-sum"><span class="en ">A 7-item patch distilled from a 4-hour high-intensity agent session on <code>prismma-gateway</code>, shipping two new MCP tools (<code>check_action</code>, <code>register_rule</code>), a wrong-project routing fix, a dream-cron failure banner, and a startup-noise cap. No breaking changes; all additions are backward-compatible.</span><span class="zh ">本版本从 <code>prismma-gateway</code> 项目的四小时高强度 Agent 会话中提炼出 7 项具体修复，新增两个 MCP 工具（<code>check_action</code>、<code>register_rule</code>），解决了项目路由误判、Dream 定时任务静默失败、以及启动信息过多等问题，完全向后兼容。</span></p>
+    <ul class="pts">
+      <li><span class="en ">Wrong-project routing fixed via <code>cwd-allowlist.json</code> per project and a cwd-aware <code>detectProject()</code> priority — previously <code>~/Projects/prismma-web</code> would load <code>prismma</code> instead of <code>prismma-gateway</code>. Auto-registers on explicit <code>resolveProject()</code>; macOS symlink-safe via <code>fs.realpathSync</code>. (commit <code>2b008c6</code>)</span><span class="zh ">新增每项目 <code>cwd-allowlist.json</code> 与 cwd 感知的 <code>detectProject()</code> 优先级，修复了从 <code>~/Projects/prismma-web</code> 启动时错误加载 <code>prismma</code> 而非 <code>prismma-gateway</code> 的路由问题。显式调用 <code>resolveProject()</code> 时自动注册；通过 <code>fs.realpathSync</code> 兼容 macOS 符号链接。（commit <code>2b008c6</code>）</span></li>
+      <li><span class="en ">Dream-cron failure banner: new <code>getDreamHealth()</code> walks the last 7 nights of <code>~/.aam/dreams/run-*.log</code> and surfaces a <code>🔴</code> red banner at the top of <code>session_start</code> output when ≥2 consecutive failure nights are detected — previously these failures were silent. (commit <code>6c0fe86</code>)</span><span class="zh ">新增 Dream 定时任务失败横幅：<code>getDreamHealth()</code> 扫描 <code>~/.aam/dreams/run-*.log</code> 最近 7 晚记录，若连续失败 ≥2 晚则在 <code>session_start</code> 顶部显示 <code>🔴</code> 红色警告，彻底消除此前的静默失败问题。（commit <code>6c0fe86</code>）</span></li>
+      <li><span class="en ">New MCP tool <code>check_action({ action_description })</code> — pre-action proactive matcher returning matching behavior rules, active corrections (P0-first), and high-salience insights for the upcoming action. Default <code>min_overlap=2</code> signal floor; deterministic and &lt;50 ms. Replaces tautological "P0 correction — follow strictly" reminders with concrete, context-matched guidance. (commit <code>5818510</code>)</span><span class="zh ">新增 MCP 工具 <code>check_action({ action_description })</code>：动作前主动匹配器，返回匹配的行为规则、活跃纠错（P0 优先）与高显著度洞察。默认信号阈值 <code>min_overlap=2</code>，确定性执行且耗时 &lt;50 ms，用具体提示取代了原本空洞的「P0 纠错——严格遵守」提示。（commit <code>5818510</code>）</span></li>
+      <li><span class="en ">New MCP tool <code>register_rule({ name, when, do })</code> backed by <code>palace/behavior-policies.json</code> — permanent IF-THEN behavior commitments always surfaced above insights and rooms in <code>session_start</code>. A hit-counter increments on every load, tracking how often each rule fires. (commit <code>eff348e</code>)</span><span class="zh ">新增 MCP 工具 <code>register_rule({ name, when, do })</code>，规则持久化存储于 <code>palace/behavior-policies.json</code>。每次 <code>session_start</code> 均将行为承诺置于洞察和 Palace 房间之前展示，且每次加载时命中计数器自动递增。（commit <code>eff348e</code>）</span></li>
+      <li><span class="en ">Startup noise cap: <code>session_start</code> now surfaces top 3 awareness insights (down from 8), top 1 cross-project insight (down from 5), and top 3 palace rooms (down from 5). Behavior rules are deliberately NOT capped — they are commitments, not context. (commit <code>eff348e</code>)</span><span class="zh ">启动信息降噪：<code>session_start</code> 现在只展示 top 3 意识洞察（原为 8 条）、top 1 跨项目洞察（原为 5 条）、top 3 Palace 房间（原为 5 条）。行为规则刻意不受限制——它们是承诺，不是上下文。（commit <code>eff348e</code>）</span></li>
+      <li><span class="en "><code>ar-sync-status.py &lt;slug&gt;</code> no longer prints the project picker in single-slug mode — silent invocations only write <code>status.json</code>, eliminating spurious output during automated runs. Shipped in the <code>~/.claude</code> repo via auto-sync rather than the main AgentRecall packages.</span><span class="zh "><code>ar-sync-status.py &lt;slug&gt;</code> 单 slug 调用模式下不再打印项目选择界面，静默执行仅写入 <code>status.json</code>，消除了自动化运行时的多余输出。该修复通过 <code>~/.claude</code> 仓库自动同步发布，不在主包内。</span></li>
+    </ul>
+  </article>
+  <article class="rel-card">
+    <div class="rel-head">
+      <span class="vbadge sm">v3.4.20</span>
+      <h2 class="rel-title"><span class="en ">Phase 6 foundations + critical audit fixes</span><span class="zh ">Phase 6 架构基础 + 关键审计修复</span></h2>
+      <span class="date mono">2026-06-01</span>
+    </div>
+    <p class="rel-sum"><span class="en ">v3.4.20 ships the full Phase 6 architectural pass — a 5-layer memory model, Modern Hopfield re-ranker primitive, FSRS-lite decay scoring, 12 new MCP tools, and a bilingual README rewrite — together with five post-audit P0 fixes covering data-loss in <code>/arsaveall</code>, path traversal in <code>paths.ts</code>, frontmatter YAML injection, and prompt-injection scrubbing in <code>/arbootstrap</code>.</span><span class="zh ">v3.4.20 完整落地 Phase 6 架构改造——5 层记忆模型、Modern Hopfield 重排序原语、FSRS-lite 衰减评分、12 个新 MCP 工具以及双语 README 重写——同时修复了审计后发现的 5 个 P0 问题，涵盖 <code>/arsaveall</code> 数据丢失、<code>paths.ts</code> 路径穿越、frontmatter YAML 注入以及 <code>/arbootstrap</code> 的提示注入清洗。</span></p>
+    <ul class="pts">
+      <li><span class="en ">5-layer memory model: added a **procedural** layer stored at <code>palace/skills/</code>, alongside the existing four layers; canonical path grammar <code>&lt;scope&gt;/&lt;type&gt;/[&lt;topic&gt;/]&lt;temporal&gt;--&lt;slug&gt;.md</code> introduced with a <code>legacy_path</code> virtual-key view so no migration was needed for existing entries.</span><span class="zh ">记忆模型扩展为 5 层：新增存储于 <code>palace/skills/</code> 的 **procedural**（程序性）层；引入规范路径语法 <code>&lt;scope&gt;/&lt;type&gt;/[&lt;topic&gt;/]&lt;temporal&gt;--&lt;slug&gt;.md</code>，并以 <code>legacy_path</code> 虚拟键视图兼容旧路径，无需迁移现有数据。</span></li>
+      <li><span class="en ">**Modern Hopfield** re-ranker primitive (Ramsauer 2020, formula ξ_new = X·softmax(β·X^⊤·ξ), capacity exp(d/2)) and **FSRS-lite** decay scorer (R = exp(-t/S), reinforce/penalize with Anki ≥23.10 grounding) added as research-driven foundations; Hopfield is unwired pending 3 prereqs, scheduled as Phase 7 wire-up candidates.</span><span class="zh ">新增 **Modern Hopfield** 重排序原语（Ramsauer 2020，公式 ξ_new = X·softmax(β·X^⊤·ξ)，容量 exp(d/2)）和 **FSRS-lite** 衰减评分器（R = exp(-t/S)，以 Anki ≥23.10 为基准），作为研究驱动的基础实现；Hopfield 暂未接入，等待 3 个前置条件，列入 Phase 7 候选。</span></li>
+      <li><span class="en ">12 new MCP tools shipped: <code>pipeline_open/close/list/current/show</code>, <code>skill_write/recall/list</code>, <code>dashboard_export</code>, <code>session_end_reflect</code>, and <code>session_start mode: lite</code> extension (~140 tokens vs ~1,800 full); feedback KPIs now track <code>retrieved_count</code> / <code>heeded_count</code> / <code>recurrence_count</code> / <code>precision</code> via <code>getCorrectionKPIs()</code> with noise/high-signal buckets.</span><span class="zh ">新增 12 个 MCP 工具：<code>pipeline_open/close/list/current/show</code>、<code>skill_write/recall/list</code>、<code>dashboard_export</code>、<code>session_end_reflect</code>、以及 <code>session_start mode: lite</code> 扩展（约 140 token 对比完整模式约 1800 token）；反馈 KPI 新增 <code>retrieved_count</code> / <code>heeded_count</code> / <code>recurrence_count</code> / <code>precision</code> 字段，通过 <code>getCorrectionKPIs()</code> 聚合并区分噪声/高信号桶。</span></li>
+      <li><span class="en "><code>/arsaveall</code> data-loss fix: bypassed the SAME-DAY dedup rule that caused parallel sessions to collapse onto one file; added per-call 6-hex suffix; removed <code>alreadyJournaled</code> skip in the CLI; unknown-project key now uses <code>sessionId</code> instead of the minute-window to prevent clobbering.</span><span class="zh ">修复 <code>/arsaveall</code> 数据丢失：跳过了导致并行会话写入同一文件的 SAME-DAY 去重规则；每次调用添加 6 位十六进制后缀；移除 CLI 中的 <code>alreadyJournaled</code> 跳过逻辑；未知项目键改用 <code>sessionId</code> 而非分钟窗口，避免覆盖写入。</span></li>
+      <li><span class="en ">Security hardening across three areas: <code>paths.ts</code> sanitizer blocks path traversal (no dots, separator-prefix check, symlink guard on milestone writes); frontmatter YAML now escaped with <code>quoteScalar</code> + atomic writes (tmp+rename) + line-walk section parser; <code>/arbootstrap</code> adds <code>SYSTEM_DIR_DENYLIST</code> (Downloads, Projects, Code, <code>.paperclip-instances-*</code>, UUIDs, etc.) and <code>scrubPromptInjection()</code> stripping <code>&lt;system-reminder&gt;</code> / <code>&lt;|im_start|&gt;</code> / "ignore previous instructions" / bidi / NULL at 3 import sites.</span><span class="zh ">三个方向的安全加固：<code>paths.ts</code> 净化器拦截路径穿越（禁点号、分隔符前缀检查、milestone 写入时的符号链接守卫）；frontmatter YAML 改用 <code>quoteScalar</code> 转义 + 原子写入（tmp+rename）+ 逐行段落解析器；<code>/arbootstrap</code> 新增 <code>SYSTEM_DIR_DENYLIST</code>（Downloads、Projects、Code、<code>.paperclip-instances-*</code>、UUID 等）和 <code>scrubPromptInjection()</code>，在 3 处导入点清除 <code>&lt;system-reminder&gt;</code> / <code>&lt;|im_start|&gt;</code> / "ignore previous instructions" / 双向字符 / NULL。</span></li>
+      <li><span class="en ">Internal dependency pin corrected: <code>agent-recall-core</code> dep in <code>mcp/sdk/cli</code> packages was stuck at 3.4.18; bumped to 3.4.20 so fresh installs resolve consistently. The <code>VERSION</code> constant in <code>core/src/types.ts</code> was likewise stale at 3.4.18 and is now 3.4.20. README rewritten bilingual EN/ZH (1175 → 567 lines) with 18-tool badge, 5-layer model section, Phase 6 features, and math citations.</span><span class="zh ">修正内部依赖钉版：<code>mcp/sdk/cli</code> 包中的 <code>agent-recall-core</code> 依赖停留在 3.4.18，已统一提升至 3.4.20，确保全新安装版本一致；<code>core/src/types.ts</code> 中同样滞后的 <code>VERSION</code> 常量也已更新。README 重写为中英双语（1175 → 567 行），新增 18 工具徽章、5 层模型章节、Phase 6 特性说明及数学引用。</span></li>
+    </ul>
+  </article>
 
   <footer>
-    Part of the <a href="https://github.com/Goldentrii/AgentRecall-MCP">AgentRecall</a> project ·
-    full reasoning lives in <code>UPDATE-LOG.md</code> ·
-    <a href="https://github.com/Goldentrii/AgentRecall-MCP">AgentRecall</a> 项目的一部分
+    <span class="en ">Part of the</span><span class="zh ">隶属于</span> <a href="https://github.com/Goldentrii/AgentRecall-MCP">AgentRecall</a> <span class="en ">project · full reasoning lives in</span><span class="zh ">项目 · 完整设计推理见</span> <code>UPDATE-LOG.md</code>
   </footer>
 
 </div>
+<script>
+  (function(){
+    var root=document.documentElement, bar=document.getElementById('lang');
+    function set(l){root.setAttribute('data-lang',l);try{localStorage.setItem('ar-changelog-lang',l);}catch(e){}
+      bar.querySelectorAll('button').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-set')===l);});}
+    var saved='en';try{saved=localStorage.getItem('ar-changelog-lang')||'en';}catch(e){}
+    set(saved);
+    bar.addEventListener('click',function(e){var b=e.target.closest('button');if(b)set(b.getAttribute('data-set'));});
+  })();
+</script>
 </body>
 </html>

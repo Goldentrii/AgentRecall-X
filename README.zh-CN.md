@@ -151,6 +151,10 @@ const ctx = await memory.recall("rate limiting");
 
 一个**本地优先的可视化仪表盘**，展示你的记忆：活动日历、各项目状态、纠正记录、insight——全部从你本地的 `~/.agent-recall/` 数据渲染。完全离线（资源已内置），无需 Node、无需构建步骤。
 
+<p align="center">
+  <img src="warroom/static/preview.png" alt="AgentRecall War Room — 总览" width="900">
+</p>
+
 1. 从 [最新 GitHub Release](https://github.com/Goldentrii/AgentRecall/releases/latest) 下载 **`ar-warroom-v3.4.30.zip`**。
 2. 解压后本地启动：
 

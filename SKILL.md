@@ -73,6 +73,8 @@ AgentRecall is a persistent memory system. Default surface: **5 tools** (two ver
 
 AgentRecall requires the MCP server to be running. If tool calls fail with "unknown tool", the human needs to install it first.
 
+> **Visual setup guide** (all 13 clients, copy-paste prompts): open `warroom/install.html` from the repo, or the [GitHub raw link](https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/warroom/install.html) in a browser.
+
 ### Installation (human runs once)
 
 **Claude Code:**

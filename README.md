@@ -151,6 +151,10 @@ All layers share one **canonical naming grammar** (`<scope>/<type>/[<topic>/]<te
 
 A **local-first visual dashboard** for your memory: an activity calendar, per-project status, corrections, and insights — all rendered from your local `~/.agent-recall/` data. Fully offline (vendored assets), no Node and no build step.
 
+<p align="center">
+  <img src="warroom/static/preview.png" alt="AgentRecall War Room — Overview" width="900">
+</p>
+
 1. Download **`ar-warroom-v3.4.30.zip`** from the [latest GitHub Release](https://github.com/Goldentrii/AgentRecall/releases/latest).
 2. Unzip it, then serve it locally:
 

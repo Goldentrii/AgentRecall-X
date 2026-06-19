@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentRecall — 2-minute Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ---- CSS VARS ---- */
+:root {
+  --bg:#FAF7F0; --surface:#F1ECDD; --surface-2:#E8E1CC; --surface-3:#E0D8BF;
+  --ink:#2B2520; --ink-soft:#5A4E3F; --ink-faint:#8C7F6B;
+  --rule:#DCD1B5; --rule-soft:#E6DFC8;
+  --canvas:#1A1814; --canvas-2:#211E18; --canvas-line:#3A332B; --canvas-ink:#E8E0D0;
+  --accent:#8A6A3F; --accent-soft:#C9A56C; --accent-dim:rgba(138,106,63,.10);
+  --ok:#4F7A48; --warn:#BD7C2D; --bad:#B7472A;
+  --ok-dim:rgba(79,122,72,.12); --warn-dim:rgba(189,124,45,.12); --bad-dim:rgba(183,71,42,.10);
+  --shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.06);
+}
+html[data-theme="dark"] {
+  --bg:#15120E; --surface:#1E1A14; --surface-2:#28231B; --surface-3:#322B21;
+  --ink:#ECE3D2; --ink-soft:#BBAE97; --ink-faint:#897C68;
+  --rule:#322B21; --rule-soft:#261F18;
+  --canvas:#100E0B; --canvas-2:#16130F; --canvas-line:#2E2820; --canvas-ink:#E8E0D0;
+  --accent:#C9A56C; --accent-soft:#E0C088; --accent-dim:rgba(201,165,108,.12);
+  --ok:#6FA565; --warn:#D9A23F; --bad:#D9684A;
+  --ok-dim:rgba(111,165,101,.14); --warn-dim:rgba(217,162,63,.14); --bad-dim:rgba(217,104,74,.12);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+}
+
+/* ---- RESET ---- */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--bg);color:var(--ink);font-family:'Nunito',system-ui,sans-serif;font-size:14px;line-height:1.5;}
+button{cursor:pointer;background:none;border:none;font-family:inherit;}
+a{color:var(--accent);text-decoration:none;}
+a:hover{text-decoration:underline;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.display{font-family:'Baloo 2','Nunito',sans-serif;}
+
+/* ---- LAYOUT ---- */
+.page{max-width:960px;margin:0 auto;padding:48px 24px 80px;}
+
+/* ---- TOP BAR ---- */
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:40px;}
+.topbar-brand{display:flex;align-items:center;gap:10px;}
+.brand-ico{width:34px;height:34px;background:var(--accent);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Baloo 2';font-weight:800;font-size:15px;}
+.brand-name{font-family:'Baloo 2';font-weight:800;font-size:18px;color:var(--ink);}
+.brand-sub{font-size:11px;color:var(--ink-faint);margin-top:-2px;}
+.topbar-actions{display:flex;align-items:center;gap:8px;}
+.theme-btn,.lang-btn{font-size:12px;font-weight:700;color:var(--ink-soft);border:1px solid var(--rule);border-radius:7px;padding:5px 10px;transition:background 140ms;}
+.theme-btn:hover,.lang-btn:hover{background:var(--surface-2);}
+
+/* ---- HERO ---- */
+.hero{text-align:center;margin-bottom:36px;}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;border-radius:100px;padding:3px 10px;background:var(--accent-dim);color:var(--accent);margin-bottom:12px;}
+.hero-title{font-family:'Baloo 2';font-weight:800;font-size:40px;color:var(--ink);line-height:1.1;margin-bottom:12px;}
+.hero-sub{font-size:15px;color:var(--ink-soft);max-width:540px;margin:0 auto 16px;line-height:1.6;}
+.tags{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:8px;}
+.tag{font-size:11px;font-weight:700;background:var(--surface-2);color:var(--ink-faint);border-radius:100px;padding:3px 10px;}
+
+/* ---- PANEL ---- */
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:12px;margin-bottom:16px;overflow:hidden;box-shadow:var(--shadow);}
+.panel--dark{background:var(--canvas);border-color:var(--canvas-line);}
+.panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--rule);}
+.panel--dark .panel-hdr{border-bottom-color:var(--canvas-line);}
+.panel-title{font-weight:800;font-size:13px;color:var(--ink);}
+.panel--dark .panel-title{color:var(--accent-soft);}
+.panel-sub{font-size:11px;color:var(--ink-faint);}
+.panel--dark .panel-sub{color:var(--accent-soft);opacity:.6;}
+.panel-body{padding:16px 18px;}
+
+/* ---- PROMPT BOXES ---- */
+.prompt-intro{font-size:13px;color:var(--canvas-ink);opacity:.85;line-height:1.5;margin-bottom:4px;}
+.prompt-intro-zh{font-size:11px;color:var(--canvas-ink);opacity:.6;line-height:1.5;margin-bottom:12px;}
+.prompt-box{font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.6;color:var(--canvas-ink);background:rgba(0,0,0,.25);border:1px solid var(--canvas-line);border-radius:9px;padding:14px;white-space:pre-wrap;margin-bottom:10px;}
+.btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;border-radius:8px;padding:8px 16px;transition:background 140ms,opacity 140ms;}
+.btn--primary{background:var(--accent);color:#fff;}
+.btn--primary:hover{opacity:.88;}
+
+/* ---- VERIFY SECTION ---- */
+.verify-section{margin-bottom:28px;}
+.onb-code{display:flex;align-items:center;gap:8px;background:var(--canvas);border:1px solid var(--canvas-line);border-radius:8px;padding:9px 12px;font-size:12px;color:var(--canvas-ink);max-width:300px;}
+.onb-code .mono{flex:1;}
+.code-copy{color:var(--accent-soft);font-size:14px;flex-shrink:0;opacity:.8;}
+.code-copy:hover{opacity:1;}
+.verify-hint{font-size:11px;color:var(--ink-faint);margin-top:8px;line-height:1.4;}
+
+/* ---- CLIENT CARDS ---- */
+.clients-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.14em;color:var(--ink-faint);margin-bottom:6px;}
+.clients-hint{font-size:11px;color:var(--ink-faint);text-align:center;margin:6px 0 12px;letter-spacing:.02em;}
+.clients-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;}
+.client-card{border:1px solid var(--rule);border-radius:10px;background:var(--surface);overflow:hidden;}
+.client-head{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 11px;transition:background 120ms;}
+.client-head:hover{background:var(--surface-2);}
+.client-ico{width:26px;height:26px;border-radius:7px;background:linear-gradient(140deg,var(--accent-soft),var(--accent));color:#fff;font-family:'Baloo 2';font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;}
+.client-ico img{width:16px;height:16px;object-fit:contain;}
+.client-name{font-weight:700;font-size:14px;color:var(--ink);white-space:nowrap;}
+.client-blurb{font-size:10px;color:var(--ink-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.client-caret{transition:transform 150ms;flex-shrink:0;color:var(--ink-faint);}
+.compat{font-size:9px;font-weight:800;border-radius:100px;padding:1px 7px;}
+.compat--verified{background:var(--ok-dim);color:var(--ok);}
+.compat--pattern{background:var(--warn-dim);color:var(--warn);}
+.compat--unverified{background:var(--surface-2);color:var(--ink-faint);}
+.compat--no-mcp{background:var(--bad-dim);color:var(--bad);}
+.client-body{display:none;padding:2px 11px 11px;}
+.client-body.open{display:block;}
+.compat-note{font-size:10px;color:var(--warn);line-height:1.4;padding:7px 0 0;border-top:1px solid var(--rule);}
+.onb-step{display:flex;gap:9px;padding:7px 0;}
+.onb-step-n{width:18px;height:18px;border-radius:50%;background:var(--accent-dim);color:var(--accent);font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;}
+.onb-step-label{font-size:11px;font-weight:800;color:var(--ink);margin-bottom:5px;}
+.step-code{display:flex;align-items:center;gap:8px;background:var(--canvas);border:1px solid var(--canvas-line);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--canvas-ink);}
+.step-code .mono{flex:1;overflow-x:auto;}
+.step-verify{font-size:12px;color:var(--ink-soft);line-height:1.5;}
+
+/* ---- ZH LAYER ---- */
+html[data-lang="en"] .zh{display:none;}
+html[data-lang="zh"] .en{display:none;}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-ico">AR</div>
+      <div>
+        <div class="brand-name">AgentRecall</div>
+        <div class="brand-sub">2-minute setup · local-first memory for agents</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="lang-btn" id="lang-btn">中文</button>
+      <button class="theme-btn" id="theme-btn">☀ Light</button>
+      <a href="https://github.com/Goldentrii/AgentRecall" class="btn" style="border:1px solid var(--rule);color:var(--ink-soft);" target="_blank">GitHub →</a>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="chip">◷ <span class="en">2-minute setup</span><span class="zh">2 分钟安装</span></div>
+    <h1 class="hero-title display">
+      <span class="en">Give your agent<br>a memory that lasts.</span>
+      <span class="zh">为你的 agent<br>打造持久记忆</span>
+    </h1>
+    <p class="hero-sub">
+      <span class="en">Persistent, accumulating memory for any AI agent. Local-first — everything lives in <span class="mono" style="color:var(--accent);">~/.agent-recall</span> and never leaves this machine unless you turn on sync.</span>
+      <span class="zh">为任意 AI agent 提供持久、累积式记忆。本地优先 —— 所有数据存储在 <span class="mono" style="color:var(--accent);">~/.agent-recall</span>，除非开启同步否则不会离开本机。</span>
+    </p>
+    <div class="tags">
+      <span class="tag"><span class="en">zero-cloud</span><span class="zh">零云端</span></span>
+      <span class="tag"><span class="en">22 MCP tools</span><span class="zh">22 个工具</span></span>
+      <span class="tag"><span class="en">plain-markdown</span><span class="zh">纯 markdown</span></span>
+    </div>
+  </div>
+
+  <!-- INSTALL PROMPT -->
+  <div class="panel panel--dark">
+    <div class="panel-hdr">
+      <span class="panel-title">🤖 Found AgentRecall? Paste this to install</span>
+      <span class="panel-sub">copy → paste to your agent → it installs for you</span>
+    </div>
+    <div class="panel-body">
+      <p class="prompt-intro en">Your agent found this page. Have it run the command below — or copy this block and paste it as a message to your agent.</p>
+      <p class="prompt-intro zh">你的 agent 找到了这个页面。让它运行下面的命令 —— 或者复制这段内容粘贴给 agent。</p>
+      <pre class="prompt-box" id="install-box"></pre>
+      <button class="btn btn--primary" id="copy-install">⧉ Copy install prompt</button>
+    </div>
+  </div>
+
+  <!-- BOOTSTRAP PROMPT -->
+  <div class="panel panel--dark" style="margin-bottom:28px;">
+    <div class="panel-hdr">
+      <span class="panel-title">⚡ After installing — paste this as first message</span>
+      <span class="panel-sub">tells your agent how to use AgentRecall each session</span>
+    </div>
+    <div class="panel-body">
+      <p class="prompt-intro en">Once installed, paste this as the first message in any new session. Your agent will know when to call session_start, when to save corrections, and when to close.</p>
+      <p class="prompt-intro zh">安装完成后，把这段作为任意新会话的第一条消息。agent 会知道什么时候调用 session_start、保存纠正、以及关闭会话。</p>
+      <pre class="prompt-box" id="paste-box"></pre>
+      <button class="btn btn--primary" id="copy-paste">⧉ Copy bootstrap prompt</button>
+    </div>
+  </div>
+
+  <!-- VERIFY -->
+  <div class="verify-section">
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">▸ <span class="en">Verify your install</span><span class="zh">验证安装</span></span>
+        <span class="panel-sub"><span class="en">run this after installing</span><span class="zh">安装后运行</span></span>
+      </div>
+      <div class="panel-body">
+        <p style="font-size:13px;color:var(--ink-soft);line-height:1.6;margin-bottom:10px;">
+          <span class="en">Run <code class="mono" style="color:var(--accent);">arstatus</code> to confirm AgentRecall is active. You'll see your workspace root, project count, and last session.</span>
+          <span class="zh">运行 <code class="mono" style="color:var(--accent);">arstatus</code> 确认 AgentRecall 已激活，显示工作区路径、项目数量和最近会话。</span>
+        </p>
+        <div class="onb-code">
+          <span class="mono">arstatus</span>
+          <button class="code-copy" data-code="arstatus">⧉</button>
+        </div>
+        <p class="verify-hint">
+          <span class="en">Expected: workspace path · X projects · last session timestamp</span>
+          <span class="zh">预期输出：工作区路径 · X 个项目 · 最近会话时间戳</span>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLIENT CARDS -->
+  <div class="clients-label"><span class="en">Pick your client</span><span class="zh">选择你的客户端</span></div>
+  <div class="clients-hint">↓ <span class="en">scroll for all 13 clients</span><span class="zh">向下滚动查看全部 13 个客户端</span></div>
+  <div class="clients-grid" id="clients-grid"></div>
+
+</div>
+
+<script>
+var INSTALL_PROMPT =
+"Please install AgentRecall for me — it's a persistent memory MCP that remembers corrections and context across sessions.\n\n" +
+"For Claude Code (one command):\n" +
+"  claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp\n\n" +
+"For other clients, add to your MCP config:\n" +
+"  { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\", \"agent-recall-mcp\"] } }\n\n" +
+"After installing, restart your client and confirm agent-recall appears with 5 tools.\n" +
+"Full setup guide: https://github.com/Goldentrii/AgentRecall#quick-start";
+
+var BOOTSTRAP_PROMPT =
+"You have AgentRecall (persistent memory MCP). " +
+"At the START of every session call session_start to load what you learned before. " +
+"When the user corrects you, call remember({type:\"correction\",...}) immediately so it never recurs. " +
+"At the END of every session call session_end. " +
+"Five core tools: session_start, session_end, remember, recall, check. " +
+"Memory lives in ~/.agent-recall and never leaves this machine unless sync is enabled.";
+
+var CLIENTS = [
+  { name:"Claude Code", compat:"verified", blurb:"Anthropic's official terminal agent — native MCP, one-line install.", brand:"CC", si:"anthropic",
+    pre:"node -v  # Node 18+ required",
+    install:"claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp",
+    verify:"Restart claude, run /mcp — agent-recall · 5 tools. Append --full to unlock all 22." },
+  { name:"Claude Desktop", compat:"verified", blurb:"Anthropic desktop app — native MCP, edit claude_desktop_config.json.", brand:"CD", si:"anthropic",
+    pre:"Open ~/Library/Application Support/Claude/claude_desktop_config.json  (Mac)",
+    install:"\"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] }",
+    verify:"Restart Claude Desktop. The 🔌 icon should list agent-recall with 5 tools." },
+  { name:"Cursor", compat:"verified", blurb:"AI-native IDE — native MCP via .cursor/mcp.json in your project.", brand:"Cu", si:"cursor",
+    pre:"Create or open .cursor/mcp.json",
+    install:"{ \"mcpServers\": { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Settings → MCP → agent-recall connected." },
+  { name:"VS Code", compat:"verified", blurb:"VS Code 1.99+ Copilot agent mode. Key is 'servers', not 'mcpServers'.", brand:"VS", si:"visualstudiocode",
+    pre:"Create .vscode/mcp.json in your workspace",
+    install:"{ \"servers\": { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Reload window; MCP: List Servers shows agent-recall." },
+  { name:"Codex CLI", compat:"verified", blurb:"OpenAI's terminal agent — MCP via ~/.codex/config.json.", brand:"Cx", si:"openai",
+    pre:"Open or create ~/.codex/config.json",
+    install:"{ \"mcpServers\": { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Restart codex; confirm MCP tools load at session start." },
+  { name:"Gemini CLI", compat:"unverified", blurb:"Google's terminal agent — standard MCP config, community-reported working.", brand:"Gm", si:"googlegemini",
+    pre:"Open ~/.gemini/settings.json",
+    install:"{ \"mcpServers\": { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Restart Gemini CLI; verify MCP tools are loaded in session context." },
+  { name:"Windsurf", compat:"verified", blurb:"Codeium's AI IDE — MCP via Windsurf settings.", brand:"Ws", si:"windsurf",
+    pre:"Open Windsurf → Settings → MCP Servers",
+    install:"{ \"mcpServers\": { \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Reload Windsurf; AI assistant panel shows agent-recall connected." },
+  { name:"Zed", compat:"verified", blurb:"GPU-accelerated editor — MCP via ~/.config/zed/settings.json (global).", brand:"Zd", si:"zedindustries",
+    pre:"Open ~/.config/zed/settings.json",
+    install:"{ \"context_servers\": { \"agent-recall\": { \"command\": { \"path\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } } } }",
+    verify:"Restart Zed; context server appears in AI assistant panel." },
+  { name:"Continue.dev", compat:"verified", blurb:"Open-source VS Code / JetBrains copilot — MCP in ~/.continue/config.yaml.", brand:"Co",
+    pre:"Open ~/.continue/config.yaml",
+    install:"mcpServers:\n  - name: agent-recall\n    command: npx -y agent-recall-mcp",
+    verify:"Reload extension; MCP tools panel shows agent-recall." },
+  { name:"Cline", compat:"verified", blurb:"VS Code extension — MCP servers configurable via Cline settings panel.", brand:"Cn", si:"cline",
+    pre:"VS Code → Extensions → Cline → Settings → MCP Servers",
+    install:"{ \"agent-recall\": { \"command\": \"npx\", \"args\": [\"-y\",\"agent-recall-mcp\"] } }",
+    verify:"Cline sidebar MCP section shows agent-recall with 5 tools." },
+  { name:"OpenCode", compat:"verified", blurb:"Terminal agent — MCP via ~/.config/opencode/config.json.", brand:"OC", si:"opencode",
+    pre:"Open ~/.config/opencode/config.json",
+    install:"{ \"mcp\": { \"agent-recall\": { \"type\": \"local\", \"command\": [\"npx\",\"-y\",\"agent-recall-mcp\"] } } }",
+    verify:"Restart opencode; run /mcp to confirm agent-recall is listed." },
+  { name:"Aider", compat:"no-mcp", blurb:"No native MCP — use the bootstrap prompt as a system prompt in .aider.conf.yml.", brand:"Ai",
+    compatNote:"Aider doesn't support MCP. Add the bootstrap prompt above as --system-prompt.",
+    pre:"Create or open .aider.conf.yml in your project root",
+    install:"system-prompt: |\n  You have AgentRecall context. [paste bootstrap prompt above]",
+    verify:"Run aider — system prompt is loaded. Memory is manual via convention." },
+  { name:"Hermes (OpenClaw)", compat:"pattern", blurb:"NousResearch agent using OpenClaw protocol — compatible with agent-recall-mcp.", brand:"He", si:"hermes",
+    compatNote:"Hermes implements the OpenClaw MCP protocol. AgentRecall tools function equivalently without modification.",
+    pre:"Ensure openclaw agent is running",
+    install:"openclaw mcp add agent-recall npx -y agent-recall-mcp",
+    verify:"Check tool list in Hermes agent panel — session_start should appear." },
+];
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function compatBadge(c) {
+  if (c === 'verified')   return '<span class="compat compat--verified">✓ verified</span>';
+  if (c === 'pattern')    return '<span class="compat compat--pattern">~ pattern</span>';
+  if (c === 'unverified') return '<span class="compat compat--unverified">? unverified</span>';
+  if (c === 'no-mcp')     return '<span class="compat compat--no-mcp">no MCP</span>';
+  return '';
+}
+
+function clientCard(c) {
+  var icon = c.si
+    ? '<img src="https://cdn.simpleicons.org/' + c.si + '/FFFFFF" width="16" height="16" style="object-fit:contain;" onerror="this.style.display=\'none\';this.parentElement.textContent=\'' + esc(c.brand || c.name.slice(0,2)) + '\'">'
+    : esc(c.brand || c.name.slice(0,2));
+  var note = c.compatNote ? '<div class="compat-note">' + esc(c.compatNote) + '</div>' : '';
+  var isCode = true;
+  function stepHtml(n, label, code, asText) {
+    return '<div class="onb-step">' +
+      '<div class="onb-step-n">' + n + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div class="onb-step-label">' + label + '</div>' +
+        (asText
+          ? '<div class="step-verify">' + esc(code) + '</div>'
+          : '<div class="step-code"><span class="mono" style="flex:1;overflow-x:auto;">' + esc(code) + '</span><button class="code-copy" data-code="' + esc(code) + '">⧉</button></div>') +
+      '</div></div>';
+  }
+  return '<div class="client-card">' +
+    '<button class="client-head">' +
+      '<div class="client-ico">' + icon + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="display:flex;align-items:center;gap:7px;">' +
+          '<span class="client-name">' + esc(c.name) + '</span>' + compatBadge(c.compat) +
+        '</div>' +
+        '<div class="client-blurb">' + esc(c.blurb) + '</div>' +
+      '</div>' +
+      '<svg class="client-caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>' +
+    '</button>' +
+    '<div class="client-body">' +
+      note +
+      stepHtml(1, 'Prerequisite', c.pre, false) +
+      stepHtml(2, 'Install', c.install, false) +
+      stepHtml(3, 'Verify', c.verify, true) +
+    '</div></div>';
+}
+
+// Render
+document.getElementById('install-box').textContent = INSTALL_PROMPT;
+document.getElementById('paste-box').textContent = BOOTSTRAP_PROMPT;
+var grid = document.getElementById('clients-grid');
+grid.innerHTML = CLIENTS.map(clientCard).join('');
+
+// Copy buttons
+function copyText(text, btn, resetLabel) {
+  navigator.clipboard && navigator.clipboard.writeText(text);
+  btn.textContent = '✓ Copied'; setTimeout(function(){ btn.textContent = resetLabel; }, 1500);
+}
+document.getElementById('copy-install').addEventListener('click', function(){ copyText(INSTALL_PROMPT, this, '⧉ Copy install prompt'); });
+document.getElementById('copy-paste').addEventListener('click', function(){ copyText(BOOTSTRAP_PROMPT, this, '⧉ Copy bootstrap prompt'); });
+
+// arstatus copy
+document.querySelector('.onb-code .code-copy').addEventListener('click', function(){
+  navigator.clipboard && navigator.clipboard.writeText('arstatus');
+  this.textContent = '✓'; var b = this; setTimeout(function(){ b.textContent = '⧉'; }, 1200);
+});
+
+// Card expand/collapse + code-copy in cards
+grid.addEventListener('click', function(e) {
+  var head = e.target.closest('.client-head');
+  var copy = e.target.closest('.code-copy');
+  if (copy) {
+    e.stopPropagation();
+    navigator.clipboard && navigator.clipboard.writeText(copy.getAttribute('data-code'));
+    copy.textContent = '✓'; setTimeout(function(){ copy.textContent = '⧉'; }, 1200);
+    return;
+  }
+  if (head) {
+    var body = head.nextElementSibling;
+    var open = body.classList.toggle('open');
+    head.querySelector('.client-caret').style.transform = open ? 'rotate(90deg)' : '';
+  }
+});
+
+// Theme toggle
+var darkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+try { var s = localStorage.getItem('ar-install-theme'); if (s) darkMode = s === 'dark'; } catch(e){}
+function applyTheme(d) {
+  darkMode = d;
+  document.documentElement.setAttribute('data-theme', d ? 'dark' : '');
+  document.getElementById('theme-btn').textContent = d ? '☀ Light' : '🌙 Dark';
+  try { localStorage.setItem('ar-install-theme', d ? 'dark' : 'light'); } catch(e){}
+}
+applyTheme(darkMode);
+document.getElementById('theme-btn').addEventListener('click', function(){ applyTheme(!darkMode); });
+
+// Language toggle
+var lang = 'en';
+try { var l = localStorage.getItem('ar-install-lang'); if (l) lang = l; } catch(e){}
+function applyLang(l) {
+  lang = l;
+  document.documentElement.setAttribute('data-lang', l);
+  document.getElementById('lang-btn').textContent = l === 'zh' ? 'EN' : '中文';
+  try { localStorage.setItem('ar-install-lang', l); } catch(e){}
+}
+applyLang(lang);
+document.getElementById('lang-btn').addEventListener('click', function(){ applyLang(lang === 'zh' ? 'en' : 'zh'); });
+</script>
+</body>
+</html>
