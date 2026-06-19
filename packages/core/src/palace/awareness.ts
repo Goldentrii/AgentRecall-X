@@ -23,7 +23,6 @@ import { extractKeywords } from "../helpers/auto-name.js";
 import { withLock } from "../storage/filelock.js";
 import { syncToSupabase } from "../supabase/sync.js";
 
-const MAX_LINES = 200;
 
 /**
  * Fetch titles of insights archived via the dashboard (Supabase).
@@ -56,35 +55,15 @@ export function readAwareness(): string {
   return fs.readFileSync(p, "utf-8");
 }
 
-export function writeAwareness(content: string): void {
-  withLock("awareness", () => {
-    const p = awarenessPath();
-    ensureDir(path.dirname(p));
-
-    // Enforce 200-line max — truncate at section boundary, not mid-line
-    const lines = content.split("\n");
-    if (lines.length > MAX_LINES) {
-      // Walk backwards from MAX_LINES to find the last clean section boundary
-      let cutAt = MAX_LINES;
-      for (let i = MAX_LINES - 1; i >= MAX_LINES - 20 && i >= 0; i--) {
-        const line = lines[i];
-        // Stop before a heading line (##) or blank line preceding one
-        if (line.startsWith("## ") || (line === "" && i + 1 < lines.length && lines[i + 1].startsWith("## "))) {
-          cutAt = i;
-          break;
-        }
-      }
-      const truncated = lines.slice(0, cutAt).join("\n");
-      fs.writeFileSync(p, truncated + "\n", "utf-8");
-      // Async sync to Supabase (non-blocking)
-      syncToSupabase(p, fs.readFileSync(p, "utf-8"), "global", "awareness");
-    } else {
+  export function writeAwareness(content: string): void {
+    withLock("awareness", () => {
+      const p = awarenessPath();
+      ensureDir(path.dirname(p));
       fs.writeFileSync(p, content, "utf-8");
-      // Async sync to Supabase (non-blocking)
-      syncToSupabase(p, fs.readFileSync(p, "utf-8"), "global", "awareness");
-    }
-  });
-}
+      syncToSupabase(p, content, "global", "awareness");
+    });
+  }
+  
 
 export type InsightTrend = "stable" | "growing" | "weakening" | "stale";
 
@@ -95,13 +74,15 @@ export type InsightTrend = "stable" | "growing" | "weakening" | "stale";
  * - weakening: confirmed but not seen in 14–30 days (fading)
  * - stable:    everything else
  */
-export function computeTrend(insight: { confirmations: number; lastConfirmed: string }): InsightTrend {
-  const daysSince = (Date.now() - new Date(insight.lastConfirmed).getTime()) / (1000 * 60 * 60 * 24);
-  if (daysSince > 30) return "stale";
-  if (insight.confirmations >= 3 && daysSince <= 7) return "growing";
-  if (daysSince > 14) return "weakening";
-  return "stable";
-}
+  export function computeTrend(insight: { confirmations: number; lastConfirmed: string; isPinned?: boolean }): InsightTrend {
+    if (insight.isPinned) return "stable";
+
+    const daysSince = (Date.now() - new Date(insight.lastConfirmed).getTime()) / (1000  60  60 * 24);
+    if (daysSince > 30) return "stale";
+    if (insight.confirmations >= 3 && daysSince <= 7) return "growing";
+    if (daysSince > 14) return "weakening";
+    return "stable";
+  }
 
 export interface Insight {
   id: string;
@@ -114,6 +95,7 @@ export interface Insight {
   source_project?: string;
   severity?: "critical" | "important" | "minor";
   trend?: InsightTrend;
+  isPinned?: boolean;
 }
 
 export interface CompoundInsight {
@@ -367,22 +349,39 @@ export function addInsight(
     trend: "stable",
   };
 
-  if (state.topInsights.length < 20) {
-    state.topInsights.push(insight);
-    writeAwarenessState(state);
-    renderAwareness(state);
-    return { action: "added", insight };
-  }
+        // Enforce soft capacity limit — strictly protect pinned items
+        if (state.topInsights.length > 20) {
+          state.topInsights.sort((a, b) => {
+            if (a.isPinned && !b.isPinned) return -1;
+            if (!a.isPinned && b.isPinned) return 1;
+            return b.confirmations - a.confirmations;
+          });
+          const demoted = state.topInsights[state.topInsights.length - 1];
+          if (!demoted.isPinned) {
+             state.topInsights.pop();
+             archiveInsight(demoted);
+          }
+        }
 
-  // Over 20: demote lowest-confirmation insight to archive (not deleted)
-  state.topInsights.sort((a, b) => b.confirmations - a.confirmations);
-  const demoted = state.topInsights.pop()!;
-  archiveInsight(demoted);
-  state.topInsights.push(insight);
+      state.topInsights.push(insight);
+      // Over 20: demote lowest-confirmation insight, but protect Pinned invariants
+      state.topInsights.sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return b.confirmations - a.confirmations;
+      });
 
-  writeAwarenessState(state);
-  renderAwareness(state);
-  return { action: "replaced", insight };
+      if (state.topInsights.length > 20) {
+        const demoted = state.topInsights[state.topInsights.length - 1];
+        if (!demoted.isPinned) {
+          state.topInsights.pop();
+          archiveInsight(demoted);
+        }
+      }
+
+      writeAwarenessState(state);
+      renderAwareness(state);
+      return { action: "replaced", insight };
 }
 
 /**
