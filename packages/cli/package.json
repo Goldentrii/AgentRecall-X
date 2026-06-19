@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-cli",
-  "version": "3.4.27",
+  "version": "3.4.30",
   "description": "CLI for AgentRecall memory system",
   "type": "module",
   "bin": {
@@ -22,7 +22,7 @@
     "agent-memory"
   ],
   "dependencies": {
-    "agent-recall-core": "3.4.27"
+    "agent-recall-core": "3.4.30"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

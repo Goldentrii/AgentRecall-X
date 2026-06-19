@@ -13,7 +13,7 @@ description: >-
   search — same API, semantic understanding. Gracefully degrades to local search
   if not configured.
 origin: community
-version: 3.4.27
+version: 3.4.30
 author: Goldentrii
 platform: clawhub
 install:
@@ -63,7 +63,7 @@ skip:
   - "算了"
 ---
 
-# AgentRecall v3.4.22 — Usage Guide
+# AgentRecall v3.4.30 — Usage Guide
 
 AgentRecall is a persistent memory system. Default surface: **5 tools** (two verbs + three essentials). Full surface: 18 tools via `npx agent-recall-mcp --full`. This guide describes how and when to use them.
 

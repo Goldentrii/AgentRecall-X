@@ -267,7 +267,7 @@ console.log("══════════════════════�
 const resultPath = path.join(import.meta.dirname, "replay-results.json");
 const resultData = {
   date: new Date().toISOString().slice(0, 10),
-  version: "3.4.27",
+  version: "3.4.30",
   recall: { score: metrics.recall, total: metrics.recallTotal, pct: metrics.recallTotal > 0 ? metrics.recall / metrics.recallTotal : null },
   precision: { score: metrics.precision, total: metrics.precisionTotal, pct: metrics.precisionTotal > 0 ? metrics.precision / metrics.precisionTotal : null },
   staleness: { score: metrics.staleness, total: metrics.stalenessTotal, pct: metrics.stalenessTotal > 0 ? metrics.staleness / metrics.stalenessTotal : null },

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentRecall · War Room</title>
+
+  <link rel="stylesheet" href="static/fonts.css">
+
+  <link rel="stylesheet" href="ar-theme.css">
+
+  <script src="static/echarts.min.js"></script>
+  <script src="static/cytoscape.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- LEFT NAV RAIL (filled by ar-app.js) -->
+    <nav id="rail"></nav>
+
+    <!-- MAIN COLUMN -->
+    <div id="main">
+      <header id="topbar">
+        <button id="rail-toggle" title="Toggle navigation">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="tb-title">
+          <span class="crumb" id="tb-crumb">Workspace</span>
+          <h1 id="tb-title-h">Overview</h1>
+        </div>
+        <div class="tb-right">
+          <span class="tb-ts" id="tb-ts"></span>
+          <div class="live-pill"><span class="live-dot"></span><span>live</span></div>
+          <span class="tb-ts" id="tb-ago"></span>
+        </div>
+        <div id="stale-banner">
+          <span>⚠ Data is stale — dream cron may be stuck</span>
+          <button class="stale-refresh" id="stale-refresh">↻ reload</button>
+        </div>
+      </header>
+
+      <div id="view"></div>
+    </div>
+  </div>
+
+  <div id="tooltip"></div>
+
+  <script src="ar-data.js"></script>
+  <script src="ar-app.js"></script>
+  <script src="ar-views-core.js"></script>
+  <script src="ar-views-more.js"></script>
+</body>
+</html>

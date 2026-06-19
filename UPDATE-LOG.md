@@ -230,6 +230,51 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Release — v3.4.30 (2026-06-19) — onboarding & distribution
+
+**Documentation + packaging release. Defers the v3.5.0 Ambient Relevance Loop.**
+Focus: make AgentRecall easy to discover, install, and run — for humans and agents alike.
+Built on `release/v3.4.30` (branched from `main`); follows the v3.4.27 governance model — implementer stops at the pushed branch + PR, human runs the irreversibles (npm publish, tag, merge).
+
+### What's new (vs v3.4.27)
+
+| Area | What changed | Why it matters |
+|------|-------------|----------------|
+| **README rewrite** | Root README cut 579 → 198 lines, English-only landing page; full reference preserved verbatim as `README.full.md` | A scannable landing page converts; the deep dive stays one click away. |
+| **Bilingual docs** | New `README.zh-CN.md` mirror + one-click `English · 中文` switch at the top of each | First-class Chinese onboarding. |
+| **War Room in repo** | The multi-page localhost dashboard now lives at `warroom/`; CDN assets (ECharts 5.4.3, Cytoscape 3.26.0, Baloo 2 / Nunito / JetBrains Mono fonts) vendored into `warroom/static/` | Fully offline — download, unzip, `python3 -m http.server`, done. No Node, no internet. |
+| **Release pipeline** | `.github/workflows/release.yml` (tag name passed via env var, actions SHA-pinned) zips `warroom/` on every `v*` tag → GitHub Release asset `ar-warroom-vX.Y.Z.zip` | Versioned, downloadable dashboard for every release. Recommended onboarding for Hermes / OpenClaw / OpenCode. **Note:** the zip asset only exists once the `v3.4.30` tag is pushed — until then the README's `releases/latest` link resolves to an earlier release. |
+| **Repo tidy** | 7 internal/QA folders (agent-prompts, eval, integrations, tests, wiki, workspace, scripts) consolidated under `meta/` | Root **folders** reduced to 7 meaningful ones (`.github`, `benchmark`, `commands`, `docs`, `packages`, `warroom`, `meta`); loose top-level files left in place (conservative scope). |
+| **Version sync** | 3.4.27 → 3.4.30 across all 4 packages + internal deps + `types.ts` VERSION + SKILL.md + benchmark + codex-compat | One consistent version everywhere. |
+
+### Scope note
+- **Documentation/packaging only** — no behavioral/runtime code changed in `packages/core`. The v3.5.0 Ambient Relevance Loop work remains parked on `feat/v3.5.0-ambient-relevance`.
+
+### Verification
+- Build: 0 errors (all 4 packages, tsc clean) — re-verified after the repo tidy
+- Benchmarks: consistency 10/10, funnel 18/18, heeded-guard 5/5, room-slug-guards 9/9
+- War Room offline check: zero `cdn.jsdelivr.net` / `fonts.googleapis.com` / `cdn.simpleicons.org` references; ECharts, Cytoscape, 3 fonts, and 8 brand-icon SVGs vendored locally (2 icons absent from SimpleIcons fall back to text initials)
+
+### Files changed (vs v3.4.27)
+```
+README.md                        — rewritten, 198 lines (EN landing + lang switch)
+README.full.md                   — NEW: verbatim backup of the 579-line reference
+README.zh-CN.md                  — NEW: Chinese mirror
+warroom/                         — NEW: 7 dashboard files + static/ (vendored echarts, cytoscape, fonts)
+.github/workflows/release.yml    — NEW: tag-triggered warroom zip → GitHub Release
+meta/                            — NEW umbrella: agent-prompts, eval, integrations, tests, wiki, workspace, scripts (relocated)
+packages/{core,mcp-server,sdk,cli}/package.json — version + internal core deps → 3.4.30
+packages/core/src/types.ts       — VERSION 3.4.30
+SKILL.md                         — version 3.4.30
+benchmark/replay-benchmark.mjs, replay-results.json — version stamp 3.4.30
+meta/tests/codex-compat/run.mjs, result-latest.json — agentrecall_version 3.4.30
+package-lock.json                — resynced
+```
+
+- Status: local on `release/v3.4.30` | NOT YET pushed (push + PR next) | NOT published | awaiting tongwu for `npm publish` ×4 + `v3.4.30` tag + merge to main
+
+---
+
 ## Release — v3.4.27 (2026-06-18) — reviewed naming + safety
 
 **Bundles v3.4.26 safety patches + naming system cleanup + reviewer MEDIUM fix.**

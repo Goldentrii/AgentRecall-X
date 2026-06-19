@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-mcp",
-  "version": "3.4.27",
+  "version": "3.4.30",
   "description": "Memory Palace MCP server for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "agent-recall-core": "3.4.27",
+    "agent-recall-core": "3.4.30",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^3.24.0"
   },
