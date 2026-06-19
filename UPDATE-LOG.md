@@ -248,7 +248,8 @@ Built on `release/v3.4.30` (branched from `main`); follows the v3.4.27 governanc
 | **Version sync** | 3.4.27 → 3.4.30 across all 4 packages + internal deps + `types.ts` VERSION + SKILL.md + benchmark + codex-compat | One consistent version everywhere. |
 
 ### Scope note
-- **Documentation/packaging only** — no behavioral/runtime code changed in `packages/core`. The v3.5.0 Ambient Relevance Loop work remains parked on `feat/v3.5.0-ambient-relevance`.
+- **Documentation/packaging only** — no behavioral/runtime code changed in `packages/core` *by this branch*. The v3.5.0 Ambient Relevance Loop work remains parked on `feat/v3.5.0-ambient-relevance`.
+- **Also folds in community PR [#18](https://github.com/Goldentrii/AgentRecall-MCP/pull/18) (leirt97), merged to `main`:** removes hardcoded Supabase fallback URL + anon key from `awareness.ts` (`fetchDashboardArchivedTitles` now gates on `readSupabaseConfig()`, returns `[]` when unconfigured). Real privacy fix — unconfigured users no longer hit a baked-in backend. The other 22 open PRs were triaged read-only and left for maintainer decision.
 
 ### Verification
 - Build: 0 errors (all 4 packages, tsc clean) — re-verified after the repo tidy
