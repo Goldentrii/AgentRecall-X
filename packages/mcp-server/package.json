@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-mcp",
-  "version": "3.4.30",
+  "version": "3.4.31",
   "mcpName": "io.github.Goldentrii/agent-recall",
   "description": "Memory Palace MCP server for AI agents",
   "type": "module",
