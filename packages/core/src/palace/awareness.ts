@@ -434,6 +434,98 @@ export function detectCompoundInsights(): CompoundInsight[] {
 }
 
 /**
+ * Wave 3: a crystallization CANDIDATE — raw material for the reasoner, NOT a
+ * synthesized principle. The LLM (dreaming loop) decides whether/how to
+ * crystallize; this detector only surfaces clusters of related insights.
+ */
+export interface CrystallizationCandidate {
+  /** The ≥2 shared appliesWhen keywords that bind this cluster. */
+  shared_keywords: string[];
+  /** Insight ids in the cluster (size ≥ minCluster). */
+  insight_ids: string[];
+  /** Titles, for human/LLM reading (no synthesis performed). */
+  insight_titles: string[];
+  /** Cluster size. */
+  size: number;
+  /** Sum of confirmations across the cluster (≥ minTotalConfirm). */
+  total_confirmations: number;
+}
+
+/**
+ * Detect crystallization CANDIDATES — clusters of ≥`minCluster` top-insights
+ * that share ≥2 `appliesWhen` keywords and together have ≥`minTotalConfirm`
+ * confirmations. Returns candidates ONLY — it writes no synthesized principle
+ * (synthesis is the LLM's job, per Decision #3 / the Wave 3 review gate).
+ *
+ * Operates on the GLOBAL awareness singleton (no project arg — readAwarenessState
+ * takes none). Excludes insights already prefixed CRYSTALLIZED / CRITICAL.
+ */
+export function findCrystallizationCandidates(
+  opts: { minCluster?: number; minTotalConfirm?: number } = {},
+): CrystallizationCandidate[] {
+  const minCluster = opts.minCluster ?? 3;
+  const minTotalConfirm = opts.minTotalConfirm ?? 5;
+
+  const state = readAwarenessState();
+  if (!state || state.topInsights.length < minCluster) return [];
+
+  // Exclude insights already crystallized or marked critical (case-insensitive
+  // title prefix — tolerate "CRYSTALLIZED:", "CRITICAL ", etc.).
+  const eligible = state.topInsights.filter(
+    (i) => !/^\s*(crystallized|critical)\b/i.test(i.title ?? ""),
+  );
+  if (eligible.length < minCluster) return [];
+
+  // Normalize appliesWhen tokens once per insight.
+  const tokensOf = (i: Insight): Set<string> =>
+    new Set((i.appliesWhen ?? []).map((k) => k.toLowerCase().trim()).filter(Boolean));
+
+  // Build candidate clusters keyed on every unordered pair of shared keywords.
+  // An insight joins a pair's cluster only if it contains BOTH keywords — this
+  // guarantees every member shares ≥2 keywords with the cluster's signature.
+  const byPair = new Map<string, Insight[]>();
+  for (const ins of eligible) {
+    const toks = [...tokensOf(ins)].sort();
+    for (let a = 0; a < toks.length; a++) {
+      for (let b = a + 1; b < toks.length; b++) {
+        const key = `${toks[a]}|${toks[b]}`;
+        if (!byPair.has(key)) byPair.set(key, []);
+        byPair.get(key)!.push(ins);
+      }
+    }
+  }
+
+  const candidates: CrystallizationCandidate[] = [];
+  const seenMemberSets = new Set<string>();
+  // Highest-confirmation clusters first so dedup keeps the strongest signature.
+  const pairs = [...byPair.entries()].sort(
+    (x, y) =>
+      y[1].reduce((s, i) => s + i.confirmations, 0) - x[1].reduce((s, i) => s + i.confirmations, 0),
+  );
+
+  for (const [key, members] of pairs) {
+    if (members.length < minCluster) continue;
+    const totalConfirm = members.reduce((s, i) => s + i.confirmations, 0);
+    if (totalConfirm < minTotalConfirm) continue;
+
+    const ids = members.map((m) => m.id).sort();
+    const memberKey = ids.join(",");
+    if (seenMemberSets.has(memberKey)) continue; // same cluster via a different pair
+    seenMemberSets.add(memberKey);
+
+    candidates.push({
+      shared_keywords: key.split("|"),
+      insight_ids: ids,
+      insight_titles: members.map((m) => m.title),
+      size: members.length,
+      total_confirmations: totalConfirm,
+    });
+  }
+
+  return candidates;
+}
+
+/**
  * Render awareness state into the 200-line markdown document.
  */
 export function renderAwareness(state: AwarenessState): void {

@@ -1,5 +1,6 @@
 import { resolveProject } from "../storage/project.js";
-import { recallSkillsByIntent, type Skill } from "../palace/skills.js";
+import { recallSkillsByIntent, reinforceSkillFsrs, type Skill } from "../palace/skills.js";
+import type { FsrsScore } from "../palace/fsrs.js";
 
 export interface SkillRecallInput {
   project?: string;
@@ -19,6 +20,10 @@ export interface SkillRecallHit {
   postconditions: string[];
   pitfalls?: string[];
   file_path: string;
+  /** Wave 3: FSRS retrievability (0..1) of this skill at recall time. */
+  retrievability: number;
+  /** Wave 3: FSRS health bucket. */
+  status: FsrsScore["status"];
 }
 
 export interface SkillRecallResult {
@@ -28,7 +33,13 @@ export interface SkillRecallResult {
   hits: SkillRecallHit[];
 }
 
-function toHit(x: { skill: Skill; score: number; matched_triggers: string[] }): SkillRecallHit {
+function toHit(x: {
+  skill: Skill;
+  score: number;
+  matched_triggers: string[];
+  retrievability: number;
+  status: FsrsScore["status"];
+}): SkillRecallHit {
   return {
     slug: x.skill.meta.slug,
     name: x.skill.meta.name,
@@ -40,6 +51,8 @@ function toHit(x: { skill: Skill; score: number; matched_triggers: string[] }): 
     postconditions: x.skill.body.postconditions,
     pitfalls: x.skill.body.pitfalls,
     file_path: x.skill.file_path,
+    retrievability: x.retrievability,
+    status: x.status,
   };
 }
 
@@ -51,6 +64,18 @@ export async function skillRecall(input: SkillRecallInput): Promise<SkillRecallR
   }
   const limit = input.limit && input.limit > 0 ? Math.min(input.limit, 20) : 5;
   const ranked = recallSkillsByIntent(slug, intent, limit);
+
+  // Wave 3: reinforce-on-recall — a recall hit grows the skill's FSRS stability
+  // (revives the dormant reinforcement loop). Throttled internally to bound
+  // write-amplification; best-effort so a write error never breaks recall.
+  for (const r of ranked) {
+    try {
+      reinforceSkillFsrs(slug, r.skill.meta.slug);
+    } catch {
+      // swallow — recall must never throw on a reinforcement failure
+    }
+  }
+
   return {
     success: true,
     project: slug,

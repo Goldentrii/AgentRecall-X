@@ -23,6 +23,7 @@ import { resolveProject } from "../storage/project.js";
 import { readCorrections } from "../storage/corrections.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { listMilestones } from "../palace/pipeline.js";
+import { findCrystallizationCandidates, type CrystallizationCandidate } from "../palace/awareness.js";
 import { archiveRawDir } from "../storage/paths.js";
 import { readJsonSafe } from "../storage/fs-utils.js";
 import * as fs from "node:fs";
@@ -48,6 +49,12 @@ export interface ReflectInputBundle {
    * only surfaces the raw material; it makes NO LLM call itself.
    */
   raw_unconsumed?: Array<{ file: string; excerpt: string; bytes: number }>;
+  /**
+   * Wave 3: clusters of related awareness insights that are candidates for
+   * crystallization into a single principle. Raw material ONLY — core does NOT
+   * synthesize the principle (the in-loop LLM does, per Decision #3).
+   */
+  crystallization_candidates?: CrystallizationCandidate[];
 }
 
 export interface ReflectResult {
@@ -108,11 +115,22 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
 
   const rawUnconsumed = collectRawUnconsumed(slug);
 
+  // Wave 3: surface crystallization candidates (best-effort; never throws).
+  let crystallizationCandidates: CrystallizationCandidate[] = [];
+  try {
+    crystallizationCandidates = findCrystallizationCandidates();
+  } catch {
+    crystallizationCandidates = [];
+  }
+
   const bundle: ReflectInputBundle = {
     recent_journals: recentJournals,
     active_corrections: corrections,
     recent_phases: recentPhases,
     ...(rawUnconsumed.length > 0 ? { raw_unconsumed: rawUnconsumed } : {}),
+    ...(crystallizationCandidates.length > 0
+      ? { crystallization_candidates: crystallizationCandidates }
+      : {}),
   };
 
   const prompt = buildPrompt(slug, bundle, lookback);
@@ -170,6 +188,25 @@ function buildPrompt(slug: string, bundle: ReflectInputBundle, lookback: number)
     for (const r of bundle.raw_unconsumed) {
       lines.push(`### ${r.file} (${r.bytes} bytes)`);
       lines.push(r.excerpt);
+      lines.push("");
+    }
+  }
+
+  // Wave 3: surface crystallization candidates — clusters of related insights
+  // the LLM may distill into a single principle. Candidates only; no synthesis.
+  if (bundle.crystallization_candidates && bundle.crystallization_candidates.length > 0) {
+    lines.push("");
+    lines.push(`## Crystallization candidates (${bundle.crystallization_candidates.length})`);
+    lines.push(
+      "These insight clusters share ≥2 trigger keywords and enough confirmations to " +
+        "be worth crystallizing into ONE principle. Decide whether to synthesize each " +
+        "(awareness_update) — the system does not synthesize for you.",
+    );
+    for (const c of bundle.crystallization_candidates) {
+      lines.push(
+        `### [${c.shared_keywords.join(" + ")}] — ${c.size} insights, ${c.total_confirmations}x confirmed`,
+      );
+      for (const t of c.insight_titles) lines.push(`- ${t}`);
       lines.push("");
     }
   }

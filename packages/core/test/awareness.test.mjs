@@ -234,3 +234,92 @@ describe("Awareness system — module integration", () => {
     }
   });
 });
+
+describe("Wave 3 — crystallization candidates", () => {
+  let awareness;
+  const ROOT = path.join(os.tmpdir(), "ar-crystallize-test-" + Date.now());
+
+  before(async () => {
+    process.env.AGENT_RECALL_ROOT = ROOT;
+    awareness = await import("../dist/palace/awareness.js");
+  });
+
+  after(() => {
+    delete process.env.AGENT_RECALL_ROOT;
+    fs.rmSync(ROOT, { recursive: true, force: true });
+  });
+
+  it("returns [] when no awareness state exists", () => {
+    // Fresh root, no state written yet.
+    const candidates = awareness.findCrystallizationCandidates();
+    assert.deepEqual(candidates, []);
+  });
+
+  it("clusters 3 insights sharing ≥2 appliesWhen keywords with enough confirmations", () => {
+    awareness.initAwareness("crystallize user");
+    // Three distinct insights sharing the keywords "deploy" + "rollback" in appliesWhen.
+    // Bump confirmations by re-adding strongly-overlapping titles so sum >= 5.
+    awareness.addInsight({
+      title: "PostgreSQL migration must run before deploy rollback window",
+      evidence: "prod incident A",
+      appliesWhen: ["deploy", "rollback", "database"],
+      source: "test",
+    });
+    awareness.addInsight({
+      title: "Kubernetes canary needs deploy rollback automation",
+      evidence: "sre handbook B",
+      appliesWhen: ["deploy", "rollback", "kubernetes"],
+      source: "test",
+    });
+    awareness.addInsight({
+      title: "Terraform provider pin avoids deploy rollback churn",
+      evidence: "staging break C",
+      appliesWhen: ["deploy", "rollback", "infrastructure"],
+      source: "test",
+    });
+
+    // Push total confirmations up so the cluster clears minTotalConfirm.
+    const state = awareness.readAwarenessState();
+    for (const ins of state.topInsights) ins.confirmations = 2;
+    awareness.writeAwarenessState(state);
+
+    const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
+    assert.ok(candidates.length >= 1, "should find at least one cluster");
+    const cluster = candidates[0];
+    assert.ok(cluster.size >= 3, `cluster size >= 3, got ${cluster.size}`);
+    assert.ok(cluster.total_confirmations >= 5, `sum confirmations >= 5, got ${cluster.total_confirmations}`);
+    assert.ok(Array.isArray(cluster.shared_keywords) && cluster.shared_keywords.length >= 2);
+    assert.ok(Array.isArray(cluster.insight_ids) && cluster.insight_ids.length >= 3);
+  });
+
+  it("does not synthesize a principle string — candidates only", () => {
+    const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
+    for (const c of candidates) {
+      assert.equal(c.principle, undefined, "must NOT write a synthesized principle");
+      assert.equal(c.synthesis, undefined, "must NOT write a synthesized principle");
+    }
+  });
+
+  it("requires minTotalConfirm — under-confirmed clusters are dropped", () => {
+    awareness.initAwareness("low confirm user");
+    awareness.addInsight({ title: "Alpha deploy rollback alpha note", evidence: "e1", appliesWhen: ["deploy", "rollback"], source: "t" });
+    awareness.addInsight({ title: "Beta deploy rollback beta note", evidence: "e2", appliesWhen: ["deploy", "rollback"], source: "t" });
+    awareness.addInsight({ title: "Gamma deploy rollback gamma note", evidence: "e3", appliesWhen: ["deploy", "rollback"], source: "t" });
+    // Each at 1 confirmation → sum = 3 < 5.
+    const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
+    assert.equal(candidates.length, 0, "sum confirmations < 5 must yield no cluster");
+  });
+
+  it("excludes clusters whose insights are already CRYSTALLIZED/CRITICAL", () => {
+    awareness.initAwareness("excluded user");
+    awareness.addInsight({ title: "CRITICAL: deploy rollback gate one", evidence: "e1xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+    awareness.addInsight({ title: "CRYSTALLIZED deploy rollback gate two", evidence: "e2xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+    awareness.addInsight({ title: "CRITICAL deploy rollback gate three", evidence: "e3xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+    const state = awareness.readAwarenessState();
+    for (const ins of state.topInsights) ins.confirmations = 3;
+    awareness.writeAwarenessState(state);
+
+    const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
+    assert.equal(candidates.length, 0, "already-crystallized/critical insights must be excluded");
+  });
+});

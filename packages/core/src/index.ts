@@ -68,6 +68,7 @@ export {
   initAwareness,
   addInsight,
   detectCompoundInsights,
+  findCrystallizationCandidates,
   renderAwareness,
   readAwarenessArchive,
   writeAwarenessArchive,
@@ -77,7 +78,12 @@ export type {
   Insight,
   CompoundInsight,
   AwarenessState,
+  CrystallizationCandidate,
 } from "./palace/awareness.js";
+
+// Palace — decay pass (Wave 3 compression tier)
+export { runDecayPass } from "./palace/decay-pass.js";
+export type { DecayReport, DecayCandidate, DecayOptions } from "./palace/decay-pass.js";
 
 // Palace — salience
 export {
@@ -428,6 +434,8 @@ export {
   writeSkill,
   parseSkillFile,
   recallSkillsByIntent,
+  reinforceSkillFsrs,
+  setSkillArchived,
 } from "./palace/skills.js";
 export type { Skill, SkillMeta, SkillBody } from "./palace/skills.js";
 
