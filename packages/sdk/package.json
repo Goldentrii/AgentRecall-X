@@ -30,9 +30,18 @@
     "ai-memory",
     "agent-recall",
     "memory-palace",
+    "agent-memory",
+    "mcp",
+    "mcp-server",
+    "persistent-memory",
+    "correction-tracking",
+    "claude-code",
+    "claude-mcp",
+    "agent-learning",
+    "session-memory",
+    "compounding-memory",
     "langchain",
-    "crewai",
-    "agent-memory"
+    "crewai"
   ],
   "license": "MIT"
 }

@@ -71,6 +71,22 @@ At the end of a session, call session_end to compound what you learned.
 
 ---
 
+## Why AgentRecall vs X?
+
+| Feature | AgentRecall | Mem0 | Zep | Letta |
+|---|---|---|---|---|
+| Correction tracking + precision KPI | ✅ Core feature | ❌ | ❌ | ❌ |
+| Behavioral calibration across sessions | ✅ | ❌ | ❌ | Partial |
+| Local markdown only (zero cloud) | ✅ | ❌ cloud | ❌ cloud | ❌ cloud |
+| MCP native | ✅ | ✅ | ✅ | ✅ |
+| FSRS-lite decay + Hopfield retrieval | ✅ | ❌ | ❌ | ❌ |
+| Free / open source | ✅ MIT | Freemium | Freemium | Apache |
+| Works offline | ✅ | ❌ | ❌ | Partial |
+
+The difference: AgentRecall is the only system that tracks whether the agent actually acted on a warning — not just that it stored one.
+
+---
+
 ## Quick Start
 
 > **Visual setup guide — all 13 clients, copy-paste prompts:** open [`warroom/install.html`](warroom/install.html) from the repo (or after unzipping the War Room release) in any browser. No server needed.

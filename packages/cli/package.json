@@ -19,7 +19,15 @@
     "ai-memory",
     "cli",
     "memory-palace",
-    "agent-memory"
+    "agent-memory",
+    "mcp",
+    "persistent-memory",
+    "correction-tracking",
+    "claude-code",
+    "claude-mcp",
+    "agent-learning",
+    "session-memory",
+    "compounding-memory"
   ],
   "dependencies": {
     "agent-recall-core": "3.4.30"

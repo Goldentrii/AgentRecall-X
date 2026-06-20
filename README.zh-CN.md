@@ -71,6 +71,22 @@ At the end of a session, call session_end to compound what you learned.
 
 ---
 
+## 为什么选 AgentRecall 而不是 X？
+
+| 功能 | AgentRecall | Mem0 | Zep | Letta |
+|---|---|---|---|---|
+| 纠正追踪 + precision KPI | ✅ 核心功能 | ❌ | ❌ | ❌ |
+| 跨会话行为校准 | ✅ | ❌ | ❌ | 部分 |
+| 纯本地 markdown（零云端） | ✅ | ❌ 云端 | ❌ 云端 | ❌ 云端 |
+| MCP 原生支持 | ✅ | ✅ | ✅ | ✅ |
+| FSRS-lite 衰减 + Hopfield 检索 | ✅ | ❌ | ❌ | ❌ |
+| 免费 / 开源 | ✅ MIT | Freemium | Freemium | Apache |
+| 支持离线使用 | ✅ | ❌ | ❌ | 部分 |
+
+区别在于：AgentRecall 是唯一追踪 agent 是否真正按警告行事的系统——而不只是把警告存起来。
+
+---
+
 ## 快速开始
 
 > **可视化安装指南 — 13 个客户端，一键复制提示词：** 用浏览器打开仓库中的 [`warroom/install.html`](warroom/install.html)（或解压 War Room 发布包后打开）。无需服务器。
