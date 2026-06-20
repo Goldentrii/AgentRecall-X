@@ -181,7 +181,7 @@ export type {
 } from "./storage/behavior-policies.js";
 export { registerRule } from "./tools-logic/register-rule.js";
 export type { RegisterRuleToolInput, RegisterRuleToolResult } from "./tools-logic/register-rule.js";
-export { checkAction } from "./tools-logic/check-action.js";
+export { checkAction, tokenize, overlap } from "./tools-logic/check-action.js";
 export type {
   CheckActionInput,
   CheckActionResult,
@@ -286,7 +286,10 @@ export { journalMerge, type JournalMergeInput, type MergeReceipt } from "./tools
 // Tool logic — smart routing
 export { smartRemember, type SmartRememberInput, type SmartRememberResult } from "./tools-logic/smart-remember.js";
 export { smartRemember as remember } from "./tools-logic/smart-remember.js";
-export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded } from "./tools-logic/smart-recall.js";
+export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded, type BridgedSource } from "./tools-logic/smart-recall.js";
+export { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceLabel, type ConfidenceScale, type CalibratedConfidence } from "./tools-logic/confidence.js";
+export { fetchVerbatim, type VerbatimKey, type VerbatimSource } from "./tools-logic/drill-down.js";
+export { buildPriors, type PriorCorrection } from "./tools-logic/prior-builder.js";
 
 // Tool logic — v3.4 composite tools (5-tool surface)
 export { sessionStart, type SessionStartInput, type SessionStartResult } from "./tools-logic/session-start.js";

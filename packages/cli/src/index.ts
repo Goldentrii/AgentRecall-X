@@ -1026,11 +1026,25 @@ async function main(): Promise<void> {
         const shouldFire = counter === 1 || counter % 5 === 0 || isHighValue;
         if (!shouldFire) process.exit(0);
 
+        // --- PRIOR PASS (Wave 4 bridge): push a correction-derived prior EARLY,
+        // ABOVE the recalled fact list. This is the highest-value signal — emit it
+        // even if recall later finds nothing. buildPriors is pure + gated at >=2
+        // token overlap (strict). Best-effort; never blocks. ---
+        try {
+          const priorProject = project ?? "auto";
+          const p0 = core.readP0Corrections(priorProject) ?? [];
+          const blindSpots = core.readAwarenessState()?.blindSpots ?? [];
+          const priors = core.buildPriors(prompt, p0, blindSpots);
+          if (priors.length > 0) {
+            process.stdout.write(priors.slice(0, 2).join("\n") + "\n");
+          }
+        } catch { /* non-blocking — priors are best-effort */ }
+
         // Extract keywords and do smart recall
         const keywords = core.extractKeywords(prompt, 6);
         if (keywords.length === 0) process.exit(0);
 
-        const recalled = await core.smartRecall({ query: keywords.join(" "), project, limit: 3 });
+        const recalled = await core.smartRecall({ query: keywords.join(" "), project, limit: 3, drilldown: true });
 
         // Ambient precision floor: require ≥2 overlapping content words (≥4 chars,
         // non-stopwords) between the query tokens and the result title+excerpt.
@@ -1089,6 +1103,16 @@ async function main(): Promise<void> {
           const suffix = excerpt ? ` — ${excerpt}` : "";
           out += `• [${source}][${conf}] ${title}${suffix}\n`;
         }
+
+        // Bridge (Wave 4): attach verbatim drill-down source for low-confidence hits.
+        if (recalled.bridged && recalled.bridged.length > 0) {
+          out += "  ↳ verbatim source (low-confidence — verify before relying):\n";
+          for (const b of recalled.bridged) {
+            const snippet = b.verbatim.replace(/\n/g, " ").slice(0, 120);
+            out += `    [${b.source}] ${snippet}\n`;
+          }
+        }
+
         process.stdout.write(out);
 
         // Save surfaced items for feedback loop + update dedup history

@@ -4,11 +4,14 @@
  * Unlike `recall` (general search), this is called mid-task:
  *   "I'm about to do X — what should I know?"
  *
- * Only returns high/medium confidence results. Designed for pull-on-demand
- * retrieval rather than push-on-start injection.
+ * Returns high/medium confidence results as the primary list. When the primary
+ * filter is empty (the match exists but is only low-confidence), the BRIDGE
+ * (Wave 4) attaches the verbatim drill-down source under `fallback` instead of
+ * silently suppressing it — so the agent gets the lossless source plus a
+ * "verify before relying" caution rather than a bare "nothing found" string.
  */
 
-import { smartRecall } from "./smart-recall.js";
+import { smartRecall, type BridgedSource } from "./smart-recall.js";
 import { resolveProject } from "../storage/project.js";
 
 // ---------------------------------------------------------------------------
@@ -38,9 +41,12 @@ export interface MemoryQueryResult {
   intent: string;
   project: string;
   results: MemoryQueryItem[];
-  /** True when no memory is relevant to this intent at the given confidence threshold. */
+  /** True when no memory passed the confidence threshold for the primary list. */
   empty: boolean;
   guidance?: string;
+  /** Verbatim drill-down source attached when the primary filter was empty but a
+   *  low-confidence match exists (Wave 4 bridge). */
+  fallback?: BridgedSource[];
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +72,7 @@ export async function memoryQuery(input: MemoryQueryInput): Promise<MemoryQueryR
     query: input.intent,
     project,
     limit: limit * 2,  // over-fetch then filter by confidence
+    drilldown: true,   // bridge: attach verbatim source for low-confidence hits
   });
 
   const filtered = recalled.results
@@ -80,13 +87,35 @@ export async function memoryQuery(input: MemoryQueryInput): Promise<MemoryQueryR
       room: r.room,
     }));
 
+  if (filtered.length > 0) {
+    return {
+      intent: input.intent,
+      project,
+      results: filtered,
+      empty: false,
+    };
+  }
+
+  // Primary filter empty — fall back to the bridged verbatim source if the
+  // model tier had a low-confidence match worth drilling into.
+  const fallback = recalled.bridged;
+  if (fallback && fallback.length > 0) {
+    return {
+      intent: input.intent,
+      project,
+      results: [],
+      empty: true,
+      fallback,
+      guidance: `Low-confidence match — verbatim source attached; verify before relying.`,
+    };
+  }
+
   return {
     intent: input.intent,
     project,
-    results: filtered,
-    empty: filtered.length === 0,
-    guidance: filtered.length === 0
-      ? `No memory found relevant to: "${input.intent}". This may be a new area — proceed with standard caution.`
-      : undefined,
+    results: [],
+    empty: true,
+    fallback: [],
+    guidance: `No memory found relevant to: "${input.intent}". This may be a new area — proceed with standard caution.`,
   };
 }

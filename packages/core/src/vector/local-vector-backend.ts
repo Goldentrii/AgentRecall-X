@@ -10,13 +10,7 @@
 import { embed } from "./embedding.js";
 import { queryVector } from "./local-vector-store.js";
 import type { SmartRecallResultItem } from "../tools-logic/smart-recall.js";
-
-function scoreLabel(score: number): string {
-  if (score >= 0.80) return "high";
-  if (score >= 0.65) return "medium";
-  if (score >= 0.50) return "low";
-  return "weak";
-}
+import { calibratedConfidence } from "../tools-logic/confidence.js";
 
 export class LocalVectorRecallBackend {
   available(): boolean {
@@ -38,13 +32,18 @@ export class LocalVectorRecallBackend {
 
     const hits = await queryVector(project, embedding, limit);
 
-    return hits.map((h) => ({
-      id: h.id,
-      source: h.source,
-      title: h.title,
-      excerpt: h.excerpt,
-      score: h.score,
-      confidence: scoreLabel(h.score),
-    }));
+    return hits.map((h) => {
+      // local-vector scores are cosine similarity — already 0..1.
+      const c = calibratedConfidence(h.score, "cosine");
+      return {
+        id: h.id,
+        source: h.source,
+        title: h.title,
+        excerpt: h.excerpt,
+        score: h.score,
+        confidence: c.label,
+        calibrated: c.calibrated,
+      };
+    });
   }
 }

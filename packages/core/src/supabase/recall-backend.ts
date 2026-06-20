@@ -2,6 +2,7 @@
 import { getSupabaseClient } from "./client.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
 import type { SupabaseConfig } from "./config.js";
+import { calibratedConfidence, type ConfidenceScale } from "../tools-logic/confidence.js";
 
 // Import the interface type — we can't import directly from recall-backend.ts
 // because it would create a circular dependency (it dynamically imports us).
@@ -10,12 +11,10 @@ import type { SupabaseConfig } from "./config.js";
 /** RRF constant (same as local backend). */
 const RRF_K = 60;
 
-// RRF max ≈ num_lists / (k+1) = 3/61 ≈ 0.049. Calibrate thresholds accordingly.
-function scoreLabel(score: number): string {
-  if (score >= 0.040) return "high";    // top of 2+ lists
-  if (score >= 0.025) return "medium";  // top of ~1.5 lists
-  if (score >= 0.015) return "low";     // top of 1 list
-  return "weak";
+/** Compute the human label + stored calibrated value for a score (Wave 4). */
+function label(score: number, scale: ConfidenceScale): { confidence: string; calibrated: number } {
+  const c = calibratedConfidence(score, scale);
+  return { confidence: c.label, calibrated: c.calibrated };
 }
 
 interface RecallResultItem {
@@ -25,6 +24,7 @@ interface RecallResultItem {
   excerpt: string;
   score: number;
   confidence: string;
+  calibrated: number;
   room?: string;
   date?: string;
   severity?: string;
@@ -96,7 +96,8 @@ export class SupabaseRecallBackend {
         title: (r.title ?? r.slug) as string,
         excerpt: ((r.body as string) ?? "").slice(0, 300),
         score: (r.similarity as number) ?? 0,
-        confidence: scoreLabel((r.similarity as number) ?? 0),
+        // cosine similarity is already 0..1.
+        ...label((r.similarity as number) ?? 0, "cosine"),
         room: (r.room as string) ?? undefined,
       })
     );
@@ -108,7 +109,8 @@ export class SupabaseRecallBackend {
         title: r.title as string,
         excerpt: `[${r.severity as string}] confirmed ${r.confirmed as number}x`,
         score: (r.similarity as number) ?? 0,
-        confidence: scoreLabel((r.similarity as number) ?? 0),
+        // cosine similarity is already 0..1.
+        ...label((r.similarity as number) ?? 0, "cosine"),
         severity: r.severity as string,
       })
     );
@@ -120,7 +122,8 @@ export class SupabaseRecallBackend {
         title: (r.title ?? r.slug) as string,
         excerpt: ((r.body as string) ?? "").slice(0, 300),
         score: 1 / (idx + 1),
-        confidence: scoreLabel(1 / (idx + 1)),
+        // reciprocal-rank 1/(idx+1) is already 0..1.
+        ...label(1 / (idx + 1), "cosine"),
         room: (r.room as string) ?? undefined,
       })
     );
@@ -152,7 +155,8 @@ export class SupabaseRecallBackend {
       const key = item.excerpt.toLowerCase().replace(/\s+/g, " ").trim();
       if (seen.has(key)) continue;
       seen.add(key);
-      deduped.push({ ...item, score, confidence: scoreLabel(score) });
+      // Final RRF score → rrf-supabase scale.
+      deduped.push({ ...item, score, ...label(score, "rrf-supabase") });
     }
 
     deduped.sort((a, b) => b.score - a.score);

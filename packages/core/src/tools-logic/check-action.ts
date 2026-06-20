@@ -76,7 +76,9 @@ const STOPWORDS = new Set([
   "my", "your", "our", "let", "lets", "going", "make", "made", "go", "want", "need",
 ]);
 
-function tokenize(s: string): Set<string> {
+// Exported (Wave 4) so the prior-builder and predict-correction (Wave 5) reuse
+// the SAME tokenizer/overlap grammar instead of forking it.
+export function tokenize(s: string): Set<string> {
   return new Set(
     s
       .toLowerCase()
@@ -87,7 +89,7 @@ function tokenize(s: string): Set<string> {
   );
 }
 
-function overlap(a: Set<string>, b: Set<string>): string[] {
+export function overlap(a: Set<string>, b: Set<string>): string[] {
   const hits: string[] = [];
   for (const t of a) if (b.has(t)) hits.push(t);
   return hits.sort();
