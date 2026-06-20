@@ -84,7 +84,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
       date: "2026-05-19",
       severity: "p1",
       project: "e2e-proj",
-      rule: "Default kind is correction",
+      rule: "Default kind must be correction when not supplied",
       context: "Test kind default.",
       tags: [],
     });
@@ -99,7 +99,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
       date: "2026-05-19",
       severity: "p0",
       project: "e2e-proj",
-      rule: "P0 weight",
+      rule: "Always use P0 weight derived from severity",
       context: "",
       tags: [],
     });
@@ -108,7 +108,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
       date: "2026-05-18",
       severity: "p1",
       project: "e2e-proj",
-      rule: "P1 weight",
+      rule: "Always use P1 weight derived from severity",
       context: "",
       tags: [],
     });
@@ -126,7 +126,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
       date: "2026-05-19",
       severity: "p0",
       project: "e2e-proj",
-      rule: "Explicit falsy values preserved",
+      rule: "Always preserve explicit falsy values via nullish coalescing",
       context: "",
       tags: [],
       weight: 0,

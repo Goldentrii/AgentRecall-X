@@ -52,7 +52,7 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
   const logFileName = captureLogFileName(date, fs.existsSync(baseLogPath), {
     saveType: "capture",
     content: combined,
-  });
+  }, dir);
   const logPath = path.join(dir, logFileName);
   const entryNum = countLogEntries(logPath) + 1;
   const tagStr = input.tags && input.tags.length > 0 ? ` [${input.tags.join(", ")}]` : "";

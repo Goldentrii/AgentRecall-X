@@ -124,7 +124,7 @@ describe("corrections storage", () => {
       date: "2026-05-18",
       severity: "p0",
       project: "test-proj",
-      rule: "Always derive P0 weight",
+      rule: "Always derive P0 weight from severity",
       context: "P0 corrections default to full weight.",
       tags: ["weight"],
     });
@@ -133,7 +133,7 @@ describe("corrections storage", () => {
       date: "2026-05-17",
       severity: "p1",
       project: "test-proj",
-      rule: "Derive P1 weight",
+      rule: "Always derive P1 weight from severity",
       context: "P1 corrections default to partial weight.",
       tags: ["weight"],
     });

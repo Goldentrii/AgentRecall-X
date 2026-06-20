@@ -133,6 +133,16 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
  */
 export function captureLogFileName(date: string, baseExists: boolean, opts?: SmartNameOpts, dir?: string): string {
   if (opts?.saveType && opts?.content) {
+    // SAME-DAY RULE: if any capture file for today already exists, reuse it so
+    // entry numbers accumulate within one file per day per project.
+    if (dir && fs.existsSync(dir)) {
+      const existingCapture = fs.readdirSync(dir)
+        .filter(f => f.startsWith(date) && f.endsWith(".md") &&
+          (f.includes("-log.md") || f.includes("--capture--")))
+        .sort()[0];
+      if (existingCapture) return existingCapture;
+    }
+
     const slug = topicSlug(opts.content);
     const sigTag = opts.sig ?? "none";
     const themeTag = opts.theme ?? "none";

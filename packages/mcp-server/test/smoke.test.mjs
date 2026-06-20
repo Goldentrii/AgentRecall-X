@@ -10,30 +10,30 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(__dirname, "..", "dist", "index.js");
 
 describe("MCP server smoke tests", () => {
-  it("--list-tools outputs 6 core tools by default", async () => {
+  it("--list-tools outputs 5 core tools by default", async () => {
     const { stdout } = await execFileAsync("node", [ENTRY, "--list-tools"]);
     const tools = JSON.parse(stdout);
     const names = tools.map((t) => t.name);
-    // Core 6 always present
+    // Core 5 always present
     assert.ok(names.includes("session_start"));
     assert.ok(names.includes("remember"));
     assert.ok(names.includes("recall"));
     assert.ok(names.includes("session_end"));
     assert.ok(names.includes("check"));
-    assert.ok(names.includes("memory_query"));
-    assert.equal(tools.length, 6);
+    assert.equal(tools.length, 5);
   });
 
-  it("--full exposes all 11 tools", async () => {
+  it("--full exposes all 23 tools", async () => {
     const { stdout } = await execFileAsync("node", [ENTRY, "--list-tools", "--full"]);
     const tools = JSON.parse(stdout);
     const names = tools.map((t) => t.name);
+    assert.ok(names.includes("memory_query"));
     assert.ok(names.includes("digest"));
     assert.ok(names.includes("project_board"));
     assert.ok(names.includes("project_status"));
     assert.ok(names.includes("bootstrap_scan"));
     assert.ok(names.includes("bootstrap_import"));
-    assert.equal(tools.length, 11);
+    assert.equal(tools.length, 23);
   });
 
   it("--version prints a semver string", async () => {
