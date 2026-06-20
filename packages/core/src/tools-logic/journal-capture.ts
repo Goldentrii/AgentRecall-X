@@ -58,6 +58,9 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
   const tagStr = input.tags && input.tags.length > 0 ? ` [${input.tags.join(", ")}]` : "";
   const timestamp = new Date().toISOString().slice(11, 19);
 
+  // Wave 2 note: capture is the CURATED stream — these 2000/5000 caps are
+  // intentional. The lossless tier is journal/archive/raw (verbatim, uncapped);
+  // do not remove these caps to "preserve everything" — that is the raw tier's job.
   const question = input.question.length > 2000 ? input.question.slice(0, 2000) + "..." : input.question;
   const answer = input.answer.length > 5000 ? input.answer.slice(0, 5000) + "..." : input.answer;
   let entry = `### Q${entryNum} (${timestamp})${tagStr}\n\n`;

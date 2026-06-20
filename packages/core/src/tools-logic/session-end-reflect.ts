@@ -23,6 +23,8 @@ import { resolveProject } from "../storage/project.js";
 import { readCorrections } from "../storage/corrections.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { listMilestones } from "../palace/pipeline.js";
+import { archiveRawDir } from "../storage/paths.js";
+import { readJsonSafe } from "../storage/fs-utils.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -39,6 +41,13 @@ export interface ReflectInputBundle {
   active_corrections: Array<{ id: string; rule: string; severity: string; precision: number | null }>;
   /** Last 3 closed pipeline phases with their synthesis. */
   recent_phases: Array<{ order: number; phase: string; synthesis: string }>;
+  /**
+   * Wave 2: lossless raw archive segments not yet consumed by compression
+   * (files newer than the `.consumed.json` marker). The in-loop LLM is asked to
+   * distill these upward and advance the marker. Core stays deterministic — it
+   * only surfaces the raw material; it makes NO LLM call itself.
+   */
+  raw_unconsumed?: Array<{ file: string; excerpt: string; bytes: number }>;
 }
 
 export interface ReflectResult {
@@ -97,10 +106,13 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
       synthesis: p.sections.synthesis,
     }));
 
+  const rawUnconsumed = collectRawUnconsumed(slug);
+
   const bundle: ReflectInputBundle = {
     recent_journals: recentJournals,
     active_corrections: corrections,
     recent_phases: recentPhases,
+    ...(rawUnconsumed.length > 0 ? { raw_unconsumed: rawUnconsumed } : {}),
   };
 
   const prompt = buildPrompt(slug, bundle, lookback);
@@ -144,5 +156,75 @@ function buildPrompt(slug: string, bundle: ReflectInputBundle, lookback: number)
   for (const ph of bundle.recent_phases) {
     lines.push(`- Phase ${ph.order} — ${ph.phase}: ${ph.synthesis}`);
   }
+
+  // Wave 2: surface lossless raw segments not yet compressed, and ask the LLM
+  // to distill them upward and advance the consume marker.
+  if (bundle.raw_unconsumed && bundle.raw_unconsumed.length > 0) {
+    lines.push("");
+    lines.push(`## Unconsumed raw archive (${bundle.raw_unconsumed.length})`);
+    lines.push(
+      "These verbatim session dumps have NOT been distilled yet. Read them, " +
+        "extract any reusable pattern/decision/skill, then advance the " +
+        "journal/archive/raw/.consumed.json marker so they aren't re-processed."
+    );
+    for (const r of bundle.raw_unconsumed) {
+      lines.push(`### ${r.file} (${r.bytes} bytes)`);
+      lines.push(r.excerpt);
+      lines.push("");
+    }
+  }
+
   return lines.join("\n");
+}
+
+/**
+ * Wave 2: collect lossless raw-archive files newer than the `.consumed.json`
+ * marker so the reflect bundle can hand them to the LLM for distillation.
+ * Deterministic and best-effort — never throws.
+ */
+function collectRawUnconsumed(
+  slug: string,
+): NonNullable<ReflectInputBundle["raw_unconsumed"]> {
+  const out: NonNullable<ReflectInputBundle["raw_unconsumed"]> = [];
+  try {
+    const rawDir = archiveRawDir(slug);
+    if (!fs.existsSync(rawDir)) return out;
+
+    const marker = readJsonSafe<{ lastConsumedAt?: string | null }>(
+      path.join(rawDir, ".consumed.json"),
+    );
+    const cutoffMs = marker?.lastConsumedAt
+      ? new Date(marker.lastConsumedAt).getTime()
+      : 0;
+
+    const files = fs
+      .readdirSync(rawDir)
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .reverse();
+
+    for (const file of files) {
+      const full = path.join(rawDir, file);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (Number.isFinite(cutoffMs) && cutoffMs > 0 && stat.mtimeMs <= cutoffMs) {
+        continue; // already consumed
+      }
+      let excerpt = "";
+      try {
+        excerpt = fs.readFileSync(full, "utf-8").slice(0, EXCERPT_CHARS);
+      } catch {
+        continue;
+      }
+      out.push({ file, excerpt, bytes: stat.size });
+      if (out.length >= 5) break; // cap — bound the bundle size
+    }
+  } catch {
+    // best-effort
+  }
+  return out;
 }

@@ -148,8 +148,15 @@ export { classifyStore, classifyPath, isPersonalProject, PERSONAL_STORES } from 
 export type { Tier } from "./storage/classification.js";
 
 // Storage
-export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject } from "./storage/paths.js";
+export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+
+// Storage — archive tier (Wave 2, lossless verbatim floor; local-only)
+export { archiveSession } from "./storage/archive-write.js";
+export type { ArchiveSessionInput, ArchiveSessionResult } from "./storage/archive-write.js";
+export { enqueueConsolidation, drainConsolidationQueue } from "./storage/consolidation-queue.js";
+export type { ConsolidationJob, DrainReport } from "./storage/consolidation-queue.js";
+export { writeMemoryProtocol } from "./storage/memory-protocol.js";
 export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";

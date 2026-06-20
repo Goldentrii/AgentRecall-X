@@ -56,6 +56,11 @@ export function journalDir(project: string): string {
  * and backlink resolution can reach rollup-archived entries (P0-2 fix).
  * Defaults to false so counting paths (session_start, dashboard_export)
  * don't inflate session counts with archived entries (v3.4.26 fix).
+ *
+ * Wave 2: when includeArchive=true we ALSO push journal/archive/raw (the
+ * lossless verbatim tier) if it exists, so recall can reach mechanical dumps.
+ * The default counting path stays unchanged → raw dumps don't inflate session
+ * counts but become recall-reachable on demand.
  */
 export function journalDirs(project: string, includeArchive = false): string[] {
   const dirs: string[] = [];
@@ -68,6 +73,9 @@ export function journalDirs(project: string, includeArchive = false): string[] {
   if (includeArchive) {
     const archiveDir = path.join(primary, "archive");
     if (fs.existsSync(archiveDir)) dirs.push(archiveDir);
+    // Wave 2: lossless verbatim tier (journal/archive/raw).
+    const rawDir = path.join(primary, "archive", "raw");
+    if (fs.existsSync(rawDir)) dirs.push(rawDir);
   }
 
   // Legacy: ~/.claude/projects/*/memory/journal/
@@ -138,6 +146,21 @@ export function digestDir(project: string): string {
   const safe = sanitizeProject(project);
   const root = getRoot();
   const resolved = path.join(root, "projects", safe, "digest");
+  assertInsideRoot(resolved, root, project);
+  return resolved;
+}
+
+/**
+ * Resolve the lossless raw-archive directory for a project (Wave 2).
+ *
+ * journal/archive/raw holds the mechanical, judgment-free verbatim session
+ * dumps written on every session end. This is the "never lost" floor under
+ * the lossy compression tier (awareness / palace skills).
+ */
+export function archiveRawDir(project: string): string {
+  const safe = sanitizeProject(project);
+  const root = getRoot();
+  const resolved = path.join(root, "projects", safe, "journal", "archive", "raw");
   assertInsideRoot(resolved, root, project);
   return resolved;
 }

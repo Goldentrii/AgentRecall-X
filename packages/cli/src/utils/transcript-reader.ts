@@ -184,6 +184,58 @@ function extractRecentExchanges(lines: unknown[], maxExchanges = 20): string {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** A parsed session plus its verbatim head+tail bytes (the lossless dump). */
+export interface TranscriptByPath extends SessionInfo {
+  /** head + "\n…\n" + tail of the transcript, capped at ~80KB. */
+  rawTail: string;
+}
+
+const RAW_TAIL_CAP = 80_000;
+
+/**
+ * Wave 2: parse a SINGLE transcript by its absolute path (from the Stop hook's
+ * `transcript_path`), reusing the same head/tail reader as readTodaySessions —
+ * no second reader. Returns the parsed SessionInfo PLUS a verbatim `rawTail`
+ * for the lossless archive tier. Returns null if the path is missing/unreadable.
+ */
+export function readTranscriptByPath(filePath: string): TranscriptByPath | null {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+
+    const { head, tail } = readHeadTail(filePath);
+    const headLines = parseLines(head);
+    const tailLines = parseLines(tail);
+
+    const cwdGuess =
+      ((headLines.find(
+        (d) => d && typeof d === "object" && "cwd" in (d as object),
+      ) as Record<string, unknown> | undefined)?.cwd as string | null) ?? null;
+
+    const projectGuess = extractProjectSlug(head) ?? extractProjectSlug(tail);
+
+    // Verbatim dump: head + tail. If the whole file fit in head, don't duplicate.
+    const rawTail = (
+      stat.size <= head.length ? head : `${head}\n…\n${tail}`
+    ).slice(0, RAW_TAIL_CAP);
+
+    return {
+      file: filePath,
+      sessionId: path.basename(filePath, ".jsonl"),
+      sizeMb: stat.size / 1024 / 1024,
+      lastModified: stat.mtime,
+      projectGuess,
+      cwdGuess,
+      firstUserMessage: extractFirstUserMessage(headLines),
+      recentExchanges: extractRecentExchanges(tailLines),
+      rawTail,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Locate and parse all Claude Code sessions modified today.
  *

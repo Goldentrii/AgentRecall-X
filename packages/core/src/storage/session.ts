@@ -6,7 +6,7 @@
  *
  * Example: 2026-05-04--arsave--shipped--version-bump--v341-release.md
  *
- * - save-type: arsave / arsaveall / hook-end / hook-correction / capture
+ * - save-type: arsave / arsaveall / hook-end / hook-correction / capture / hook-archive
  * - sig: significance tag (SignificanceTag) — why this session matters
  * - theme: recurring theme tag (ThemeTag) — cross-session pattern
  * - topic-slug: semantic keywords from generateSlug(), max 35 chars
@@ -32,7 +32,13 @@ export function getSessionId(): string {
 }
 
 /** Save type for intelligent naming. */
-export type SaveType = "arsave" | "arsaveall" | "hook-end" | "hook-correction" | "capture";
+export type SaveType =
+  | "arsave"
+  | "arsaveall"
+  | "hook-end"
+  | "hook-correction"
+  | "capture"
+  | "hook-archive";
 
 export interface SmartNameOpts {
   saveType: SaveType;

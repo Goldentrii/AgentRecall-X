@@ -559,11 +559,46 @@ async function main(): Promise<void> {
 
     case "hook-end": {
       // Fires at session Stop via Stop hook.
-      // Auto-saves a minimal journal entry IF /arsave wasn't called manually.
-      // Per-session lock (mirrors hook-start) prevents double-fire within the same session.
-      const endSessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "";
+      //
+      // Wave 2 (two-tier memory): FIRST do a mechanical, lossless, judgment-free
+      // verbatim archive of the session — UNCONDITIONALLY, before any capture/
+      // summary short-circuit, so a session can never be "lost" just because
+      // nothing was captured. THEN run the existing capture→summary path, but
+      // defer palace consolidation to the async dreaming queue.
+      //
+      // Per-session lock (mirrors hook-start) prevents double-fire within the
+      // same session. Every failure path exits 0 — never crash into the Stop turn.
+
+      // ---- read stdin first (mirror hook-correction / hook-ambient / hook-pretool)
+      let stopRaw = "";
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        stopRaw = Buffer.concat(chunks).toString("utf-8").trim();
+      } catch { stopRaw = ""; }
+
+      let stop: Record<string, unknown> = {};
+      if (stopRaw) {
+        try { stop = JSON.parse(stopRaw) as Record<string, unknown>; }
+        catch { stop = {}; }
+      }
+
+      const transcriptPath =
+        typeof stop.transcript_path === "string" ? stop.transcript_path : undefined;
+      const stopSessionId =
+        typeof stop.session_id === "string" ? stop.session_id : undefined;
+
       const endToday = new Date().toISOString().slice(0, 10);
-      const endLockKey = `${endSessionId || endToday}-end`;
+      // Dedup key = transcript filename UUID (collision-free), else stdin
+      // session_id, else env, else date (last resort — may collide same-day).
+      const sid =
+        (transcriptPath ? path.basename(transcriptPath, ".jsonl") : "") ||
+        stopSessionId ||
+        process.env.CLAUDE_SESSION_ID ||
+        process.env.SESSION_ID ||
+        endToday;
+
+      const endLockKey = `${sid}-end`;
       const endLockFile = path.join(os.homedir(), ".agent-recall", ".hook-end-lock");
 
       try {
@@ -573,80 +608,132 @@ async function main(): Promise<void> {
         fs.writeFileSync(endLockFile, endLockKey, "utf-8");
       } catch { /* non-blocking */ }
 
+      // ---- MECHANICAL ARCHIVE — unconditional, zero dependence on captures ----
+      try {
+        const { readTranscriptByPath, readTodaySessions } = await import("./utils/transcript-reader.js");
+        // Prefer the explicit transcript_path; fall back to the proven
+        // readTodaySessions discovery if the Stop payload lacks it.
+        const src = transcriptPath
+          ? readTranscriptByPath(transcriptPath)
+          : (readTodaySessions()[0] ?? null);
+        if (src && "rawTail" in src && typeof (src as { rawTail?: unknown }).rawTail === "string") {
+          const proj = project ?? src.projectGuess ?? "auto";
+          core.archiveSession({
+            project: proj,
+            sessionId: sid,
+            transcriptPath,
+            rawTranscript: (src as { rawTail: string }).rawTail,
+            summary: src.firstUserMessage ?? undefined,
+          });
+          core.enqueueConsolidation({ project: proj, sessionId: sid, reason: "hook-end archive" });
+        }
+      } catch (e) {
+        // Archive must never break the Stop turn.
+        process.stderr.write(`[AgentRecall hook-end archive] ${String(e)}\n`);
+      }
+
+      // ---- existing capture→summary path (now deferred + stub dropped) ----
       try {
         const today = endToday;
 
-        // Only save if there's actual capture data from this session.
-        // If nothing was captured, don't create a useless stub file.
+        // Only write a journal summary if there's actual capture data from this
+        // session. The 60-char "Auto-saved:" stub is DROPPED (Wave 2) — the
+        // verbatim archive above is the floor; the summary is additive.
         const resolvedJournalDir = path.join(os.homedir(), ".agent-recall", "projects", project ?? "auto", "journal");
         const logFile = path.join(resolvedJournalDir, `${today}-log.md`);
 
-        // Check for captures
         let summary = "";
         if (fs.existsSync(logFile)) {
           const logContent = fs.readFileSync(logFile, "utf-8");
           const answers = logContent.match(/\*\*A:\*\*\s*(.+)/g) ?? [];
           if (answers.length > 0) {
-            summary = `Auto-saved: ${answers.slice(0, 2).map((a) => a.replace("**A:** ", "").slice(0, 60)).join("; ")}`;
+            summary = answers
+              .slice(0, 2)
+              .map((a) => a.replace("**A:** ", "").slice(0, 60))
+              .join("; ");
           }
         }
 
-        // Also check if any smart-named journal was already written today (by /arsave)
+        // Also check if any smart-named journal was already written today (by /arsave).
         const existingToday = fs.existsSync(resolvedJournalDir)
           ? fs.readdirSync(resolvedJournalDir).some(f => f.startsWith(today) && f.endsWith(".md") && f !== "index.md")
           : false;
 
+        // Guards now run AFTER the archive block: the lossless dump already
+        // happened, so skipping the summary here loses nothing.
         if (!summary && existingToday) {
-          // /arsave already ran today — no stub needed
-          process.exit(0);
+          process.exit(0); // /arsave already ran today — no summary needed
         }
-
         if (!summary) {
-          // No captures, no existing journal — nothing worth saving. Skip silently.
-          process.exit(0);
+          process.exit(0); // no captures, no journal — verbatim archive is enough
         }
 
-        await core.sessionEnd({ summary, project, saveType: "hook-end" });
+        // Defer palace consolidation to the async queue (Decision #3).
+        await core.sessionEnd({ summary, project, saveType: "hook-end", deferConsolidation: true });
         process.stderr.write(`[AgentRecall] Session auto-saved\n`);
 
-        // Write summary for arstatus cache script (async, non-blocking)
-        try {
-          const summaryFile = path.join(os.homedir(), ".agent-recall", ".last-session-summary.txt");
-          fs.writeFileSync(summaryFile, summary, "utf-8");
-          // Spawn cache generation in background — never await
-          const { spawn } = await import("node:child_process");
-          spawn("python3", [
-            path.join(os.homedir(), ".claude", "scripts", "ar-arstatus-cache.py"),
-          ], { detached: true, stdio: "ignore" }).unref();
-        } catch { /* non-blocking */ }
+        // ---- everything below DEPENDS on `summary` — guard it. ----
+        if (summary) {
+          // Write summary for arstatus cache script (async, non-blocking)
+          try {
+            const summaryFile = path.join(os.homedir(), ".agent-recall", ".last-session-summary.txt");
+            fs.writeFileSync(summaryFile, summary, "utf-8");
+            // Spawn cache generation in background — never await
+            const { spawn } = await import("node:child_process");
+            spawn("python3", [
+              path.join(os.homedir(), ".claude", "scripts", "ar-arstatus-cache.py"),
+            ], { detached: true, stdio: "ignore" }).unref();
+          } catch { /* non-blocking */ }
 
-        // Semantic prefetch — pre-warm next session's context
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const coremod = await import("agent-recall-core") as any;
-          const backend = await coremod.getRecallBackend();
-          const prefetchProject = project ?? "auto";
-          if (backend.available() && summary) {
-            const prefetchResults = await backend.search(summary.slice(0, 200), prefetchProject, 5);
-            if (prefetchResults.length > 0) {
-              const prefetchFile = path.join(
-                os.homedir(), ".agent-recall", "projects", prefetchProject, "semantic-prefetch.json"
-              );
-              fs.writeFileSync(prefetchFile, JSON.stringify({
-                generated: new Date().toISOString(),
-                query: summary.slice(0, 100),
-                results: prefetchResults.map((r: { title: string; excerpt?: string; score: number; source: string }) => ({
-                  title: r.title,
-                  excerpt: r.excerpt?.slice(0, 200) ?? "",
-                  score: r.score,
-                  source: r.source,
-                }))
-              }, null, 2), "utf-8");
+          // Semantic prefetch — pre-warm next session's context
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const coremod = await import("agent-recall-core") as any;
+            const backend = await coremod.getRecallBackend();
+            const prefetchProject = project ?? "auto";
+            if (backend.available()) {
+              const prefetchResults = await backend.search(summary.slice(0, 200), prefetchProject, 5);
+              if (prefetchResults.length > 0) {
+                const prefetchFile = path.join(
+                  os.homedir(), ".agent-recall", "projects", prefetchProject, "semantic-prefetch.json"
+                );
+                fs.writeFileSync(prefetchFile, JSON.stringify({
+                  generated: new Date().toISOString(),
+                  query: summary.slice(0, 100),
+                  results: prefetchResults.map((r: { title: string; excerpt?: string; score: number; source: string }) => ({
+                    title: r.title,
+                    excerpt: r.excerpt?.slice(0, 200) ?? "",
+                    score: r.score,
+                    source: r.source,
+                  }))
+                }, null, 2), "utf-8");
+              }
             }
-          }
-        } catch { /* non-blocking — prefetch is best-effort */ }
+          } catch { /* non-blocking — prefetch is best-effort */ }
+        }
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-end] ${String(e)}\n`);
+      }
+      break;
+    }
+
+    case "consolidate-async": {
+      // Wave 2: drain the async consolidation queue. Each pending job runs the
+      // pure-regex consolidateJournalToPalace (headless-safe, no LLM). One bad
+      // job never blocks the rest. Invocable only — NO cron/scheduler created.
+      try {
+        const report = core.drainConsolidationQueue((job) => {
+          try {
+            core.ensurePalaceInitialized(job.project);
+            core.consolidateJournalToPalace(job.project);
+          } catch (e) {
+            // rethrow so the queue marks this job failed (not done) for retry
+            throw e instanceof Error ? e : new Error(String(e));
+          }
+        });
+        output(`consolidate-async: ${report.processed} processed, ${report.failed} failed`);
+      } catch (e) {
+        process.stderr.write(`[AgentRecall consolidate-async] ${String(e)}\n`);
       }
       break;
     }

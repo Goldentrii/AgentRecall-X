@@ -20,6 +20,8 @@ import { todayISO } from "../storage/fs-utils.js";
 import { getRoot } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
+import { getSessionId } from "../storage/session.js";
+import { enqueueConsolidation } from "../storage/consolidation-queue.js";
 import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { pipelineOpen } from "./pipeline-open.js";
@@ -60,6 +62,15 @@ export interface SessionEndInput {
     phase_name: string;
     goal: string;
   };
+  /**
+   * Wave 2: defer the inline journal→palace consolidation to the async
+   * dreaming queue instead of running it in this turn. ONLY the harness-driven
+   * Stop hook (`hook-end`) passes this true — it enqueues a consolidation job
+   * and skips the synchronous palace pass. Default false ⇒ ZERO behavior
+   * change for /arsave, /arsaveall, and the MCP session_end (they still
+   * consolidate inline). Decision #3: consolidation is async dreaming.
+   */
+  deferConsolidation?: boolean;
 }
 
 export interface MergeSuggestion {
@@ -318,13 +329,30 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     }
   }
 
-  // 3. Consolidate journal to palace
-  try {
-    ensurePalaceInitialized(slug);
-    consolidateJournalToPalace(slug);
-    palaceConsolidated = true;
-  } catch (err) {
-    palaceError = err instanceof Error ? err.message : String(err);
+  // 3. Consolidate journal to palace.
+  // Wave 2: when deferConsolidation is set (harness Stop hook only), hand the
+  // compression off to the async dreaming queue instead of running it inline.
+  // Default path is unchanged for /arsave, /arsaveall and MCP session_end.
+  if (input.deferConsolidation) {
+    try {
+      ensurePalaceInitialized(slug);
+      enqueueConsolidation({
+        project: slug,
+        sessionId: getSessionId(),
+        reason: "session_end deferred (hook-end)",
+      });
+    } catch {
+      // enqueue is fire-and-forget — never affect the result
+    }
+    palaceConsolidated = false; // compression happens later, off this turn
+  } else {
+    try {
+      ensurePalaceInitialized(slug);
+      consolidateJournalToPalace(slug);
+      palaceConsolidated = true;
+    } catch (err) {
+      palaceError = err instanceof Error ? err.message : String(err);
+    }
   }
 
   // 4. Detect similar recent entries — suggest merge if high overlap
