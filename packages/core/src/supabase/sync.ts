@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { getSupabaseClient } from "./client.js";
 import { readSupabaseConfig } from "./config.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
+import { classifyStore } from "../storage/classification.js";
 
 // ---------------------------------------------------------------------------
 // Utilities (exported for testing)
@@ -111,6 +112,14 @@ export function syncToSupabase(
   store: "journal" | "palace" | "awareness" | "digest",
   room?: string
 ): void {
+  // PRIVACY GATE (Wave 1, Decision #6): personal-tier data (awareness behavioral
+  // layer, _global palace) does not leave the machine unless sync_personal=true.
+  // Silent skip preserves the fire-and-forget contract.
+  // NOTE: flipping config.sync_personal=true re-feeds the war-room dashboard's
+  // ar_awareness reads.
+  if (classifyStore(store, { project }) === "personal" && readSupabaseConfig()?.sync_personal !== true) {
+    return;
+  }
   setImmediate(() => {
     void doSync(filePath, content, project, store, room);
   });
@@ -196,6 +205,12 @@ export async function backfill(
 
   for (const file of files) {
     try {
+      // PRIVACY GATE (Wave 1): backfill() calls doSync() directly, bypassing
+      // syncToSupabase()'s gate — so re-apply it here. Count as skipped.
+      if (classifyStore(file.store, { project }) === "personal" && readSupabaseConfig()?.sync_personal !== true) {
+        skipped++;
+        continue;
+      }
       const hash = contentHash(file.content);
       const { data: existing } = await client
         .from("ar_sync_state")

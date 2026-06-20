@@ -60,6 +60,13 @@ export interface CheckActionResult {
   matching_insights: InsightMatch[];
   /** Ready-to-paste warning string for the agent to read before acting. */
   warning: string | null;
+  /**
+   * Wave 5 — corrections are ground truth that can OVERRIDE a plan. `blocked`
+   * fires ONLY when a matched correction is authoritative (`authoritative!==false`),
+   * P0, and NOT a noise-candidate (`precision<0.3 && retrieved>=3`) — otherwise
+   * stale/low-signal P0s would veto legitimate plans. Default `advisory`.
+   */
+  verdict: "advisory" | "blocked";
 }
 
 const STOPWORDS = new Set([
@@ -76,7 +83,9 @@ const STOPWORDS = new Set([
   "my", "your", "our", "let", "lets", "going", "make", "made", "go", "want", "need",
 ]);
 
-function tokenize(s: string): Set<string> {
+// Exported (Wave 4) so the prior-builder and predict-correction (Wave 5) reuse
+// the SAME tokenizer/overlap grammar instead of forking it.
+export function tokenize(s: string): Set<string> {
   return new Set(
     s
       .toLowerCase()
@@ -87,7 +96,7 @@ function tokenize(s: string): Set<string> {
   );
 }
 
-function overlap(a: Set<string>, b: Set<string>): string[] {
+export function overlap(a: Set<string>, b: Set<string>): string[] {
   const hits: string[] = [];
   for (const t of a) if (b.has(t)) hits.push(t);
   return hits.sort();
@@ -105,6 +114,7 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
       matching_corrections: [],
       matching_insights: [],
       warning: null,
+      verdict: "advisory",
     };
   }
   // Default min_overlap=2 — with a populated awareness store, 1-token matches
@@ -127,6 +137,9 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
 
   // 2. Corrections — match on rule + context
   const correctionMatches: CorrectionMatch[] = [];
+  // Wave 5: keep the full matched records (authoritative + precision/retrieved)
+  // so the override gate can decide `blocked` vs `advisory` without re-reading.
+  const matchedRecords = new Map<string, CorrectionRecord>();
   const corrections: CorrectionRecord[] = readActiveCorrections(slug);
   for (const c of corrections) {
     const cTokens = tokenize(`${c.rule} ${c.context} ${(c.tags ?? []).join(" ")}`);
@@ -139,6 +152,7 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
         date: c.date,
         matched_tokens: matched,
       });
+      matchedRecords.set(c.id, c);
     }
   }
 
@@ -176,6 +190,23 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
   const topCorrections = correctionMatches.slice(0, 5);
   const topInsights = insightMatches.slice(0, 3);
 
+  // Wave 5: authoritative override. A matched correction `blocks` the plan ONLY
+  // when it is authoritative (authoritative!==false), P0, and NOT a noise
+  // candidate. Noise = the existing getCorrectionKPIs signal: precision<0.3 with
+  // retrieved>=3 (a low-signal P0 that keeps firing without being heeded). Gating
+  // on noise prevents stale P0s from vetoing legitimate plans (Risk #6).
+  const isNoiseCandidate = (rec: CorrectionRecord): boolean => {
+    const ret = rec.retrieved_count ?? 0;
+    const p = rec.precision;
+    return p !== undefined && p !== null && ret >= 3 && p < 0.3;
+  };
+  const authoritativeP0 = topCorrections.find((c) => {
+    const rec = matchedRecords.get(c.id);
+    if (!rec) return false;
+    return rec.authoritative !== false && rec.severity === "p0" && !isNoiseCandidate(rec);
+  });
+  const verdict: "advisory" | "blocked" = authoritativeP0 ? "blocked" : "advisory";
+
   // Build human-readable warning if anything matched
   let warning: string | null = null;
   if (topRules.length + topCorrections.length + topInsights.length > 0) {
@@ -190,6 +221,10 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
       parts.push(`  💡 [${i.confirmations}×] ${i.title}`);
     }
     warning = parts.join("\n");
+    // A blocked plan leads with the override banner — corrections OVERRIDE the model.
+    if (verdict === "blocked") {
+      warning = `⛔ CONFLICT: a human correction OVERRIDES this plan — reconcile before proceeding.\n${warning}`;
+    }
   }
 
   return {
@@ -200,5 +235,6 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
     matching_corrections: topCorrections,
     matching_insights: topInsights,
     warning,
+    verdict,
   };
 }

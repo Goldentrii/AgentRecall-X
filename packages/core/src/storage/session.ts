@@ -6,7 +6,7 @@
  *
  * Example: 2026-05-04--arsave--shipped--version-bump--v341-release.md
  *
- * - save-type: arsave / arsaveall / hook-end / hook-correction / capture
+ * - save-type: arsave / arsaveall / hook-end / hook-correction / capture / hook-archive
  * - sig: significance tag (SignificanceTag) — why this session matters
  * - theme: recurring theme tag (ThemeTag) — cross-session pattern
  * - topic-slug: semantic keywords from generateSlug(), max 35 chars
@@ -32,7 +32,13 @@ export function getSessionId(): string {
 }
 
 /** Save type for intelligent naming. */
-export type SaveType = "arsave" | "arsaveall" | "hook-end" | "hook-correction" | "capture";
+export type SaveType =
+  | "arsave"
+  | "arsaveall"
+  | "hook-end"
+  | "hook-correction"
+  | "capture"
+  | "hook-archive";
 
 export interface SmartNameOpts {
   saveType: SaveType;
@@ -133,6 +139,16 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
  */
 export function captureLogFileName(date: string, baseExists: boolean, opts?: SmartNameOpts, dir?: string): string {
   if (opts?.saveType && opts?.content) {
+    // SAME-DAY RULE: if any capture file for today already exists, reuse it so
+    // entry numbers accumulate within one file per day per project.
+    if (dir && fs.existsSync(dir)) {
+      const existingCapture = fs.readdirSync(dir)
+        .filter(f => f.startsWith(date) && f.endsWith(".md") &&
+          (f.includes("-log.md") || f.includes("--capture--")))
+        .sort()[0];
+      if (existingCapture) return existingCapture;
+    }
+
     const slug = topicSlug(opts.content);
     const sigTag = opts.sig ?? "none";
     const themeTag = opts.theme ?? "none";

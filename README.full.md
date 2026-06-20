@@ -298,7 +298,7 @@ npx agent-recall-cli palace walk --depth active
 <tr><td><code>session_end</code></td><td>Exhale — save journal + insights + trajectory; compounds memory over time.</td><td>呼出——保存 journal + insights + trajectory；随时间复合记忆。</td></tr>
 <tr><td><code>remember</code></td><td>Write a memory, auto-routes to the right palace room.</td><td>写入一条记忆，自动路由到合适的 palace 房间。</td></tr>
 <tr><td><code>recall</code></td><td>Search all memory (BM25 + vector with RRF fusion + Hopfield rerank).</td><td>搜索所有记忆（BM25 + 向量 + RRF 融合 + Hopfield 重排）。</td></tr>
-<tr><td><code>check</code></td><td>Record agent understanding; returns predictive warnings from past corrections.</td><td>记录 agent 的理解；返回从过去纠正得出的预测性警告。</td></tr>
+<tr><td><code>check</code></td><td>Record agent understanding; the system anticipates the likely correction before you make it.</td><td>记录 agent 的理解；在你纠正之前预测最可能的纠正。</td></tr>
 <tr><td colspan="4" style="text-align:center;padding:6px 0"><b>— Full mode (<code>npx agent-recall-mcp --full</code>) —</b>&nbsp;&nbsp;|&nbsp;&nbsp;<b>— 完整模式 —</b></td></tr>
 <tr><td rowspan="3"><b>On-demand + safety</b><br/>按需 + 安全</td>
     <td><code>memory_query</code></td><td>Pull-on-demand recall mid-task. Supports file-scoped queries.</td><td>任务中按需召回。支持按文件范围查询。</td></tr>

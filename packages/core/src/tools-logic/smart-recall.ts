@@ -57,6 +57,8 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { getConnectedRooms } from "../palace/graph.js";
 import { palaceDir } from "../storage/paths.js";
+import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
+import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,6 +79,9 @@ export interface SmartRecallInput {
    *  Accepts ISO date ("2026-05-01") or relative duration ("7d").
    *  Palace and insight results are unaffected. */
   since?: string;
+  /** Bridge kill-switch (Wave 4). When false, no verbatim drill-down is attached.
+   *  Default true. */
+  drilldown?: boolean;
 }
 
 export interface SmartRecallResultItem {
@@ -87,17 +92,27 @@ export interface SmartRecallResultItem {
   score: number;
   /** Human-readable confidence: "high", "medium", "low", "weak" */
   confidence: string;
+  /** Calibrated confidence on the shared 0..1 axis, SET AT SCORING TIME.
+   *  The bridge gate reads THIS, not the boosted `score` (Risk #8). */
+  calibrated: number;
+  /** Locator for lossless drill-down (Wave 4 bridge). Absent on graph-walk items. */
+  verbatimKey?: VerbatimKey;
   room?: string;
   date?: string;
   severity?: string;
 }
 
-/** Convert raw RRF score to a readable label. */
-function scoreLabel(score: number): string {
-  if (score >= 0.10) return "high";
-  if (score >= 0.05) return "medium";
-  if (score >= 0.03) return "low";
-  return "weak";
+/** A verbatim source attached when a low-confidence top hit was drilled into. */
+export interface BridgedSource {
+  forItemId: string;
+  source: string;
+  verbatim: string;
+}
+
+/** Compute both the human label and the stored calibrated value for a score. */
+function label(score: number, scale: ConfidenceScale): { confidence: string; calibrated: number } {
+  const c = calibratedConfidence(score, scale);
+  return { confidence: c.label, calibrated: c.calibrated };
 }
 
 export interface SmartRecallDegraded {
@@ -115,6 +130,8 @@ export interface SmartRecallResult {
   guidance?: string;
   /** Present when semantic backend timed out or errored and local fallback was used. */
   degraded?: SmartRecallDegraded;
+  /** Verbatim sources attached for low-confidence top hits (Wave 4 bridge). */
+  bridged?: BridgedSource[];
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +363,9 @@ export async function localRecallSearch(
         title,
         excerpt: r.excerpt,
         score: internalScore,
-        confidence: scoreLabel(internalScore),
+        // internalScore is already 0..1 → cosine scale (NOT rrf-local).
+        ...label(internalScore, "cosine"),
+        verbatimKey: { kind: "palace", room: r.room, file: r.file },
         room: r.room,
         date: palaceDate,
       });
@@ -382,7 +401,9 @@ export async function localRecallSearch(
         title,
         excerpt: r.excerpt,
         score: internalScore,
-        confidence: scoreLabel(internalScore),
+        // internalScore is already 0..1 → cosine scale.
+        ...label(internalScore, "cosine"),
+        verbatimKey: { kind: "journal", date: r.date },
         date: r.date,
       });
     }
@@ -417,7 +438,8 @@ export async function localRecallSearch(
         title: i.title,
         excerpt: rawExcerpt.length > 300 ? rawExcerpt.slice(0, 300) + "..." : rawExcerpt,
         score: internalScore,
-        confidence: scoreLabel(internalScore),
+        // internalScore is already 0..1 → cosine scale.
+        ...label(internalScore, "cosine"),
         severity: i.severity,
       });
     }
@@ -462,7 +484,9 @@ export async function localRecallSearch(
     const key = item.excerpt.toLowerCase().replace(/\s+/g, " ").trim();
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ ...item, score, confidence: scoreLabel(score) });
+    // Post-RRF (+ hot-window boost) score → rrf-local scale. This SET of
+    // `calibrated` is what the bridge gate reads (NOT the later boosted score).
+    deduped.push({ ...item, score, ...label(score, "rrf-local") });
   }
 
   // ── 6. Final sort ─────────────────────────────────────────────────────────
@@ -477,13 +501,15 @@ export async function localRecallSearch(
       const linked = getConnectedRooms(pd, topRoom);
       for (const linkedRoom of linked.slice(0, 2)) {
         if (!resultIds.has(linkedRoom)) {
+          // Graph-walk items have NO verbatimKey → skipped by the bridge by design.
+          const linkedScore = deduped[0].score * 0.6;
           deduped.push({
             id: linkedRoom,
             source: "palace" as const,
             title: `↳ linked: ${linkedRoom}`,
             excerpt: `Connected to ${topRoom} via memory graph`,
-            score: deduped[0].score * 0.6,
-            confidence: "low",
+            score: linkedScore,
+            ...label(linkedScore, "rrf-local"),
             room: linkedRoom,
           });
           resultIds.add(linkedRoom);
@@ -576,7 +602,17 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     if (positives > 0 || negatives > 0) {
       const multiplier = betaUtility(positives, negatives) * 2;
       item.score *= multiplier;
-      item.confidence = scoreLabel(item.score);
+      // Update the human-readable label only. `calibrated` stays the
+      // SCORING-TIME value so the bridge gate is not fooled by the ×3–6 boost
+      // chain (Risk #8). Backends without `calibrated` (defensive) get one.
+      item.confidence = calibratedConfidence(item.score, "rrf-local").label;
+      if (typeof item.calibrated !== "number") {
+        item.calibrated = calibratedConfidence(item.score, "rrf-local").calibrated;
+      }
+    } else if (typeof item.calibrated !== "number") {
+      // Remote backend items may arrive without a calibrated field — derive one
+      // from their (cosine-derived) confidence-time score defensively.
+      item.calibrated = calibratedConfidence(item.score, "rrf-local").calibrated;
     }
   }
 
@@ -584,12 +620,33 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   results.sort((a, b) => b.score - a.score);
 
   const finalResults = results.slice(0, limit);
+
+  // ── BRIDGE: low-confidence top hits drill down to the lossless archive ──────
+  // Gate on the STORED `calibrated` (scoring-time), never the boosted score.
+  // Cap ≤2 items / ≤1200 chars each; `drilldown:false` is the kill-switch.
+  // High-confidence items and graph-walk items (no verbatimKey) are skipped.
+  let bridged: BridgedSource[] | undefined;
+  if (input.drilldown !== false && finalResults.length > 0) {
+    const low = finalResults.filter(
+      (it) => it.calibrated < CONFIDENCE_FLOOR.medium && it.verbatimKey,
+    );
+    const collected: BridgedSource[] = [];
+    for (const it of low.slice(0, 2)) {
+      const v = fetchVerbatim(input.project ?? "auto", it.verbatimKey);
+      if (v?.found) {
+        collected.push({ forItemId: it.id, source: v.source, verbatim: v.text });
+      }
+    }
+    if (collected.length > 0) bridged = collected;
+  }
+
   return {
     query: input.query,
     results: finalResults,
     total_searched: results.length,
     sources_queried: [...new Set(results.map((r) => r.source))],
     ...(degraded ? { degraded } : {}),
+    ...(bridged ? { bridged } : {}),
     ...(finalResults.length === 0
       ? { guidance: "No results found. Try `session_start` to initialize this project, or `bootstrap_scan` to import existing context." }
       : {}),

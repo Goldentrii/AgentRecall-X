@@ -40,13 +40,35 @@ export interface CorrectionRecord {
   /** Set when retractCorrection() soft-deletes this record. */
   retracted_at?: string;      // ISO timestamp of retraction
   retract_reason?: string;    // Free-text reason (e.g. "triage-2026-06-12: capture noise")
+  /**
+   * Wave 5 — corrections-prediction (north-star).
+   *
+   * `authoritative`: a human correction is GROUND TRUTH that can OVERRIDE the
+   * model (check_action `verdict:'blocked'`). Defaults true for `kind:'correction'`
+   * via applyCorrectionDefaults; explicit `authoritative:false` opts a record out
+   * of the override gate. Insights/hunches/facts default to NOT authoritative.
+   *
+   * predict_* counters track the predict-the-correction loop. They are kept
+   * STRICTLY SEPARATE from `precision` (= heeded/retrieved) — `predict_precision`
+   * = predict_hits / predicted_count and must never mutate the heeded metric.
+   */
+  authoritative?: boolean;
+  predicted_count?: number;   // How many times predictCorrection fired this risk
+  predict_hits?: number;      // How many predictions later turned into a real recurrence/heeded
+  predict_precision?: number; // min(1, predict_hits / predicted_count)
+  last_predicted?: string;    // ISO timestamp of most recent prediction
 }
 
 export interface CorrectionOutcome {
   correction_id: string;
   project: string;
-  /** "heeded" = agent's action honored the warning. "recurred" = same bug happened again. */
-  kind: "retrieved" | "heeded" | "recurred";
+  /**
+   * "retrieved" = surfaced via check/recall. "heeded" = agent's action honored
+   * the warning. "recurred" = same bug happened again.
+   * Wave 5 — "predicted" = predictCorrection fired this risk before the user
+   * corrected; "predict_hit" = that prediction later became a real recurrence.
+   */
+  kind: "retrieved" | "heeded" | "recurred" | "predicted" | "predict_hit";
   /** ISO timestamp */
   at: string;
   /** Free-text evidence — what made you decide. */
@@ -115,12 +137,17 @@ function todayDate(): string {
 }
 
 function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string): CorrectionRecord {
+  const kind = record.kind ?? "correction";
   return {
     ...record,
     holder: record.holder ?? holderDefault,
-    kind: record.kind ?? "correction",
+    kind,
     weight: record.weight ?? defaultWeight(record.severity),
     active: record.active ?? true,
+    // Wave 5: a human correction is authoritative ground truth by default.
+    // Non-correction kinds (insight/hunch/fact) are advisory unless explicitly
+    // marked authoritative. Honor an explicit value when present.
+    authoritative: record.authoritative ?? (kind === "correction"),
   };
 }
 
@@ -364,13 +391,33 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
   } else if (outcome.kind === "recurred") {
     updated.recurrence_count = (updated.recurrence_count ?? 0) + 1;
     updated.last_outcome = outcome.at;
+  } else if (outcome.kind === "predicted") {
+    // Wave 5: prediction fired — instrument the predict-the-correction loop.
+    updated.predicted_count = (updated.predicted_count ?? 0) + 1;
+    updated.last_predicted = outcome.at;
+  } else if (outcome.kind === "predict_hit") {
+    updated.predict_hits = (updated.predict_hits ?? 0) + 1;
   }
   const r = updated.retrieved_count ?? 0;
   // Clamp to [0,1]: `retrieved` is guarded 1/day but `heeded` can fire on every
   // session_end, so raw heeded/retrieved can exceed 1.0 ("150% heeded" is
   // nonsense). min(1, …) keeps the metric honest. (Root-cause follow-up: apply
   // the same 1/day guard to heeded as retrieved has, for finer resolution.)
+  // NB (Wave 5): `precision` is heeded/retrieved ONLY — predict_* never touch it.
   updated.precision = r > 0 ? Math.min(1, Number(((updated.heeded_count ?? 0) / r).toFixed(3))) : undefined;
+
+  // Wave 5: predict_precision = predict_hits / predicted_count, kept SEPARATE
+  // from `precision`. Undefined until at least one prediction has fired.
+  // A predict_hit implies a prior prediction. If data is inconsistent (hits
+  // recorded without a matching predicted_count — e.g. migrated/corrupt records),
+  // floor the denominator at predict_hits so the metric stays VISIBLE and bounded
+  // rather than silently undefined while hits exist.
+  const pc = updated.predicted_count ?? 0;
+  const ph = updated.predict_hits ?? 0;
+  const predictDenom = Math.max(pc, ph);
+  updated.predict_precision = predictDenom > 0
+    ? Math.min(1, Number((ph / predictDenom).toFixed(3)))
+    : undefined;
 
   // Re-write the JSON file atomically (tmp + rename — prevents truncation on SIGTERM).
   const filename = `${updated.date}-${slugify(updated.rule || updated.id)}.json`;
@@ -378,6 +425,53 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
   const tmp = `${filepath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(updated, null, 2), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filepath);
+}
+
+/**
+ * Wave 5 — single source for "what outcomes already fired today" across the
+ * predict / check-action / session-start / session-end call sites. Reads the
+ * _outcomes.jsonl audit trail and buckets today's events (local-TZ) per
+ * correction id. Returns an empty Map when no log exists — never throws.
+ *
+ * Local-TZ date (`sv` locale → YYYY-MM-DD) matches the 1/day guards elsewhere
+ * (session-start/session-end) so "today" agrees across all four readers.
+ */
+export function readOutcomesForToday(project: string): Map<string, Set<CorrectionOutcome["kind"]>> {
+  const map = new Map<string, Set<CorrectionOutcome["kind"]>>();
+  const p = outcomesPath(project);
+  if (!fs.existsSync(p)) return map;
+  const todayStr = new Date().toLocaleDateString("sv");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(p, "utf-8");
+  } catch {
+    return map;
+  }
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let evt: CorrectionOutcome;
+    try {
+      evt = JSON.parse(trimmed) as CorrectionOutcome;
+    } catch {
+      continue; // skip malformed lines
+    }
+    if (!evt || !evt.correction_id || !evt.at) continue;
+    let day: string;
+    try {
+      day = new Date(evt.at).toLocaleDateString("sv");
+    } catch {
+      continue;
+    }
+    if (day !== todayStr) continue;
+    let set = map.get(evt.correction_id);
+    if (!set) {
+      set = new Set<CorrectionOutcome["kind"]>();
+      map.set(evt.correction_id, set);
+    }
+    set.add(evt.kind);
+  }
+  return map;
 }
 
 /**

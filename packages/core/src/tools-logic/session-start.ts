@@ -16,6 +16,8 @@ import { extractSection } from "../helpers/sections.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
 import { readP0Corrections, recordOutcome, getCorrectionKPIs, type CorrectionRecord } from "../storage/corrections.js";
+import { readBlindSpots } from "../storage/blind-spots-store.js";
+import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
@@ -114,6 +116,17 @@ export interface SessionStartResult {
     heeded: number;
     recurred: number;
   } | null;
+  /**
+   * Wave 5 — corrections-derived behavioral profile (top 2). READ-only at
+   * session_start; derivation happens async in consolidation. Empty when no
+   * profile exists yet. The prior pushed EARLY (memory becoming understanding).
+   */
+  blind_spots: Array<{ tendency: string; severity: "p0" | "p1"; evidence_count: number }>;
+  /**
+   * Wave 5 — forward anticipation against the active phase goal + latest `## Next`
+   * trajectory (top 2 risks). Empty when likelihood is low or no profile exists.
+   */
+  predicted_risks: Array<{ tendency: string; likelihood: "high" | "medium" | "low"; matched: string[] }>;
   empty_state?: string;
 }
 
@@ -444,6 +457,43 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     };
   }
 
+  // Wave 5: Blind Spots (READ-only) + forward anticipation. Both are best-effort
+  // — never break orientation. Derivation runs async in consolidation; here we
+  // only READ the profile and run the (synchronous) predictor over the active
+  // phase goal + latest `## Next` trajectory.
+  let blindSpots: SessionStartResult["blind_spots"] = [];
+  let predictedRisks: SessionStartResult["predicted_risks"] = [];
+  try {
+    const profile = readBlindSpots(slug);
+    if (profile) {
+      blindSpots = profile.blind_spots.slice(0, 2).map((b) => ({
+        tendency: sliceAtWord(b.tendency, 160),
+        severity: b.severity,
+        evidence_count: b.evidence_count,
+      }));
+    }
+  } catch {
+    blindSpots = [];
+  }
+  try {
+    const planParts: string[] = [];
+    if (pipeline?.active_phase_goal) planParts.push(pipeline.active_phase_goal);
+    if (resume?.last_trajectory) planParts.push(resume.last_trajectory);
+    const planText = planParts.join(". ").trim();
+    if (planText) {
+      const pred = await predictCorrection({ plan: planText, project: slug });
+      if (pred.likelihood !== "low" && pred.top_risks.length > 0) {
+        predictedRisks = pred.top_risks.slice(0, 2).map((r) => ({
+          tendency: sliceAtWord(r.tendency, 160),
+          likelihood: pred.likelihood,
+          matched: r.matched,
+        }));
+      }
+    }
+  } catch {
+    predictedRisks = [];
+  }
+
   return {
     project: slug,
     identity,
@@ -463,6 +513,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     dream_health: dreamHealth,
     pipeline,
     alignment,
+    blind_spots: blindSpots,
+    predicted_risks: predictedRisks,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
   };
 }

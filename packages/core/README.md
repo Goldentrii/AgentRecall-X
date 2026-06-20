@@ -299,7 +299,7 @@ npx agent-recall-cli palace walk --depth active
 <tr><td><code>recall</code></td><td>Search all memory (BM25 + vector with RRF fusion + Hopfield rerank).</td><td>搜索所有记忆（BM25 + 向量 + RRF 融合 + Hopfield 重排）。</td></tr>
 <tr><td><code>memory_query</code></td><td>Pull-on-demand recall mid-task. Supports file-scoped queries.</td><td>任务中按需召回。支持按文件范围查询。</td></tr>
 <tr><td rowspan="2"><b>Calibration</b><br/>校准</td>
-    <td><code>check</code></td><td>Record agent understanding; system returns predictive warnings from past corrections.</td><td>记录 agent 的理解；系统返回从过去纠正得出的预测性警告。</td></tr>
+    <td><code>check</code></td><td>Record agent understanding; the system anticipates the likely correction before you make it.</td><td>记录 agent 的理解；系统在你纠正之前预测最可能的纠正。</td></tr>
 <tr><td><code>dashboard_export</code></td><td>Generate agent-readable <code>dashboard.json</code> with all-project memory snapshot + naming index.</td><td>生成 agent 可读的 <code>dashboard.json</code>，包含所有项目记忆快照 + 命名索引。</td></tr>
 <tr><td rowspan="5"><b>Pipeline</b><br/>叙事</td>
     <td><code>pipeline_open</code></td><td>Open a new project phase (Goal/Hard/Solved/Synthesis).</td><td>开启新的项目阶段（目标/难点/解决/提炼）。</td></tr>

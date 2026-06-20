@@ -4,7 +4,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 
-import { readActiveCorrections, readCorrections, writeCorrection } from "../dist/storage/corrections.js";
+import {
+  readActiveCorrections,
+  readCorrections,
+  writeCorrection,
+  recordOutcome,
+  readOutcomesForToday,
+} from "../dist/storage/corrections.js";
 
 let testRoot;
 
@@ -124,7 +130,7 @@ describe("corrections storage", () => {
       date: "2026-05-18",
       severity: "p0",
       project: "test-proj",
-      rule: "Always derive P0 weight",
+      rule: "Always derive P0 weight from severity",
       context: "P0 corrections default to full weight.",
       tags: ["weight"],
     });
@@ -133,7 +139,7 @@ describe("corrections storage", () => {
       date: "2026-05-17",
       severity: "p1",
       project: "test-proj",
-      rule: "Derive P1 weight",
+      rule: "Always derive P1 weight from severity",
       context: "P1 corrections default to partial weight.",
       tags: ["weight"],
     });
@@ -144,5 +150,82 @@ describe("corrections storage", () => {
 
     assert.equal(p0.weight, 1.0);
     assert.equal(p1.weight, 0.7);
+  });
+
+  // ── Wave 5: prediction outcome instrumentation ──────────────────────────
+  it("authoritative defaults true for kind 'correction', and respects explicit kind", () => {
+    writeCorrection("test-proj", {
+      id: "2026-06-01-auth-default",
+      date: "2026-06-01",
+      severity: "p0",
+      project: "test-proj",
+      rule: "Never push without explicit approval",
+      context: "push gate",
+      tags: [],
+    });
+    writeRawCorrection("test-proj", "2026-06-02-insight-kind.json", {
+      id: "2026-06-02-insight-kind",
+      date: "2026-06-02",
+      severity: "p1",
+      project: "test-proj",
+      rule: "Prefer warm color palettes for dashboards",
+      context: "palette",
+      tags: [],
+      kind: "insight",
+    });
+
+    const recs = readCorrections("test-proj");
+    const corr = recs.find((r) => r.id === "2026-06-01-auth-default");
+    const ins = recs.find((r) => r.id === "2026-06-02-insight-kind");
+    assert.equal(corr.authoritative, true, "correction kind defaults authoritative true");
+    assert.equal(ins.authoritative, false, "non-correction kind defaults authoritative false");
+  });
+
+  it("recordOutcome('predicted'|'predict_hit') updates predict_precision, leaves precision untouched", () => {
+    writeCorrection("test-proj", {
+      id: "2026-06-01-predict",
+      date: "2026-06-01",
+      severity: "p0",
+      project: "test-proj",
+      rule: "Never bump the version without approval",
+      context: "version bump gate",
+      tags: [],
+    });
+    const at = new Date().toISOString();
+
+    // Two predictions fired, one hit → predict_precision = 0.5
+    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
+    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
+    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predict_hit", at });
+
+    const rec = readCorrections("test-proj").find((r) => r.id === "2026-06-01-predict");
+    assert.equal(rec.predicted_count, 2);
+    assert.equal(rec.predict_hits, 1);
+    assert.equal(rec.predict_precision, 0.5);
+    // The existing precision metric (heeded/retrieved) is NOT touched by prediction outcomes.
+    assert.equal(rec.precision, undefined);
+    assert.equal(rec.heeded_count ?? 0, 0);
+    assert.equal(rec.retrieved_count ?? 0, 0);
+  });
+
+  it("readOutcomesForToday returns a Map<id, Set<kind>> of today's events", () => {
+    writeCorrection("test-proj", {
+      id: "2026-06-01-today",
+      date: "2026-06-01",
+      severity: "p0",
+      project: "test-proj",
+      rule: "Never delete local files after push",
+      context: "delete gate",
+      tags: [],
+    });
+    const at = new Date().toISOString();
+    recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "retrieved", at });
+    recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "heeded", at });
+
+    const map = readOutcomesForToday("test-proj");
+    const kinds = map.get("2026-06-01-today");
+    assert.ok(kinds, "today's correction should be present");
+    assert.ok(kinds.has("retrieved"));
+    assert.ok(kinds.has("heeded"));
   });
 });

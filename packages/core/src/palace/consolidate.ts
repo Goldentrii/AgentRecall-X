@@ -22,6 +22,7 @@ import { generateFrontmatter } from "./obsidian.js";
 import { updatePalaceIndex } from "./index-manager.js";
 import { appendToLog } from "./log.js";
 import { markKeystones } from "./keystone.js";
+import { runDecayPass, type DecayReport } from "./decay-pass.js";
 
 export interface ConsolidationResult {
   entriesProcessed: number;
@@ -187,12 +188,28 @@ export function consolidateJournalToPalace(
     // Keystone marking is best-effort — never breaks consolidation
   }
 
+  // Wave 3: run the FSRS/salience decay pass — flags stale skills/rooms as
+  // archived (non-destructive). Best-effort: never breaks consolidation.
+  let decay: DecayReport | null = null;
+  try {
+    decay = runDecayPass(project, { dryRun: false });
+  } catch {
+    // Decay is best-effort — never breaks consolidation
+  }
+
   // Log the operation
   appendToLog(project, "consolidate", {
     entries_processed: result.entriesProcessed,
     rooms_updated: result.roomsUpdated,
     memories_created: result.memoriesCreated,
     keystones_marked: keystonesMarked,
+    decay: decay
+      ? {
+          scanned: decay.scanned,
+          archived: decay.archived_candidates.length,
+          skipped: decay.skipped.length,
+        }
+      : null,
   });
 
   return result;

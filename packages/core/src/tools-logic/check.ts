@@ -23,6 +23,7 @@ import { awarenessUpdate } from "./awareness-update.js";
 import { palaceDir } from "../storage/paths.js";
 import { listRooms } from "../palace/rooms.js";
 import { palaceWrite } from "./palace-write.js";
+import { predictCorrection, type PredictCorrectionResult } from "./predict-correction.js";
 
 export interface EvidenceFactor {
   factor: string;
@@ -71,6 +72,12 @@ export interface CheckResult {
    * caller should rephrase as an actionable rule and retry.
    */
   correction_gate_rejected?: string;
+  /**
+   * Wave 5 — forward anticipation: does this goal resemble a tendency the user
+   * has been corrected on? Pushed as an early prior, not a fact pulled late.
+   * Absent when prediction could not run or no blind-spots profile exists.
+   */
+  prediction?: PredictCorrectionResult;
 }
 
 function alignmentLogPath(project: string): string {
@@ -297,6 +304,23 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     }
   }
 
+  // 6. Wave 5: forward anticipation — predict whether this goal is likely to be
+  // corrected, based on the corrections-derived Blind-Spots profile. Pushed as
+  // an early prior. Best-effort: prediction must never break the check flow.
+  let prediction: PredictCorrectionResult | undefined;
+  try {
+    prediction = await predictCorrection({ plan: input.goal, project: slug });
+  } catch {
+    prediction = undefined;
+  }
+  // Over-confidence guard: a high-likelihood prediction against a high-confidence
+  // self-assessment is exactly the mismatch worth flagging before acting.
+  if (prediction && prediction.likelihood === "high" && input.confidence === "high") {
+    const guardLine =
+      "OVER-CONFIDENCE GUARD: a prior correction predicts this plan is likely to be corrected — reconcile first.";
+    calibrationNote = calibrationNote ? `${calibrationNote} ${guardLine}` : guardLine;
+  }
+
   return {
     recorded: true,
     project: slug,
@@ -307,5 +331,6 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     decision_trail_saved: decisionTrailSaved || undefined,
     calibration_note: calibrationNote,
     correction_gate_rejected: gateRejection,
+    ...(prediction ? { prediction } : {}),
   };
 }

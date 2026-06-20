@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentRecall · Memory → Understanding Plan</title>
+<link rel="stylesheet" href="static/fonts.css">
+<style>
+  :root{
+    --bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;
+    --ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;
+    --accent-dim:rgba(138,106,63,.10);--canvas:#1A1814;--canvas-ink:#E8E0D0;--canvas-line:#3A332B;
+    --shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.06);
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;
+    --ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;
+    --accent-dim:rgba(201,165,108,.12);--canvas:#100E0B;--canvas-ink:#E8E0D0;--canvas-line:#2E2820;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+  }}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--ink);font-family:'Nunito','Segoe UI',system-ui,sans-serif;
+    font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased;padding:40px 20px 100px;}
+  .wrap{max-width:920px;margin:0 auto;}
+  h1,h2,h3,h4,.display{font-family:'Baloo 2','Nunito',sans-serif;font-weight:700;color:var(--ink);}
+  h1{font-size:30px;line-height:1.15;margin:2px 0 4px;}
+  h2{font-size:23px;margin:38px 0 12px;padding-top:18px;border-top:1px solid var(--rule);}
+  h3{font-size:18px;margin:26px 0 8px;color:var(--accent);}
+  h4{font-size:15px;margin:18px 0 6px;color:var(--ink-soft);text-transform:none;}
+  p{margin:10px 0;color:var(--ink-soft);}
+  strong{color:var(--ink);font-weight:700;}
+  code{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.84em;background:var(--surface-2);
+    color:var(--accent);padding:1px 5px;border-radius:5px;}
+  pre.code{font-family:'JetBrains Mono',ui-monospace,monospace;background:var(--canvas);color:var(--canvas-ink);
+    padding:16px 18px;border-radius:12px;overflow-x:auto;font-size:12.5px;line-height:1.55;margin:14px 0;
+    border:1px solid var(--canvas-line);}
+  pre.code code{background:none;color:inherit;padding:0;font-size:inherit;}
+  ul,ol{margin:10px 0 10px 26px;color:var(--ink-soft);}
+  li{margin:5px 0;}
+  blockquote{background:var(--accent-dim);border-left:3px solid var(--accent-soft);border-radius:0 10px 10px 0;
+    padding:12px 16px;margin:14px 0;font-size:14px;color:var(--ink-soft);}
+  blockquote .qli{margin:3px 0;}
+  blockquote code{background:var(--surface);}
+  hr{border:none;border-top:1px solid var(--rule);margin:30px 0;}
+  .tablewrap{overflow-x:auto;margin:16px 0;border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow);}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--surface);}
+  th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--rule-soft);vertical-align:top;}
+  th{background:var(--surface-2);color:var(--ink);font-family:'Baloo 2';font-weight:700;font-size:13px;}
+  tr:last-child td{border-bottom:none;}
+  td code{font-size:.8em;}
+  .topbar{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+  .logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(140deg,var(--accent-soft),var(--accent));
+    display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Baloo 2';font-weight:800;font-size:24px;
+    box-shadow:var(--shadow);flex-shrink:0;}
+  .sub{font-size:13px;color:var(--ink-faint);margin-top:3px;}
+  .back{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--accent);text-decoration:none;
+    margin-bottom:22px;padding:6px 12px;border:1px solid var(--rule);border-radius:999px;background:var(--surface);}
+  .back:hover{background:var(--surface-2);}
+  .meta-banner{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:14px 18px;
+    margin-bottom:8px;box-shadow:var(--shadow);font-size:13px;color:var(--ink-faint);}
+  .meta-banner b{color:var(--ink-soft);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="changelog.html">← Changelog</a>
+  <div class="topbar">
+    <div class="logo">AR</div>
+    <div>
+      <div class="display" style="font-size:26px;line-height:1;">Memory → Understanding</div>
+      <div class="sub">Implementer plan · 5 waves · fact-checked against the live tree</div>
+    </div>
+  </div>
+  <div class="meta-banner"><b>Status:</b> orchestrator deliverable — a terminal coding agent implements. <b>REDLINE:</b> no version bump / publish / deploy / push in any step. Every claim verified against code; refuted assumptions corrected inline.</div>
+  <h1 id="agentrecall-memory-understanding-implementer-plan">AgentRecall: Memory → Understanding — Implementer Plan</h1>
+<blockquote><div>Status: PLAN (orchestrator deliverable). A terminal coding agent implements; this doc is the brief.</div><div><strong>REDLINE (non-negotiable):</strong> No version bump, no <code>npm publish</code>, no deploy, no <code>git push</code>, no cron creation in any step. Each wave delivers a branch + green build + passing tests, then STOPS for explicit human approval.</div><div>Ground truth in this doc has been verified against the live tree (see "Verified facts" callouts). Refuted design assumptions have been corrected inline — do not carry the originals forward.</div></blockquote>
+<hr>
+<h2 id="1-thesis">1. Thesis</h2>
+<p>AgentRecall today is <strong>memory</strong>: it collects sessions, corrections, and insights and surfaces them when asked. The goal is <strong>understanding</strong> — a system that anticipates rather than merely recalls. Two structural moves get us there. First, a <strong>two-tier memory</strong>: a lossless <em>archive</em> (raw journal, never lost) under a lossy <em>model</em> tier (compressed awareness/instinct), joined by a <strong>bridge</strong> — when the model tier is not confident, it drills down to the archive instead of answering thinly. Second, <strong>predict-the-correction</strong>: human corrections are not one input among many but <em>ground truth that overrides the model</em>, and from accumulated corrections we auto-derive the user's "Blind Spots" so the system can warn <em>before</em> the user has to correct. Memory recalls the past; understanding pushes a calibrated prior into the present, early — before the agent reasons, not as a fact retrieved after.</p>
+<hr>
+<h2 id="2-target-architecture">2. Target Architecture</h2>
+<pre class="code"><code>                          ┌─────────────────────────────────────────┐
+   session end  ────────► │  MECHANICAL ARCHIVE (lossless, verbatim)  │  ~/.agent-recall/projects/&lt;slug&gt;/
+   (Stop hook,            │  journal/archive/raw/&lt;date&gt;--&lt;uuid&gt;.md    │  journal/ , corrections/ ,
+    zero judgment)        │  appended on EVERY session, no summary    │  palace/{rooms,skills,pipeline,awareness}
+                          └───────────────┬───────────────────────────┘
+                                          │ consume-marker (.consumed.json / queue)
+                          ┌───────────────▼───────────────────────────┐
+   async dreaming  ─────► │  QUALITY COMPRESSION (lossy, reasoned)     │  awareness (rules), palace skills,
+   (in-loop LLM, never    │  insights, crystallized principles,        │  FSRS reinforce/decay,
+    in the Stop turn)     │  Blind-Spots profile, skill drafts         │  Plywood-encoded procedures
+                          └───────────────┬───────────────────────────┘
+                                          │ confidence &lt; floor ⇒ BRIDGE
+                          ┌───────────────▼───────────────────────────┐
+   recall / check  ─────► │  RETRIEVAL = a FUNCTION (not an agent)     │  smartRecall, check, check_action
+   session_start /        │  low-confidence ⇒ fetchVerbatim(archive)   │  → calibrated confidence on ONE scale
+   hook-ambient           │  prior injected BEFORE reasoning (instinct)│  → drill-down attaches lossless source
+                          └─────────────────────────────────────────────┘</code></pre>
+<p>Four design commitments hold across the whole plan:</p>
+<ul><li><strong>Two-tier with a bridge (Decisions #1, #2).</strong> Lossless archive below, compressed model above, and a confidence signal so the model knows when to fall back. The mature output is a <em>prior pushed early</em> ("this feels wrong") via ambient hooks, not a RAG fact pulled late.</li><li><strong>Retrieval is a function; consolidation is async dreaming (Decision #3).</strong> No spawned per-recall storage agent (that adds a lossy brief + cold start). Synchronous recall is <code>smartRecall()</code>. Quality compression happens later, in the existing dreaming loop, off the Stop turn.</li><li><strong>Self-describing, substrate-independent memory (Decision #5).</strong> A single <code>MEMORY-PROTOCOL.md</code> lets a cold agent (Cursor/Codex/OpenCode, no MCP) read and write the folder. Local-first, with an <em>optional</em> local git commit substrate — remote push deferred until the privacy split is proven.</li><li><strong>Privacy boundary before any sync (Decision #6).</strong> Personal model (corrections-derived Blind Spots, awareness behavioral layer) is separable from project knowledge and is <strong>excluded from sync by default</strong>.</li></ul>
+<blockquote><div><strong>Decision #4 (Plywood procedural encoding) is scoped as additive metadata only</strong> (an optional <code>plywood?:</code> field on skills/behavior rules). The episodic=NL / semantic=structured / procedural=Plywood discipline and any migration of existing prose skills is <strong>punted this cycle</strong> (lowest ROI of the eight) unless explicitly requested.</div></blockquote>
+<hr>
+<h2 id="3-sequenced-roadmap-waves">3. Sequenced Roadmap (Waves)</h2>
+<p>Each wave = a branch, a green build (<code>npm run build</code> at repo root), passing tests (<code>npm test</code> at root), then STOP for human review. <strong>Build order is load-bearing: privacy first, lossless floor next, then compression, then the bridge, then the north-star.</strong></p>
+<div class="tablewrap"><table><thead><tr><th>Wave</th><th>Workstream</th><th>Why this order</th><th>Hard deps</th></tr></thead><tbody><tr><td><strong>1</strong></td><td>Privacy classification + plug the <strong>live</strong> Supabase awareness leak</td><td>The personal/behavioral layer leaks to Supabase <strong>today</strong> (verified). Decision #6 mandates the split precede any sync.</td><td>none</td></tr><tr><td><strong>2</strong></td><td><strong>Archive tier + auto-save (MERGED — build ONE)</strong></td><td>Lossless floor must exist before the bridge can drill into it.</td><td>Wave 1 (raw tier on the sync denylist)</td></tr><tr><td><strong>3</strong></td><td>Compression tier: FSRS revival + in-repo decay pass + crystallization-candidate detector</td><td>Turns COLLECT-by-count into COMPRESS-into-rules; activates dormant code (high leverage, low risk).</td><td>Wave 2 (consume-marker seam)</td></tr><tr><td><strong>4</strong></td><td>Bridge: unify confidence on one calibrated scale + uncertainty-triggered drill-down + prior-injection</td><td>The model→archive fallback + early prior.</td><td>Wave 2 (clean archive), shares confidence primitive w/ Wave 3</td></tr><tr><td><strong>5</strong></td><td>Corrections-prediction (authoritative override, Blind Spots, predictCorrection, honest heeded/recurred) <strong>+</strong> compression remainder (versioned consolidation prompt, <code>ar consolidate</code>, dreaming repoint)</td><td>North-star; deepest behavior change; coordinates the external <code>~/.aam</code> prompt (human-approved).</td><td>Waves 1, 4, verified check-action primitives</td></tr></tbody></table></div>
+<h3 id="per-wave-exit-criteria">Per-wave exit criteria</h3>
+<ul><li><strong>Wave 1:</strong> <code>classifyStore</code>/<code>classifyPath</code> land with a unit test; <code>syncToSupabase(..., "awareness")</code> and any <code>_global</code> palace write are gated behind <code>sync_personal=false</code> (default). A test fails if a personal store has no matching sync gate. <strong>Open decision surfaced (not silently picked):</strong> whether the war-room dashboard's dependence on <code>ar_awareness</code> in Supabase means awareness-only stays synced — human call.</li><li><strong>Wave 2:</strong> A session with <strong>zero captures</strong> leaves a verbatim file under <code>journal/archive/raw/</code>; idempotent on session UUID; empty/blank stdin exits 0 with no throw; existing <code>/arsave</code> + MCP <code>session_end</code> still consolidate palace inline (no behavior change for in-turn callers); raw tier never routes through <code>syncToSupabase</code>. Stop-hook stdin contract <strong>empirically captured</strong> before relied upon.</li><li><strong>Wave 3:</strong> A recall hit reinforces a skill's FSRS state (stability up, status climbs), throttled to avoid write-amplification; decay pass flags <code>archive_candidate</code> skills with <code>archived:true</code> <strong>and the readers honor the flag</strong> (not inert); crystallization detector returns clusters (candidates) but writes no synthesized principle.</li><li><strong>Wave 4:</strong> All recall backends route through one <code>calibratedConfidence</code>; a low-confidence top hit attaches a verbatim <code>bridged</code> source equal to <code>readJournalFile</code> output; drill-down capped (≤2 items, ≤1200 chars) with a kill-switch; ambient hook emits a correction-derived prior <strong>above</strong> the fact list.</li><li><strong>Wave 5:</strong> An authoritative P0 correction (not a noise-candidate) yields <code>verdict:"blocked"</code> in <code>check_action</code>; <code>predictCorrection</code> returns a likelihood band from plan↔Blind-Spots overlap and instruments <code>predicted</code>/<code>predict_hit</code>; default-heeded only fires when no real <code>check_action</code> outcome exists for that correction today (expect a precision <strong>drop</strong> — correct, not a regression).</li></ul>
+<hr>
+<h2 id="4-workstreams">4. Workstreams</h2>
+<blockquote><div><strong>Universal Done-Definition (every workstream, before "done"):</strong></div><div>1. Trace ≥1 error path manually (catch/finally/throw; <code>process.exit()</code> skipping <code>finally{}</code>).</div><div>2. Assume <strong>no global binaries</strong> — tests import compiled functions directly; never call a global <code>ar</code> on PATH.</div><div>3. Ternary ordering: highest threshold first (<code>r&gt;=0.85?'hot':r&gt;=0.6?'warm':…</code>).</div><div>4. Time logic vs TODAY: a future-dated <code>last_confirmed</code> must not yield R&gt;1.</div><br><div><strong>Universal test contract (corrects every area's original SOP):</strong></div><div class='qli'>• - Tests are <code>packages/&lt;pkg&gt;/test/&lt;name&gt;.test.mjs</code>, written with <code>node:test</code> + <code>node:assert/strict</code>, importing from <strong><code>../dist/...</code></strong> (compiled output).</div><div class='qli'>• - There is <strong>no vitest, no <code>.test.ts</code>, no pnpm</strong>. Runner is <code>node --test test/*.test.mjs</code>. Package manager is <strong>npm workspaces</strong>.</div><div class='qli'>• - "RED before GREEN" means: write the <code>.test.mjs</code>, <code>npm run build</code> (which omits the new module → import fails), then implement and rebuild. <strong>You must build to <code>dist</code> before any test can exercise new code.</strong> Do NOT "ignore dist" — the suite imports from it.</div><div class='qli'>• - Verify with <code>npm run build</code> then <code>npm test</code> <strong>at repo root</strong> (builds all 4 packages in dependency order: core → mcp-server → sdk → cli).</div><br><div><strong>Review-by:</strong> <code>code-reviewer</code> agent (fresh eyes, never self-review) on each wave's diff. <code>security-reviewer</code> additionally on Waves 1, 2 (untrusted stdin → fs paths; sync gating).</div></blockquote>
+<hr>
+<h3 id="wave-1-privacy-classification-plug-the-live-supabase-leak">Wave 1 — Privacy classification + plug the live Supabase leak</h3>
+<p><strong>Goal.</strong> Land the personal-vs-project split as the single source of truth, and cap what leaves the machine <strong>today</strong>. This must precede every other wave.</p>
+<blockquote><div><strong>Verified fact (corrects the original design framing):</strong></div><div class='qli'>• - Awareness/insights sync to Supabase <strong>right now</strong>: <code>awareness.ts:84,88</code> and <code>insights-index.ts:132</code> call <code>syncToSupabase(..., "awareness")</code> synchronously on every write. The <code>store</code> union is <code>"journal"|"palace"|"awareness"|"digest"</code> (<code>sync.ts:111</code>). This is the real, live personal-data leak.</div><div class='qli'>• - <strong>Corrections are NEVER synced</strong> (<code>grep</code> of <code>corrections.ts</code> for supabase = 0 hits). There is no <code>corrections</code> store. So the "gate the corrections leak" rationale is moot for Supabase — corrections only matter for the future git <code>.gitignore</code>.</div><div class='qli'>• - Awareness syncs with the project string <strong><code>"global"</code></strong>, NOT <code>_global</code>. A <code>project==="_global"</code> gate would miss it. Gate on <strong><code>store==="awareness"</code></strong> for the awareness leak; gate <code>_global</code> only for its <strong>palace</strong> writes (bootstrap path writes palace with project <code>_global</code>).</div><div class='qli'>• - <code>~/.agent-recall</code> is <strong>NOT a git repo</strong> — so no GitHub-mirror leak exists for AR data today. The <code>~/.claude</code> auto-push (<code>session-stop-sync.sh</code>) targets a different tree. Do not conflate.</div></blockquote>
+<p><strong>Changes (files).</strong></p>
+<ul><li>NEW <code>packages/core/src/storage/classification.ts</code> — <code>type Tier = "personal"|"project"</code>; <code>PERSONAL_STORES</code> set; <code>classifyStore(store, opts?): Tier</code> (<code>store==="awareness"</code> ⇒ personal; <code>opts.project==="_global"</code> ⇒ personal; else project); <code>classifyPath(absPath): Tier</code> (markers: <code>/corrections/</code>, <code>/awareness</code>, <code>behavior-policies.json</code>, <code>/projects/_global/</code>, future <code>/personal/</code>); <code>isPersonalProject(slug)</code>. Pure, no IO. Document that <code>classifyStore</code> covers the <strong>sync</strong> surface (only <code>awareness</code> + <code>_global</code> palace are reachable as personal there) while <code>classifyPath</code> covers the <strong>git/.gitignore</strong> surface (corrections, behavior-policies). Disjoint by design.</li><li>MODIFY <code>packages/core/src/supabase/config.ts</code> — add <code>sync_personal?: boolean</code> (default <code>false</code>) to <code>SupabaseConfig</code>; env override <code>AGENT_RECALL_SYNC_PERSONAL</code>.</li><li>MODIFY <code>packages/core/src/supabase/sync.ts</code> — in <code>syncToSupabase()</code> and <code>backfill()</code>, before upsert: <code>if (classifyStore(store, {project}) === "personal" &amp;&amp; config.sync_personal !== true) return;</code> (skip silently — preserves fire-and-forget).</li><li>MODIFY <code>packages/core/src/index.ts</code> — barrel-export classification.</li><li>NEW <code>packages/core/test/classification.test.mjs</code> — corrections⇒personal (via <code>classifyPath</code>), palace rooms⇒project, awareness store⇒personal, <code>_global</code> palace⇒personal; <strong>a test that fails if any <code>PERSONAL_STORES</code> member lacks a sync gate</strong> (the single-source guarantee).</li></ul>
+<p><strong>Plywood SOP.</strong></p>
+<pre class="code"><code>CORE = "packages/core/src"
+// REDLINE: no version bump / publish / deploy / push.
+
+// STEP 0 — test first (build-then-run semantics)
+WRITE(CORE/../test/classification.test.mjs, cases=[awareness=&gt;personal, palace=&gt;project, _global-palace=&gt;personal, gate-coverage])
+RUN("npm run build &amp;&amp; npm test -w packages/core")     // RED: classification module absent
+
+// STEP 1 — the load-bearing primitive (single source of truth)
+WRITE(CORE/storage/classification.ts):
+  EXPORT type Tier = "personal" | "project"
+  EXPORT PERSONAL_STORES = Set{ "awareness" }          // the ONLY personal value reachable via sync `store`
+  EXPORT classifyStore(store, opts?):
+    IF store == "awareness": return "personal"
+    IF opts?.project == "_global": return "personal"   // _global palace writes
+    return "project"
+  EXPORT classifyPath(abs):
+    for m of ["/corrections/","/awareness","behavior-policies.json","/projects/_global/","/personal/"]:
+      IF abs.includes(m): return "personal"
+    return "project"
+  EXPORT isPersonalProject(slug) =&gt; slug === "_global"
+INSERT barrel export into CORE/index.ts
+
+// STEP 2 — config flag
+EDIT(CORE/supabase/config.ts): add sync_personal?:boolean (default false) + env AGENT_RECALL_SYNC_PERSONAL
+
+// STEP 3 — gate the live leak
+EDIT(CORE/supabase/sync.ts) in syncToSupabase() AND backfill(), BEFORE upsert:
+  IF classifyStore(store,{project}) == "personal" AND readSupabaseConfig()?.sync_personal !== true:
+    return                                             // silent skip, fire-and-forget contract
+
+// STEP 4 — verify + escalate the dashboard decision
+RUN("npm run build &amp;&amp; npm test")                       // GREEN
+IF exitCode != 0: FIX; RUN(again); IF still red: ESCALATE
+// trace error path: classifyStore on unknown store =&gt; "project" (no throw)
+ESCALATE_TO_HUMAN("DECISION NEEDED: war-room dashboard reads ar_awareness from Supabase. " +
+                  "sync_personal=false STOPS awareness reaching Supabase → dashboard may go blank. " +
+                  "Keep awareness-only synced, or accept blank until git-mirror? Do not silently pick.")</code></pre>
+<p><strong>Review-by.</strong> <code>code-reviewer</code> + <code>security-reviewer</code> (data egress gate).</p>
+<hr>
+<h3 id="wave-2-archive-tier-auto-save-merged-into-one-archive-design">Wave 2 — Archive tier + auto-save (MERGED into ONE archive design)</h3>
+<p><strong>Goal.</strong> A mechanical, lossless, judgment-free verbatim dump on <strong>every</strong> session end — the "never lost" floor — plus an async consume seam handing quality compression to dreaming. <strong>Build exactly one transcript reader and one Stop-hook rewrite.</strong></p>
+<blockquote><div><strong>Verified facts (correct the originals):</strong></div><div class='qli'>• - <code>transcript_path</code> appears <strong>NOWHERE</strong> in the repo or <code>~/.claude/settings.json</code>. The Stop-hook stdin contract is <strong>unverified</strong>. A live Stop payload MUST be captured (log raw stdin to a temp file once) before relying on field names. Until then, fall back to the proven <code>readTodaySessions</code> discovery (scans <code>~/.claude/projects/-Users-&lt;user&gt;/*.jsonl</code> by mtime).</div><div class='qli'>• - <code>hook-end</code> reads <strong>no stdin</strong> (relies on <code>CLAUDE_SESSION_ID</code> env) and <strong>already</strong> exits 0 silently when there are no captures (<code>index.ts:599-607</code>). So the only real change to that gate is <strong>dropping the 60-char <code>Auto-saved:</code> stub string</strong> (lines 588-591) — NOT adding a data-gate (the gate already exists).</div><div class='qli'>• - The Stop matcher has <strong>4 commands</strong>, not 1 (<code>session-stop-sync.sh</code> git-pushes <code>~/.claude</code>, then the <code>hook-end</code> node command, then two notify scripts). Appending a 5th is fine, but do not describe the current state as "only hook-end".</div><div class='qli'>• - <code>readHeadTail</code> exists (<code>transcript-reader.ts:41-63</code>, head 60KB / tail 25KB), is module-private. <strong>Reuse it</strong> — do not add a second reader.</div><div class='qli'>• - The transcript filename basename <strong>is</strong> the session UUID — use it as the dedup key (NOT the date, which collides across same-day sessions).</div><div class='qli'>• - There is <strong>no <code>projectFromCwd</code> helper</strong>. The only detector is <code>detectProject()</code> keyed on <code>process.cwd()</code>/env. Resolving project from a stdin <code>cwd</code> field needs a new helper or an explicit <code>--project</code>; do not assume it exists.</div></blockquote>
+<p><strong>Changes (files).</strong></p>
+<ul><li>MODIFY <code>packages/cli/src/utils/transcript-reader.ts</code> — add <code>readTranscriptByPath(filePath)</code> reusing <code>readHeadTail</code>/<code>parseLines</code>/<code>extractProjectSlug</code>/<code>extractFirstUserMessage</code>; returns the parsed <code>SessionInfo</code> <strong>plus</strong> a verbatim <code>rawTail</code> (head+tail joined, cap ~80KB). Do NOT touch <code>readTodaySessions</code>.</li><li>NEW <code>packages/core/src/storage/archive-write.ts</code> — <code>archiveSession({project, sessionId, transcriptPath, rawTranscript, summary?})</code>. Writes verbatim to <code>journalDir(slug)/archive/raw/&lt;date&gt;--&lt;sanitizeSlug(sessionId)&gt;.md</code>. <strong><code>sessionId</code> is untrusted (stdin) → MUST pass through <code>sanitizeSlug</code> before <code>path.join</code></strong> (MCP-security rule). Idempotent: no-op if file exists. Small frontmatter (<code>project, sessionId, savedAt, source:hook-archive</code>), then raw bytes. Appends one line to <code>journal/archive/index.md</code>. Maintains a <code>journal/archive/raw/.consumed.json</code> (<code>{lastConsumedOffset, lastConsumedAt}</code>) via existing <code>writeJsonAtomic</code>. <strong>Never</strong> throws to caller (<code>return {path:"",bytes:0}</code> on error). <strong>Never</strong> imports <code>journal-write</code> / <code>syncToSupabase</code> (raw tier is local-only — privacy).</li><li>MODIFY <code>packages/core/src/storage/paths.ts</code> — add <code>archiveRawDir(project)</code> mirroring <code>digestDir</code> (lines 137-143) with <code>assertInsideRoot</code>; extend <code>journalDirs(project, includeArchive)</code> so <code>includeArchive=true</code> ALSO pushes <code>journal/archive/raw</code> if it exists (default counting path unchanged → raw dumps don't inflate session counts but become recall-reachable).</li><li>MODIFY <code>packages/core/src/storage/session.ts</code> — add <code>'hook-archive'</code> to the <code>SaveType</code> union (line 35) + doc comment (line 9).</li><li>NEW <code>packages/core/src/storage/consolidation-queue.ts</code> — <code>enqueueConsolidation(job)</code> appends a JSONL line to <code>~/.agent-recall/.consolidation-queue/&lt;date&gt;.jsonl</code>; <code>drainConsolidationQueue(handler)</code> reads pending, marks done, one bad job never blocks the rest.</li><li>MODIFY <code>packages/core/src/tools-logic/session-end.ts</code> — add <code>deferConsolidation?: boolean</code> to <code>SessionEndInput</code>; when true (only <code>hook-end</code> passes it) skip inline <code>consolidateJournalToPalace</code> (step 3, lines 321-328) and <code>enqueueConsolidation()</code> instead. Default false ⇒ zero change for <code>/arsave</code>, <code>/arsaveall</code>, MCP <code>session_end</code>.</li><li>MODIFY <code>packages/cli/src/index.ts</code>:</li><li>Rewrite <code>case "hook-end"</code> (560-651): read stdin first (<code>for await chunk of process.stdin</code>, mirror hook-correction/ambient/pretool), defensive <code>JSON.parse</code>. <strong>UNCONDITIONALLY before any short-circuit</strong>, if a usable transcript source resolves, call <code>readTranscriptByPath</code> (or fall back to <code>readTodaySessions</code> if <code>transcript_path</code> is absent) then <code>core.archiveSession(...)</code> then <code>core.enqueueConsolidation(...)</code>. Reorder so the <code>if(!summary) exit 0</code> guards run AFTER archiving. Keep the <code>.hook-end-lock</code>. Drop the 60-char stub. Keep the capture→summary path but pass <code>deferConsolidation:true</code> to <code>sessionEnd</code>. <strong>Guard</strong> the semantic-prefetch block (623-647) and arstatus-cache write (614-621) against empty <code>summary</code> (they depend on it). Every failure path exits 0.</li><li>Add <code>case "consolidate-async"</code>: drains the queue, per job runs <code>consolidateJournalToPalace(slug)</code> (pure regex, headless-safe).</li><li>NEW <code>packages/core/src/storage/memory-protocol.ts</code> — <code>writeMemoryProtocol(slug)</code> writes <code>~/.agent-recall/projects/&lt;slug&gt;/MEMORY-PROTOCOL.md</code> (write-once if absent) documenting folder layout, the two-tier model + bridge rule, <code>.consolidation-queue/</code> drain format, and cold-agent read/write conventions. Called from <code>archiveSession</code>. <strong>This is the SINGLE protocol generator (see Non-goals: do not also build <code>protocol-doc.ts</code>).</strong></li><li>MODIFY <code>packages/core/src/index.ts</code> — export <code>archiveSession</code>, <code>enqueueConsolidation</code>, <code>drainConsolidationQueue</code>, <code>writeMemoryProtocol</code>.</li><li>MODIFY <code>packages/core/src/tools-logic/session-end-reflect.ts</code> — add optional <code>raw_unconsumed: Array&lt;{file;excerpt;bytes}&gt;</code> to <code>ReflectInputBundle</code>, populated from raw segments after <code>.consumed.json</code> offset; append a prompt line telling the in-loop LLM to distill them and advance the marker. <strong>No LLM call added to core</strong> (keep it deterministic, matches reflect.ts's stance).</li><li>MODIFY <code>packages/core/src/tools-logic/journal-capture.ts</code> — add a one-line comment at the 2000/5000 truncation (lines 61-62) declaring capture = curated stream, <code>journal/archive/raw</code> = lossless tier. Keep the caps.</li><li>NEW tests: <code>packages/core/test/archive-write.test.mjs</code>, <code>packages/core/test/consolidation-queue.test.mjs</code>, <code>packages/cli/test/hook-end-archive.test.mjs</code>.</li></ul>
+<p><strong>Plywood SOP.</strong></p>
+<pre class="code"><code>CORE="packages/core/src"; CLI="packages/cli/src/index.ts"
+// REDLINE: no version bump/publish/deploy/push. Reuse readHeadTail; do NOT add a 2nd reader.
+
+// STEP 0 — capture the live Stop payload BEFORE trusting field names
+ESCALATE_OR_PROBE("Add a one-off: log raw Stop-hook stdin to /tmp/ar-stop-payload.json, " +
+                  "trigger one Stop, inspect actual keys (transcript_path? session_id? cwd?). " +
+                  "If keys differ, adapt; if no transcript path, use readTodaySessions fallback.")
+
+// STEP 1 — tests first
+WRITE(test/archive-write.test.mjs, cases=[
+  zero_capture_session_still_dumps, verbatim_no_truncation, idempotent_per_uuid,
+  bad_transcript_returns_false_no_throw, journalDirs_includeArchive_reaches_raw,
+  archiveSession_never_calls_supabase])
+WRITE(test/consolidation-queue.test.mjs, cases=[enqueue_then_drain_marks_done, second_drain_noop, one_bad_job_doesnt_block])
+WRITE(packages/cli/test/hook-end-archive.test.mjs, cases=[empty_stdin_exit0_no_throw, captures_still_write_summary_additive])
+RUN("npm run build &amp;&amp; npm test")                      // RED
+
+// STEP 2 — reader (reuse, don't duplicate)
+INSERT readTranscriptByPath(path) into transcript-reader.ts:
+  IF !exists(path): return null
+  {head,tail} = readHeadTail(path)                    // REUSE 41-63
+  return { ...SessionInfo(parseLines(head)+parseLines(tail)), rawTail: (head+"\n…\n"+tail).slice(0,80_000) }
+// do NOT modify readTodaySessions
+
+// STEP 3 — core archive writer (lossless, idempotent, never-throw, local-only)
+EDIT(CORE/storage/session.ts): SaveType += "hook-archive" (line 35) + doc (line 9)
+EDIT(CORE/storage/paths.ts): add archiveRawDir(project) mirror digestDir(137-143) w/ assertInsideRoot;
+     journalDirs(p,includeArchive): IF includeArchive AND exists(primary+"/archive/raw"): dirs.push(it)
+WRITE(CORE/storage/archive-write.ts):
+  archiveSession({project,sessionId,transcriptPath,rawTranscript,summary?}):
+    try:
+      slug = sanitizeProject(project)
+      sid  = sanitizeSlug(sessionId)                   // UNTRUSTED stdin → sanitize before path.join
+      dir  = path.join(journalDir(slug),"archive","raw"); ensureDir(dir)
+      dest = path.join(dir, `${todayISO()}--${sid}.md`)
+      IF exists(dest): return {path:dest,bytes:0}      // idempotent on UUID
+      writeFileSync(dest, frontmatter{project,sessionId:sid,savedAt,source:"hook-archive"} + rawTranscript)
+      appendLine(join(journalDir(slug),"archive","index.md"), `${todayISO()} ${sid} ${summary??""}`)
+      IF !exists(dir+"/.consumed.json"): writeJsonAtomic(dir+"/.consumed.json",{lastConsumedOffset:0})
+      writeMemoryProtocol(slug)                        // write-once
+      return {path:dest, bytes:rawTranscript.length}
+    catch: return {path:"",bytes:0}                    // NEVER throw into Stop
+  // NB: NO syncToSupabase, NO journal-write import. NO min-length gate.
+WRITE(CORE/storage/consolidation-queue.ts): enqueueConsolidation + drainConsolidationQueue (one bad job ≠ block)
+WRITE(CORE/storage/memory-protocol.ts): writeMemoryProtocol(slug) — SINGLE generator
+EDIT(CORE/index.ts): export archiveSession, enqueue/drainConsolidationQueue, writeMemoryProtocol
+
+// STEP 4 — defer inline consolidation for the harness-driven Stop path only
+EDIT(CORE/tools-logic/session-end.ts): add deferConsolidation?:boolean
+  at step-3 (321-328): IF input.deferConsolidation: enqueueConsolidation(...); palaceConsolidated=false
+                       ELSE: existing inline consolidateJournalToPalace (unchanged for /arsave,/arsaveall,MCP)
+
+// STEP 5 — rewire hook-end (THE fix): archive ALWAYS, before the short-circuits
+EDIT(CLI case "hook-end" 560-651):
+  raw=""; try: for await c of process.stdin: raw+=c; catch: raw=""
+  stop = safeJsonParse(raw) ?? {}
+  sid  = basename(stop.transcript_path ?? "", ".jsonl") || stop.session_id || env.CLAUDE_SESSION_ID || endToday
+  KEEP .hook-end-lock guard (key `${sid}-end`)
+  // ---- MECHANICAL ARCHIVE — unconditional, zero dependence on captures ----
+  src = stop.transcript_path &amp;&amp; exists(stop.transcript_path)
+          ? readTranscriptByPath(stop.transcript_path)
+          : pickFrom(readTodaySessions())               // proven fallback if no transcript_path
+  IF src:
+    proj = project ?? src.projectGuess ?? "auto"
+    core.archiveSession({project:proj, sessionId:sid, transcriptPath:stop.transcript_path, rawTranscript:src.rawTail, summary:src.firstUserMessage})
+    core.enqueueConsolidation({project:proj, sessionId:sid, reason:"hook-end archive"})
+  // ---- existing capture→summary path, now deferred + stub dropped ----
+  ...compute summary from log answers...               // DROP the 60-char "Auto-saved:" stub string
+  MOVE the `if(!summary &amp;&amp; existingToday) exit0` / `if(!summary) exit0` guards to AFTER the archive block
+  IF summary:
+    core.sessionEnd({summary, project, saveType:"hook-end", deferConsolidation:true})
+    GUARD arstatus-cache(614-621) + semantic-prefetch(623-647) behind `if(summary)` (they read summary)
+  // every catch → stderr, exit 0
+ADD case "consolidate-async": core.drainConsolidationQueue(job =&gt; consolidateJournalToPalace(job.project))
+
+// STEP 6 — reflect seam + capture comment
+EDIT(CORE/tools-logic/session-end-reflect.ts): add raw_unconsumed[] to ReflectInputBundle, populate from
+     archiveRawDir segments past .consumed.json offset; append distill-and-advance prompt line. NO LLM in core.
+EDIT(CORE/tools-logic/journal-capture.ts 61-62): comment "capture=curated stream; lossless=journal/archive/raw"
+
+// STEP 7 — settings wiring is a CONFIG EDIT, gated on build-first (NOT in this branch's code)
+//   ~/.claude/settings.json Stop matcher: append a 5th command
+//     `node /Users/tongwu/Projects/AgentRecall/packages/cli/dist/index.js hook-archive || true`  (if a separate
+//   command is preferred) OR rely on the rewired hook-end. Build dist FIRST. Write a .bak. HUMAN-APPROVED.
+
+// STEP 8 — verify
+RUN("npm run build &amp;&amp; npm test")                       // GREEN
+IF red: FIX; RUN(again); IF still red: ESCALATE
+// trace: blank stdin → no throw, exit 0, no archive; bad transcript path → {path:"",bytes:0}
+ASSERT zero-capture session leaves a file in journal/archive/raw/   // headline regression fixed
+ASSERT /arsave + MCP session_end still consolidate inline           // deferConsolidation default false
+// RETENTION (do NOT defer): cap rawTail (≤80KB); add prune-or-gzip of raw segments once .consumed marks them
+//   distilled, reusing journalArchive's older_than_days pattern. Bound ~/.agent-recall growth.
+ESCALATE_TO_HUMAN("settings.json edit + retention policy need approval before enabling for all users")</code></pre>
+<p><strong>Review-by.</strong> <code>code-reviewer</code> + <code>security-reviewer</code> (untrusted <code>sessionId</code>/<code>transcript_path</code> → fs; confirm no <code>syncToSupabase</code> from the raw tier).</p>
+<hr>
+<h3 id="wave-3-compression-tier-fsrs-revival-decay-pass-crystallization-candidates">Wave 3 — Compression tier (FSRS revival + decay pass + crystallization candidates)</h3>
+<p><strong>Goal.</strong> Make "what you use survives" real in code, and surface crystallization candidates to the reasoner — without faking synthesis.</p>
+<blockquote><div><strong>Verified facts (correct the originals):</strong></div><div class='qli'>• - FSRS is dormant: <code>fsrs.ts</code> exports <code>reinforce/score/penalize</code> but only <code>initFsrs</code> is called (<code>skills.ts:206</code>). Zero reinforcement loop. <code>reinforce</code>/<code>penalize</code>/<code>score</code> have no non-test call sites.</div><div class='qli'>• - <strong>There is NO existing room auto-archive path.</strong> <code>AUTO_ARCHIVE_THRESHOLD</code> is consumed nowhere except a re-export. <code>computeSalience</code> is called to <em>store</em> salience; only <code>palace-lint.ts</code> compares it (to emit a WARNING, never archives). So "rooms already decay, don't double-decay" overstates reality — but still route rooms through the <strong>salience</strong> path (not FSRS) to keep one decay model per object type.</div><div class='qli'>• - <code>computeSalience</code> does <strong>NOT</strong> accept a room meta object. Signature: <code>computeSalience({importance,lastUpdated,accessCount,connectionCount,urgency?,category?,pin?,keystone?}) → number</code>. Map fields explicitly (mirror <code>palace-lint.ts:63</code>).</div><div class='qli'>• - <strong>The <code>archived</code> flag is inert today</strong> — zero readers anywhere. Setting <code>archived:true</code> is a no-op unless <code>listSkills</code>/room readers/recall/session_start are ALSO updated to filter it. This reader-side filtering is <strong>load-bearing, not optional</strong>.</div><div class='qli'>• - Awareness is a <strong>global singleton</strong> — <code>readAwarenessState</code>/<code>detectCompoundInsights</code> take no project arg. <code>findCrystallizationCandidates</code> cannot be project-scoped; the insight field is <code>appliesWhen</code> (camelCase) in <code>awareness.ts</code>, not <code>applies_when</code>.</div><div class='qli'>• - <code>writeSkill</code> does NOT use <code>withLock</code> (atomic tmp+rename + symlink guard only). The real risk is <strong>write-amplification</strong> in git-mirrored memory — add the throttle.</div></blockquote>
+<p><strong>Changes (files).</strong></p>
+<ul><li>MODIFY <code>packages/core/src/palace/skills.ts</code> — add <code>reinforceSkillFsrs(project, slug, now?)</code> (read skill, <code>meta.fsrs = reinforce(meta.fsrs ?? initFsrs(meta.created))</code>, atomic write-back via existing render path, keep <code>order</code>; <strong>throttle: skip write if <code>last_confirmed</code> within N hours</strong> to bound churn; best-effort try/catch — a recall hit must never throw). Extend <code>recallSkillsByIntent</code> return objects with <code>retrievability</code> + <code>status</code> via <code>score(meta.fsrs)</code>. <strong>Add <code>archived</code> filtering to <code>listSkills</code>/recall consumers.</strong></li><li>MODIFY <code>packages/core/src/tools-logic/skill-recall.ts</code> — after <code>recallSkillsByIntent</code> returns ranked (line 53), call <code>reinforceSkillFsrs</code> per returned skill inside try/catch.</li><li>NEW <code>packages/core/src/palace/decay-pass.ts</code> — <code>runDecayPass(project, {dryRun}): DecayReport</code>. Skills: <code>score(meta.fsrs ?? initFsrs(created))</code>; if <code>status==='archive_candidate'</code> set non-destructive <code>archived:true</code> (never unlink — compress.ts §6 invariant). Rooms: route through <code>computeSalience({importance, lastUpdated:room.updated, accessCount:room.access_count, connectionCount})</code> and the salience threshold — do NOT FSRS-decay rooms. Skip rooms in <code>{corrections, critical_path}</code> and <code>keystone===true</code>.</li><li>MODIFY <code>packages/core/src/palace/consolidate.ts</code> — wire <code>runDecayPass(project,{dryRun:false})</code> after <code>markKeystones</code> (line ~185) in the existing best-effort try/catch; add <code>decay</code> to the <code>appendToLog</code> payload.</li><li>MODIFY <code>packages/core/src/palace/awareness.ts</code> — add <code>findCrystallizationCandidates({minCluster:3, minTotalConfirm:5})</code>: cluster <code>topInsights</code> sharing ≥2 <code>appliesWhen</code> keywords (reuse <code>extractKeywords</code>), keep clusters with size≥3 AND sum(confirmations)≥5, exclude any title prefixed <code>CRYSTALLIZED</code>/<code>CRITICAL</code>. <strong>Returns clusters (candidates) only — writes no synthesized principle</strong> (synthesis is the LLM's job). No project arg (global singleton).</li><li>MODIFY <code>packages/core/src/tools-logic/session-end-reflect.ts</code> — add <code>crystallization_candidates</code> to <code>ReflectInputBundle</code>.</li><li>MODIFY <code>packages/core/src/index.ts</code> — export <code>runDecayPass</code>, <code>findCrystallizationCandidates</code>, <code>reinforceSkillFsrs</code>.</li><li>NEW tests: <code>packages/core/test/fsrs-reinforce.test.mjs</code>, <code>decay-pass.test.mjs</code>, extend <code>awareness.test.mjs</code>.</li></ul>
+<p><strong>Plywood SOP.</strong></p>
+<pre class="code"><code>CORE="packages/core/src"
+// REDLINE: no version bump/publish/deploy/push. Do NOT rewrite fsrs.ts math. Do NOT write synthesized principles in code.
+
+RUN("npm run build &amp;&amp; npm test")                       // baseline green; else ESCALATE
+
+// PHASE 1 — reinforce-on-recall (revive the dead loop) + reader filtering
+EDIT(CORE/palace/skills.ts):
+  add reinforceSkillFsrs(project,slug,now?):
+    try:
+      sk = parseSkillFile(fileFor(project,slug))
+      IF withinHours(sk.meta.fsrs?.last_confirmed, N): return    // THROTTLE write-amp
+      sk.meta.fsrs = reinforce(sk.meta.fsrs ?? initFsrs(sk.meta.created), now)
+      writeSkill(project, sk.meta, sk.body, order=parsedOrder(sk))  // atomic tmp+rename, keep order
+    catch: return                                         // recall must never throw
+  recallSkillsByIntent return mapping: add {retrievability,status}=score(meta.fsrs ?? initFsrs(meta.created))
+  listSkills (+ recall/session_start consumers): FILTER OUT meta.archived === true   // make the flag live
+EDIT(CORE/tools-logic/skill-recall.ts after line 53):
+  for s of ranked: try: reinforceSkillFsrs(slug, s.skill.meta.slug) catch: /*swallow*/
+
+// PHASE 2 — in-repo decay pass (skills via FSRS, rooms via salience — never both)
+WRITE(CORE/palace/decay-pass.ts):
+  runDecayPass(project,{dryRun=false}):
+    report={scanned:0, archived_candidates:[], skipped:[]}
+    for sk of listSkills(project, {includeArchived:true}):
+      st = score(sk.meta.fsrs ?? initFsrs(sk.meta.created)); report.scanned++
+      IF st.status=="archive_candidate":
+        IF !dryRun: setSkillFlag(sk,"archived",true)      // NEVER unlink
+        report.archived_candidates.push({slug:sk.meta.slug, r:st.retrievability})
+    for roomJson of glob(palaceDir(project)+"/rooms/**/_room.json"):
+      m = read(roomJson)
+      IF m.slug in {"corrections","critical_path"} OR m.keystone: report.skipped.push(m.slug); continue
+      sal = computeSalience({importance:m.importance??"medium", lastUpdated:m.updated, accessCount:m.access_count, connectionCount:countConns(m)})
+      IF sal &lt;= SALIENCE_ARCHIVE_THRESHOLD AND !dryRun: setRoomFlag(roomJson,"archived",true); report.archived_candidates.push({slug:m.slug,r:0})
+    return report
+EDIT(CORE/palace/consolidate.ts after markKeystones ~185):
+  let decay=null; try: decay=runDecayPass(project,{dryRun:false}); catch {}
+  appendToLog payload += {decay}
+EXPORT runDecayPass from CORE/index.ts
+
+// PHASE 3 — crystallization CANDIDATES (raw material, NOT synthesis)
+EDIT(CORE/palace/awareness.ts near detectCompoundInsights):
+  findCrystallizationCandidates({minCluster:3,minTotalConfirm:5}):
+    state=readAwarenessState(); IF !state: return []
+    clusters = group topInsights where sharedKeywords(appliesWhen) &gt;= 2     // reuse extractKeywords; FIELD = appliesWhen
+    keep size&gt;=minCluster AND sum(confirmations)&gt;=minTotalConfirm
+    drop clusters whose title is prefixed CRYSTALLIZED|CRITICAL
+    return clusters                                       // NO principle string written here
+EDIT(CORE/tools-logic/session-end-reflect.ts): ReflectInputBundle += crystallization_candidates = findCrystallizationCandidates()
+
+// PHASE 4 — tests + verify
+WRITE(test/fsrs-reinforce.test.mjs): recall hit grows stability, status climbs; throttle skips a same-hour 2nd write;
+      reinforce on unreadable/symlinked skill does NOT throw out of recall
+WRITE(test/decay-pass.test.mjs): stale skill → archived:true AND fs.existsSync still true (NOT deleted);
+      keystone/corrections rooms skipped; archived skill is FILTERED from listSkills (flag is live, not inert)
+EXTEND(test/awareness.test.mjs): 3 insights sharing 2 keywords sum&gt;=5 → 1 cluster; CRITICAL-prefixed excluded; &lt;5 confirms → none
+RUN("npm run build &amp;&amp; npm test"); IF red: FIX; RUN(again); IF still red: ESCALATE
+// ternary order high-first in any status buckets; future-dated last_confirmed must not yield R&gt;1</code></pre>
+<p><strong>Review-by.</strong> <code>code-reviewer</code>. <strong>Critical review gate:</strong> reject any in-code synthesized "principle" string in <code>findCrystallizationCandidates</code> (it must stay a candidate detector). Confirm the <code>archived</code> flag has live readers (else the wave is inert).</p>
+<hr>
+<h3 id="wave-4-bridge-one-calibrated-confidence-drill-down-prior-injection">Wave 4 — Bridge (one calibrated confidence + drill-down + prior-injection)</h3>
+<p><strong>Goal.</strong> Unify confidence onto one scale, drill into the lossless archive when the model tier is unsure, and push a correction-derived prior <strong>before</strong> the agent reasons.</p>
+<blockquote><div><strong>Verified facts (correct the originals):</strong></div><div class='qli'>• - <code>scoreLabel</code> is duplicated in <strong>3 files</strong> with <strong>divergent thresholds and on different scales</strong>: <code>smart-recall.ts:96</code> (5 call sites — 349/385/420 feed a 0–1 <code>internalScore</code>, 465/579 feed the post-RRF <code>score</code>), <code>supabase/recall-backend.ts:14</code> (5 call sites on cosine / reciprocal-rank / RRF — three scales), <code>vector/local-vector-backend.ts:14</code> (cosine 0–1). Unify FIRST, and <strong>tag each call site with the scale it actually feeds</strong> — a single <code>'rrf-local'</code> tag for all of smart-recall is wrong (the internalScore sites are already ~0–1).</div><div class='qli'>• - The local post-RRF <code>score</code> is mutated by hot-window boosts (×3/×2/×1.3) AND a Beta feedback multiplier (×up to 2) AFTER RRF — so the "0.12 RRF max" divisor is wrong; a boosted recent item can reach ~0.7. <strong>The bridge gate must read the stored <code>calibrated</code> field set at scoring time, not re-derive from the mutated final score.</strong> Treat divisors as tunable constants, not trusted gates.</div><div class='qli'>• - <code>tokenize</code>/<code>overlap</code> are <strong>private</strong> in <code>check-action.ts:79/90</code> — promote to exports before reuse.</div><div class='qli'>• - <code>[[journal/DATE]]</code> backlinks live only on markdown <strong>heading</strong> lines, which <code>palace-search.ts:117</code> explicitly <strong>skips</strong> — so they essentially never appear in <code>r.excerpt</code>. The "lift sourceRefs from excerpt" mechanism is unsound; rely on the <code>{kind:'palace',room,file}</code> locator instead.</div><div class='qli'>• - The Supabase backend maps <strong>no <code>date</code> field</strong> and folds slug into <code>title</code> — drill-down is effectively <strong>local-only</strong> unless the remote query is extended to select <code>created_at</code>/slug. Scope drill-down to local for this wave.</div><div class='qli'>• - <code>extractSection</code> extracts a <strong>named</strong> markdown section, not "around the match" — it cannot center on a query hit. Cap by a simple char window; don't claim match-centering.</div><div class='qli'>• - <code>getRoot</code> is exported from <code>types.ts:37</code>, not <code>storage/paths.js</code> (both re-exported from the barrel).</div></blockquote>
+<p><strong>Changes (files).</strong></p>
+<ul><li>NEW <code>packages/core/src/tools-logic/confidence.ts</code> — <code>ConfidenceLabel='high'|'medium'|'low'|'weak'</code>; <code>CONFIDENCE_FLOOR={high:0.66,medium:0.4,low:0.2}</code>; <code>calibratedConfidence(score, scale)</code> mapping each backend's native score onto a shared 0–1 axis then binning. Delete the three private <code>scoreLabel</code>s; route each call site through <code>calibratedConfidence</code> with <strong>the correct per-site scale tag</strong>. Add <code>calibrated:number</code> to <code>SmartRecallResultItem</code> set <strong>at scoring time</strong>.</li><li>MODIFY <code>smart-recall.ts</code> — add <code>verbatimKey?:{kind:'journal'|'palace',date?,room?,file?}</code> to result items (journal loop ~369: <code>{kind:'journal',date:r.date}</code>; palace loop ~326: <code>{kind:'palace',room:r.room,file:r.file}</code>); add <code>drilldown?:boolean</code> (default true) to input and <code>bridged?:Array&lt;{forItemId,source,verbatim}&gt;</code> to result (mirror the <code>degraded</code> field). After the final sort (~584), if <code>drilldown!==false</code> and results non-empty: take top ≤2 items whose <strong>stored</strong> <code>calibrated &lt; CONFIDENCE_FLOOR.medium</code> with a <code>verbatimKey</code>, <code>fetchVerbatim</code> each, attach to <code>bridged</code>. Skip high-confidence; skip graph-walk items (no <code>verbatimKey</code>).</li><li>NEW <code>packages/core/src/tools-logic/drill-down.ts</code> — <code>fetchVerbatim(project, key)</code>. journal: validate <code>/^\d{4}-\d{2}-\d{2}$/</code>, reuse <code>readJournalFile</code>. palace: <code>path.join(palaceDir, 'rooms', sanitizeSlug(room), sanitizeSlug(file)+'.md')</code> with the compress.ts path-escape assertion (169-173). Cap text ~1200 chars. Never throws.</li><li>MODIFY <code>packages/core/src/tools-logic/memory-query.ts</code> + <code>packages/mcp-server/src/tools/memory-query.ts</code> — call <code>smartRecall({drilldown:true})</code>; keep the confidence filter for the primary list but when filtered is empty OR all low, attach <code>bridged</code> to a new <code>fallback</code> field and switch guidance to "Low-confidence match — verbatim source attached; verify before relying." Update the file-header contract docstring (lines 6-8) that currently promises suppression.</li><li>MODIFY <code>packages/mcp-server/src/tools/recall.ts</code> — after <code>formatResults</code>, if <code>bridged.length</code>, append a "— Verbatim source (low-confidence drill-down):" block.</li><li>MODIFY <code>packages/cli/src/index.ts</code> <code>hook-ambient</code> (~821): <strong>prior pass BEFORE the keyword <code>smartRecall</code></strong> — read <code>readP0Corrections(project)</code> and <code>readAwarenessState().blindSpots</code>; for any P0 correction whose rule/tags overlap prompt tokens (reuse <code>ambientTokens</code>/<code>wordOverlap</code>, start at <strong>≥2</strong> overlap), emit <code>⚠ [AgentRecall instinct] Resembles a past correction — &lt;rule&gt;. Check before proceeding.</code> ABOVE the fact list; blind-spots get a softer line. Cap 2 priors. For surfaced low-confidence items, append the bridged verbatim under the existing block. Keep rate-limiting/dedup/feedback unchanged. <strong>Extract the prior-builder into a pure exported fn</strong> so it's unit-testable without spawning the CLI.</li><li>MODIFY <code>packages/core/src/tools-logic/check-action.ts</code> — export <code>tokenize</code>, <code>overlap</code>.</li><li>NEW tests: <code>packages/core/test/confidence.test.mjs</code>, <code>drill-down.test.mjs</code>, <code>memory-query.test.mjs</code>.</li></ul>
+<p><strong>Plywood SOP.</strong></p>
+<pre class="code"><code>core="packages/core/src"
+// REDLINE: no version bump/publish/deploy/push. Land calibratedConfidence as its own small commit FIRST.
+
+// STEP 1 — one calibrated scale (per-site scale tags!)
+WRITE(core/tools-logic/confidence.ts):
+  EXPORT type ConfidenceLabel="high"|"medium"|"low"|"weak"
+  EXPORT CONFIDENCE_FLOOR={high:0.66,medium:0.4,low:0.2}
+  EXPORT calibratedConfidence(score,scale):
+    norm = scale=="rrf-local"?score/0.12 : scale=="rrf-supabase"?score/0.049 : score   // cosine/internal already 0..1
+    c=clamp(norm,0,1)
+    label = c&gt;=FLOOR.high?"high":c&gt;=FLOOR.medium?"medium":c&gt;=FLOOR.low?"low":"weak"
+    return {label, calibrated:c}
+for f in [smart-recall.ts, supabase/recall-backend.ts, vector/local-vector-backend.ts]:
+  DELETE private scoreLabel
+  ROUTE each call site with its TRUE scale:
+    smart-recall internalScore sites (349/385/420) → scale="cosine"   // already 0..1
+    smart-recall post-RRF site (465) + final (579)  → scale="rrf-local"
+    supabase cosine sites (99/111)                   → "cosine"
+    supabase reciprocal-rank (123)                   → "cosine"        // 1/(idx+1) is 0..1
+    supabase RRF (155)                               → "rrf-supabase"
+    local-vector (47)                                → "cosine"
+ADD `calibrated:number` to SmartRecallResultItem; SET it where confidence is set (carry .calibrated)
+RUN("npm run build"); retry-once; ESCALATE if still red
+// ship THIS as a standalone commit so the scale change is observable before drill-down rides on it
+
+// STEP 2 — provenance locator (NO excerpt-backlink lift — unsound)
+EDIT(smart-recall.ts): add verbatimKey?:{kind,date?,room?,file?}
+  journal loop ~369: verbatimKey={kind:"journal",date:r.date}
+  palace loop ~326:  verbatimKey={kind:"palace",room:r.room,file:r.file}
+
+// STEP 3 — verbatim fetch (local-only this wave)
+WRITE(core/tools-logic/drill-down.ts):
+  import readJournalFile from "../helpers/journal-files.js"; palaceDir,sanitizeSlug from "../storage/paths.js"; getRoot from "../types.js"
+  fetchVerbatim(project,key):
+    try:
+      IF key.kind=="journal":
+        IF !/^\d{4}-\d{2}-\d{2}$/.test(key.date): return null
+        t=readJournalFile(project,key.date); return t ? {found:true,source:"journal/"+key.date,text:cap(t,1200)} : null
+      else:
+        p=join(palaceDir(project),"rooms",sanitizeSlug(key.room),sanitizeSlug(key.file)+".md")
+        ASSERT p.startsWith(getRoot()+sep) ELSE throw "path escape"   // copy compress.ts 169-173
+        return exists(p) ? {found:true,source:"palace/"+key.room+"/"+key.file,text:cap(read(p),1200)} : null
+    catch: return null                                     // never throw into recall
+
+// STEP 4 — the bridge (gate on STORED calibrated, not mutated score)
+EDIT(smart-recall.ts): add drilldown?:boolean to input; bridged?:[] to result (mirror `degraded`)
+  AFTER final sort ~584, BEFORE return:
+    bridged=[]
+    IF input.drilldown!==false AND results.length&gt;0:
+      low = results.filter(it =&gt; it.calibrated &lt; CONFIDENCE_FLOOR.medium AND it.verbatimKey)   // STORED calibrated
+      for it of low.slice(0,2): v=fetchVerbatim(input.project,it.verbatimKey); IF v?.found: bridged.push({forItemId:it.id,source:v.source,verbatim:v.text})
+    spread ...(bridged.length?{bridged}:{})
+
+// STEP 5 — invert memory_query; STEP 6 — render in recall.ts + memory-query MCP
+EDIT(memory-query.ts): smartRecall({drilldown:true}); IF filtered empty OR all low: result.fallback=bridged; guidance="Low-confidence match — verbatim source attached; verify before relying."
+  UPDATE the "Only returns high/medium" header docstring (6-8)
+EDIT(mcp-server recall.ts): IF bridged.length: append "— Verbatim source (low-confidence drill-down):" block
+EDIT(mcp-server memory-query.ts): render `fallback` when present
+
+// STEP 7 — prior-injection in hook-ambient (target #2)
+EDIT(check-action.ts): EXPORT tokenize, overlap
+EXTRACT a pure buildPriors(prompt, corrections, blindSpots) fn (exported, testable)
+EDIT(cli hook-ambient ~821 BEFORE keyword smartRecall ~946):
+  priors = buildPriors(prompt, core.readP0Corrections(project), core.readAwarenessState()?.blindSpots ?? [])
+  // correction overlap gate &gt;=2 (start strict); cap 2; emit ⚠ instinct lines ABOVE the fact block
+  IF priors.length: stdout.write(priors.slice(0,2).join("\n")+"\n")
+  ...existing fact block + low-conf bridged verbatim lines unchanged...
+
+// STEP 8 — tests + verify
+WRITE(test/confidence.test.mjs): same calibrated → same label across scales; floors monotonic
+WRITE(test/drill-down.test.mjs): low-conf journal hit → bridged.text == readJournalFile; high-conf → none; palace path-escape blocked, no throw
+WRITE(test/memory-query.test.mjs): empty/low filtered → returns `fallback` not the bare caution string
+WRITE(prior-builder test): prompt overlapping a P0 correction emits instinct line above facts
+RUN("npm run build &amp;&amp; npm test"); IF red: FIX; RUN(again); IF still red: ESCALATE
+// trace: fetchVerbatim null + zero results both leave existing empty-state guidance intact</code></pre>
+<p><strong>Review-by.</strong> <code>code-reviewer</code>. Confirm the gate reads the <strong>stored</strong> <code>calibrated</code>, not the boosted final score; confirm drill-down kill-switch + caps exist.</p>
+<hr>
+<h3 id="wave-5-corrections-prediction-north-star-compression-remainder">Wave 5 — Corrections-prediction (north-star) + compression remainder</h3>
+<p><strong>Goal.</strong> Make human correction <em>override</em> the model, auto-derive Blind Spots, and predict the correction before the user makes it. Land the versioned consolidation prompt + <code>ar consolidate</code> CLI and coordinate the external <code>~/.aam</code> dreaming prompt (human-approved retirement/repoint).</p>
+<blockquote><div><strong>Verified facts (correct the originals):</strong></div><div class='qli'>• - <code>CorrectionRecord</code> lacks <code>authoritative</code>/<code>predict_*</code>; <code>applyCorrectionDefaults</code> (117-125) is the right place for an <code>authoritative</code> default keyed on <code>kind==='correction'</code>. <code>CorrectionOutcome.kind</code> is <code>'retrieved'|'heeded'|'recurred'</code> — extend with <code>'predicted'|'predict_hit'</code>. Don't touch the existing <code>precision = heeded/retrieved</code> math; add a separate <code>predict_precision</code>.</div><div class='qli'>• - <code>tokenize</code>/<code>overlap</code> are now exported (Wave 4). <code>predict-correction.ts</code> reuses them.</div><div class='qli'>• - The MCP "predictive warnings from past corrections" string is in <strong><code>packages/mcp-server/src/index.ts</code> (lines 101, 143)</strong> + READMEs — <strong>NOT</strong> in <code>tools/check.ts</code>. Edit the right file.</div><div class='qli'>• - Awareness <code>blindSpots</code> is a <code>string[]</code> on the global state — the derived Blind-Spots <strong>profile</strong> is new and must live in a <strong>personal</strong> tier (<code>projects/&lt;slug&gt;/personal/blind-spots.json</code>, mode 0600), registered in <code>classification.ts</code> (Wave 1) so it never syncs.</div><div class='qli'>• - <code>session-start.ts</code> <code>autoBackfill</code> (470-505) scans journal + palace/rooms only (non-recursive) — <code>personal/</code> is safe by omission today, but add a guard/test so a future recursive scan can't leak it.</div><div class='qli'>• - The over-block gate must be <code>authoritative!==false AND severity==='p0' AND NOT noise_candidate</code> (noise = <code>precision&lt;0.3 &amp;&amp; retrieved&gt;=3</code>, the existing <code>getCorrectionKPIs</code> signal) — else stale P0s veto legitimate plans.</div></blockquote>
+<p><strong>Changes (files).</strong></p>
+<ul><li>MODIFY <code>packages/core/src/storage/corrections.ts</code> — add <code>authoritative?</code>, <code>predicted_count?</code>, <code>predict_hits?</code>, <code>predict_precision?</code>, <code>last_predicted?</code> to <code>CorrectionRecord</code>; extend <code>CorrectionOutcome.kind</code> with <code>'predicted'|'predict_hit'</code>; default <code>authoritative</code> in <code>applyCorrectionDefaults</code>; extend <code>recordOutcome</code> switch (don't touch existing precision); add shared <code>readOutcomesForToday(slug)</code> (used by 4 call sites — single source).</li><li>NEW <code>packages/core/src/helpers/blind-spots.ts</code> — <code>deriveBlindSpots(corrections, alignmentLog): BlindSpotProfile</code>. Reuse <code>extractKeywords</code> + <code>cleanRule</code> clustering from <code>alignment-patterns.ts</code> (do NOT fork the matching grammar). Cluster ≥2 (≥1 if P0) ⇒ <code>BlindSpot{tendency, evidence_count, severity, trigger_keywords[], example_rule, last_seen}</code>. Pure, no LLM. Normalize alignment-log entries (<code>corrections:string[]</code>/<code>delta</code>) vs correction records (<code>.rule</code>) — explicit contract.</li><li>NEW <code>packages/core/src/storage/blind-spots-store.ts</code> — write to <code>personalDir(slug)/blind-spots.json</code> (atomic, 0600); write a one-line <code>personal/README</code> marking it sync-excluded; <code>readBlindSpots(slug)</code> returns null when absent.</li><li>MODIFY <code>packages/core/src/storage/paths.ts</code> — add <code>personalDir(project)</code> mirroring <code>palaceDir</code> with <code>assertInsideRoot</code>.</li><li>NEW <code>packages/core/src/tools-logic/predict-correction.ts</code> — <code>predictCorrection({plan, project}): {likelihood, top_risks[], matched_blind_spots[], suggested_guard}</code>. Reuse exported <code>tokenize</code>/<code>overlap</code>; load profile (lazy recompute if missing) + active corrections; weighted overlap lifted by recurrence + <code>predict_precision</code>; <strong>high-threshold-first ternary</strong> band (<code>&gt;=0.6?'high':&gt;=0.3?'medium':'low'</code>); for each fired risk <code>recordOutcome(kind:'predicted')</code>. Synchronous (no spawned agent — Decision #3).</li><li>MODIFY <code>packages/core/src/tools-logic/check.ts</code> — attach a <code>prediction</code> block; when <code>likelihood==='high' &amp;&amp; input.confidence==='high'</code> append an over-confidence line to <code>calibration_note</code>.</li><li>MODIFY <code>packages/mcp-server/src/index.ts</code> (lines 101, 143) + READMEs — reword "predictive warnings from past corrections" to reflect forward anticipation.</li><li>MODIFY <code>packages/core/src/tools-logic/check-action.ts</code> — add <code>verdict:'advisory'|'blocked'</code>; <code>blocked</code> only when a matched correction is <code>authoritative!==false &amp;&amp; severity==='p0' &amp;&amp; NOT noise_candidate</code>; prepend a <code>⛔ CONFLICT: a human correction OVERRIDES this plan</code> line. Also <code>recordOutcome(heeded|recurred)</code> when a surfaced correction shows compliance/violation signal (real outcome).</li><li>MODIFY <code>packages/cli/src/index.ts</code> <code>hook-pretool</code> (~1092, case spans 1027-1190) — surface <code>verdict==='blocked'</code> first, still capped at 6 lines. Add <code>case "blind-spots"</code> (<code>--recompute</code> flag for the dream prompt). Add <code>case "consolidate"</code> (mirror <code>synthesize</code> ~404): <code>runDecayPass</code> (default <code>--dry-run</code>), <code>buildConsolidationPrompt</code> + <code>findCrystallizationCandidates</code>, <code>proposeSkillsFromPhases</code>; print prompt + candidates. <strong>No cron creation.</strong></li><li>MODIFY <code>packages/core/src/tools-logic/session-end.ts</code> — weaken the default-heeded block (~233): only default-heeded when <code>readOutcomesForToday</code> has no real outcome for that correction; close <code>predict_hit</code> when a <code>predicted</code> later <code>recurred</code>. In step-3 consolidation (async), guarded fire-and-forget <code>recomputeBlindSpots(slug)</code>.</li><li>MODIFY <code>packages/core/src/tools-logic/session-start.ts</code> — add <code>blind_spots</code> (top 2 from <code>readBlindSpots</code>) + <code>predicted_risks</code> (run <code>predictCorrection</code> against active phase goal + latest journal <code>## Next</code>, top 2) to the orientation block (prior pushed early); reuse the 1/day <code>recordOutcome('retrieved')</code> guard. READ only — derivation is async.</li><li>NEW <code>packages/core/src/prompts/consolidation-prompt.ts</code> — <code>CONSOLIDATION_PROMPT_TEMPLATE</code> + <code>buildConsolidationPrompt(slug, bundle)</code>, porting <strong>only Phase B (candidate-finding)</strong> of T1 Step 4.5 into the bundle and leaving Phase C (synthesis) to the LLM. Refactor <code>session-end-reflect.ts:buildPrompt()</code> to import it (single source). Verify tsconfig globs <code>src/**/*</code> so <code>prompts/</code> compiles to <code>dist/prompts/</code>.</li><li>NEW <code>packages/core/src/tools-logic/skill-propose.ts</code> — <code>proposeSkillsFromPhases(slug)</code>: scan closed milestones' <code>how_solved</code>/<code>synthesis</code> (via <code>listMilestones</code>) for repeated procedural shape; emit DRAFT <code>SkillBody</code> (<code>source:'auto_reflection'</code>) into <code>ReflectResult</code>. <strong>Do not auto-write</strong> — agent confirms (agent-as-author).</li><li>MODIFY <code>packages/core/src/index.ts</code> — export <code>deriveBlindSpots</code>, <code>readBlindSpots</code>, <code>recomputeBlindSpots</code>, <code>predictCorrection</code>, <code>proposeSkillsFromPhases</code>, <code>buildConsolidationPrompt</code>, <code>readOutcomesForToday</code>, types.</li><li>NEW tests: <code>packages/core/test/blind-spots.test.mjs</code>, <code>predict-correction.test.mjs</code>, extend <code>corrections.test.mjs</code>, <code>check-action</code> verdict test, <code>personal-not-backfilled.test.mjs</code>.</li></ul>
+<p><strong>Plywood SOP.</strong></p>
+<pre class="code"><code>CORE="packages/core/src"; MCP="packages/mcp-server/src"; CLI="packages/cli/src/index.ts"
+// REDLINE: no version bump/publish/deploy/push/cron. Barrel-export new fns BEFORE the .test.mjs that import them. Build before every test.
+
+// PHASE 0 — tests first (correct harness: .test.mjs importing ../dist, build-then-run)
+WRITE(test/blind-spots.test.mjs): 3 same-keyword corrections cluster into 1 blind spot
+WRITE(test/predict-correction.test.mjs): high-recurrence correction + overlapping plan → likelihood "high"; empty store → "low", no throw
+WRITE(test/corrections.test.mjs additions): recordOutcome("predicted"|"predict_hit") updates predict_precision, leaves precision untouched
+WRITE(check-action verdict test): authoritative p0 (not noise) → "blocked" + CONFLICT line; noise p0 → "advisory"
+WRITE(test/personal-not-backfilled.test.mjs): autoBackfill never reads projects/&lt;slug&gt;/personal/
+RUN("npm run build &amp;&amp; npm test")                       // RED
+
+// PHASE 1 — schema backbone
+EDIT(CORE/storage/corrections.ts): + authoritative?,predicted_count?,predict_hits?,predict_precision?,last_predicted?
+  CorrectionOutcome.kind += "predicted"|"predict_hit"
+  applyCorrectionDefaults: authoritative = rec.authoritative ?? ((rec.kind??"correction")==="correction")
+  recordOutcome: predicted→predicted_count++,last_predicted=at ; predict_hit→predict_hits++ ;
+                 predict_precision = predicted_count&gt;0 ? min(1,predict_hits/predicted_count) : undefined   // DO NOT touch `precision`
+  add readOutcomesForToday(slug): Map&lt;id,Set&lt;kind&gt;&gt;     // shared by predict/check-action/session-start/session-end
+
+// PHASE 2 — personal tier (privacy boundary; registered in classification.ts from Wave 1)
+EDIT(CORE/storage/paths.ts): add personalDir(project) mirror palaceDir w/ assertInsideRoot
+WRITE(CORE/storage/blind-spots-store.ts): writeBlindSpots(slug,profile) atomic 0600 to personalDir/blind-spots.json + personal/README "DO NOT sync"; readBlindSpots(slug)→null if absent; recomputeBlindSpots(slug)
+WRITE(CORE/helpers/blind-spots.ts): deriveBlindSpots(corrections, alignmentLog) — reuse extractKeywords+cleanRule; normalize alignment(corrections[]/delta) vs record(.rule)
+
+// PHASE 3 — predictor (reuse Wave-4 exported tokenize/overlap; synchronous)
+WRITE(CORE/tools-logic/predict-correction.ts):
+  predictCorrection({plan,project}):
+    slug=resolveProject(project); profile=readBlindSpots(slug) ?? recomputeBlindSpots(slug)
+    pt=tokenize(plan); risks=[]
+    for bs of profile.blind_spots:
+      ov=overlap(pt,Set(bs.trigger_keywords)); IF ov.length&gt;=2:
+        score = ov.length*(bs.severity=="p0"?1.5:1)*(1+0.2*(matchingCorrection?.recurrence_count??0))
+        risks.push({tendency:bs.tendency,score,matched:ov,correction_id})
+    raw=normalize(sum(score),pt.size)
+    likelihood = raw&gt;=0.6?"high":raw&gt;=0.3?"medium":"low"   // HIGH-THRESHOLD-FIRST
+    for r of topRisks: try recordOutcome({correction_id:r.correction_id,project:slug,kind:"predicted",at:nowISO}) catch{}
+    return {likelihood, top_risks:topRisks.slice(0,3), matched_blind_spots, suggested_guard}
+
+// PHASE 4 — wire prediction into check(); reword the RIGHT MCP file
+EDIT(CORE/tools-logic/check.ts): try result.prediction=predictCorrection({plan:input.goal,project:slug}) catch{}
+  IF prediction.likelihood=="high" AND input.confidence=="high": calibration_note += "OVER-CONFIDENCE GUARD: a prior correction predicts this plan is likely to be corrected — reconcile first."
+EDIT(MCP/index.ts lines 101,143 + READMEs): reword "predictive warnings from past corrections" → forward anticipation
+
+// PHASE 5 — authoritative override in check_action (gated against noise)
+EDIT(CORE/tools-logic/check-action.ts): add verdict
+  authP0 = matches.find(c =&gt; record(c).authoritative!==false &amp;&amp; c.severity=="p0" &amp;&amp; !isNoiseCandidate(c))
+  verdict = authP0 ? "blocked" : "advisory"
+  IF blocked: warning = "⛔ CONFLICT: a human correction OVERRIDES this plan — reconcile before proceeding.\n"+warning
+  ALSO recordOutcome(heeded|recurred) on real compliance/violation signal
+EDIT(CLI hook-pretool ~1092): IF verdict=="blocked": push CONFLICT line first (still cap 6 lines)
+
+// PHASE 6 — honest heeded loop + async derivation
+EDIT(CORE/tools-logic/session-end.ts ~233): todayOut=readOutcomesForToday(slug)
+  for c: IF todayOut.get(c.id) has heeded|recurred: CONTINUE  // real outcome beats default
+         IF todayOut.get(c.id) has "predicted" AND now recurred/warned-then-heeded: recordOutcome(predict_hit)
+  step-3 (async consolidation): try recomputeBlindSpots(slug) catch{}   // NOT in the Stop hook
+EDIT(CORE/tools-logic/session-start.ts): READ blind_spots(top2)+predicted_risks(top2 from predictCorrection over phase goal + latest ## Next); reuse 1/day retrieved-guard
+
+// PHASE 7 — versioned consolidation prompt + skill drafts + CLI (in-repo replacement for ~/.aam prompt)
+WRITE(CORE/prompts/consolidation-prompt.ts): CONSOLIDATION_PROMPT_TEMPLATE + buildConsolidationPrompt(slug,bundle) — PORT ONLY Phase B (candidates); Phase C synthesis stays the LLM's job
+EDIT(session-end-reflect.ts buildPrompt): import buildConsolidationPrompt (single source)
+WRITE(CORE/tools-logic/skill-propose.ts): proposeSkillsFromPhases(slug) → DRAFT SkillBody[]{source:"auto_reflection"} into ReflectResult (NO writeSkill)
+EDIT(CLI): case "consolidate": print runDecayPass(slug,{dryRun:!hasFlag("--apply")}) + buildConsolidationPrompt + findCrystallizationCandidates + proposeSkillsFromPhases
+           case "blind-spots": --recompute ? recomputeBlindSpots(slug) : readBlindSpots(slug) ?? "none yet"
+EDIT(CORE/index.ts): export deriveBlindSpots,readBlindSpots,recomputeBlindSpots,predictCorrection,proposeSkillsFromPhases,buildConsolidationPrompt,readOutcomesForToday,types
+
+// PHASE 8 — verify
+RUN("npm run build &amp;&amp; npm test"); IF red: FIX; RUN(again); IF still red: ESCALATE
+// trace: predictCorrection on empty store → "low", no throw; check-action with no matches → "advisory"
+DISPATCH(code-reviewer)                                  // never self-review
+ESCALATE_TO_HUMAN("Plan complete. Coordinate retiring/repointing the external ~/.aam/dreams prompt to `ar consolidate` " +
+                  "(human-approved op). Communicate that a precision DROP after removing optimistic-heeded bias is EXPECTED, not a regression.")</code></pre>
+<p><strong>Review-by.</strong> <code>code-reviewer</code> + <code>security-reviewer</code> (personal-tier path stays off sync/backfill). Confirm the <code>blocked</code> verdict is gated against noise-candidates.</p>
+<hr>
+<h2 id="5-risks-mitigations">5. Risks &amp; Mitigations</h2>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Risk</th><th>Sev</th><th>Mitigation</th></tr></thead><tbody><tr><td>1</td><td><strong>PRIVACY — personal model already leaking to Supabase TODAY</strong> (<code>syncToSupabase(...,"awareness")</code> runs synchronously now; Blind-Spots/awareness behavioral layer is the highest-sensitivity artifact).</td><td><strong>Critical</strong></td><td>Wave 1 FIRST. <code>sync_personal=false</code> default. Derive any future <code>.gitignore</code> from <code>classification.ts</code> (single source) + a test that fails if a personal store lacks a gate. Raw tier (Wave 2) writes local-only, never <code>syncToSupabase</code>. Confirm <code>autoBackfill</code> never reaches <code>personal/</code>. <strong>Surface (don't pick) the awareness-vs-dashboard sync decision.</strong></td></tr><tr><td>2</td><td><strong>Migration / breaking 51 existing projects (12M).</strong> Dropping the 60-char stub means hook-end may write nothing; <code>arstatus</code> cache, dashboard counts, <code>.last-session-summary.txt</code>, and the semantic-prefetch block all read <code>summary</code>. 80KB verbatim per session is unbounded.</td><td>High</td><td>Guard semantic-prefetch + arstatus-cache behind <code>if(summary)</code>. <code>journalDirs(includeArchive=false)</code> already excludes archive from counting — verify dashboard/project-status globs do too. Define retention (cap tailBytes; prune/gzip raw once <code>.consumed</code> marks distilled) <strong>as part of Wave 2</strong>, reusing <code>journalArchive</code>'s <code>older_than_days</code>.</td></tr><tr><td>3</td><td><strong>Test-harness mismatch</strong> — every original SOP assumed vitest/<code>.test.ts</code>/pnpm. None exist.</td><td>High</td><td>Universal test contract (§4): <code>.test.mjs</code> + <code>node:test</code>, import from <code>dist</code>, build before test, <code>npm</code> workspaces. RED = module-not-found after a build that omits the new module.</td></tr><tr><td>4</td><td><strong>Stop-hook stdin contract unverified</strong> — <code>transcript_path</code> appears nowhere; hook-end reads no stdin today; Stop can double-fire; empty <code>session_id</code> collides on date.</td><td>High</td><td>Capture a live Stop payload before relying on field names; fall back to proven <code>readTodaySessions</code>. Dedup key = transcript filename UUID, not date. Append-only + cap bytes + exit-0 fast. CLI test: empty stdin → exit 0 silent.</td></tr><tr><td>5</td><td><strong>REDLINE</strong> — version bump / publish / deploy / push / cron. Repo mid SEO/MCP-registry push. settings.json edits are cross-repo (git-backed <code>Goldentrii/claude</code>); git-mirror has a push path.</td><td>High</td><td>Every wave delivers branch + green + tests, then STOP. No auto-push from any hook/dreaming path (commit-only at most, deferred). No cron — <code>ar consolidate</code>/<code>consolidate-async</code>/<code>blind-spots</code> are invocable only. settings.json: build dist first, write a <code>.bak</code>, human-approved.</td></tr><tr><td>6</td><td><strong>Over-blocking</strong> from <code>verdict:'blocked'</code>; precision metric will (correctly) DROP after removing optimistic-heeded bias.</td><td>Medium</td><td>Gate <code>blocked</code> on <code>authoritative!==false &amp;&amp; p0 &amp;&amp; NOT noise_candidate</code> (<code>precision&lt;0.3 &amp;&amp; retrieved&gt;=3</code>). Communicate up front that the precision drop is expected and correct. Thresholds are tunable constants.</td></tr><tr><td>7</td><td><strong>Duplicate-area waste</strong> — archive-tier ≈ auto-save-hooks (two writers, two Stop rewrites).</td><td>Medium</td><td><strong>Merged into ONE</strong> archive design (Wave 2). One reader (reuse <code>readHeadTail</code>), one Stop command, one consume marker, one <code>MEMORY-PROTOCOL.md</code> generator.</td></tr><tr><td>8</td><td><strong>Confidence calibration untuned</strong> — divisors (0.12/0.049) are theoretical maxima; the local post-RRF score is boosted ×3–6 after RRF, so the gate must read the <strong>stored</strong> <code>calibrated</code>, not the mutated final score.</td><td>Medium</td><td>Land scale-unification as a standalone commit; gate on stored <code>calibrated</code>. Cap drill-down ≤2 items / ≤1200 chars + a <code>drilldown:false</code> kill-switch. Prior-overlap starts at ≥2, loosen only if recall too low. Tune against a fixture corpus before trusting the medium floor.</td></tr><tr><td>9</td><td><strong>FSRS write-amplification</strong> — reinforce-on-recall mutates skill files on every hit in git-tracked memory.</td><td>Medium</td><td>Throttle: skip write if <code>last_confirmed</code> within N hours. Atomic tmp+rename (already in <code>writeSkill</code>). Backfill missing <code>fsrs</code> via <code>initFsrs</code> lazily.</td></tr><tr><td>10</td><td><strong>Inert <code>archived</code> flag</strong> — zero readers today; writing it without reader-side filtering is a no-op.</td><td>Medium</td><td>Wave 3 adds <code>archived</code> filtering to <code>listSkills</code> + recall + session_start consumers; a test asserts an archived skill is filtered out (flag is live).</td></tr></tbody></table></div>
+<hr>
+<h2 id="6-non-goals-yagni">6. Non-Goals / YAGNI</h2>
+<ul><li><strong>No live/synchronous sidecar storage agent.</strong> Retrieval stays a function (<code>smartRecall</code>/<code>check</code>); consolidation stays the async dreaming agent. No spawned per-recall agent, no cold-start brief (Decision #3). <em>Add a one-line ADR note in <code>MEMORY-PROTOCOL.md</code> locking this so a future contributor doesn't reintroduce it.</em></li><li><strong>Do NOT build both archive writers.</strong> archive-tier and auto-save-hooks are duplicates → one merged design (Wave 2). No second transcript reader — reuse <code>readHeadTail</code>.</li><li><strong>No standalone MCP <code>predict_correction</code> tool.</strong> Fold prediction into <code>check()</code> (Agent-First simplicity). Same for a standalone <code>git_mirror</code> tool beyond the minimum.</li><li><strong>No cron / scheduler creation</strong> for <code>ar consolidate</code> / <code>consolidate-async</code> / <code>blind-spots --recompute</code>. Ship invocable commands; the human or AAM wires scheduling (human-approved).</li><li><strong>No git-mirror PUSH path / GitHub remote this cycle.</strong> Decision #6: design the privacy split before sync. Local-commit substrate at most; remote push deferred until the privacy boundary is proven AND the awareness-vs-dashboard sync question is resolved.</li><li><strong>No Plywood migration of existing skills</strong> (Decision #4). The additive <code>plywood?:</code> field is cheap and may land opportunistically, but rewriting prose skills into pseudocode is scope creep — punt unless named.</li><li><strong>Do NOT expand the Hopfield/associative-memory machinery</strong> (<code>hopfield.ts</code>) — unreferenced by any of the 8 decisions. Resist infra-for-infra.</li><li><strong>Do NOT run the external <code>~/.aam</code> T1/T4 prompts in parallel with an in-repo port</strong> (two diverging sources). Either repoint the external cron to the in-repo job (human-approved) or leave it external — not both.</li></ul>
+<hr>
+<h2 id="7-north-star-metric-predict-the-correction">7. North-Star Metric: Predict-the-Correction</h2>
+<p><strong>Definition.</strong> Anticipate a correction <em>before</em> the user makes it. The system wins when a fired prediction reliably precedes an actual correction/recurrence.</p>
+<p><strong>Instrumentation (lands in Wave 5, already in the schema plan):</strong></p>
+<ul><li><code>recordOutcome(kind:'predicted')</code> when <code>predictCorrection</code> fires a risk for a correction.</li><li><code>recordOutcome(kind:'predict_hit')</code> when a <code>predicted</code> correction later <code>recurred</code> (or was warned-then-heeded) the same period.</li><li><code>predict_precision = min(1, predict_hits / predicted_count)</code> per correction — <strong>kept separate</strong> from the existing <code>precision = heeded/retrieved</code>.</li></ul>
+<p><strong>How to measure (the eval the critic flagged as missing — build it as the Wave 5 verifier, not a tool):</strong></p>
+<pre class="code"><code>// offline replay eval — packages/core/test/predict-eval.test.mjs (or a benchmark/*.mjs)
+GIVEN a fixture corpus of real correction histories (anonymized; from a temp-root, NOT live ~/.agent-recall)
+for each correction C with a known first-occurrence date D and recurrence date D':
+  build the Blind-Spots profile from corrections BEFORE D'           // no look-ahead leakage
+  run predictCorrection({plan: the-plan-text-at-D', project})
+  record: did a top_risk match C with likelihood &gt;= medium?
+REPORT:
+  recall    = (# recurrences predicted) / (# recurrences)            // did we see it coming?
+  precision = (# predictions that preceded a real correction) / (# predictions fired)
+  lead_time = median(D' - prediction_time)                           // how early
+ACCEPT only if recall and precision beat a keyword-baseline on the fixture; thresholds (0.6/0.3) are tunable</code></pre>
+<p>Without this offline replay, prediction quality is unfalsifiable — so the eval is the gate, not an afterthought.</p>
+<p><strong>The "auto-derive Blind Spots" test (Wave 5 unit test):</strong></p>
+<pre class="code"><code>// packages/core/test/blind-spots.test.mjs
+GIVEN 3 corrections sharing &gt;=2 cleaned keywords (e.g. "infra over revenue") with sum(confirmations) &gt;= 5
+WHEN deriveBlindSpots(corrections, alignmentLog) runs
+THEN exactly 1 BlindSpot is produced with evidence_count==3, the shared trigger_keywords, severity by P0-presence
+AND a single P0 correction (count==1) still yields a BlindSpot (&gt;=1-if-P0 rule)
+AND the profile is written ONLY to personalDir/blind-spots.json (mode 0600), NEVER under palace/ or any sync path
+AND classifyPath(thatFile) === "personal"                          // privacy invariant</code></pre>
+<p>This closes the loop from Decision #8: corrections are ground truth that overrides the model (<code>verdict:'blocked'</code>), and their accumulation auto-derives the user's behavioral profile, which <code>predictCorrection</code> pushes as an early prior at <code>session_start</code> and <code>hook-ambient</code> — memory becoming understanding.</p>
+</div>
+</body>
+</html>

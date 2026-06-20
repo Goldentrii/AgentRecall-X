@@ -7,12 +7,12 @@
     "source": "github",
     "subfolder": "packages/mcp-server"
   },
-  "version": "3.4.31",
+  "version": "3.4.32",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "agent-recall-mcp",
-      "version": "3.4.31",
+      "version": "3.4.32",
       "transport": {
         "type": "stdio"
       }

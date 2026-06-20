@@ -22,6 +22,21 @@ export function register(server: McpServer): void {
       const result = await memoryQuery({ intent: searchIntent, project, min_confidence, limit });
 
       if (result.empty) {
+        // Bridge (Wave 4): when the primary filter is empty but a low-confidence
+        // match exists, surface the verbatim drill-down source instead of a bare
+        // "nothing found" string.
+        if (result.fallback && result.fallback.length > 0) {
+          const lines: string[] = [
+            result.guidance ?? "Low-confidence match — verbatim source attached; verify before relying.",
+            "",
+            "— Verbatim source (low-confidence drill-down):",
+          ];
+          for (const b of result.fallback) {
+            const snippet = b.verbatim.replace(/\n/g, " ").slice(0, 300);
+            lines.push(`  [${b.source}] ${snippet}`);
+          }
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+        }
         return {
           content: [{
             type: "text" as const,

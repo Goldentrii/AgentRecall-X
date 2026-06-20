@@ -98,7 +98,7 @@ Default tools (5):
   session_end            Save journal, insights, trajectory — compounds memory over time
   remember               Write a memory — auto-routes to the right store
   recall                 Search all memory — BM25 + vector + RRF fusion + Hopfield rerank
-  check                  Record understanding; returns predictive warnings from past corrections
+  check                  Record understanding; anticipates the likely correction before you make it
 
 Full-mode additions (--full):
   memory_query           Pull-on-demand recall mid-task
@@ -140,7 +140,7 @@ if (args.includes("--list-tools")) {
     { name: "session_end", description: "Save journal, insights, and trajectory — compounds memory over time" },
     { name: "remember", description: "Save a memory — auto-routes to the right store" },
     { name: "recall", description: "Search all memory stores, return ranked results with feedback" },
-    { name: "check", description: "Record understanding, get predictive warnings from past corrections" },
+    { name: "check", description: "Record understanding; anticipates the likely correction before you make it" },
   ];
   const fullOnlyTools = [
     { name: "memory_query", description: "Pull-on-demand recall mid-task — query before decisions (--full)" },

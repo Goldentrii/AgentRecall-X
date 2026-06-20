@@ -255,7 +255,7 @@ export function pruneStale(project: string, olderThanDays: number = 30, global?:
     const keep: DigestEntry[] = [];
 
     for (const entry of index.entries) {
-      if (entry.stale && new Date(entry.updated).getTime() < cutoff) {
+      if (entry.stale && new Date(entry.updated).getTime() <= cutoff) {
         const cp = contentPath(dir, entry.id);
         if (fs.existsSync(cp)) fs.unlinkSync(cp);
         pruned++;

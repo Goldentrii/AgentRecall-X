@@ -230,6 +230,28 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
+## Release — v3.4.32 (2026-06-20) — Memory → Understanding (5 waves)
+
+> Branch-staged on `feat/memory-to-understanding`. Build clean, 408 tests green. NOT yet merged/published — version stamped at human request after the waves landed and the HIGH review items were closed.
+
+The shift from **memory** (collect + recall) to **understanding** (anticipate). Plan: [docs/internal/MEMORY-TO-UNDERSTANDING-PLAN.md](docs/internal/MEMORY-TO-UNDERSTANDING-PLAN.md) (one-click HTML: [warroom/memory-to-understanding-plan.html](warroom/memory-to-understanding-plan.html)). Every plan claim was fact-checked against the live tree by a multi-agent workflow before implementation; each wave was built behind a build/test gate, then adversarially re-verified against the plan and code-reviewed.
+
+| Wave | What | Why |
+|------|------|-----|
+| **1 — Privacy** | `classification.ts` (personal vs project, single source of truth) + a sync gate; `sync_personal=false` default | The behavioral/awareness layer was leaking to Supabase on **every write** (`awareness.ts` `syncToSupabase(…, "awareness")`). Plugged. Personal model must not leave the machine by default. |
+| **2 — Archive tier** | Lossless verbatim dump to `journal/archive/raw/<date>--<uuid>.md` on every session end (never throws, idempotent, local-only); async consolidation seam (`.consumed.json` + queue); self-describing `MEMORY-PROTOCOL.md`; **`pruneRawArchive`** retention (gzip/remove consumed+old segments) | Two-tier memory: a lossless floor nothing can fall through, with quality compression deferred to the async dreaming loop. Retention bounds disk once distillation advances the consume marker. |
+| **3 — Compression** | Revived the dormant FSRS reinforce-on-recall loop (throttled); in-repo decay pass; `archived` flag made live (reader-side filtering); crystallization-candidate detector | Turns *collect-by-count* into *compress-into-rules*. What you use survives; what you don't fades. |
+| **4 — Bridge** | One calibrated confidence scale across all recall backends; uncertainty-triggered drill-down to the verbatim archive; correction-derived **prior injected early** at `hook-ambient`/`session_start` | Instinct = a prior pushed *before* the agent reasons ("this feels wrong"), not a fact retrieved after. Low-confidence answers attach their lossless source instead of bluffing. |
+| **5 — Predict-the-correction** | `verdict:'blocked'` when an authoritative P0 correction conflicts with a plan (correction OVERRIDES the model); Blind-Spots profile derived from accumulated corrections (personal tier, sync-excluded); `predictCorrection`; honest heeded/recurred loop | North star: anticipate a correction *before* the user makes it. Memory recalls the past; understanding pushes a calibrated prior into the present. |
+
+**Post-wave HIGH fixes** (code-review, 0 CRITICAL/0 HIGH after): guarded the second `predict_hit` path against double-counting; `predict_precision` denominator floored at `max(predicted_count, predict_hits)` so the metric stays visible (never silently `undefined`), leaving `precision = heeded/retrieved` untouched; the `hook-end` no-`transcript_path` fallback no longer risks archiving the wrong session (resolves by session id, else the single session today, else skips + logs) and keys the archive on the transcript's own UUID.
+
+**Known follow-ups (deferred):** `check_action` doesn't yet record real heeded/recurred outcomes on compliance signal (plan §4 Wave 5 line 493); the offline replay eval for the north-star isn't built; the `~/.claude` Stop-hook wiring + live-payload capture are human-approved config ops, not in-branch.
+
+**REDLINE:** every wave is local commits on the branch only — no publish, no deploy, no push, no cron. Version stamped 3.4.32 (the prior 3.4.31 `types.ts` mirror constant was also corrected to match the already-shipped package version).
+
+---
+
 ## Release — v3.4.30 (2026-06-19) — onboarding & distribution
 
 **Documentation + packaging release. Defers the v3.5.0 Ambient Relevance Loop.**
@@ -820,6 +842,24 @@ Pre-demo review (boss/external audience) of the war-room dashboard surfaced 4 cr
 | Metric bug: "11/10 heeded" (heeded_count > retrieved_count) | Root cause: session_end recorded a `heeded` outcome on EVERY same-day call while `retrieved` is 1/day-guarded. Added matching 1/day guard via `last_outcome`; reconciled 3 existing inflated counters (cap heeded ≤ retrieved) | `tools-logic/session-end.ts` + runtime data |
 
 Reviewed by fresh-eyes code-reviewer (GO). Local-only — no push/publish/version-bump per REDLINE.
+
+---
+
+## Distribution campaign — v3.4.31 (2026-06-20)
+
+SEO/GEO launch across all major MCP discovery channels.
+
+| Channel | Action | Result |
+|---|---|---|
+| modelcontextprotocol/registry | Published `io.github.Goldentrii/agent-recall` v3.4.31 via `mcp-publisher` | Live |
+| LobeHub marketplace | Already listed at launch (`lobehub.com/mcp/goldentrii-agentrecall`) | 23 installs at launch |
+| awesome-mcp (punkpeye/TensorBlock/YuzeHao) | PRs opened | Pending merge |
+| GitHub topics + description | 10 topics set, description updated | Live |
+| README comparison table | Added vs Mem0/Zep/Letta; expanded npm keywords | PR #34 merged |
+| r/mcp | Post `redd.it/1uatp0o` | Live |
+| r/ClaudeAI | Post submitted | Live |
+
+**Update mechanics for future releases:** LobeHub auto-syncs from npm. All other channels (registry, aggregator lists) require manual action. Registry re-publish: bump `server.json` version → `~/.local/bin/mcp-publisher publish packages/mcp-server/server.json`.
 
 ---
 

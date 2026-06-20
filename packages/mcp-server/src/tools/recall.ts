@@ -47,6 +47,15 @@ export function register(server: McpServer): void {
 
       const lines: string[] = [formatResults(result.results)];
 
+      // Bridge (Wave 4): low-confidence top hits drilled into the lossless archive.
+      if (result.bridged && result.bridged.length > 0) {
+        lines.push("");
+        lines.push("— Verbatim source (low-confidence drill-down):");
+        for (const b of result.bridged) {
+          lines.push(`  [${b.source}] ${trunc(b.verbatim.replace(/\n/g, " "), 300)}`);
+        }
+      }
+
       // Feedback nudge — show IDs so agents can easily rate on next call
       lines.push("");
       lines.push("— Rate these results on next recall() to improve future ranking:");

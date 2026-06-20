@@ -42,8 +42,12 @@ export function readAlignmentLog(project: string): AlignmentRecord[] {
  * Extract a clean, actionable rule from raw correction text.
  * Raw: 'Was: "Adding CSS classes" | Correction: "no don't use black backgrounds"'
  * Clean: "Don't use black backgrounds"
+ *
+ * Exported (Wave 5) so deriveBlindSpots reuses the SAME cleaning grammar instead
+ * of forking it — the blind-spots clustering and the watch-pattern clustering
+ * must agree on what "the rule text" is.
  */
-function cleanRule(raw: string): string {
+export function cleanRule(raw: string): string {
   // Try to extract the "Correction:" part from delta format
   const corrMatch = raw.match(/Correction:\s*"?([^"|]+)/i);
   if (corrMatch) {

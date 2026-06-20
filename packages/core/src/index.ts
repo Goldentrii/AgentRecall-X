@@ -68,6 +68,7 @@ export {
   initAwareness,
   addInsight,
   detectCompoundInsights,
+  findCrystallizationCandidates,
   renderAwareness,
   readAwarenessArchive,
   writeAwarenessArchive,
@@ -77,7 +78,12 @@ export type {
   Insight,
   CompoundInsight,
   AwarenessState,
+  CrystallizationCandidate,
 } from "./palace/awareness.js";
+
+// Palace — decay pass (Wave 3 compression tier)
+export { runDecayPass } from "./palace/decay-pass.js";
+export type { DecayReport, DecayCandidate, DecayOptions } from "./palace/decay-pass.js";
 
 // Palace — salience
 export {
@@ -143,9 +149,22 @@ export { appendToLog } from "./palace/log.js";
 export { consolidateJournalToPalace } from "./palace/consolidate.js";
 export type { ConsolidationResult } from "./palace/consolidate.js";
 
+// Storage — privacy classification (Wave 1, single source of truth)
+export { classifyStore, classifyPath, isPersonalProject, PERSONAL_STORES } from "./storage/classification.js";
+export type { Tier } from "./storage/classification.js";
+
 // Storage
-export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject } from "./storage/paths.js";
+export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+
+// Storage — archive tier (Wave 2, lossless verbatim floor; local-only)
+export { archiveSession } from "./storage/archive-write.js";
+export type { ArchiveSessionInput, ArchiveSessionResult } from "./storage/archive-write.js";
+export { pruneRawArchive } from "./storage/archive-prune.js";
+export type { PruneRawArchiveOptions, PruneRawArchiveResult } from "./storage/archive-prune.js";
+export { enqueueConsolidation, drainConsolidationQueue } from "./storage/consolidation-queue.js";
+export type { ConsolidationJob, DrainReport } from "./storage/consolidation-queue.js";
+export { writeMemoryProtocol } from "./storage/memory-protocol.js";
 export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
@@ -164,7 +183,7 @@ export type {
 } from "./storage/behavior-policies.js";
 export { registerRule } from "./tools-logic/register-rule.js";
 export type { RegisterRuleToolInput, RegisterRuleToolResult } from "./tools-logic/register-rule.js";
-export { checkAction } from "./tools-logic/check-action.js";
+export { checkAction, tokenize, overlap } from "./tools-logic/check-action.js";
 export type {
   CheckActionInput,
   CheckActionResult,
@@ -269,7 +288,10 @@ export { journalMerge, type JournalMergeInput, type MergeReceipt } from "./tools
 // Tool logic — smart routing
 export { smartRemember, type SmartRememberInput, type SmartRememberResult } from "./tools-logic/smart-remember.js";
 export { smartRemember as remember } from "./tools-logic/smart-remember.js";
-export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded } from "./tools-logic/smart-recall.js";
+export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded, type BridgedSource } from "./tools-logic/smart-recall.js";
+export { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceLabel, type ConfidenceScale, type CalibratedConfidence } from "./tools-logic/confidence.js";
+export { fetchVerbatim, type VerbatimKey, type VerbatimSource } from "./tools-logic/drill-down.js";
+export { buildPriors, type PriorCorrection } from "./tools-logic/prior-builder.js";
 
 // Tool logic — v3.4 composite tools (5-tool surface)
 export { sessionStart, type SessionStartInput, type SessionStartResult } from "./tools-logic/session-start.js";
@@ -417,6 +439,8 @@ export {
   writeSkill,
   parseSkillFile,
   recallSkillsByIntent,
+  reinforceSkillFsrs,
+  setSkillArchived,
 } from "./palace/skills.js";
 export type { Skill, SkillMeta, SkillBody } from "./palace/skills.js";
 
@@ -431,8 +455,28 @@ export type { SkillListInput, SkillListResult, SkillListItem } from "./tools-log
 export {
   recordOutcome,
   getCorrectionKPIs,
+  readOutcomesForToday,
 } from "./storage/corrections.js";
 export type { CorrectionOutcome, CorrectionKPI } from "./storage/corrections.js";
+
+// Wave 5 — corrections-prediction (north-star) + compression remainder
+export { deriveBlindSpots } from "./helpers/blind-spots.js";
+export type { BlindSpot, BlindSpotProfile } from "./helpers/blind-spots.js";
+export { writeBlindSpots, readBlindSpots, recomputeBlindSpots } from "./storage/blind-spots-store.js";
+export { personalDir } from "./storage/paths.js";
+export { predictCorrection } from "./tools-logic/predict-correction.js";
+export type {
+  PredictCorrectionInput,
+  PredictCorrectionResult,
+  PredictedRisk,
+} from "./tools-logic/predict-correction.js";
+export { proposeSkillsFromPhases } from "./tools-logic/skill-propose.js";
+export type { ProposedSkill } from "./tools-logic/skill-propose.js";
+export {
+  buildConsolidationPrompt,
+  CONSOLIDATION_PROMPT_TEMPLATE,
+  CONSOLIDATION_PROMPT_VERSION,
+} from "./prompts/consolidation-prompt.js";
 
 // session_start lite (V6)
 export { sessionStartLite } from "./tools-logic/session-start-lite.js";

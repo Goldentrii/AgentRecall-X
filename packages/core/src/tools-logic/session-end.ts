@@ -12,7 +12,8 @@ import { promoteConfirmedInsights } from "./insight-promotion.js";
 import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
-import { readCorrections, recordOutcome } from "../storage/corrections.js";
+import { readCorrections, recordOutcome, readOutcomesForToday } from "../storage/corrections.js";
+import { recomputeBlindSpots } from "../storage/blind-spots-store.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir } from "../storage/paths.js";
 import { readAwarenessState } from "../palace/awareness.js";
@@ -20,6 +21,8 @@ import { todayISO } from "../storage/fs-utils.js";
 import { getRoot } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
+import { getSessionId } from "../storage/session.js";
+import { enqueueConsolidation } from "../storage/consolidation-queue.js";
 import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { pipelineOpen } from "./pipeline-open.js";
@@ -60,6 +63,15 @@ export interface SessionEndInput {
     phase_name: string;
     goal: string;
   };
+  /**
+   * Wave 2: defer the inline journal→palace consolidation to the async
+   * dreaming queue instead of running it in this turn. ONLY the harness-driven
+   * Stop hook (`hook-end`) passes this true — it enqueues a consolidation job
+   * and skips the synchronous palace pass. Default false ⇒ ZERO behavior
+   * change for /arsave, /arsaveall, and the MCP session_end (they still
+   * consolidate inline). Decision #3: consolidation is async dreaming.
+   */
+  deferConsolidation?: boolean;
 }
 
 export interface MergeSuggestion {
@@ -235,10 +247,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       // Local-TZ date matching (see session-start.ts guard comment).
       const todayStr = new Date().toLocaleDateString("sv");
       const nowISO = new Date().toISOString();
-      // 1/day guard (mirrors the `retrieved` guard in session-start): record at
-      // most ONE outcome per correction per day. Without this, multiple sessions
-      // in a day each fire another "heeded", pushing heeded_count past
-      // retrieved_count (which IS 1/day-guarded) → nonsensical "11/10 heeded".
+      // Wave 5: HONEST heeded loop. Default-heeded is optimistic bias — it only
+      // fires now when there is NO real check_action outcome for that correction
+      // TODAY. The single source for "what already fired today" is
+      // readOutcomesForToday (audit trail), shared with check-action/session-start.
+      // Expect aggregate precision to DROP after this change — that is correct,
+      // not a regression (Risk #6): we stop manufacturing heeded events.
+      const todayOut = readOutcomesForToday(slug);
       const todays = readCorrections(slug).filter(
         (c) =>
           c.last_retrieved &&
@@ -250,6 +265,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       const summaryLower = input.summary.toLowerCase();
       for (const c of todays) {
         try {
+          const firedToday = todayOut.get(c.id);
+          // A REAL outcome already exists today → never overwrite it with a
+          // default heuristic. This is the heart of the honesty fix.
+          if (firedToday && (firedToday.has("heeded") || firedToday.has("recurred"))) {
+            // Close the predict-the-correction loop: a prediction that fired and
+            // then actually recurred is a `predict_hit`.
+            if (firedToday.has("predicted") && firedToday.has("recurred") && !firedToday.has("predict_hit")) {
+              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "predicted then recurred same day" });
+            }
+            continue;
+          }
           // Extract content words (≥ 4 chars) from the rule text
           const ruleWords = c.rule
             .toLowerCase()
@@ -265,8 +291,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
             at: nowISO,
             evidence: violated
               ? "recurrence markers in session summary"
-              : "no recurrence evidence in session summary",
+              : "no recurrence evidence in session summary (default-heeded — no real outcome today)",
           });
+          // If this correction was predicted today and now recurred, it's a hit.
+          // Guard against double-counting (mirror the guard on the early-exit path).
+          if (violated && firedToday && firedToday.has("predicted") && !firedToday.has("predict_hit")) {
+            recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "predicted then recurred same day" });
+          }
         } catch {
           // Per-correction errors are swallowed — don't abort the loop
         }
@@ -318,13 +349,42 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     }
   }
 
-  // 3. Consolidate journal to palace
-  try {
-    ensurePalaceInitialized(slug);
-    consolidateJournalToPalace(slug);
-    palaceConsolidated = true;
-  } catch (err) {
-    palaceError = err instanceof Error ? err.message : String(err);
+  // 3. Consolidate journal to palace.
+  // Wave 2: when deferConsolidation is set (harness Stop hook only), hand the
+  // compression off to the async dreaming queue instead of running it inline.
+  // Default path is unchanged for /arsave, /arsaveall and MCP session_end.
+  if (input.deferConsolidation) {
+    try {
+      ensurePalaceInitialized(slug);
+      enqueueConsolidation({
+        project: slug,
+        sessionId: getSessionId(),
+        reason: "session_end deferred (hook-end)",
+      });
+    } catch {
+      // enqueue is fire-and-forget — never affect the result
+    }
+    palaceConsolidated = false; // compression happens later, off this turn
+  } else {
+    try {
+      ensurePalaceInitialized(slug);
+      consolidateJournalToPalace(slug);
+      palaceConsolidated = true;
+    } catch (err) {
+      palaceError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Wave 5: re-derive the Blind-Spots profile as part of the (synchronous, NOT
+  // Stop-hook) consolidation pass. The harness Stop path defers via the queue,
+  // so this only runs for /arsave, /arsaveall and MCP session_end — never in the
+  // Stop turn. Guarded fire-and-forget — derivation must never affect the result.
+  if (!input.deferConsolidation) {
+    try {
+      recomputeBlindSpots(slug);
+    } catch {
+      // blind-spots derivation is best-effort — swallow all errors
+    }
   }
 
   // 4. Detect similar recent entries — suggest merge if high overlap
