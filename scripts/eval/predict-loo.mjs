@@ -41,12 +41,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { deriveBlindSpots } from "../../packages/core/dist/helpers/blind-spots.js";
+import {
+  deriveBlindSpots,
+  matchesBlindSpot,
+  BLIND_SPOT_SEMANTIC_THRESHOLD,
+} from "../../packages/core/dist/helpers/blind-spots.js";
 import { tokenize, overlap } from "../../packages/core/dist/tools-logic/check-action.js";
 
 // ── Config — mirrors predict-correction.ts so the eval scores the SAME way ──
 const MIN_OVERLAP = 2; // trigger-keyword overlap floor for a risk to fire
 const MAX_RISKS = 3;
+const DEFAULT_SEMANTIC_THRESHOLD = BLIND_SPOT_SEMANTIC_THRESHOLD;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Corpus loading
@@ -157,33 +162,54 @@ function sigOverlap(a, b) {
  * Score the redacted lead-in against the BLIND profile derived from priorCorrs.
  * Returns the fired risks, each anchored to the prior correction that best backs
  * its blind spot (by trigger-keyword overlap against that correction's signature).
+ *
+ * Matching uses the SAME shared grammar as production (matchesBlindSpot): a
+ * keyword-overlap FLOOR plus, when `opts.semantic` is set, a LOCAL
+ * semantic-similarity widen (stemming + concept map + char-trigram cosine, no API
+ * key, no network). With `semantic:false` (the default) this reproduces the Loop 3
+ * keyword-only path EXACTLY — so the 0/13 baseline is preserved and the harness is
+ * never weakened to flatter the result. The HIT judgment and predictability are
+ * decided elsewhere on RECORDED fields, untouched by this firing change.
  */
-function predictBlind(leadIn, profile, priorCorrs) {
+function predictBlind(leadIn, profile, priorCorrs, opts = {}) {
   const planTokens = tokenize(leadIn);
   if (planTokens.size === 0 || !profile.blind_spots.length) return [];
+
+  const semantic = opts.semantic === true;
+  // When semantic is off, pass an impossible (>1) threshold so matchesBlindSpot's
+  // semantic branch can NEVER fire — keyword-only, byte-identical to Loop 3.
+  const semanticThreshold = semantic
+    ? (opts.threshold ?? DEFAULT_SEMANTIC_THRESHOLD)
+    : Number.POSITIVE_INFINITY;
 
   const risks = [];
   for (const bs of profile.blind_spots) {
     const triggerSet = new Set(bs.trigger_keywords.map((k) => k.toLowerCase()));
-    const matched = overlap(planTokens, triggerSet);
-    if (matched.length < MIN_OVERLAP) continue;
+    const m = matchesBlindSpot(leadIn, bs, MIN_OVERLAP, semanticThreshold);
+    if (!m.fired) continue;
 
     // Anchor the risk to the prior correction whose signature best overlaps the
     // blind spot's triggers (mirrors matchingCorrection in predict-correction.ts).
+    // Trigger keywords are frequently sparse/empty, so fall back to the blind
+    // spot's TENDENCY text (the seed rule it was derived from) — still RECORDED
+    // prior-correction fields, never C's lead-in, so the anchor stays honest.
+    const bsSig = new Set([...triggerSet, ...tokenize(bs.tendency || "")]);
     let anchor;
     let best = 0;
     for (const pc of priorCorrs) {
-      const n = sigOverlap(clusterSignature(pc), triggerSet);
+      const n = sigOverlap(clusterSignature(pc), bsSig);
       if (n >= 1 && n > best) {
         best = n;
         anchor = pc;
       }
     }
+    const baseMatch = m.via === "keyword" ? m.matched.length : MIN_OVERLAP * m.semanticScore;
     risks.push({
       tendency: bs.tendency,
       severity: bs.severity,
-      matched,
-      score: matched.length * (bs.severity === "p0" ? 1.5 : 1),
+      matched: m.via === "keyword" ? m.matched : [`~semantic:${m.semanticScore.toFixed(2)}`],
+      via: m.via,
+      score: baseMatch * (bs.severity === "p0" ? 1.5 : 1),
       anchor,
     });
   }
@@ -214,10 +240,16 @@ function assertBlindCut(priorCorrs, c, t) {
  * Run the LOO predict eval over a corpus root.
  *
  * @param {string} root — corpus root (…/.agent-recall). Reads <root>/projects/<P>/corrections/*.json.
+ * @param {{semantic?: boolean, threshold?: number}} [opts]
+ *        semantic=false (default) ⇒ EXACT keyword-only path = the Loop 3 0/13
+ *        baseline, preserved unchanged. semantic=true ⇒ enables the LOCAL
+ *        zero-key semantic widen at the given threshold. The HIT/predictable
+ *        ground truth is decided on RECORDED fields regardless — opts only change
+ *        what FIRES, never how a hit is judged, so the harness is never weakened.
  * @returns a structured report with REAL numbers (or honest nulls when a metric
  *          is uncomputable, e.g. zero predictions fired ⇒ precision = null).
  */
-export function runLooEval(root) {
+export function runLooEval(root, opts = {}) {
   const projects = listProjects(root);
 
   let corpusSize = 0;
@@ -230,10 +262,22 @@ export function runLooEval(root) {
   const bySeverity = {}; // sev → {corpus, predictable, fired, hits}
   const byProject = {}; // project → {corpus, predictable, fired, hits}
 
+  // FALSE-POSITIVE / precision check on NEGATIVE pairs. For each lead-in we ALSO
+  // score it against a blind spot derived from an UNRELATED correction (a prior
+  // correction whose recorded cluster does NOT overlap C's). A fire there is a
+  // false positive: the matcher reacted to an unrelated situation. Recall gains
+  // that also inflate this are noise, not signal.
+  let negTrials = 0; // negative (unrelated) lead-in↔blind-spot pairs evaluated
+  let negFires = 0; // of those, how many wrongly fired
+
   const bumpBucket = (bucket, key, field) => {
     bucket[key] = bucket[key] || { corpus: 0, predictable: 0, fired: 0, hits: 0 };
     bucket[key][field] += 1;
   };
+
+  // Collect every (correction, redacted lead-in) once so the negative-pair check
+  // can cross-match lead-ins against UNRELATED corrections' blind spots.
+  const allCorrections = []; // { project, c, leadIn, cSig }
 
   for (const project of projects) {
     const all = readProjectCorrections(root, project);
@@ -273,7 +317,10 @@ export function runLooEval(root) {
       const leadIn = redactLeadIn(c);
       if (!leadIn) continue; // no usable situation text → cannot fire a prediction
 
-      const risks = predictBlind(leadIn, profile, priorCorrs);
+      // Record for the negative-pair (false-positive) cross-match below.
+      allCorrections.push({ project, c, leadIn, cSig });
+
+      const risks = predictBlind(leadIn, profile, priorCorrs, opts);
       if (risks.length === 0) continue;
 
       predictionsFired += 1;
@@ -309,6 +356,35 @@ export function runLooEval(root) {
     }
   }
 
+  // ── NEGATIVE-PAIR FALSE-POSITIVE CHECK ──────────────────────────────────────
+  // For each lead-in, score it against a blind spot derived from a SINGLE
+  // unrelated correction (recorded cluster does NOT overlap C's). The matcher
+  // SHOULD NOT fire on these. Capped per lead-in for determinism and to keep the
+  // negative set balanced against the positive set. Uses the SAME predictBlind
+  // (and therefore the same semantic setting) so the FP rate is measured under
+  // identical firing rules as the recall number.
+  const NEG_PER_LEADIN = 5;
+  for (const { c, leadIn, cSig } of allCorrections) {
+    // Candidate unrelated corrections: recorded cluster overlaps C's by 0 tokens.
+    const unrelated = [];
+    for (const other of allCorrections) {
+      if (other.c.id === c.id) continue;
+      if (sigOverlap(other.cSig, cSig) >= 1) continue; // related → not a negative
+      unrelated.push(other.c);
+    }
+    // Deterministic stride sample so the negative set is stable across runs.
+    if (unrelated.length === 0) continue;
+    const stride = Math.max(1, Math.floor(unrelated.length / NEG_PER_LEADIN));
+    for (let i = 0, taken = 0; i < unrelated.length && taken < NEG_PER_LEADIN; i += stride, taken++) {
+      const negProfile = deriveBlindSpots([unrelated[i]], []);
+      if (negProfile.blind_spots.length === 0) continue;
+      negTrials += 1;
+      const negRisks = predictBlind(leadIn, negProfile, [unrelated[i]], opts);
+      if (negRisks.length > 0) negFires += 1;
+    }
+  }
+  const falsePositiveRate = negTrials > 0 ? negFires / negTrials : null;
+
   const precision = predictionsFired > 0 ? hits / predictionsFired : null;
   const recall = predictable > 0 ? hits / predictable : null;
   const leadTime = leadTimes.length
@@ -322,6 +398,8 @@ export function runLooEval(root) {
 
   return {
     root,
+    mode: opts.semantic ? "semantic" : "keyword",
+    semantic_threshold: opts.semantic ? (opts.threshold ?? DEFAULT_SEMANTIC_THRESHOLD) : null,
     projects: projects.length,
     corpus_size: corpusSize,
     predictable,
@@ -331,6 +409,10 @@ export function runLooEval(root) {
     precision,
     recall,
     lead_time: leadTime,
+    // Negative-pair false-positive instrument (precision protection).
+    neg_trials: negTrials,
+    neg_fires: negFires,
+    false_positive_rate: falsePositiveRate,
     by_severity: bySeverity,
     by_project: byProject,
   };
@@ -357,6 +439,7 @@ function renderReport(r) {
   lines.push("  (HONEST numbers — a low score is a valid result, not a bug)");
   lines.push("══════════════════════════════════════════════════════════════");
   lines.push(`  corpus root        ${r.root}`);
+  lines.push(`  MODE               ${r.mode}${r.semantic_threshold != null ? ` (threshold=${r.semantic_threshold})` : ""}`);
   lines.push(`  projects           ${r.projects}`);
   lines.push(`  corrections (N)    ${r.corpus_size}`);
   lines.push(`  predictable (had ≥1 prior same-cluster sibling)  ${r.predictable}`);
@@ -366,6 +449,7 @@ function renderReport(r) {
   lines.push("");
   lines.push(`  PRECISION  hits/fired       ${fmtPct(r.precision)}  (${r.hits}/${r.predictions_fired})`);
   lines.push(`  RECALL     hits/predictable ${fmtPct(r.recall)}  (${r.hits}/${r.predictable})`);
+  lines.push(`  FALSE-POS  fires/neg-pairs  ${fmtPct(r.false_positive_rate)}  (${r.neg_fires}/${r.neg_trials})  [unrelated pairs MUST NOT fire]`);
   if (r.lead_time) {
     lines.push(
       `  LEAD-TIME  n=${r.lead_time.n}  mean=${r.lead_time.mean_days}d  median=${r.lead_time.median_days}d  max=${r.lead_time.max_days}d`,
@@ -399,6 +483,10 @@ function main() {
   const rootIdx = args.indexOf("--root");
   const root = rootIdx >= 0 ? args[rootIdx + 1] : defaultRoot();
   const asJson = args.includes("--json");
+  const semantic = args.includes("--semantic");
+  const both = args.includes("--both"); // print keyword baseline AND semantic side-by-side
+  const thrIdx = args.indexOf("--threshold");
+  const threshold = thrIdx >= 0 ? Number(args[thrIdx + 1]) : undefined;
 
   if (!fs.existsSync(path.join(root, "projects"))) {
     process.stderr.write(`No corpus at ${root} (expected <root>/projects/…). Nothing to score.\n`);
@@ -407,7 +495,18 @@ function main() {
     return;
   }
 
-  const report = runLooEval(root);
+  if (both) {
+    const keyword = runLooEval(root, { semantic: false });
+    const sem = runLooEval(root, { semantic: true, threshold });
+    if (asJson) {
+      process.stdout.write(JSON.stringify({ keyword, semantic: sem }, null, 2) + "\n");
+    } else {
+      process.stdout.write(renderReport(keyword) + "\n\n" + renderReport(sem) + "\n");
+    }
+    return;
+  }
+
+  const report = runLooEval(root, { semantic, threshold });
   process.stdout.write(asJson ? JSON.stringify(report, null, 2) + "\n" : renderReport(report) + "\n");
 }
 

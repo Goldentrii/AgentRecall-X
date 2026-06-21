@@ -8,7 +8,8 @@ import {
   buildRecognition,
   PERSON_LOW_CONFIDENCE_CAVEAT,
 } from "../dist/tools-logic/recognition.js";
-import { writeIdentity } from "../dist/palace/identity.js";
+import { ensurePalaceInitialized } from "../dist/palace/rooms.js";
+import { writeIdentity, readIdentity } from "../dist/palace/identity.js";
 import { writeSkill } from "../dist/palace/skills.js";
 import { writeCorrection } from "../dist/storage/corrections.js";
 import { recomputeBlindSpots } from "../dist/storage/blind-spots-store.js";
@@ -161,6 +162,46 @@ describe("Loop 4 — buildRecognition", () => {
     assert.equal(payload.who.unknown, true);
     assert.equal(payload.who.name, "unknown");
     assert.equal(payload.who.role, null);
+  });
+
+  // (L5 CARRY-IN) The REAL bootstrap output — `ensurePalaceInitialized` writes a
+  // `# <slug>` heading + a `> _(fill in...)_` stub body. The slug heading is NOT
+  // a real identity (it is the project label, auto-filled, not a human-authored
+  // name), so WHO must be `unknown`. Loop 4's test used `# \n` (empty heading),
+  // an APPROXIMATION that masked this bug — `# <slug>` parses as a real name and
+  // wrongly returns unknown:false. This test exercises the ACTUAL bootstrap.
+  it("a freshly-bootstrapped identity card (real ensurePalaceInitialized output) is unknown", () => {
+    const slug = "bootstrap-project";
+    ensurePalaceInitialized(slug);
+
+    // Prove we are testing the REAL bootstrap artifact: `# <slug>` heading + the
+    // fill-in stub, NOT an approximation. (Fail loud if bootstrap ever changes.)
+    const card = readIdentity(slug);
+    assert.match(card, new RegExp(`^#\\s+${slug}\\s*$`, "m"), "bootstrap writes a `# <slug>` heading");
+    assert.match(card, /_\(fill in/, "bootstrap writes the fill-in stub body");
+
+    const payload = buildRecognition(slug);
+    assert.equal(payload.who.unknown, true, "slug-only heading + fill-in stub must be unknown");
+    assert.equal(payload.who.name, "unknown");
+    assert.equal(payload.who.role, null);
+    assert.equal(payload.who.owner, null);
+  });
+
+  // The flip-side guard: a slug heading WITH real authored body (intention/owner)
+  // is a known identity — the fix must not over-correct and erase real cards.
+  it("a slug heading WITH real authored intention is known (no over-correction)", () => {
+    const slug = "filled-project";
+    ensurePalaceInitialized(slug);
+    // Human fills in the card: keeps the `# <slug>` heading, adds a real intention.
+    writeIdentity(
+      slug,
+      `---\nproject: ${slug}\ncreated: 2026-01-01T00:00:00.000Z\n---\n\n# ${slug}\n\n` +
+        `**Intention:** Build the local semantic matcher.\n\n- Source: /Users/test/Projects/${slug}\n`,
+    );
+    const who = buildRecognition(slug).who;
+    assert.equal(who.unknown, false, "a real authored body makes the card known");
+    assert.equal(who.name, slug);
+    assert.match(who.role, /^Build the local semantic matcher/);
   });
 
   // (3) NO NETWORK on the hot path — stub global fetch and assert it is never called.

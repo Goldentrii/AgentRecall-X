@@ -16,6 +16,8 @@
 import { extractKeywords } from "./auto-name.js";
 import { cleanRule, type AlignmentRecord } from "./alignment-patterns.js";
 import type { CorrectionRecord } from "../storage/corrections.js";
+import { tokenize, overlap } from "../tools-logic/check-action.js";
+import { semanticSimilarity, blindSpotConcepts } from "./semantic-match.js";
 
 export interface BlindSpot {
   /** One-sentence description of the tendency (the strongest cleaned rule). */
@@ -49,6 +51,66 @@ interface Signal {
 }
 
 const P0_RE = /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b/i;
+
+/** Default exact trigger-keyword overlap floor for a blind spot to fire (Loop 3 path). */
+export const BLIND_SPOT_MIN_OVERLAP = 2;
+/**
+ * Default LOCAL semantic-similarity floor (Loop 5). When exact keyword overlap is
+ * below {@link BLIND_SPOT_MIN_OVERLAP}, a blind spot still fires if the situation
+ * is semantically similar to its concept text at or above this threshold.
+ *
+ * TUNED on the real ~/.agent-recall corpus (scripts/eval/predict-loo.mjs --both):
+ * the keyword baseline fires 0/13 (0% recall). The local semantic path lifts that
+ * to 2/13 (15.4% recall) at this threshold while the false-positive rate on
+ * unrelated NEGATIVE pairs stays exactly 0% (0/22). This is the HIGHEST-recall
+ * point with zero FP — the conservative choice. The next step down (0.19) reaches
+ * 3/13 (23.1%) but at 4.5% FP, and FP climbs to 22.7% by 0.14; recall gains that
+ * also fire on unrelated pairs are noise, so we hold the zero-FP line. On the
+ * controlled zero-overlap paraphrase instrument (scripts/eval/paraphrase-
+ * robustness.mjs) this threshold fires 100% (vs 0% for the keyword path), proving
+ * the path is genuinely semantic, not lexical luck.
+ */
+export const BLIND_SPOT_SEMANTIC_THRESHOLD = 0.20;
+
+/** How a blind spot matched a situation: not at all, by exact keywords, or semantically. */
+export interface BlindSpotMatch {
+  fired: boolean;
+  /** 'keyword' when the exact overlap floor passed; 'semantic' when only the similarity floor did. */
+  via: "keyword" | "semantic" | null;
+  /** Exact trigger tokens that overlapped (keyword path). */
+  matched: string[];
+  /** Local semantic similarity in [0,1] (computed only when keywords did not fire). */
+  semanticScore: number;
+}
+
+/**
+ * Decide whether a free-text SITUATION resembles a blind spot — the single
+ * matching grammar shared by predict-correction.ts and the LOO eval, so both
+ * score identically (no fork).
+ *
+ * FLOOR: exact trigger-keyword overlap >= minOverlap (the Loop 3 path, unchanged).
+ * WIDEN: when the floor fails, a LOCAL semantic-similarity score (stemming +
+ * concept map + char-trigram cosine over the blind spot's tendency/example/triggers)
+ * at or above semanticThreshold fires the risk. NO API key, NO network.
+ */
+export function matchesBlindSpot(
+  situation: string,
+  bs: Pick<BlindSpot, "tendency" | "example_rule" | "trigger_keywords">,
+  minOverlap: number = BLIND_SPOT_MIN_OVERLAP,
+  semanticThreshold: number = BLIND_SPOT_SEMANTIC_THRESHOLD,
+): BlindSpotMatch {
+  const sitTokens = tokenize(situation);
+  const triggerSet = new Set((bs.trigger_keywords ?? []).map((k) => k.toLowerCase()));
+  const matched = overlap(sitTokens, triggerSet);
+  if (matched.length >= minOverlap) {
+    return { fired: true, via: "keyword", matched, semanticScore: 0 };
+  }
+  const semanticScore = semanticSimilarity(situation, blindSpotConcepts(bs));
+  if (semanticScore >= semanticThreshold) {
+    return { fired: true, via: "semantic", matched, semanticScore };
+  }
+  return { fired: false, via: null, matched, semanticScore };
+}
 
 /** Number of cleaned keywords to extract per signal for clustering. */
 const KW_PER_SIGNAL = 4;

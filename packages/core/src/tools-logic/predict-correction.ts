@@ -14,7 +14,7 @@ import { resolveProject } from "../storage/project.js";
 import { tokenize, overlap } from "./check-action.js";
 import { readBlindSpots, recomputeBlindSpots } from "../storage/blind-spots-store.js";
 import { readActiveCorrections, recordOutcome, type CorrectionRecord } from "../storage/corrections.js";
-import type { BlindSpot } from "../helpers/blind-spots.js";
+import { matchesBlindSpot, BLIND_SPOT_SEMANTIC_THRESHOLD, type BlindSpot } from "../helpers/blind-spots.js";
 
 export interface PredictCorrectionInput {
   /** The plan / action / goal text to evaluate. */
@@ -47,6 +47,14 @@ export interface PredictCorrectionResult {
 
 /** Minimum trigger-keyword overlap for a risk to fire (strict — mirrors prior-builder). */
 const MIN_OVERLAP = 2;
+/**
+ * LOCAL semantic-similarity floor for a risk to fire when the keyword path does
+ * NOT (Loop 5). Re-exported from blind-spots.ts (the single matching grammar) so
+ * production and the LOO eval share ONE threshold. Tuned on the real corpus to
+ * balance recall against false positives on unrelated pairs. No API key, no
+ * network — pure stemming + concept map + char-trigram cosine.
+ */
+export const SEMANTIC_THRESHOLD = BLIND_SPOT_SEMANTIC_THRESHOLD;
 /** Likelihood band thresholds — HIGH-THRESHOLD-FIRST ternary. */
 const HIGH_BAND = 0.6;
 const MEDIUM_BAND = 0.3;
@@ -103,24 +111,30 @@ export async function predictCorrection(
 
   const risks: PredictedRisk[] = [];
   for (const bs of profile.blind_spots) {
-    const triggerSet = new Set(bs.trigger_keywords.map((k) => k.toLowerCase()));
-    const matched = overlap(planTokens, triggerSet);
-    if (matched.length < MIN_OVERLAP) continue;
+    // FLOOR keyword overlap + WIDEN local semantic similarity — the SINGLE shared
+    // matching grammar (helpers/blind-spots.ts). Keyword path is the floor; the
+    // semantic path strictly ADDS recall, with NO API key and NO network.
+    const m = matchesBlindSpot(plan, bs, MIN_OVERLAP, SEMANTIC_THRESHOLD);
+    if (!m.fired) continue;
 
     const corr = matchingCorrection(bs, corrections);
     const recurrence = corr?.recurrence_count ?? 0;
     const predictPrecision = corr?.predict_precision ?? 0;
+    // Keyword hits score on matched-token count; a semantic-only hit scores on its
+    // similarity (mapped onto a comparable scale, ~MIN_OVERLAP-equivalent) so a
+    // strong lexical match still outranks a borderline semantic one.
+    const baseMatch = m.via === "keyword" ? m.matched.length : MIN_OVERLAP * m.semanticScore;
     // Weighted overlap: more matched triggers + P0 severity + observed recurrence
     // + a track record of accurate predictions all raise the score.
     const raw =
-      matched.length *
+      baseMatch *
       (bs.severity === "p0" ? 1.5 : 1) *
       (1 + 0.2 * recurrence) *
       (1 + 0.5 * predictPrecision);
     risks.push({
       tendency: bs.tendency,
       score: raw,
-      matched,
+      matched: m.via === "keyword" ? m.matched : [`~semantic:${m.semanticScore.toFixed(2)}`],
       correction_id: corr?.id,
       severity: bs.severity,
     });

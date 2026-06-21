@@ -162,10 +162,23 @@ function readWho(project: string): RecognitionWho {
   let name: string | null = null;
   let role: string | null = null;
   let owner: string | null = null;
+  // Track whether the card carries any SUBSTANTIVE authored body — a line that is
+  // not the heading, not the fill-in stub, not frontmatter/frontmatter-fence, and
+  // not the structural markers we already capture as role/owner. A freshly
+  // bootstrapped card (`# <slug>` + only a `_(fill in...)_` stub) has NONE, so
+  // its slug heading is not a real identity (Loop 5 carry-in fix).
+  let hasAuthoredBody = false;
+  let inFrontmatter = false;
 
   for (const lineRaw of raw.split("\n")) {
     const line = lineRaw.trim();
     if (!line) continue;
+    // Skip YAML frontmatter (--- … ---): it is bootstrap metadata, never identity.
+    if (line === "---") {
+      inFrontmatter = !inFrontmatter;
+      continue;
+    }
+    if (inFrontmatter) continue;
     // First ATX heading that is not an empty stub becomes the name.
     if (name === null && line.startsWith("#")) {
       const h = line.replace(/^#+\s*/, "").trim();
@@ -193,11 +206,25 @@ function readWho(project: string): RecognitionWho {
         }
       }
     }
+    // Any remaining non-empty line that is NOT a fill-in stub counts as authored
+    // body — the human added real content beyond the bootstrap skeleton.
+    if (!TEMPLATE_STUB_RE.test(line)) hasAuthoredBody = true;
   }
 
-  // A real file with only frontmatter + a stub heading equal to the slug and no
-  // role/owner is still "known" if a non-stub name was found; otherwise unknown.
   if (name === null) {
+    return { name: "unknown", role: null, owner: null, unknown: true };
+  }
+
+  // Honesty law (Loop 5 carry-in): a card whose heading is just the project slug
+  // with NO authored body — no role, no owner, no other real line, only the
+  // bootstrap fill-in stub — is NOT a real identity. `ensurePalaceInitialized`
+  // writes exactly this (`# <slug>` + `_(fill in...)_`), so it must read as
+  // unknown rather than echoing the slug back as a fabricated persona. A human
+  // who fills in an intention/owner/body makes `role`/`owner`/`hasAuthoredBody`
+  // truthy and the card becomes known.
+  const isBootstrapStub =
+    name === project && role === null && owner === null && !hasAuthoredBody;
+  if (isBootstrapStub) {
     return { name: "unknown", role: null, owner: null, unknown: true };
   }
 
