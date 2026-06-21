@@ -149,6 +149,20 @@ export { appendToLog } from "./palace/log.js";
 export { consolidateJournalToPalace } from "./palace/consolidate.js";
 export type { ConsolidationResult } from "./palace/consolidate.js";
 
+// Tools-logic — login-free / LLM-free background safety consolidation (L2)
+export {
+  runSafetyConsolidation,
+  DEFAULT_ARCHIVE_RETENTION_DAYS,
+  DEFAULT_GRADUATION_MIN_CONFIRMATIONS,
+} from "./tools-logic/safety-consolidation.js";
+export type {
+  SafetyConsolidationResult,
+  SafetyConsolidationOptions,
+  SafetyDecayResult,
+  SafetyPruneResult,
+  SafetyGraduateResult,
+} from "./tools-logic/safety-consolidation.js";
+
 // Storage — privacy classification (Wave 1, single source of truth)
 export { classifyStore, classifyPath, isPersonalProject, PERSONAL_STORES } from "./storage/classification.js";
 export type { Tier } from "./storage/classification.js";

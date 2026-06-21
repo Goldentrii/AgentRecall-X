@@ -23,6 +23,7 @@ import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
 import { getSessionId } from "../storage/session.js";
 import { enqueueConsolidation } from "../storage/consolidation-queue.js";
+import { runSafetyConsolidation } from "./safety-consolidation.js";
 import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { pipelineOpen } from "./pipeline-open.js";
@@ -387,6 +388,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       // enqueue is fire-and-forget — never affect the result
     }
     palaceConsolidated = false; // compression happens later, off this turn
+
+    // L2: the async dreaming queue fails often and is un-cron'd, so the three
+    // safety steps (decay, prune, graduate) historically rarely ran. ALSO run
+    // the LOGIN-FREE / LLM-FREE safety pass synchronously here so decay/prune/
+    // graduate fire on EVERY hook-end regardless of whether the queue is ever
+    // drained. Best-effort — must NEVER throw into the Stop turn.
+    try {
+      await runSafetyConsolidation(slug, { dryRun: false });
+    } catch {
+      // safety consolidation is best-effort — never affect the result
+    }
   } else {
     try {
       ensurePalaceInitialized(slug);
@@ -394,6 +406,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       palaceConsolidated = true;
     } catch (err) {
       palaceError = err instanceof Error ? err.message : String(err);
+    }
+
+    // L2: the inline consolidate above covers (a) decay+keystones. Add the other
+    // two safety steps — (b) prune the unbounded raw archive and (c) graduate
+    // above-threshold crystallization candidates — to the manual save paths
+    // (/arsave, /arsaveall, MCP session_end) too. Login-free, LLM-free,
+    // best-effort: must NEVER throw into the caller.
+    try {
+      await runSafetyConsolidation(slug, { dryRun: false });
+    } catch {
+      // safety consolidation is best-effort — never affect the result
     }
   }
 

@@ -416,6 +416,20 @@ async function main(): Promise<void> {
       break;
     }
     case "consolidate": {
+      // L2: LOGIN-FREE / LLM-FREE safety pass. `ar consolidate --safety` runs the
+      // three background safety steps (decay, prune the unbounded raw archive,
+      // graduate above-threshold crystallization candidates) directly — NO Claude
+      // login, NO OpenAI key, NO async-queue dependency. `--dry-run` computes
+      // counts but writes nothing.
+      if (hasFlag("--safety", rest)) {
+        const slug = await core.resolveProject(project);
+        const result = await core.runSafetyConsolidation(slug, {
+          dryRun: hasFlag("--dry-run", rest),
+        });
+        output(result);
+        break;
+      }
+
       // Wave 5: in-repo replacement for the external ~/.aam consolidation prompt.
       // Surfaces the versioned consolidation prompt + decay report + crystallization
       // candidates + DRAFT skill proposals. INVOCABLE ONLY — no cron created.
