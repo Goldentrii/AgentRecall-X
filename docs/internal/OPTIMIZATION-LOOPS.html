@@ -90,7 +90,7 @@
     <tr><td>6</td><td>Math layer (MATH.md) + read-only integrity store-doctor</td><td>math / integrity</td><td><span class="st done" id="s6">done ✓</span></td><td id="r6">MATH.md honest ("redundancy→intent" = <b>aspirational</b>, FSRS hand-tuned, Hopfield unwired); <code>ar doctor</code> found <b>3 real issues on your store</b> (16-room index drift, 22-day stale lock, dreaming never consumed). 454/454</td></tr>
     <tr><td>7</td><td>Capture-gate survivorship bias — instrument + measure</td><td>thesis integrity</td><td><span class="st done" id="s7">done ✓</span></td><td id="r7"><b>76% discard FLOOR · 60% false-reject</b> (real soft corrections dropped). Root cause found: gate scores only the truncated 1st sentence. Gate left unchanged (measured only). 461/461</td></tr>
     <tr><td>8</td><td>Full-text capture gate (v3) — recover soft corrections</td><td>thesis integrity</td><td><span class="st done" id="s8">done ◑ self-verified</span></td><td id="r8"><b>discard 76% → 46.4%</b> (soft corrections recovered, noise buckets held); 476 tests green. Code committed before limit; round-table re-label cut off → self-verified only</td></tr>
-    <tr><td>9</td><td>🎨 Freestyle — "The Mirror" (agent's first-person model of you, surfaced for correction)</td><td>creative</td><td><span class="st plan" id="s9">freestyle</span></td><td id="r9">—</td></tr>
+    <tr><td>9</td><td>🎨 Freestyle — "The Mirror" (agent's first-person model of you, surfaced for correction)</td><td>creative</td><td><span class="st done" id="s9">done ✓</span></td><td id="r9">correctable self-model, every line cited to a real correction, Loop-3 caveat, no fabrication; thesis micro-test <b>0/25</b> (dropped soft corrections NOT reconstructable from redundancy → write-time capture is necessary). 486/486</td></tr>
     <tr><td>10</td><td>🎨 Freestyle — intent-reconstruction-as-signal-processing experiment (does correction variance shrink with N?)</td><td>creative · math</td><td><span class="st plan" id="s10">freestyle</span></td><td id="r10">—</td></tr>
     <tr><td>11</td><td>🎨 Freestyle — zero-shot cross-project correction prediction from the global blind-spots model</td><td>creative</td><td><span class="st plan" id="s11">freestyle</span></td><td id="r11">—</td></tr>
   </table>
@@ -257,7 +257,25 @@
     <div class="blk" style="border-left:4px solid var(--amber);"><h4 style="color:var(--amber)">⚠ Verification gap (honest)</h4><p>The implementer agent committed <code>3b875a8</code> and then the <b>session usage limit</b> killed the round-table (verifier / blind re-labeler / skeptic all failed; resets ~15:20 Europe/Berlin). I self-verified what local execution can prove for free: build+test green (476), the v3 discard re-measure (76%→46.4%), and that the noise buckets held + the Loop-7 noise-rejection unit tests still pass. What I could NOT confirm: the blind hand-relabel false-reject rate (target 60%→≤15%) and an adversarial stress that no true-noise got wrongly <i>accepted</i>. Treat Loop 8 as <b>self-verified, not round-table-verified</b> until the limit resets.</p></div>
   </section>
 
-  <div class="sech">Interim self-evaluation — Loops 1–8 (9–11 pending session-limit reset)</div>
+  <section class="loop" id="loop-9">
+    <h2>⑨ 🎨 The Mirror <span class="st done">done ✓ — freestyle</span></h2>
+    <div class="theme">Theme: creative / collaborative self-model. Commit <code>233b171</code>. Build/test 486/486. Run leaner (4 agents) after the budget reset.</div>
+    <div class="grid2">
+      <div class="blk"><h4>The innovation</h4><ul>
+        <li><code>buildMirror()</code> + <code>ar mirror</code>: a <b>first-person "what I've learned about how you think"</b> assembled locally from real corrections + blind-spots + recovered soft signals — turning the hidden Ptolemaic model into a <b>visible, correctable</b> one (correcting the mirror is itself a high-value correction).</li>
+        <li>Every line <b>cites a real stored id</b> (no fabrication — 10 tests enforce it); carries the Loop-3 fallibility caveat ("not yet predictive: 0/13"); empty store → honest empty mirror.</li>
+        <li>Real output reflected your actual corrections back: <i>"you tend to insist: beige/warm palette, round font, side-by-side EN/ZH"</i>, <i>"NOT move to Linear — build 九天"</i>, each with its source.</li>
+      </ul></div>
+      <div class="blk"><h4>The thesis micro-test (the surprise)</h4><ul>
+        <li>Took soft corrections the v2 gate would have dropped, removed each, and asked: can recall reconstruct its intent from the surviving same-cluster siblings? <b>Result: 0/25</b> (0 at the production floor; 8/25 at the loosest).</li>
+        <li><b>Finding:</b> dropped soft corrections are <b>lexically novel</b> — redundancy does NOT recover them post-hoc. This mirrors Loop 3's 0/13 and proves Loop 8's write-time capture fix was <b>necessary</b>, not optional. You can't reconstruct what you never stored.</li>
+        <li>Related (your eval-validity fix, commit <code>0528e2a</code>): the achievable recall denominator is 7, not 13 — semantic recall is <b>28.6% (2/7) achievable</b> vs 15.4% (2/13) theoretical.</li>
+      </ul></div>
+    </div>
+    <div class="blk selfeval" style="margin-top:14px;"><h4>Self-evaluation</h4><p><b>Genuine freestyle win — 9/10.</b> The Mirror is a real innovation (a self-model the human can audit and correct, with zero fabrication and an honest caveat), and the micro-test turned a creative idea into a measured, thesis-relevant negative that retroactively justified Loop 8. The discipline held even in "freestyle": cited, caveated, tested, no overclaim.</p></div>
+  </section>
+
+  <div class="sech">Interim self-evaluation — Loops 1–8 (budget reset → 9 done; 10–11 running)</div>
   <div class="card">
     <p><b>8 of 11 done; the three freestyle loops (9 The Mirror · 10 signal-processing intent experiment · 11 zero-shot cross-project) are gated on the session usage limit (resets ~15:20 Europe/Berlin) — they will run when budget returns.</b> Everything is local on <code>opt/autonomous-loops</code>; nothing pushed; no version bump.</p>
     <p style="margin-top:10px;"><b>What the run actually achieved (honestly):</b></p>
