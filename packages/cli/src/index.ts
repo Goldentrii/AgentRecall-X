@@ -90,6 +90,7 @@ META:
 DIAGNOSTICS:
   ar stats             Show memory system health: corrections, feedback, insights, graph edges
   ar corrections rejected [--stats] [--json]  Survivorship-bias probe: corrections the capture gate discarded
+  ar mirror [--json]   The Mirror: first-person, citation-backed self-model from your real corrections/insights (personal-tier, local-only; omit --project for the cross-project mirror)
   ar rooms             Show palace rooms with entry counts and topic keywords
   ar sync-memory       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
 
@@ -541,6 +542,21 @@ async function main(): Promise<void> {
       }
       // Non-zero exit on red so scripts/CI can gate on it; warn/ok exit 0.
       if (result.status === "red") process.exitCode = 1;
+      break;
+    }
+    case "mirror": {
+      // Loop 9 — The Mirror. A VISIBLE, CORRECTABLE first-person self-model
+      // assembled deterministically + LOCALLY from REAL stored data (personal
+      // tier: corrections, blind-spots, awareness insights, cross-project
+      // patterns). Every rendered line cites the real records it derives from;
+      // it NEVER fabricates a trait and carries an explicit fallibility caveat.
+      // No --project ⇒ the cross-project ("_global") mirror.
+      const reflection = core.buildMirror(project);
+      if (hasFlag("--json", rest)) {
+        output(reflection);
+      } else {
+        output(core.renderMirror(reflection));
+      }
       break;
     }
     case "knowledge": {

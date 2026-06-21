@@ -507,6 +507,14 @@ export { deriveBlindSpots } from "./helpers/blind-spots.js";
 export type { BlindSpot, BlindSpotProfile } from "./helpers/blind-spots.js";
 export { writeBlindSpots, readBlindSpots, recomputeBlindSpots } from "./storage/blind-spots-store.js";
 export { personalDir } from "./storage/paths.js";
+// Loop 9 — The Mirror (visible, correctable self-model)
+export { buildMirror, renderMirror, deriveCrossProjectPatterns } from "./tools-logic/mirror.js";
+export type {
+  MirrorReflection,
+  MirrorObservation,
+  MirrorReaders,
+  CrossProjectPattern,
+} from "./tools-logic/mirror.js";
 export { predictCorrection } from "./tools-logic/predict-correction.js";
 export type {
   PredictCorrectionInput,

@@ -145,6 +145,16 @@ export interface SessionStartResult {
    * caveat.
    */
   recognition: RecognitionPayload;
+  /**
+   * Loop 9 — one-line pointer to The Mirror, populated ONLY when a correctable
+   * self-model can be assembled for this project (≥1 active correction or a
+   * stored blind-spots profile). Null otherwise so a fresh project stays SILENT.
+   * Cheap to compute on the hot path: we count active corrections / probe the
+   * profile, we do NOT assemble the full reflection here (that's `ar mirror`).
+   * OMITTED (undefined ⇒ dropped from JSON) when no mirror exists, so a fresh
+   * project adds ZERO bytes to the session_start payload budget.
+   */
+  mirror_available?: string;
   empty_state?: string;
 }
 
@@ -522,6 +532,23 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     predictedRisks = [];
   }
 
+  // Loop 9 — cheap pointer to The Mirror. We do NOT assemble the reflection on
+  // the hot path; we only note it EXISTS when there is real data to reflect (a
+  // stored blind-spots profile OR ≥1 active correction). Best-effort: a failure
+  // here leaves the pointer null and never breaks orientation.
+  let mirrorAvailable: string | undefined;
+  try {
+    const hasProfile = blindSpots.length > 0;
+    const activeCorrections = corrections.filter((c) => c.active !== false).length;
+    if (hasProfile || activeCorrections > 0) {
+      mirrorAvailable =
+        `The Mirror is available — run \`ar mirror --project ${slug}\` to see, and correct, ` +
+        `what I've noticed about how you think (${activeCorrections} corrections grounding it).`;
+    }
+  } catch {
+    mirrorAvailable = undefined;
+  }
+
   // Loop 4 — real-time recognition snapshot. Pure-local assembler over the
   // already-resolved slug (no re-detection ⇒ no git shell-out on the hot path).
   // Best-effort: a degraded recognition must never break orientation.
@@ -560,6 +587,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     blind_spots: blindSpots,
     predicted_risks: predictedRisks,
     recognition,
+    mirror_available: mirrorAvailable,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
   };
 }

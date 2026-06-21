@@ -132,6 +132,13 @@ function formatTerse(result: SessionStartResult): string {
     }
   }
 
+  // ── The Mirror pointer (Loop 9) ───────────────────────────────────────
+  // One quiet line, only when a correctable self-model can be assembled.
+  if (result.mirror_available) {
+    lines.push("");
+    lines.push(`🪞 ${result.mirror_available}`);
+  }
+
   // ── Empty state guidance ──────────────────────────────────────────────
   if (result.empty_state) {
     lines.push("");
