@@ -85,7 +85,7 @@
     <tr><td>1</td><td>Honesty fixes — kill self-confirming metric + false README claims</td><td>measurement trust</td><td><span class="st done" id="s1">partial ✓</span></td><td id="r1">408/408 green; README + dashboard honest; predict_hit over-corrected → dead code (caught, deferred to L3)</td></tr>
     <tr><td>2</td><td>Auto background consolidation (no manual save)</td><td>real-time / automaticity</td><td><span class="st done" id="s2">done ✓</span></td><td id="r2">login-free decay/prune/graduate at session_end + <code>ar consolidate --safety</code>; 4 new tests (env unset); 412/412 green</td></tr>
     <tr><td>3</td><td>Leave-one-out predict-the-correction eval</td><td>understanding validation</td><td><span class="st done" id="s3">done ✓ (negative)</span></td><td id="r3"><b>Honest negative:</b> real corpus → 0 fired, recall 0/13, precision uncomputable. Harness verified clean. predict_hit dead code fixed. 418/418</td></tr>
-    <tr><td>4</td><td>Real-time session_start: who / what / progress / who-you-are</td><td>real-time recognition</td><td><span class="st plan" id="s4">planned</span></td><td id="r4">—</td></tr>
+    <tr><td>4</td><td>Real-time session_start: who / what / progress / who-you-are</td><td>real-time recognition</td><td><span class="st done" id="s4">done ✓</span></td><td id="r4">deterministic, zero-network, <b>~0.3–1.0ms</b>; 4 fields accurate on 3 real projects; 426/426. 1 latent WHO-on-bootstrap bug → L5 carry-in</td></tr>
     <tr><td>5</td><td>Paraphrase eval + counting→rule-induction (linguistics)</td><td>understanding research</td><td><span class="st plan" id="s5">planned</span></td><td id="r5">—</td></tr>
     <tr><td>6</td><td>Mathematics layer + integrity doctor + final self-eval</td><td>math / reflection</td><td><span class="st plan" id="s6">planned</span></td><td id="r6">—</td></tr>
     <tr><td>7</td><td>Structured backlog — store-doctor integrity + filelock fail-loud / capture-gate survivorship-bias fix</td><td>integrity</td><td><span class="st plan" id="s7">planned</span></td><td id="r7">—</td></tr>
@@ -165,6 +165,24 @@
       </ul></div>
     </div>
     <div class="blk selfeval" style="margin-top:14px;"><h4>Self-evaluation</h4><p><b>The loop at its best — 10/10 for integrity.</b> A falsifiability loop's job is to be able to come back FALSE, and this one did, on the project's headline claim, with an attack-survived harness. The temptation would have been to present the fixture's positive numbers or soften the zero; instead the system now has an <b>honest scoreboard and a 0/13 baseline</b>, and we proceed <b>knowing</b> the predictor doesn't work rather than hoping it does. This is exactly the "engineered to grade its own homework" failure the earlier round-table warned about — now broken. Everything downstream (Loop 5 embeddings, the freestyle loops) measures against this same honest baseline.</p></div>
+  </section>
+
+  <section class="loop" id="loop-4">
+    <h2>④ Real-time recognition <span class="st done">done ✓</span></h2>
+    <div class="theme">Theme: real-time recognition — the operator's north-star. Commit <code>9fe2cdb</code>. Build/test 426/426. Sidesteps Loop 3's negative: recognition is retrieval+assembly, not prediction.</div>
+    <div class="grid2">
+      <div class="blk"><h4>What I did</h4><ul>
+        <li>New <code>buildRecognition(project)</code> — deterministic, synchronous, <b>zero-network</b>. Assembles 4 fields from local stores: <b>WHO</b> (identity), <b>CAN-DO</b> (skills + permission corrections), <b>PROJECT+PROGRESS</b> (status + journal + rooms), <b>WHAT-KIND-OF-PERSON</b> (blind-spots, with a mandatory low-confidence caveat citing Loop 3's 0/13).</li>
+        <li>Wired into <code>session_start</code> best-effort; emits <code>unknown</code> rather than inventing a persona.</li>
+        <li>8 tests (determinism · no-hallucination · no-network · caveat present · ordering).</li>
+      </ul></div>
+      <div class="blk"><h4>Round-table (tested on real corpus)</h4><ul>
+        <li><b>Tester</b>: latency <b>~0.3–1.0ms</b> (p95 &lt;1.4ms); all 4 fields accurate on AgentRecall/novada-proxy/prismma-gateway — including <i>correctly-empty</i> fields verified vs disk.</li>
+        <li><b>Skeptic</b> 🎯 found a real bug: WHO returns <code>unknown:false</code> for a freshly-bootstrapped unfilled card (bootstrap writes <code># &lt;slug&gt;</code>, which readWho accepts) — no persona fabricated, but the known/unknown bit is wrong. <b>And the regression test masked it</b> by writing <code># \n</code> instead of the real <code># &lt;slug&gt;</code>.</li>
+        <li><b>Architect</b>: deterministic (per-day) ✓ · reads-not-rebuilds ✓ · ~1% of session_start cost ✓. Nits: two STALE_DAYS windows (14 vs 7); PERMISSION_RE over-claims; trajectory grabs the first <code>## Next</code> (can be an off-topic side-session).</li>
+      </ul></div>
+    </div>
+    <div class="blk selfeval" style="margin-top:14px;"><h4>Self-evaluation</h4><p><b>Strong win — 8/10.</b> The real-time north-star is delivered: instant, accurate, honest (no fabricated identity, blind-spots explicitly caveated as not-yet-predictive). The −2: a genuine latent WHO-on-bootstrap correctness bug, and — more importantly — <b>the test that should have caught it used an approximation of the bootstrap output instead of the real thing</b>. That's Loop 1's lesson in a new costume: <i>a green test that doesn't exercise the real scenario is worse than no test</i>. Carried into Loop 5: fix readWho + a regression test using the actual <code># &lt;slug&gt;</code> bootstrap output. Loop 4 is orientation-only — it does NOT move the 0/13; that's Loop 5's job.</p></div>
   </section>
 
   <div class="foot mono">Living document — updated after each loop. Not pushed. Final self-evaluation lands after loop 11.</div>
