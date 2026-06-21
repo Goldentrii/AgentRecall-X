@@ -92,7 +92,7 @@
     <tr><td>8</td><td>Full-text capture gate (v3) — recover soft corrections</td><td>thesis integrity</td><td><span class="st done" id="s8">done ◑ self-verified</span></td><td id="r8"><b>discard 76% → 46.4%</b> (soft corrections recovered, noise buckets held); 476 tests green. Code committed before limit; round-table re-label cut off → self-verified only</td></tr>
     <tr><td>9</td><td>🎨 Freestyle — "The Mirror" (agent's first-person model of you, surfaced for correction)</td><td>creative</td><td><span class="st done" id="s9">done ✓</span></td><td id="r9">correctable self-model, every line cited to a real correction, Loop-3 caveat, no fabrication; thesis micro-test <b>0/25</b> (dropped soft corrections NOT reconstructable from redundancy → write-time capture is necessary). 486/486</td></tr>
     <tr><td>10</td><td>🎨 Freestyle — intent-convergence experiment (does redundancy reconstruct intent?)</td><td>creative · math</td><td><span class="st done" id="s10">done ✓ — UNTESTABLE</span></td><td id="r10"><b>"redundancy→intent" UNTESTABLE</b> on real corpus: 0 active N≥3 clusters (intent-sparse); the only N≥3 are tag artifacts (refuted where measurable, SNR 0.035). <b>3rd confirmation of the sparsity ceiling</b> — bottleneck is data density, not the algorithm. 493/493</td></tr>
-    <tr><td>11</td><td>🎨 Freestyle — zero-shot cross-project correction prediction from the global blind-spots model</td><td>creative</td><td><span class="st plan" id="s11">freestyle</span></td><td id="r11">—</td></tr>
+    <tr><td>11</td><td>🎨 Freestyle — zero-shot cross-project correction prediction from the global blind-spots model</td><td>creative</td><td><span class="st done" id="s11">done ✓</span></td><td id="r11">cross-project transfer <b>~27% lexical / ~9% substantive</b> (rule-only; with-tags 77% = confirmed artifact). REFUTED as a rescue for L10's sparsity. 499/499</td></tr>
   </table>
   <p style="font-size:12.5px;color:var(--ink-faint);margin-top:8px;">🎨 = freestyle/creative loops (9–11): seeds only — final direction decided live from what loops 1–8 reveal. "Always find surprises."</p>
 
@@ -287,19 +287,45 @@
     <div class="blk selfeval"><h4>Self-evaluation</h4><p><b>The experiment at its most valuable — 9.5/10.</b> It refused to claim a result the data doesn't contain: it distinguished UNTESTABLE from REFUTED, used 4 diagnostic views to expose tag-inflation, documented its own ceil(k/2) Jaccard artifact, and the synthetic test proves the instrument discriminates real convergence from noise. A faked "supported" would have been worthless; this located the real reason understanding isn't emerging yet and pointed at the two concrete fixes. This is what the whole run was for.</p></div>
   </section>
 
-  <div class="sech">Interim self-evaluation — Loops 1–10 (11 running)</div>
+  <section class="loop" id="loop-11">
+    <h2>⑪ 🎨 Zero-shot cross-project transfer <span class="st done">done ✓ — REFUTED (one genuine signal)</span></h2>
+    <div class="theme">Theme: creative — the escape from L10's within-project dead end. Commit <code>d5cb7f6</code>. Build/test 499/499. FINAL loop.</div>
+    <div class="blk" style="border-left:4px solid var(--amber);margin-bottom:14px;"><h4 style="color:var(--amber)">🎯 Does your correction-style transfer across projects?</h4>
+      <p>Leave-one-project-out: hide project B, build a blind-spot profile from the OTHER projects, test whether it anticipates B's corrections cold.</p>
+      <p class="mono" style="font-size:12.5px;margin-top:6px;"><b>rule-only (headline): 27.3% (6/22) · with-tags: 77.3% (CONFIRMED tag artifact, NOT believed) · genuine substance: ~9% (2/22)</b></p>
+      <p style="margin-top:8px;">Only <b>one</b> of the rule-only hits is true same-intent transfer (<i>"Don't map to human memory"</i>, AgentRecall↔aam); the rest are 2-token function-word collisions. <b>Verdict: REFUTED</b> — cross-project signal is real but thin and bounded (~27% lexical ceiling, ~9% substantive); it does NOT rescue L10's sparse within-project intent well. The 50-point with-tags gap is pure boilerplate-tag inflation, exactly the L10 vulnerability.</p>
+      <p style="margin-top:8px;"><b>The decisive caveat:</b> the matcher is fuzzy-<i>lexical</i>, so a low rule-only rate = "no LEXICAL transfer", NOT "no semantic transfer". Same-intent corrections worded differently score MISS and are invisible. So ~27%/~9% is a <b>lower bound</b> — and that's the bridge to the one fix that matters.</p>
+    </div>
+    <div class="blk selfeval"><h4>Self-evaluation</h4><p><b>9/10.</b> A clean, honest bound on the global blind-spots feature: real but weak, and it refused to be fooled by the tag artifact (rule-only headline, with-tags flagged). It also closed the arc — naming explicitly that the whole 3/9/10/11 instrument can't distinguish "no transfer" from "transfer the words don't show," which is the finding that points at the next bet.</p></div>
+  </section>
+
+  <div class="sech" style="border-color:var(--accent);">★ Final self-evaluation — all 11 loops complete</div>
   <div class="card">
-    <p><b>8 of 11 done; the three freestyle loops (9 The Mirror · 10 signal-processing intent experiment · 11 zero-shot cross-project) are gated on the session usage limit (resets ~15:20 Europe/Berlin) — they will run when budget returns.</b> Everything is local on <code>opt/autonomous-loops</code>; nothing pushed; no version bump.</p>
-    <p style="margin-top:10px;"><b>What the run actually achieved (honestly):</b></p>
-    <ul style="font-size:13.5px;color:var(--ink-soft);padding-left:20px;margin-top:6px;">
-      <li><b>Stopped the system grading its own homework.</b> Killed a self-confirming predict_hit metric (L1), built a falsifiability eval that returned an honest <b>0/13</b> on the prediction differentiator (L3), and a store-doctor that found <b>3 real latent problems</b> in the live store (L6).</li>
-      <li><b>Shipped the operator's #1</b> — login-free auto-consolidation, proven with the API key unset (L2) — and real-time recognition at ~1ms (L4).</li>
-      <li><b>Moved the differentiator off zero, honestly:</b> a local semantic matcher took recall <b>0/13 → 2/13 at 0% FP</b> (L5) — and named it fuzzy-lexical, not "understanding."</li>
-      <li><b>Answered the math question without flinching</b> (MATH.md: "redundancy reconstructs intent" is <b>aspirational</b> today, here's the experiment to make it real → L10), and quantified a <b>thesis-level input bias</b> — the capture gate discarded ~60% of genuine soft corrections (L7), then halved the discard rate (L8).</li>
-      <li><b>The harness caught me three times</b> (L1 dead-code over-correction, L4 a test that masked a bug, L7 my own overclaimed numbers) — which is the whole point: an orchestrator that can be wrong, checked by reviewers who don't share its blind spots.</li>
+    <p><b>11/11 done. Build green throughout (499 tests at the end). Branch <code>opt/autonomous-loops</code>, ~22 commits, NOTHING pushed, no version bump, no deletes — REDLINE held the entire run.</b></p>
+    <div class="tableScroll" style="margin-top:12px;"><table>
+      <tr><th>#</th><th>Loop</th><th>Honest outcome</th><th>Grade</th></tr>
+      <tr><td>1</td><td>Honesty fixes</td><td>relabels landed; my predict_hit fix over-corrected → caught, deferred</td><td>6</td></tr>
+      <tr><td>2</td><td>Auto consolidation (your #1)</td><td>login-free, proven API-key-unset; manual save intact</td><td>9</td></tr>
+      <tr><td>3</td><td>Predict eval</td><td>honest <b>0/13</b> — falsifiability gate, harness verified</td><td>10</td></tr>
+      <tr><td>4</td><td>Real-time recognition</td><td>~1ms, accurate, no fabricated identity; 1 latent bug</td><td>8</td></tr>
+      <tr><td>5</td><td>Local semantic matcher</td><td><b>0/13 → 2/13 @ 0% FP</b>; named fuzzy-lexical, not "understanding"</td><td>9</td></tr>
+      <tr><td>6</td><td>Math layer + store-doctor</td><td>MATH.md honest; doctor found <b>3 real</b> store problems</td><td>9</td></tr>
+      <tr><td>7</td><td>Capture-gate bias</td><td>76% discard / 60% false-reject quantified; slight overclaim, caught</td><td>8</td></tr>
+      <tr><td>8</td><td>Full-text gate (v3)</td><td>discard <b>76% → 46%</b>; round-table cut off by limit → self-verified only</td><td>7.5</td></tr>
+      <tr><td>9</td><td>🎨 The Mirror</td><td>correctable self-model, zero fabrication; thesis test 0/25</td><td>9</td></tr>
+      <tr><td>10</td><td>🎨 Intent-convergence</td><td>"redundancy→intent" <b>UNTESTABLE</b> (intent-sparse); refused to fake it</td><td>9.5</td></tr>
+      <tr><td>11</td><td>🎨 Cross-project transfer</td><td>~27% lexical / ~9% substantive — REFUTED as a rescue</td><td>9</td></tr>
+    </table></div>
+
+    <p style="margin-top:14px;"><b>The one honest conclusion the whole run earned:</b> AgentRecall is a <b>genuinely good memory system</b> — it shipped real, verified wins (login-free consolidation, real-time recognition, a store-doctor that found live problems, a semantic matcher that moved recall off zero) and it now <b>measures whether it works instead of assuming it does</b>. But "understanding" hit <b>one ceiling, confirmed four independent ways</b> (L3 0/13 · L9 0/25 · L10 untestable · L11 ~9%): the corpus is <b>intent-sparse</b>, and a bag-of-tokens matcher <b>cannot distinguish "no shared intent" from "shared intent, different words."</b></p>
+    <p style="margin-top:8px;"><b>Single highest-leverage next bet:</b> replace token-overlap with a <b>learned semantic representation</b> (sentence embeddings over correction text, calibrated against this run's lexical HIT/MISS labels). It is the <i>only</i> change that can tell a real data-sparsity wall apart from an instrument artifact — and everything downstream (global blind-spots, predict-the-correction) is blocked on resolving that ambiguity. The honest harnesses built this run (LOO eval, paraphrase, intent-convergence, cross-project) are the scoreboard any new representation must beat.</p>
+
+    <p style="margin-top:14px;"><b>Orchestrator self-grade: 8.5/10.</b></p>
+    <ul style="font-size:13.5px;color:var(--ink-soft);padding-left:20px;margin-top:4px;">
+      <li><b>What went right:</b> honest, verified, no-theater progress; REDLINE held throughout; the round-table caught my own errors <b>three times</b> (L1 dead-code, L4 a test that masked a bug, L7 overclaimed numbers) and I recorded each plainly rather than burying it — an orchestrator that can be wrong, checked by reviewers who don't share its blind spots.</li>
+      <li><b>What I'd do differently (−1.5):</b> I sized early loops as 5-agent fan-outs, which exhausted the session budget mid-run and left Loop 8 <b>self-verified, not round-table-verified</b>; I should have paced the spend from the start (the leaner 4-agent freestyle loops worked just as well). And twice I let an overclaim into a commit note that a reviewer, not I, caught.</li>
     </ul>
-    <p style="margin-top:10px;"><b>Orchestrator self-grade: 8.5/10.</b> Strong, honest, verified progress with no theater and no pushed risk. −1.5: I sized each loop as a 5-agent fan-out, which exhausted the session budget before the freestyle loops — I should have paced the spend (smaller round-tables, or front-loaded the creative loops). The freestyle loops are designed and ready; they just need budget.</p>
   </div>
 
-  <div class="foot mono">Living document — Loops 1–8 recorded. 9–11 pending session-limit reset (~15:20 Europe/Berlin). Not pushed.</div>
+  <div class="foot mono">All 11 loops complete · branch opt/autonomous-loops · NOT pushed (REDLINE held) · build green throughout (499 tests) · 2026-06-21.</div>
 </div>
