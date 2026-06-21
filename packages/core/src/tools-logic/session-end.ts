@@ -12,7 +12,7 @@ import { promoteConfirmedInsights } from "./insight-promotion.js";
 import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
-import { readCorrections, recordOutcome, readOutcomesForToday } from "../storage/corrections.js";
+import { readCorrections, recordOutcome, readOutcomesForToday, readOutcomesBefore } from "../storage/corrections.js";
 import { recomputeBlindSpots } from "../storage/blind-spots-store.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir } from "../storage/paths.js";
@@ -255,6 +255,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       // Expect aggregate precision to DROP after this change — that is correct,
       // not a regression (Risk #6): we stop manufacturing heeded events.
       const todayOut = readOutcomesForToday(slug);
+      // Loop 3 — cross-day prediction ledger. predict_hit must come from a
+      // prediction recorded on a STRICTLY EARLIER day (a genuine ahead-of-time
+      // call that later came true), NOT from a same-session predicted+recurred
+      // pair judged by the same matcher in the same pass (that would only measure
+      // lexical self-consistency). readOutcomesBefore reads the _outcomes.jsonl
+      // audit trail and EXCLUDES today's events by construction (day < today), so
+      // a same-day prediction can never satisfy this gate. This replaces the old
+      // `firedToday.has("predicted")` source, which was today-only and therefore
+      // mutually exclusive with the earlier-day requirement — that mismatch made
+      // predict_hit unreachable (the loop-1 known defect, now fixed).
+      const predictedBefore = readOutcomesBefore(slug, nowISO);
       const todays = readCorrections(slug).filter(
         (c) =>
           c.last_retrieved &&
@@ -264,25 +275,15 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       );
       const recurrenceMarker = /\b(again|recurred|repeated|violat|broke the rule|same mistake)\b/i;
       const summaryLower = input.summary.toLowerCase();
-      // Honesty guard (loop1): a same-day predicted+recurred pair is judged by the
-      // SAME keyword matcher in the SAME pass — granting predict_hit there only
-      // measures lexical self-consistency, not predictive accuracy. Only count a
-      // hit when the prediction was recorded on an EARLIER day than today's
-      // recurrence (a genuine ahead-of-time prediction that later came true).
-      //
-      // KNOWN DEFECT (loop1 round-table, deferred to Loop 3): this correctly kills
-      // the same-session self-confirming path, but ALSO makes predict_hit currently
-      // UNREACHABLE — `firedToday.has("predicted")` is today-only (readOutcomesForToday
-      // filters day===today) while `predictedOnEarlierDay` requires last_predicted<today,
-      // and `last_predicted` is a single overwritten scalar, so the two conditions are
-      // mutually exclusive. predict_precision therefore pins at 0 (internal field; NOT
-      // shown on the dashboard). The correct fix is a per-day prediction ledger
-      // (readOutcomesBefore/onDate over _outcomes.jsonl) + a unit test, built together
-      // with Loop 3's counterfactual eval. Until then predict_hit intentionally never
-      // fires rather than fire dishonestly.
-      const predictedOnEarlierDay = (c: { last_predicted?: string }): boolean =>
-        !!c.last_predicted &&
-        new Date(c.last_predicted).toLocaleDateString("sv") < todayStr;
+      // A genuine cross-day predict_hit requires: (1) a `predicted` event for this
+      // correction on a strictly-earlier day (audit-trail truth), (2) a recurrence
+      // that fired TODAY, and (3) no predict_hit already booked today (dedup). The
+      // audit-trail check is authoritative; the scalar last_predicted is a coarse
+      // secondary signal that can drift, so it is NOT required.
+      const predictedOnEarlierDay = (id: string): boolean => {
+        const before = predictedBefore.get(id);
+        return !!before && before.has("predicted");
+      };
       for (const c of todays) {
         try {
           const firedToday = todayOut.get(c.id);
@@ -290,9 +291,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
           // default heuristic. This is the heart of the honesty fix.
           if (firedToday && (firedToday.has("heeded") || firedToday.has("recurred"))) {
             // Close the predict-the-correction loop: a prediction recorded on an
-            // EARLIER day that has now actually recurred is a genuine `predict_hit`.
-            // Same-day predicted+recurred is NOT a hit (self-confirming metric).
-            if (firedToday.has("predicted") && firedToday.has("recurred") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c)) {
+            // EARLIER day (audit trail) that has now actually recurred today is a
+            // genuine `predict_hit`. Same-day predicted+recurred is NOT a hit.
+            if (firedToday.has("recurred") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c.id)) {
               recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
             }
             continue;
@@ -314,11 +315,10 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
               ? "recurrence markers in session summary"
               : "no recurrence evidence in session summary (default-heeded — no real outcome today)",
           });
-          // If a correction predicted on an EARLIER day has now recurred, it's a
-          // genuine hit. Same-day predicted+recurred is NOT a hit (the prediction
-          // and the recurrence are judged by the same matcher in the same pass —
-          // self-confirming). Guard against double-counting too.
-          if (violated && firedToday && firedToday.has("predicted") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c)) {
+          // If a correction predicted on an EARLIER day (audit trail) has now
+          // recurred today, it's a genuine cross-day hit. Same-day predicted+
+          // recurred is NOT a hit (self-confirming). Guard against double-counting.
+          if (violated && !firedToday?.has("predict_hit") && predictedOnEarlierDay(c.id)) {
             recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
           }
         } catch {

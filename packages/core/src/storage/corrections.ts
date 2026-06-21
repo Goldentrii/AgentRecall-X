@@ -428,19 +428,21 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
 }
 
 /**
- * Wave 5 — single source for "what outcomes already fired today" across the
- * predict / check-action / session-start / session-end call sites. Reads the
- * _outcomes.jsonl audit trail and buckets today's events (local-TZ) per
- * correction id. Returns an empty Map when no log exists — never throws.
+ * Internal: bucket _outcomes.jsonl events per correction id, keeping only the
+ * lines for which `keep(localDay)` returns true. `localDay` is the event's
+ * local-TZ date (`sv` locale → YYYY-MM-DD), matching the 1/day guards elsewhere.
+ * Returns an empty Map when no log exists — never throws.
  *
- * Local-TZ date (`sv` locale → YYYY-MM-DD) matches the 1/day guards elsewhere
- * (session-start/session-end) so "today" agrees across all four readers.
+ * This is the single parsing core shared by readOutcomesForToday /
+ * readOutcomesBefore / readOutcomesOnDate so all three agree on date handling.
  */
-export function readOutcomesForToday(project: string): Map<string, Set<CorrectionOutcome["kind"]>> {
+function bucketOutcomesBy(
+  project: string,
+  keep: (localDay: string) => boolean,
+): Map<string, Set<CorrectionOutcome["kind"]>> {
   const map = new Map<string, Set<CorrectionOutcome["kind"]>>();
   const p = outcomesPath(project);
   if (!fs.existsSync(p)) return map;
-  const todayStr = new Date().toLocaleDateString("sv");
   let raw: string;
   try {
     raw = fs.readFileSync(p, "utf-8");
@@ -463,7 +465,7 @@ export function readOutcomesForToday(project: string): Map<string, Set<Correctio
     } catch {
       continue;
     }
-    if (day !== todayStr) continue;
+    if (!keep(day)) continue;
     let set = map.get(evt.correction_id);
     if (!set) {
       set = new Set<CorrectionOutcome["kind"]>();
@@ -472,6 +474,63 @@ export function readOutcomesForToday(project: string): Map<string, Set<Correctio
     set.add(evt.kind);
   }
   return map;
+}
+
+/**
+ * Wave 5 — single source for "what outcomes already fired today" across the
+ * predict / check-action / session-start / session-end call sites. Reads the
+ * _outcomes.jsonl audit trail and buckets today's events (local-TZ) per
+ * correction id. Returns an empty Map when no log exists — never throws.
+ *
+ * Local-TZ date (`sv` locale → YYYY-MM-DD) matches the 1/day guards elsewhere
+ * (session-start/session-end) so "today" agrees across all four readers.
+ */
+export function readOutcomesForToday(project: string): Map<string, Set<CorrectionOutcome["kind"]>> {
+  const todayStr = new Date().toLocaleDateString("sv");
+  return bucketOutcomesBy(project, (day) => day === todayStr);
+}
+
+/**
+ * Loop 3 — bucket outcome events recorded STRICTLY BEFORE a given ISO/date
+ * cutoff (local-TZ day comparison). Mirrors readOutcomesForToday but with an
+ * explicit date arg, so the cross-day predict_hit path can ask "was this risk
+ * already PREDICTED on an earlier day?" without depending on today's bucket.
+ *
+ * `isoCutoff` may be a full ISO timestamp or a YYYY-MM-DD date; only its
+ * local-TZ day is used. An event on the SAME day as the cutoff is EXCLUDED
+ * (strictly-before) — this is what keeps a same-session/same-day prediction
+ * from ever counting as a cross-day hit.
+ */
+export function readOutcomesBefore(
+  project: string,
+  isoCutoff: string,
+): Map<string, Set<CorrectionOutcome["kind"]>> {
+  let cutoffDay: string;
+  try {
+    cutoffDay = new Date(isoCutoff).toLocaleDateString("sv");
+  } catch {
+    return new Map();
+  }
+  return bucketOutcomesBy(project, (day) => day < cutoffDay);
+}
+
+/**
+ * Loop 3 — bucket outcome events recorded ON a specific local-TZ day. Mirrors
+ * readOutcomesForToday but with an explicit date arg (for replaying a past day
+ * in tests / offline analysis). `isoDate` may be a full ISO timestamp or a
+ * YYYY-MM-DD date; only its local-TZ day is used.
+ */
+export function readOutcomesOnDate(
+  project: string,
+  isoDate: string,
+): Map<string, Set<CorrectionOutcome["kind"]>> {
+  let onDay: string;
+  try {
+    onDay = new Date(isoDate).toLocaleDateString("sv");
+  } catch {
+    return new Map();
+  }
+  return bucketOutcomesBy(project, (day) => day === onDay);
 }
 
 /**

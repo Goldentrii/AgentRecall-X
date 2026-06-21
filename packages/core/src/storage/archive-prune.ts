@@ -4,12 +4,19 @@
  * Companion to archive-write.ts. Bounds ~/.agent-recall growth by gzipping (or
  * removing) raw session segments under journal/archive/raw/ that are BOTH:
  *   (a) older than `olderThanDays` (by file mtime), AND
- *   (b) already CONSUMED — distilled by the dreaming loop, i.e. their mtime is
- *       at or before journal/archive/raw/.consumed.json `lastConsumedAt`.
+ *   (b) already CONSUMED — i.e. their mtime is at or before
+ *       journal/archive/raw/.consumed.json `lastConsumedAt`.
  *
- * The consumed gate is load-bearing: until the dreaming-loop distillation
- * advances `.consumed.json` (Wave 5+), `lastConsumedAt` is null and this pass
- * prunes NOTHING — we never discard raw bytes that have not been distilled.
+ * "Consumed" (single agreed definition, shared with advanceConsumeMarker in
+ * safety-consolidation.ts): a raw segment whose content has been folded into the
+ * palace by the login-free, regex journal→palace consolidation. The marker is
+ * advanced monotonically to `now − retentionWindow` by advanceConsumeMarker on
+ * the login-free safety pass (the optional dreaming loop MAY also advance it, but
+ * is no longer required to — that was the original Wave-5 plan, superseded).
+ *
+ * The consumed gate is load-bearing: while `lastConsumedAt` is null (nothing
+ * advanced the marker yet) this pass prunes NOTHING — we never discard raw bytes
+ * that have not been distilled into the palace.
  *
  * Mirrors journal-archive.ts's older_than_days / dry-run shape. Unlike
  * archive-write.ts (which must never throw inside the Stop turn), this is an

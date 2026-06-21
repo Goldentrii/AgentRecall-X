@@ -22,6 +22,15 @@
  *                   No LLM-authored summary — that stays the optional dreaming
  *                   path. Idempotent because findCrystallizationCandidates
  *                   excludes already-CRYSTALLIZED titles.
+ *                   NOTE (sync side effect): when a candidate actually graduates,
+ *                   this step persists the mutated awareness state and calls
+ *                   renderAwareness, which (via writeAwareness) fires a GATED,
+ *                   non-blocking Supabase sync of the awareness markdown. The
+ *                   sync is a no-op unless Supabase is configured AND sync_enabled
+ *                   (readSupabaseConfig returns null otherwise), so it never
+ *                   requires a network round-trip or a login to complete the pass
+ *                   — it does NOT violate the login-free contract below. dryRun
+ *                   and "nothing graduated" paths perform NO write and NO sync.
  *
  * HARD contract:
  *   - NONE of the three steps may require an LLM / OPENAI_API_KEY / Claude login.
@@ -59,7 +68,10 @@ export const DEFAULT_ARCHIVE_RETENTION_DAYS = 90;
 /** Deterministic graduation floor: a crystallization candidate graduates when
  *  its members together carry at least this many confirmations. Layered on top
  *  of findCrystallizationCandidates' own minCluster/minTotalConfirm gates so the
- *  rule is purely numeric — NO LLM judgement. */
+ *  rule is purely numeric — NO LLM judgement. Overridable via the runSafety
+ *  opt, the AGENT_RECALL_GRADUATION_MIN_CONFIRMATIONS env var, or config.json
+ *  `graduation_min_confirmations` (resolved in that order by
+ *  resolveGraduationMinConfirmations). */
 export const DEFAULT_GRADUATION_MIN_CONFIRMATIONS = 8;
 
 export interface SafetyDecayResult {
@@ -110,6 +122,8 @@ export interface SafetyConsolidationOptions {
   dryRun?: boolean;
   /** Override the raw-archive retention window (days). */
   olderThanDays?: number;
+  /** Override the deterministic graduation confirmation floor. */
+  minConfirmations?: number;
 }
 
 /** Resolve the retention window: explicit opt > config.json > env > default. */
@@ -138,13 +152,49 @@ function resolveRetentionDays(explicit?: number): number {
 }
 
 /**
+ * Resolve the graduation confirmation floor: explicit opt >
+ * AGENT_RECALL_GRADUATION_MIN_CONFIRMATIONS env > config.json
+ * `graduation_min_confirmations` > DEFAULT_GRADUATION_MIN_CONFIRMATIONS.
+ *
+ * Mirrors resolveRetentionDays so the two numeric knobs resolve identically.
+ */
+function resolveGraduationMinConfirmations(explicit?: number): number {
+  if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
+    return explicit;
+  }
+  const env = process.env.AGENT_RECALL_GRADUATION_MIN_CONFIRMATIONS;
+  if (env) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  try {
+    const cfg = readSupabaseConfig() as unknown as {
+      graduation_min_confirmations?: number;
+    } | null;
+    if (
+      cfg &&
+      typeof cfg.graduation_min_confirmations === "number" &&
+      cfg.graduation_min_confirmations > 0
+    ) {
+      return cfg.graduation_min_confirmations;
+    }
+  } catch {
+    // config read is best-effort — fall through to default
+  }
+  return DEFAULT_GRADUATION_MIN_CONFIRMATIONS;
+}
+
+/**
  * Advance the raw-archive `.consumed.json` marker to "now − olderThanDays".
  *
- * Rationale: segments older than the retention window have already been folded
- * into the palace by the (regex, login-free) journal→palace consolidation, so
- * they count as distilled. Advancing the marker to the age cutoff lets
- * pruneRawArchive actually fire on those aged segments while still PROTECTING
- * anything newer than the window (the consumed gate stays meaningful).
+ * Definition of "consumed" (single agreed definition, shared verbatim with
+ * archive-prune.ts): a raw segment whose content has been folded into the palace
+ * by the (regex, login-free) journal→palace consolidation. Segments older than
+ * the retention window have necessarily already been consolidated, so they count
+ * as consumed. Advancing the marker to the age cutoff lets pruneRawArchive
+ * actually fire on those aged segments while still PROTECTING anything newer than
+ * the window (the consumed gate stays meaningful). This is the writer for the
+ * exact `mtime <= lastConsumedAt` contract pruneRawArchive reads.
  *
  * MONOTONIC: never moves the marker backward. This is what makes the whole pass
  * idempotent — a re-run with no newly-aged segments advances nothing and prunes
@@ -246,6 +296,7 @@ export async function runSafetyConsolidation(
 ): Promise<SafetyConsolidationResult> {
   const dryRun = opts.dryRun === true;
   const olderThanDays = resolveRetentionDays(opts.olderThanDays);
+  const minConfirmations = resolveGraduationMinConfirmations(opts.minConfirmations);
 
   const decay: SafetyDecayResult = { ran: false, scanned: 0, archived: 0 };
   const pruned: SafetyPruneResult = {
@@ -314,7 +365,7 @@ export async function runSafetyConsolidation(
     graduated.candidates = candidates.length;
     const g = graduateCandidates(
       candidates,
-      DEFAULT_GRADUATION_MIN_CONFIRMATIONS,
+      minConfirmations,
       dryRun,
     );
     graduated.graduated = g.graduated;

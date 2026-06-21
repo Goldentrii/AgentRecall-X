@@ -470,6 +470,8 @@ export {
   recordOutcome,
   getCorrectionKPIs,
   readOutcomesForToday,
+  readOutcomesBefore,
+  readOutcomesOnDate,
 } from "./storage/corrections.js";
 export type { CorrectionOutcome, CorrectionKPI } from "./storage/corrections.js";
 
