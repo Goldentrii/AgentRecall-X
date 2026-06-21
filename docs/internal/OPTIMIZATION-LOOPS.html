@@ -1,0 +1,103 @@
+<title>AgentRecall · Autonomous Optimization Loops</title>
+<style>
+  :root{--bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;--ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;--accent-dim:rgba(138,106,63,.10);--good:#5C7A4A;--bad:#A6483C;--blue:#4E6E8E;--amber:#B07A2E;--shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.07);}
+  @media (prefers-color-scheme:dark){:root{--bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;--ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;--accent-dim:rgba(201,165,108,.13);--good:#9DBE84;--bad:#D98A7C;--blue:#8FB0CE;--amber:#D9A85A;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.4);}}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--ink);font-family:'Nunito','Baloo 2','Segoe UI Rounded','Hiragino Maru Gothic ProN','Yuanti SC',system-ui,sans-serif;font-size:15px;line-height:1.62;-webkit-font-smoothing:antialiased;padding:32px 18px 80px;}
+  .wrap{max-width:1000px;margin:0 auto;}
+  h1,h2,h3,.display{font-family:'Baloo 2','Nunito','Segoe UI Rounded',system-ui,sans-serif;font-weight:700;letter-spacing:-.01em;}
+  .mono,pre,code{font-family:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;}
+  code{font-size:.84em;background:var(--surface-2);color:var(--accent);padding:1.5px 6px;border-radius:6px;}
+  .topbar{display:flex;align-items:center;gap:14px;margin-bottom:8px;}
+  .logo{width:46px;height:46px;border-radius:13px;background:linear-gradient(140deg,var(--accent-soft),var(--accent));display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:var(--shadow);}
+  h1.title{font-size:30px;line-height:1;}
+  .sub{font-size:13px;color:var(--ink-faint);margin-top:3px;}
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:16px 20px;box-shadow:var(--shadow);margin:16px 0;}
+  .card.guard{border-left:4px solid var(--bad);}
+  .sech{font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);margin:38px 0 12px;padding-bottom:7px;border-bottom:1.5px solid var(--rule);}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule-soft);vertical-align:top;}
+  th{background:var(--surface-2);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);}
+  tr:last-child td{border-bottom:0;}
+  .st{font-weight:800;font-size:11px;padding:2px 9px;border-radius:999px;display:inline-block;}
+  .st.done{background:rgba(92,122,74,.16);color:var(--good);} .st.run{background:rgba(176,122,46,.16);color:var(--amber);} .st.plan{background:var(--surface-2);color:var(--ink-faint);} .st.blocked{background:rgba(166,72,60,.16);color:var(--bad);}
+  pre{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:12px;line-height:1.65;color:var(--ink-soft);box-shadow:var(--shadow);}
+  pre b{color:var(--accent);font-weight:700;} pre i{color:var(--ink-faint);font-style:normal;}
+  .loop{scroll-margin-top:20px;}
+  .loop h2{font-size:21px;display:flex;align-items:center;gap:10px;margin-bottom:2px;}
+  .loop .theme{font-size:13px;color:var(--ink-faint);margin-bottom:10px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}@media(max-width:720px){.grid2{grid-template-columns:1fr;}}
+  .blk{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);}
+  .blk h4{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:7px;}
+  .blk p,.blk li{font-size:13px;color:var(--ink-soft);} .blk ul{padding-left:18px;}
+  .verdict{font-size:13.5px;}
+  .selfeval{border-left:4px solid var(--blue);}
+  .pill{font-size:11.5px;background:var(--surface-2);border:1px solid var(--rule-soft);border-radius:7px;padding:2px 8px;color:var(--ink-soft);}
+  .foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--rule);font-size:12px;color:var(--ink-faint);text-align:center;}
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="logo">🔁</div>
+    <div><h1 class="title">Autonomous Optimization — 6 Loops</h1>
+    <div class="sub mono">AgentRecall · branch opt/autonomous-loops · run while operator away · 2026-06-21</div></div>
+  </div>
+
+  <div class="card">
+    <p><b>Mandate.</b> Operator is away and is NOT making decisions — the orchestrator (Claude) holds all decisions. Run 6 loops of <b>improve → verify → round-table (agents that actually run tests) → synthesize → design next</b>, toward three north-stars: <b>(1) real-time recognition</b> at session start (who I am · what I can do · project + progress · what kind of person I am); <b>(2) brain-like preservation / reflection / understanding</b> of memory; <b>(3) a real mathematics layer</b>. Document every loop honestly here.</p>
+  </div>
+
+  <div class="card guard">
+    <h4 style="color:var(--bad);font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Guardrails (held even with full autonomy)</h4>
+    <p>All work on local branch <code>opt/autonomous-loops</code> · <b>NEVER</b> push / publish / version-bump / deploy / cron · <b>NEVER</b> delete system or important files · every code change must pass <code>npm run build &amp;&amp; npm test</code> (halt-on-red) · failures recorded verbatim, no theater.</p>
+  </div>
+
+  <div class="sech">The Loop — Plywood SOP (run 6×)</div>
+  <pre><b>SOP</b> run_loop(N, plan):
+  ASSERT branch == "opt/autonomous-loops"  AND  no_push AND no_publish AND no_version_bump   <i># REDLINE</i>
+
+  <b>Phase 1 — IMPLEMENT</b>
+    impl  = WORKER.implement(plan)                 <i># small, single-purpose change on branch</i>
+    gate  = RUN("npm run build && npm test")
+    IF gate.red:
+      FIX(once); gate = RUN(...)                    <i># retry once</i>
+      IF still red: REVERT(impl); loop.status = BLOCKED   <i># carry the failure to the round-table as the finding</i>
+    COMMIT(local, "loop N: " + plan)                <i># never push</i>
+
+  <b>Phase 2 — ROUND-TABLE</b> (parallel, diverse, must TEST not just opine)
+    results = PARALLEL[
+      TESTER.run(build/test/eval) -> real stdout,
+      SKEPTIC.attack(impl)        -> "did it fix the thing or just rename it?",
+      RESEARCHER.investigate(loop.theme) -> papers / math / linguistics grounding,
+    ]
+
+  <b>Phase 3 — SYNTHESIZE</b>
+    synth = CHAIR(results) -> { worked, still_broken, eval_numbers, next_loop_design }
+
+  <b>Phase 4 — ORCHESTRATOR DECISION</b> (me, bird's-eye)
+    UPDATE_HTML(loop N)  ;  plywood_feedback(sop_id=946850b5, outcome, note)
+    RETURN synth.next_loop_design          <i># drives loop N+1</i>
+</pre>
+
+  <div class="sech">Status board</div>
+  <table id="board">
+    <tr><th>#</th><th>Loop</th><th>Theme</th><th>Status</th><th>Headline result</th></tr>
+    <tr><td>1</td><td>Honesty fixes — kill self-confirming metric + false README claims</td><td>measurement trust</td><td><span class="st run" id="s1">running</span></td><td id="r1">—</td></tr>
+    <tr><td>2</td><td>Auto background consolidation (no manual save)</td><td>real-time / automaticity</td><td><span class="st plan" id="s2">planned</span></td><td id="r2">—</td></tr>
+    <tr><td>3</td><td>Leave-one-out predict-the-correction eval</td><td>understanding validation</td><td><span class="st plan" id="s3">planned</span></td><td id="r3">—</td></tr>
+    <tr><td>4</td><td>Real-time session_start: who / what / progress / who-you-are</td><td>real-time recognition</td><td><span class="st plan" id="s4">planned</span></td><td id="r4">—</td></tr>
+    <tr><td>5</td><td>Paraphrase eval + counting→rule-induction (linguistics)</td><td>understanding research</td><td><span class="st plan" id="s5">planned</span></td><td id="r5">—</td></tr>
+    <tr><td>6</td><td>Mathematics layer + integrity doctor + final self-eval</td><td>math / reflection</td><td><span class="st plan" id="s6">planned</span></td><td id="r6">—</td></tr>
+  </table>
+
+  <!-- LOOP SECTIONS — filled incrementally -->
+  <div class="sech">Loop records</div>
+
+  <section class="loop" id="loop-1">
+    <h2>① Honesty fixes <span class="st run">running</span></h2>
+    <div class="theme">Theme: measurement trust — a misleading green metric is worse than no metric. Fix the self-confirming predict_hit loop and the two false README claims (dead-code Hopfield badge, "zero-cloud" vs OpenAI embeddings) before building anything new.</div>
+    <div class="blk" id="loop-1-body"><p class="mono" style="color:var(--ink-faint)">… in progress; results will be written here when the round-table closes.</p></div>
+  </section>
+
+  <div class="foot mono">Living document — updated after each loop. Not pushed. Final self-evaluation lands after loop 6.</div>
+</div>
