@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getRoot, getLegacyRoot } from "../types.js";
 import type { ProjectInfo } from "../types.js";
+import { isJournalFile } from "../helpers/journal-filter.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -209,15 +210,8 @@ export async function resolveProject(project: string | undefined): Promise<strin
   return project;
 }
 
-/**
- * Returns true if a filename is a journal entry (legacy or smart-named).
- * Excludes log/capture files and index files.
- */
-function isJournalFile(f: string): boolean {
-  if (!f.endsWith(".md")) return false;
-  if (f === "index.md") return false;
-  if (f.includes("-log.md") || f.includes("--capture--")) return false;
-  return /^\d{4}-\d{2}-\d{2}/.test(f);
+function isProjectJournalFile(filename: string): boolean {
+  return isJournalFile(filename) && /^\d{4}-\d{2}-\d{2}/.test(filename);
 }
 
 /**
@@ -233,7 +227,7 @@ export function listAllProjects(): ProjectInfo[] {
     for (const slug of dirs) {
       const jDir = path.join(projectsDir, slug, "journal");
       if (fs.existsSync(jDir)) {
-        const files = fs.readdirSync(jDir).filter(isJournalFile);
+        const files = fs.readdirSync(jDir).filter(isProjectJournalFile);
         if (files.length > 0) {
           files.sort().reverse();
           projects.set(slug, {
@@ -258,7 +252,7 @@ export function listAllProjects(): ProjectInfo[] {
           const slug = parts[parts.length - 1] || entry;
 
           if (!projects.has(slug)) {
-            const files = fs.readdirSync(journalPath).filter(isJournalFile);
+            const files = fs.readdirSync(journalPath).filter(isProjectJournalFile);
             if (files.length > 0) {
               files.sort().reverse();
               projects.set(slug, {
