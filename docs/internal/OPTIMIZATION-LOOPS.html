@@ -83,7 +83,7 @@
   <table id="board">
     <tr><th>#</th><th>Loop</th><th>Theme</th><th>Status</th><th>Headline result</th></tr>
     <tr><td>1</td><td>Honesty fixes — kill self-confirming metric + false README claims</td><td>measurement trust</td><td><span class="st done" id="s1">partial ✓</span></td><td id="r1">408/408 green; README + dashboard honest; predict_hit over-corrected → dead code (caught, deferred to L3)</td></tr>
-    <tr><td>2</td><td>Auto background consolidation (no manual save)</td><td>real-time / automaticity</td><td><span class="st plan" id="s2">planned</span></td><td id="r2">—</td></tr>
+    <tr><td>2</td><td>Auto background consolidation (no manual save)</td><td>real-time / automaticity</td><td><span class="st done" id="s2">done ✓</span></td><td id="r2">login-free decay/prune/graduate at session_end + <code>ar consolidate --safety</code>; 4 new tests (env unset); 412/412 green</td></tr>
     <tr><td>3</td><td>Leave-one-out predict-the-correction eval</td><td>understanding validation</td><td><span class="st plan" id="s3">planned</span></td><td id="r3">—</td></tr>
     <tr><td>4</td><td>Real-time session_start: who / what / progress / who-you-are</td><td>real-time recognition</td><td><span class="st plan" id="s4">planned</span></td><td id="r4">—</td></tr>
     <tr><td>5</td><td>Paraphrase eval + counting→rule-induction (linguistics)</td><td>understanding research</td><td><span class="st plan" id="s5">planned</span></td><td id="r5">—</td></tr>
@@ -118,5 +118,28 @@
     <div class="blk selfeval" style="margin-top:14px;"><h4>Self-evaluation</h4><p><b>Partial win — 6/10.</b> The credibility fixes (the point of going first) landed and are verified. But my headline fix was wrong in a way I didn't catch — I traded a dishonest-positive metric for a dishonest-zero one, and <b>shipped it with no test on the grant path</b> (violated my own NEVER-skip-Verify). The round-table caught it in code — which is exactly why the loop exists, and the strongest evidence the debiasing harness works. Lesson carried into every later loop: <b>add a failing/edge test for the specific behavior changed, not just "the suite is green."</b></p></div>
   </section>
 
-  <div class="foot mono">Living document — updated after each loop. Not pushed. Final self-evaluation lands after loop 6.</div>
+  <section class="loop" id="loop-2">
+    <h2>② Auto background consolidation <span class="st done">done ✓</span></h2>
+    <div class="theme">Theme: real-time / automaticity — the operator's #1. Commit <code>41f9a86</code>. Build/test 412/412 (+4 new). A clean win, verified adversarially.</div>
+    <div class="grid2">
+      <div class="blk"><h4>What I did</h4><ul>
+        <li>New <code>runSafetyConsolidation()</code> — 3 <b>login-free, LLM-free, per-step try/catch-isolated</b> steps: FSRS decay, raw-archive prune (wired the previously-<b>dead</b> <code>pruneRawArchive</code>), deterministic awareness graduation (threshold, no LLM summary).</li>
+        <li>Wired into <b>both</b> <code>session_end</code> paths (Stop-hook defer + manual /arsave) — runs synchronously, best-effort, never throws into the caller.</li>
+        <li>Added <code>ar consolidate --safety</code> — a login-free manual trigger. Retention config-driven (default 90d). Manual save interface unchanged.</li>
+      </ul></div>
+      <div class="blk"><h4>Round-table (tested)</h4><ul>
+        <li><b>Verifier</b> ran the 4 new tests independently — all pass: login-free (env unset) fires all 3 steps · idempotent 2nd run · one step throwing doesn't abort others · dryRun writes nothing.</li>
+        <li><b>Skeptic</b>: no login dependency remains · <code>pruneRawArchive</code> now reachable · Stop turn stays crash-safe · steps isolated. ✅</li>
+        <li><b>Architect</b>: manual save unchanged · SAFETY/QUALITY split clean · retention config-driven · TZ-safe (epoch-millis).</li>
+      </ul></div>
+    </div>
+    <div class="blk" style="margin-top:14px;"><h4>Honest gaps found (low-sev, carried)</h4><ul>
+      <li>The graduate path still reaches a <b>gated, fire-and-forget Supabase sync</b> — login-free holds, but the module's "no network" header is overstated. Fix in a later polish pass.</li>
+      <li>Graduation threshold (8) is the one knob NOT config-driven (retention is). <code>.consumed.json</code> contract now has two writers/definitions. → folded into Loop 3.</li>
+      <li><b>Load-bearing finding for Loop 3:</b> the <code>_outcomes.jsonl</code> ledger is too thin (1 recurred, 0 predicted, 10-day span) to be prediction ground truth. The eval must run off the <b>86 dated correction docs across 17 projects</b> instead. Caught before Loop 3 built the wrong thing.</li>
+    </ul></div>
+    <div class="blk selfeval" style="margin-top:14px;"><h4>Self-evaluation</h4><p><b>Strong win — 9/10.</b> The operator's #1 priority is done, login-free, and <b>proven by tests run with the API key deleted</b> — not asserted. Loop 1's lesson held: the worker shipped behavior-specific tests and the verifier re-ran them. The −1: the graduate path's latent Supabase sync slightly contradicts the "no network" framing (a docs/honesty nit, not a functional break), and the data-thinness discovery should ideally have surfaced in planning, not mid-loop.</p></div>
+  </section>
+
+  <div class="foot mono">Living document — updated after each loop. Not pushed. Final self-evaluation lands after loop 11.</div>
 </div>
