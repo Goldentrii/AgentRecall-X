@@ -805,6 +805,7 @@ async function main(): Promise<void> {
         // under this key and corrupt the archive. Only use "newest" when it is
         // unambiguous (exactly one session today); otherwise skip + log.
         let resolvedPath: string | undefined = transcriptPath;
+        let skippedAmbiguous = false;
         if (!resolvedPath) {
           const today = readTodaySessions();
           const wantId =
@@ -818,8 +819,56 @@ async function main(): Promise<void> {
             process.stderr.write(
               `[AgentRecall hook-end] no transcript_path and ${today.length} sessions today with no id match — skipping archive to avoid archiving the wrong session\n`,
             );
+            skippedAmbiguous = true;
           }
         }
+
+        // ---- P3: agent-intent backstop scan ----
+        // Best-effort, bounded, try/catch — MUST NOT throw into the Stop hook.
+        // If the agent's last few assistant messages express a durable save intent
+        // (saveTriggerKind === 'explicit-save'), force the archive even when the
+        // normal resolution would skip (ambiguous multi-session, no explicit path).
+        // Uses the stdin transcript_path as a last-resort fallback in the skip case.
+        try {
+          const scanPath = resolvedPath ?? (skippedAmbiguous ? transcriptPath : undefined);
+          if (scanPath) {
+            const { saveTriggerKind } = await import("agent-recall-core");
+            const scanSrc = readTranscriptByPath(scanPath);
+            if (scanSrc && typeof scanSrc.rawTail === "string") {
+              // Extract the last 3 assistant messages from the tail (bounded).
+              const SCAN_LIMIT = 3;
+              const tailLines: unknown[] = [];
+              for (const line of scanSrc.rawTail.split("\n").filter(Boolean)) {
+                try { tailLines.push(JSON.parse(line)); } catch { /* skip malformed */ }
+              }
+              const assistantTexts: string[] = [];
+              for (let i = tailLines.length - 1; i >= 0 && assistantTexts.length < SCAN_LIMIT; i--) {
+                const rec = tailLines[i] as Record<string, unknown> | null;
+                if (!rec || rec.type !== "assistant") continue;
+                const msg = rec.message as Record<string, unknown> | undefined;
+                const content = msg?.content;
+                if (!Array.isArray(content)) continue;
+                const prose = content
+                  .filter((c) => (c as Record<string, unknown>).type === "text")
+                  .map((c) => String((c as Record<string, unknown>).text ?? ""))
+                  .join(" ")
+                  .trim();
+                if (prose) assistantTexts.push(prose);
+              }
+              const agentIntentDetected = assistantTexts.some(
+                (t) => saveTriggerKind(t) === "explicit-save",
+              );
+              if (agentIntentDetected) {
+                process.stderr.write("[AgentRecall hook-end] agent save-intent detected — ensuring archive fires\n");
+                // Force the resolved path when we were in the skip-due-to-ambiguity case.
+                if (!resolvedPath && scanPath) {
+                  resolvedPath = scanPath;
+                }
+              }
+            }
+          }
+        } catch { /* intent scan is best-effort — never surface into Stop turn */ }
+
         // Read the actual transcript file (gives a verbatim rawTail). Key the
         // archive on the file's own UUID so content and key always agree.
         const src = resolvedPath ? readTranscriptByPath(resolvedPath) : null;

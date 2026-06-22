@@ -24,18 +24,22 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 
 import { archiveSession, type ArchiveSessionInput } from "./archive-write.js";
 import { dropHardNoise } from "./corrections.js";
 import { saveTriggerKind } from "./durable-intent.js";
 import { withLock } from "./filelock.js";
+import { getRoot } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Cross-process dedup arbiter
 // ---------------------------------------------------------------------------
 
-const DEDUP_FILE = path.join(os.homedir(), ".agent-recall", ".capture-intent-seen");
+/** Computed at call-time so setRoot() in tests takes effect. */
+function dedupFilePath(): string {
+  return path.join(getRoot(), ".capture-intent-seen");
+}
+
 const DEDUP_MAX_ENTRIES = 50;
 
 interface DedupEntry {
@@ -55,8 +59,9 @@ function quickHash(text: string): string {
 
 function readDedupEntries(): DedupEntry[] {
   try {
-    if (!fs.existsSync(DEDUP_FILE)) return [];
-    const parsed = JSON.parse(fs.readFileSync(DEDUP_FILE, "utf-8"));
+    const file = dedupFilePath();
+    if (!fs.existsSync(file)) return [];
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
     if (Array.isArray(parsed)) return parsed as DedupEntry[];
     return [];
   } catch {
@@ -70,13 +75,14 @@ function isDuplicate(hash: string, entries: DedupEntry[]): boolean {
 
 function writeDedupEntry(entry: DedupEntry): void {
   try {
-    const dir = path.dirname(DEDUP_FILE);
+    const file = dedupFilePath();
+    const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     withLock("capture-dedup", () => {
       let entries = readDedupEntries();
       entries.push(entry);
       if (entries.length > DEDUP_MAX_ENTRIES) entries = entries.slice(-DEDUP_MAX_ENTRIES);
-      fs.writeFileSync(DEDUP_FILE, JSON.stringify(entries), "utf-8");
+      fs.writeFileSync(file, JSON.stringify(entries), "utf-8");
     });
   } catch {
     // Best-effort — dedup failure must never block the capture path.

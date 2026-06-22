@@ -58,7 +58,7 @@ export const DURABLE_INTENT_PATTERNS: ReadonlyArray<RegExp> = [
  * This function tests the WHOLE text, so we rely on hedging being in the first clause.
  */
 const HEDGE_DEMOTE_PATTERN =
-  /^[\s\S]{0,60}?\b(remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b)/i;
+  /^[\s\S]{0,60}?\b(remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b|(?:i|you|one)\s+could\s+(?:save|remember|log|checkpoint)\b|you\s+might\s+want\s+to\s+(?:save|remember|log)\b)/i;
 
 /**
  * Correction-signal vocabulary — behavioral corrections from check.ts / hook-correction.
