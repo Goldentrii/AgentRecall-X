@@ -1,5 +1,6 @@
 # Orchestrator Protocol — Multi-Agent Work Loop
 > Formalized 2026-04-24 from live novada-mcp + AgentRecall sessions.
+> Updated 2026-06-22 — folded in the 14-loop autonomous run + the cross-surface-adapter design workflows (model routing, the workflow phases, convergence checks, never-self-review, eval-first, verify-not-guess, honesty gates).
 > Drag this file into any new session to resume the pattern.
 
 ---
@@ -11,11 +12,12 @@ A repeatable protocol for running an Opus orchestrator + parallel Sonnet sub-age
 **Model routing — fixed rule:**
 | Role | Model | Reason |
 |------|-------|--------|
-| Orchestrator (you) | Opus 4.6 | Conflict analysis, agent briefing, synthesis, decisions |
-| All sub-agents | Sonnet 4.6 | Coding, reading, testing — high volume, cost-controlled |
-| Reviewer agent | Sonnet 4.6 (`code-reviewer` subagent type) | Independent read, catches what implementation agents miss |
+| Orchestrator (you) | Opus (latest, 4.8) | Conflict analysis, agent briefing, synthesis, decisions — holds the context + the brain |
+| Implementation sub-agents | Sonnet 4.6 | Coding, reading, testing — high volume, cost-controlled |
+| Reviewer / verifier | Sonnet 4.6 (`code-reviewer` subagent type) | Independent read, catches what implementation agents miss |
+| Optional cross-implementation | Codex (via `codex` skill / `codex:codex-rescue`) | An independent second coder when convergence (pattern B) is worth the cost |
 
-Do NOT use Opus for sub-agents. Do NOT use Haiku unless the task is pure read-only exploration with no judgment required.
+Do NOT use Opus for routine sub-agents. Use Haiku only for pure read-only exploration. The orchestrator stays Opus and does NOT code by hand when a worker can — it briefs, converges, verifies, and lands.
 
 ---
 
@@ -205,6 +207,37 @@ Report to human before any push. Human decides: merge to main + push, or more it
 
 ---
 
+## Evolved Patterns (validated 2026-06 across the 14-loop run + the cross-surface adapter)
+
+The 5-step loop is the baseline. These were earned on real work and are now part of the protocol.
+
+### A. Workflow phases for non-trivial design — ground → design → adversarial-verify → converge
+For anything with design latitude (a new subsystem, a cross-cutting change), don't jump to dispatch. Run a structured workflow:
+1. **GROUND** (parallel read-only agents): verify what ALREADY exists against the live code, per pillar. Never rebuild what's there.
+2. **DESIGN** (diverse lenses → synthesis): N independent designs from different angles, then synthesize the best.
+3. **ADVERSARIAL-VERIFY** (skeptics, one per dimension): each attacks the design and must produce a `required_fix`; default to "concern/blocker" when uncertain.
+4. **CONVERGE**: fold every required_fix into one verified spec; surface unresolved blockers as explicit human decisions.
+Output = a spec grounded in real `file:line`, not a guess. (On the adapter this caught 2 spec errors + 2 false read-only claims that would have shipped broken.)
+
+### B. Different-sequence convergence — a robustness check
+Run the same task from two DIFFERENT starting orders (e.g. one worker contract-first, one carrier-first). Converge on the same design → treat as settled (high confidence). Diverge → the divergence is the signal; inspect it. Validated on adapter P0: opposite sequences agreed on the architecture AND independently surfaced the same grounding correction.
+
+### C. Never-self-review is LOAD-BEARING, not hygiene
+The author's first draft skews optimistic — measured repeatedly: across the run the round-table caught the orchestrator's OWN errors 6+ times (dead code, a bug-masking test, overclaimed numbers, circular reasoning, two false read-only claims). NONE were self-caught. Always implement with one agent and verify with a DIFFERENT fresh-eyes agent that actually runs the tests/evals. The objective test gate + an independent reviewer save the work — not the author's restraint.
+
+### D. Eval-first + falsifiable measurement
+Before claiming an improvement helps, build a measurement that CAN come back negative, and run it on real data. Honest negatives (0/13, "no benefit", "untestable") are valid, valuable results — they prevent wrong bets (a declined ~25 MB embedding dependency). A reusable harness (LOO / paraphrase / convergence) outlives any one feature — it's the scoreboard the next idea must beat.
+
+### E. Verify, never guess — ground every claim against the live tree
+Every load-bearing claim (a file path, an API shape, "this is already gated") gets checked against the actual code/SDK before it's acted on. The adapter spec said `instructions` goes in the McpServer constructor — grounding found it's constructor ARG 2 (arg 1 silently drops it). Guessing ships a no-op.
+
+### F. Honesty gates (anti-overclaim)
+- A tool must NOT claim `readOnlyHint` if ANY branch writes (caught on both `check` and `recall`).
+- A capability matrix must not badge "AUTO" on a host that physically can't auto-fire — split detection vs persistence; mark best-effort honestly.
+- Name things for what they verifiably ARE, not aspiration ("compounding memory", not "self-evolving").
+
+---
+
 ## Agent Templates
 
 ### Implementation agent (standard)
@@ -238,67 +271,32 @@ prompt: "Fix ONE issue. File: X. Line: Y. Current code: [paste]. Fix: [paste]. R
 
 ---
 
-## Current AgentRecall State (as of 2026-04-24)
+## Current AgentRecall State (as of 2026-06-22)
 
-**Version:** v3.3.27 (local) | npm: v3.3.23
-**Branch:** `feature/agent-feedback-improvements` — ready to merge to main
-**Tests:** build passes, all 4 packages clean
+**Version:** v3.4.32 (local + npm). **Tests:** 518 across 4 packages, all green.
 
-### What was just shipped (feature branch, not yet merged)
+**Branches:**
+- `main` — released line. v3.4.32 = "Memory→Understanding" (two-tier lossless archive + confidence bridge + predict-the-correction).
+- `opt/autonomous-loops` — the 14-loop autonomous optimization run (Loops 1–14): honesty fixes, login-free safety-consolidation, the LOO predict-eval harness, real-time recognition, local semantic matcher, MATH.md + store-doctor/store-repair, capture-gate v4, the Mirror, intent-convergence + cross-project evals, and the local-embedding experiment (declined). 33 commits, NOT pushed. Full record: `docs/internal/OPTIMIZATION-LOOPS.html`.
+- `feat/cross-surface-adapter` — the cross-surface ADAPTER (current work). **P0 landed:** MCP server-level `instructions` carrier (arg 2) + tool-description timing tags (3 synced surfaces) + honesty-gated annotations + drift/handshake test. Spec: `docs/internal/cross-surface-adapter-spec.md`. NOT pushed.
 
-| Feature | File | Status |
-|---------|------|--------|
-| `project_status` MCP tool | `tools-logic/project-status.ts` (new) | ✅ Reviewer: GOOD |
-| `session_start` resume block | `tools-logic/session-start.ts` | ✅ Bug fixed (trajectory key was "next" not "trajectory") |
-| `session_start` watch_for prominence | `mcp-server/tools/session-start.ts` | ✅ Reviewer: GOOD |
-| Palace staleness (`touchRoom`, `isRoomStale`) | `palace/rooms.ts`, `consolidate.ts` | ✅ Reviewer: GOOD |
-| Insight quality gate | `tools-logic/session-end.ts` | ✅ Reviewer: GOOD |
+### The one earned conclusion (5× confirmed)
+AgentRecall is a genuinely good MEMORY system; its "understanding"/prediction limit is **DATA density, not the algorithm** — confirmed five independent ways (LOO 0/13 · Mirror 0/25 · intent-convergence untestable · cross-project ~9% · local embeddings no-benefit). The lever is better/more **capture**, not a fancier matcher. Do NOT re-propose a learned-embedding rewrite without new data (`docs/internal/loop13-embedding-experiment.md`).
 
-### Minor issues left open (not blocking merge)
-
-1. `project_status` MCP returns raw JSON. Should add `formatProjectStatus()` like `session_start` has `formatSessionStart()`.
-2. `sessions_count` counts files not unique days — cosmetic inflation on heavy-save days.
-
-### Next loop: Decision trail enhancement for `check` tool
-
-**Inspiration:** @yaojingang's Bayesian Decision Skill (github.com/yaojingang/yao) — multi-round prior→posterior updating with structured audit trail. 286 likes, 440 bookmarks. We don't copy the full Bayesian math — we steal the decision trail pattern.
-
-**What to build (3 agents):**
-
-**Agent 1 — Enhance `check` tool input/output** (`tools-logic/check.ts`)
-- Add optional fields to CheckInput: `prior?: number` (0-1), `evidence?: Array<{ factor: string; direction: "supports" | "weakens"; weight: number }>`, `posterior?: number`
-- Return type adds: `decision_trail` summary when prior+posterior both present
-- Backward compatible — existing `check({ goal, confidence })` calls still work unchanged
-
-**Agent 2 — Decision trail persistence** (`tools-logic/check.ts` + `palace/`)
-- When a `check` call includes `prior` + `posterior` + `outcome` (new optional field), persist as `palace/rooms/decisions/<slug>.md`
-- Format: YAML frontmatter with prior/posterior/outcome/date + body with evidence chain
-- Obsidian-compatible (existing palace file format)
-
-**Agent 3 — Decision calibration in watch_for** (`helpers/alignment-patterns.ts` + `session-start.ts`)
-- Read decision trail records from palace
-- Compute calibration: "your priors on <category> average X, outcomes average Y"
-- Surface as a `watch_for` entry when agent is about to make a similar decision
-- Example: `"Prior confidence on API design decisions tends to be overconfident (avg prior 0.8, avg outcome 0.5) — corrected 3×"`
-
-**Conflict matrix:**
-- Agent 1 + 2 share `check.ts` → merge into one agent OR run sequentially
-- Agent 3 owns `alignment-patterns.ts` + adds to `session-start.ts` watch_for output
-
-### Remaining open work (from palace/goals)
-
-- Context cache + pre-digest summaries for token savings (AR v3.4 direction)
-- Validate genome on a new live site
-- LobeHub marketplace submission
-- Consider wiring `getConnectedRooms()` into `palaceSearch()` (implemented but never called)
+### Open work
+- Cross-surface ADAPTER P1–P5 (two-lane capture · surface-agnostic status board · Tier-A Stop-time agent-trigger · `brief` + transfer failsafe with read-side security guards · `HOST-TIERS.md`). Operator P0 hosts: OpenClaw + Codex.
+- 3 live store-doctor findings were fixed on the live store in Loop 12; keep `ar doctor`/`ar repair` in the maintenance loop.
 
 ### Key architecture decisions (do not reverse)
 
-- **5-tool MCP surface:** `session_start`, `remember`, `recall`, `session_end`, `check`. Legacy tools exist but are not registered by default.
+- **5-tool MCP surface:** `session_start`, `remember`, `recall`, `session_end`, `check`. Legacy tools exist but aren't default-registered.
 - **RRF scoring** for recall (Reciprocal Rank Fusion across journal + palace + insights).
-- **Palace rooms are Obsidian-compatible** — YAML frontmatter + `[[wikilinks]]`. Do not change file format.
-- **Advisory-only quality gates** — insight quality warnings never block saves. Human/agent is always in control.
-- **`/arsave` not `/agsave`** — `ar` prefix is the namespace. Do not rename commands.
+- **Palace rooms are Obsidian-compatible** — YAML frontmatter + `[[wikilinks]]`. Do not change the file format.
+- **Advisory-only quality gates** — warnings never block saves; human/agent is always in control.
+- **Two capture lanes** — explicit-trigger (liberal, writes the LOCAL raw archive) vs passive-capture (gated by `isLikelyRealCorrection` v4). Do NOT weaken the v4 gate (Loops 7/8/14).
+- **Privacy = opt-in cloud.** No Supabase config → ZERO cloud egress (`config.ts` returns null); personal tier needs `sync_personal:true`. Generous saving stays LOCAL by design.
+- **Naming (P0):** `<domain>-<verb>.ts`; build-modules pair file↔export (`prior-builder↔buildPriors`). `pipeline_*` is the project-narrative-phase domain — do NOT overload "pipeline" (the cross-surface layer is the **adapter**).
+- **`/arsave` not `/agsave`** — `ar` is the command namespace. Slash commands are a Claude Code convenience, NOT the universal interface — other hosts drive the same MCP core (the adapter formalizes this; never tell a Codex agent to run `/arstatus`).
 
 ---
 
@@ -310,9 +308,10 @@ Before starting work on AgentRecall, do this in order:
 - [ ] Run `cd ~/Projects/AgentRecall && git log --oneline -5` — confirm branch state
 - [ ] Run `npm run build` — confirm clean build
 - [ ] Call `session_start({ project: "AgentRecall" })` via MCP — load current context
-- [ ] Decide: merge feature branch first, or start new work on top of it?
-- [ ] Pick the next improvement from "Remaining open work" above
-- [ ] Run the 5-step loop: Scout → Plan → Dispatch → Review → Fix+Ship
+- [ ] Read `docs/internal/OPTIMIZATION-LOOPS.html` (the 14-loop run) + `cross-surface-adapter-spec.md` if touching the adapter
+- [ ] Decide which branch you're on: released `main`, the `opt/autonomous-loops` line, or `feat/cross-surface-adapter`
+- [ ] Pick the next item from "Open work" above
+- [ ] Run the 5-step loop AND the Evolved Patterns (workflow phases for design, convergence check, never-self-review, eval-first, verify-not-guess)
 
 ---
 
