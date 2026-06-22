@@ -10,6 +10,7 @@
     --bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;
     --ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;
     --accent-dim:rgba(138,106,63,.10);--canvas:#1A1814;--canvas-ink:#E8E0D0;--canvas-line:#3A332B;
+    --reflect:#6B5B95;--reflect-bg:rgba(124,107,168,.10);
     --shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.06);
     --shadow-lift:0 4px 12px rgba(43,37,32,.10),0 20px 48px rgba(43,37,32,.14);
   }
@@ -17,6 +18,7 @@
     --bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;
     --ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;
     --accent-dim:rgba(201,165,108,.12);--canvas:#100E0B;--canvas-ink:#E8E0D0;--canvas-line:#2E2820;
+    --reflect:#C9BBE8;--reflect-bg:rgba(156,139,200,.15);
     --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
     --shadow-lift:0 4px 12px rgba(0,0,0,.4),0 20px 48px rgba(0,0,0,.5);
   }}
@@ -57,6 +59,11 @@
   @media (max-width:680px){.grid{grid-template-columns:1fr;padding:20px 20px 6px 24px;}}
   .card{background:var(--bg);border:1px solid var(--rule-soft);border-radius:14px;padding:15px 16px;}
   .card.flag{border-color:var(--accent);background:var(--accent-dim);}
+  /* Reflection / learning card — a distinct cool-violet TYPE, set apart from the warm feature/fix cards. */
+  .card.reflect{border-color:var(--reflect);background:var(--reflect-bg);}
+  .card.reflect h3,.card.reflect .ic{color:var(--reflect);}
+  .card.reflect .why b,.card.reflect p b{color:var(--reflect);}
+  .reflect-badge{font-family:'Baloo 2';font-weight:800;font-size:15px;color:#fff;background:linear-gradient(140deg,#9C8BC8,#6B5B95);padding:5px 14px;border-radius:999px;box-shadow:var(--shadow);}
   .card .ic{font-size:19px;line-height:1;margin-bottom:8px;display:block;}
   .card h3{font-family:'Baloo 2';font-size:15px;color:var(--ink);margin-bottom:5px;}
   .card p{font-size:13px;color:var(--ink-soft);line-height:1.55;}
@@ -108,6 +115,66 @@
     </span>
     <span style="font-size:20px;color:var(--accent);flex-shrink:0;">→</span>
   </a>
+
+  <!-- REFLECTION: Autonomous Loops 12–14 (local, not released) -->
+  <section class="hero">
+    <div class="hero-head">
+      <div class="tagrow">
+        <span class="reflect-badge"><span class="en ">Reflections &amp; Learnings</span><span class="zh ">反思与新知</span></span>
+        <span class="major" style="color:var(--reflect);background:var(--reflect-bg);"><span class="en ">local · not released</span><span class="zh ">本地 · 未发布</span></span>
+        <span class="date mono">2026-06-22</span>
+      </div>
+      <h2 class="hero-title"><span class="en ">Autonomous Loops 12–14</span><span class="zh ">自主优化 Loops 12–14</span></h2>
+      <p class="hero-lede"><span class="en ">A different <b>kind</b> of entry (hence the violet cards): not a shipped feature set, but the autonomous follow-up loops + the honest learnings they earned. All on branch <code>opt/autonomous-loops</code> — <b>nothing pushed, no version bump</b> (REDLINE held). Kept here so the <i>type</i> of update — reflection, not release — is distinguishable at a glance.</span><span class="zh ">一种<b>不同类型</b>的条目(所以用紫色卡):不是已发布的功能集,而是自主延伸的几个 loop + 它们换来的诚实结论。全部在分支 <code>opt/autonomous-loops</code> —— <b>未 push、未升版本</b>(红线守住)。放这里是为了让「更新的<i>类型</i>」—— 反思而非发布 —— 一眼可辨。</span></p>
+    </div>
+    <div class="grid">
+      <div class="card reflect">
+        <span class="ic">🔧</span>
+        <h3><span class="en ">Loop 12 — Live-store repair</span><span class="zh ">Loop 12 — 真实库修复</span></h3>
+        <p><span class="en ">New <code>store-repair.ts</code> (write-side sibling to the read-only <code>store-doctor</code>). With your authorization it fixed <b>3 real findings on the live store</b> — 16-room index drift, a 23-day dead lock, a null consume marker — <code>red→ok</code>, <b>zero content lost</b> (diff-verified vs a backup). Dry-run by default, idempotent.</span><span class="zh ">新增 <code>store-repair.ts</code>(只读 <code>store-doctor</code> 的写操作姊妹)。你授权后在<b>真实库修好 3 个真问题</b> —— 16 room 索引漂移、23 天废锁、null consume marker —— <code>red→ok</code>,<b>零内容丢失</b>(对比备份验证)。默认 dry-run、幂等。</span></p>
+        <p class="why"><span class="en ">Why: diagnosis without a safe, reversible remedy is half a tool.</span><span class="zh ">为什么:只有诊断、没有安全可逆的修复,只是半个工具。</span></p>
+      </div>
+      <div class="card reflect">
+        <span class="ic">🧪</span>
+        <h3><span class="en ">Loop 13 — Learned representation: tested, declined</span><span class="zh ">Loop 13 — 学得表示:实测后否决</span></h3>
+        <p><span class="en ">The long-standing "next bet" (sentence embeddings) was tested <b>eval-first</b>, zero-key (local MiniLM). On the real corpus it showed <b>no benefit</b> — 1/13 vs lexical 2/13; adversarial paraphrase bridged only 2/8; <b>0</b> natural paraphrase pairs exist. <b>Dependency declined.</b></span><span class="zh ">长期挂着的「下一个赌注」(句向量)被<b>eval-first</b>、零 key(本地 MiniLM)实测。真实语料上<b>无收益</b> —— 1/13 vs 词法 2/13;对抗改写只桥接 2/8;天然改写对为 <b>0</b>。<b>依赖否决。</b></span></p>
+        <p class="why"><span class="en ">Why: an experiment that says "no" with proof saved a 25 MB dependency for zero gain.</span><span class="zh ">为什么:一个用证据说「不」的实验,省掉了一个零收益的 25MB 依赖。</span></p>
+      </div>
+      <div class="card reflect">
+        <span class="ic">🔎</span>
+        <h3><span class="en ">Loop 14 — Loop 8 re-verified + precision fix</span><span class="zh ">Loop 14 — Loop 8 复验 + 修精度泄漏</span></h3>
+        <p><span class="en ">Supplied the independent round-table Loop 8 never got. Core v3 gate re-verified <b>SOUND</b>; reviewers found a MEDIUM false-accept (hedged filler) → fixed (GATE v4, recall-safe, eval unchanged) and an overclaim → corrected. <b>All 14 loops now independently verified.</b></span><span class="zh ">补上了 Loop 8 当时被截断的独立 round-table。v3 门核心复验为 <b>SOUND</b>;reviewer 发现 1 个 MEDIUM 误收(hedged filler)→ 已修(GATE v4,recall 不变)+ 1 处夸大 → 已纠正。<b>14 个 loop 现在全部独立复验过。</b></span></p>
+        <p class="why"><span class="en ">Why: "self-verified" is a promissory note; the round-table is what cashes it.</span><span class="zh ">为什么:「自验证」只是张欠条,round-table 才是兑现它的人。</span></p>
+      </div>
+      <div class="card reflect">
+        <span class="ic">💡</span>
+        <h3><span class="en ">Learning — the ceiling is DATA, not the algorithm</span><span class="zh ">新知 — 天花板是数据,不是算法</span></h3>
+        <p><span class="en ">"Understanding" hit one ceiling, now confirmed <b>five independent ways</b> (L3 · L9 · L10 · L11 · L13). The corpus is intent-sparse and the same-intent pairs that exist are lexically obvious — so a fancier matcher adds nothing. The real unlock is <b>more data carrying the "same intent, different words" signal</b>.</span><span class="zh ">「理解」撞上同一道天花板,现在<b>五种独立方式</b>都确认(L3 · L9 · L10 · L11 · L13)。语料意图稀疏,而存在的同意图对在词法上就很明显 —— 更花哨的匹配器加不了分。真正的解法是<b>更多带「同意图、换措辞」信号的数据</b>。</span></p>
+        <p class="why"><span class="en ">Why: stop optimizing the matcher; the lever is capture, not algorithm.</span><span class="zh ">为什么:别再优化匹配器了;杠杆在捕获,不在算法。</span></p>
+      </div>
+      <div class="card reflect">
+        <span class="ic">🪞</span>
+        <h3><span class="en ">Learning — my drafts skew optimistic</span><span class="zh ">新知 — 我的初稿系统性偏乐观</span></h3>
+        <p><span class="en ">The round-table caught my <i>own</i> errors <b>six times</b> (L1 dead-code · L4 bug-masking test · L7/L13/L14 overclaims · L12 config). Every first framing was rosier than the truth. The honest takeaway: <b>"never self-review" isn't hygiene, it's load-bearing</b> — the discipline saves the work, not my restraint.</span><span class="zh ">round-table <b>六次</b>抓到我<i>自己</i>的错(L1 死代码 · L4 掩盖 bug 的测试 · L7/L13/L14 夸大 · L12 配置)。每一版初稿都比真相漂亮。诚实结论:<b>「永不自审」不是卫生习惯,是承重墙</b> —— 救下成果的是纪律,不是我的克制。</span></p>
+        <p class="why"><span class="en ">Why: an agent that knows its own bias designs the harness to catch it.</span><span class="zh ">为什么:知道自己偏差的 agent,会把验证机制设计成能抓住这个偏差。</span></p>
+      </div>
+      <div class="card reflect">
+        <span class="ic">🧰</span>
+        <h3><span class="en ">Learning — the scoreboard outlives the player</span><span class="zh ">新知 — 记分牌比选手活得久</span></h3>
+        <p><span class="en ">The reusable <code>matchFn</code> hook let the embedding be A/B'd on the <b>exact production harness</b> (provably fair) without touching prod. The lasting asset isn't any matcher — it's the honest LOO/paraphrase/cross-project scoreboard any future idea must beat.</span><span class="zh ">可复用的 <code>matchFn</code> 钩子让 embedding 在<b>生产同一个 harness</b> 上 A/B(可证公平),不碰生产。真正的资产不是某个匹配器,而是那套诚实的 LOO/改写/跨项目记分牌 —— 任何未来想法都得先打败它。</span></p>
+        <p class="why"><span class="en ">Why: invest in measurement; it pays out across every later bet.</span><span class="zh ">为什么:投资于测量,它在之后每一个赌注上都回本。</span></p>
+      </div>
+    </div>
+    <div class="verify">
+      <span class="vlabel"><span class="en ">Verified</span><span class="zh ">已验证</span></span>
+      <span class="pill">build · 0 errors</span>
+      <span class="pill">513 tests · 0 fail</span>
+      <span class="pill">14 loops · all verified</span>
+      <span class="pill">33 commits · NOT pushed</span>
+      <span class="pill">REDLINE held</span>
+    </div>
+    <div class="shipped" style="background:var(--reflect-bg);border-color:var(--reflect);"><span class="en "><b>Status:</b> local on <code>opt/autonomous-loops</code> — <b>not pushed, no version bump</b> (REDLINE). Full record: <code>docs/internal/OPTIMIZATION-LOOPS.html</code>. Awaiting your review + merge decision.</span><span class="zh "><b>状态:</b>本地分支 <code>opt/autonomous-loops</code> —— <b>未 push、未升版本</b>(红线)。完整记录:<code>docs/internal/OPTIMIZATION-LOOPS.html</code>。等你 review + 合并决定。</span></div>
+  </section>
 
   <!-- MAJOR: v3.4.32 -->
   <section class="hero">
