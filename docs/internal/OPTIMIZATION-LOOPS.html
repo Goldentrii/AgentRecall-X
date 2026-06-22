@@ -1,4 +1,4 @@
-<title>AgentRecall · 自主优化 11 Loops</title>
+<title>AgentRecall · 自主优化 12 Loops</title>
 <style>
 :root{--bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;--ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;--accent-dim:rgba(138,106,63,.10);--good:#5C7A4A;--bad:#A6483C;--blue:#4E6E8E;--amber:#B07A2E;--shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.07);}
 @media(prefers-color-scheme:dark){:root{--bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;--ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;--accent-dim:rgba(201,165,108,.13);--good:#9DBE84;--bad:#D98A7C;--blue:#8FB0CE;--amber:#D9A85A;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.4);}}
@@ -87,8 +87,8 @@ tr:last-child td{border-bottom:0;}
   <div class="topbar">
     <div class="logo">🔁</div>
     <div>
-      <h1 class="title"><span class="zh">自主优化 · 11 Loops</span><span class="en">Autonomous Optimization · 11 Loops</span></h1>
-      <div class="sub">AgentRecall · opt/autonomous-loops · 25 commits · NOT pushed · 2026-06-21</div>
+      <h1 class="title"><span class="zh">自主优化 · 12 Loops</span><span class="en">Autonomous Optimization · 12 Loops</span></h1>
+      <div class="sub">AgentRecall · opt/autonomous-loops · 29 commits · NOT pushed · 2026-06-22</div>
     </div>
     <div class="lang">
       <button id="zhBtn" class="on" onclick="setLang('zh')">中文</button>
@@ -157,6 +157,11 @@ tr:last-child td{border-bottom:0;}
         <span class="lbl"><span class="zh">跨项目</span><span class="en">Cross-proj</span></span>
         <span class="sc">9/10</span>
       </a>
+      <a class="win" data-target="loop-12">
+        <span class="num">⑫ ✅</span>
+        <span class="lbl"><span class="zh">真库修复</span><span class="en">Live repair</span></span>
+        <span class="sc">9/10</span>
+      </a>
       <a class="spec" data-target="final">
         <span class="num">★</span>
         <span class="lbl"><span class="zh">总评</span><span class="en">Final</span></span>
@@ -196,6 +201,7 @@ tr:last-child td{border-bottom:0;}
     <tr><td>9</td><td><span class="zh">🎨 镜子</span><span class="en">🎨 The Mirror</span></td><td><span class="zh">可纠正自我模型,零编造,每行引用真实 id;thesis 微测 <b>0/25</b></span><span class="en">Correctable self-model, zero fabrication, every line cites real id; thesis test <b>0/25</b></span></td><td class="grade">9</td></tr>
     <tr><td>10</td><td><span class="zh">🎨 意图收敛实验</span><span class="en">🎨 Intent-convergence</span></td><td><span class="zh">「冗余→意图」<b>UNTESTABLE</b>(0 个 N≥3 簇);第 3 次确认稀疏天花板</span><span class="en">"Redundancy→intent" <b>UNTESTABLE</b> (0 N≥3 clusters); 3rd confirmation of sparsity ceiling</span></td><td class="grade">9.5</td></tr>
     <tr><td>11</td><td><span class="zh">🎨 零样本跨项目迁移</span><span class="en">🎨 Cross-project transfer</span></td><td><span class="zh">~27% 词法 / ~9% 实质;跨项目不能救稀疏天花板;第 4 次确认</span><span class="en">~27% lexical / ~9% substantive; cross-project cannot rescue sparsity ceiling; 4th confirmation</span></td><td class="grade">9</td></tr>
+    <tr><td>12</td><td><span class="zh">✅ 真实库修复(store-repair)</span><span class="en">✅ Live-store repair</span></td><td><span class="zh">你授权后:3 个真问题在<b>真实库</b>修好(16 room 漂移 / 23 天废锁 / null marker),red→ok,<b>零内容丢失</b>;doctor 假阳性也修了;round-table 抓的 4 个问题全变回归守卫</span><span class="en">authorized: 3 real findings fixed on the <b>live store</b> (16-room drift / 23-day lock / null marker), red→ok, <b>zero content lost</b>; doctor false-positive fixed too; round-table's 4 issues all regression-guarded</span></td><td class="grade">9</td></tr>
     <tr><td>+</td><td><span class="zh">2 个评测诚实性补丁</span><span class="en">2 eval-honesty patches</span></td><td><span class="zh">active_predictable 第二分母 · 词法↔语义对称提醒(非 loop,补丁)</span><span class="en">active_predictable denominator · symmetric lexical/semantic caveat (patches, not loops)</span></td><td class="grade">—</td></tr>
   </table></div>
 
@@ -599,11 +605,52 @@ tr:last-child td{border-bottom:0;}
     </div>
   </section>
 
+  <!-- LOOP 12 -->
+  <section class="loop" id="loop-12">
+    <div class="loop-hdr">
+      <h2>⑫ ✅ <span class="zh">真实库修复 — store-repair</span><span class="en">Live-store repair — store-repair</span></h2>
+      <span class="st win">9 / 10 · <span class="zh">你授权</span><span class="en">authorized</span></span>
+    </div>
+    <div class="meta">commits eb5ab75 · 9f7ab7d · <span class="zh">主题:真实数据修复 + 命名 P0</span><span class="en">Theme: live-data repair + naming P0</span></div>
+    <div class="blks">
+      <div class="blk">
+        <div class="blk-label"><span class="zh">问题</span><span class="en">Problem</span></div>
+        <p><span class="zh">L6 的 store-doctor 在你<b>真实库</b>发现的 3 个问题一直只报告、没修(写操作要你授权)。你授权后开修:① 16 个 room 的 index 漂移 ② 23 天的废锁 <code>.lock-pipeline-..</code> ③ AgentRecall 的 consume marker 从没推进(null)。</span>
+        <span class="en">The 3 findings L6's store-doctor surfaced on your <b>live store</b> had only ever been reported — fixing needs write ops, which needed your authorization. Now authorized: ① 16-room index drift ② a 23-day dead lock <code>.lock-pipeline-..</code> ③ AgentRecall's consume marker never advanced (null).</span></p>
+      </div>
+      <div class="blk hi">
+        <div class="blk-label"><span class="zh">改了什么</span><span class="en">What was built</span></div>
+        <p><span class="zh"><code>store-repair.ts</code> —— store-doctor 的<b>写操作姊妹</b>:重建漂移 index、删死锁(<code>rmdirSync</code> fail-loud、只删 &gt;5min 的)、跑 L2 的免登录 drain。<b>默认 dry-run、幂等、每步隔离、诚实报告</b>(只列真删掉的锁)。CLI:<code>ar repair [--apply]</code>。还修了 doctor 一个假阳性 + 把保留窗提到共享 <code>retention.ts</code>(单一真源)。</span>
+        <span class="en"><code>store-repair.ts</code> — the <b>write-side sibling</b> to store-doctor: rebuild drifted indexes, remove dead locks (<code>rmdirSync</code>, fail-loud, only &gt;5min old), run L2's login-free drain. <b>Dry-run by default, idempotent, per-step isolated, honest reporting</b> (lists only locks actually removed). CLI: <code>ar repair [--apply]</code>. Also fixed a doctor false-positive + lifted the retention window into a shared <code>retention.ts</code> (single source of truth).</span></p>
+      </div>
+      <div class="blk hi">
+        <div class="blk-label"><span class="zh">结果 · 在你真实库上</span><span class="en">Result · on your live store</span></div>
+        <p><span class="zh"><b>red → ok</b>,3 个问题全修。关键:对比备份,<b>没有任何内容 <code>.md</code> 被改</b> —— 只动了派生缓存(index)、元数据、consume marker、删掉的死锁,外加 2 条高确认洞见自动晋升 CRYSTALLIZED(正是 L2 的预期维护)。<b>零记忆丢失。</b></span>
+        <span class="en"><b>red → ok</b>, all 3 fixed. Critically, diffed against the backup: <b>NO content <code>.md</code> changed</b> — only derived caches (index), metadata, the consume marker, the removed dead lock, plus 2 high-confirmation insights auto-graduating to CRYSTALLIZED (exactly L2's intended maintenance). <b>Zero memory lost.</b></span></p>
+        <div class="num-row">
+          <span class="metric">live: red→ok</span>
+          <span class="metric">content .md changed: 0</span>
+          <span class="metric">508 tests green</span>
+        </div>
+      </div>
+      <div class="blk se">
+        <div class="blk-label"><span class="zh">Round-table(3 个独立 reviewer)</span><span class="en">Round-table (3 independent reviewers)</span></div>
+        <p><span class="zh">skeptic <b>确认 doctor 的改动是修假阳性、不是 gaming</b>(login-free 折叠路径真实存在);safety auditor 证明 <code>.lock-pipeline-..</code> 不会路径逃逸、零数据丢失路径。但又一次(第 4 次)抓到 4 个我没看到的问题:<b>配置化保留窗发散(HIGH)、null-marker 盲区、drain 循环隔离、rmdir 安全</b> —— <b>全部修好并变成回归守卫</b>。</span>
+        <span class="en">The skeptic <b>confirmed the doctor change is a false-positive fix, NOT gaming</b> (the login-free fold path is real); the safety auditor proved <code>.lock-pipeline-..</code> can't path-escape and found zero data-loss paths. But once again (4th time) they caught 4 issues I'd missed: <b>config-resolved retention divergence (HIGH), the null-marker blind spot, drain-loop isolation, rmdir safety</b> — <b>all fixed and turned into regression guards</b>.</span></p>
+      </div>
+      <div class="blk">
+        <div class="blk-label"><span class="zh">命名 P0</span><span class="en">Naming P0</span></div>
+        <p><span class="zh">顺带按你的命名 P0:<code>recognition.ts → recognition-builder.ts</code>、<code>mirror.ts → mirror-builder.ts</code>(匹配现有 <code>prior-builder.ts ↔ buildPriors</code> 约定,与各自的 <code>build*</code> 导出配对)。纯改名,508 测试仍绿。</span>
+        <span class="en">Also, per your naming P0: <code>recognition.ts → recognition-builder.ts</code>, <code>mirror.ts → mirror-builder.ts</code> (matching the existing <code>prior-builder.ts ↔ buildPriors</code> convention, pairing each file with its <code>build*</code> export). Pure rename; 508 tests still green.</span></p>
+      </div>
+    </div>
+  </section>
+
   <!-- FINAL -->
-  <div class="sech" id="final" style="border-color:var(--accent);">★ <span class="zh">总评 —— 11 个 loop 全部完成</span><span class="en">Final self-evaluation — all 11 loops complete</span></div>
+  <div class="sech" id="final" style="border-color:var(--accent);">★ <span class="zh">总评 —— 自主 11-loop 跑 + Loop 12 授权修复</span><span class="en">Final self-evaluation — the autonomous 11-loop run + Loop 12 authorized repair</span></div>
   <div class="card">
-    <p><b><span class="zh">11/11 完成。全程 build 绿(最后 499 测试)。分支 opt/autonomous-loops,25 个 commit,从未 push、未升版本、未删文件 —— 红线全程守住。</span>
-    <span class="en">11/11 done. Build green throughout (499 tests). Branch opt/autonomous-loops, 25 commits — nothing pushed, no version bump, no deletes. REDLINE held the entire run.</span></b></p>
+    <p><b><span class="zh">11/11 自主完成,Loop 12(你授权)已在<b>真实库</b>上落地。全程 build 绿(508 测试)。分支 opt/autonomous-loops,29 个 commit,<u>从未 push、未升版本、未删文件 —— 红线全程守住</u>。</span>
+    <span class="en">11/11 autonomous loops done; Loop 12 (authorized) landed on the <b>live store</b>. Build green throughout (508 tests). Branch opt/autonomous-loops, 29 commits — nothing pushed, no version bump, no deletes. REDLINE held the entire run.</span></b></p>
 
     <p style="margin-top:12px;"><b><span class="zh">这次跑出来的唯一诚实结论:</span><span class="en">The one honest conclusion the run earned:</span></b></p>
     <p><span class="zh">AgentRecall 是个<b>真正不错的记忆系统</b>,落地了真实、可验证的成果(免登录整合、~1ms 实时识别、发现真问题的 store-doctor、把 recall 拉离零的语义匹配),并且现在<b>会测量自己有没有用,而不是假设有用</b>。但「理解」撞上了<b>同一道天花板,四种独立方式都确认</b>:语料意图稀疏,词袋匹配器分不清「没有共同意图」和「有共同意图、只是换了词」。</span>
@@ -621,7 +668,7 @@ tr:last-child td{border-bottom:0;}
   </div>
 
   <!-- DECISIONS -->
-  <div class="sech" id="decide" style="border-color:var(--amber);">⚑ <span class="zh">待你决定(3 件)</span><span class="en">Your call — 3 decisions</span></div>
+  <div class="sech" id="decide" style="border-color:var(--amber);">⚑ <span class="zh">待你决定(#3 已完成)</span><span class="en">Your call (#3 now done)</span></div>
   <div class="card decide">
     <p><b>1 · <span class="zh">合并 / 推送?</span><span class="en">Merge / push?</span></b></p>
     <p><span class="zh">「合并到 main」= 把 25 个 commit 合进<b>本地电脑上的</b> main 分支(可逆,完全不碰 GitHub)。「push 到 GitHub」是<b>另一步</b>,属于红线范畴,需要你明确说「可以 push」。现在<b>两件都没做</b>,全在 <code>opt/autonomous-loops</code>。建议:先 review + 给 Loop 8 补一次 round-table 复验,再决定。</span>
@@ -631,12 +678,12 @@ tr:last-child td{border-bottom:0;}
     <p><span class="zh">四次独立测量都撞上同一道天花板。「学得的语义表示」是<b>唯一</b>能解开「真·数据稀疏 vs 工具假象」二义性的改动。下游的全局 blind-spots、predict-the-correction 都卡在这里。要不要做?</span>
     <span class="en">Four independent measurements hit the same ceiling. A learned semantic representation is the <b>only</b> change that resolves the "real data-sparsity vs instrument artifact" ambiguity. Global blind-spots and predict-the-correction downstream are both blocked on this. Do it?</span></p>
 
-    <p style="margin-top:10px;"><b>3 · <span class="zh">修 store-doctor 发现的 3 个真问题?</span><span class="en">Fix the 3 real store-doctor findings?</span></b></p>
-    <p><span class="zh">你真实 store 里:① <b>16 个 room 的 vector-index 漂移</b>(如 aam/goals: index=4 但实际=24,检索会出错)② <b>22 天的废锁</b>(某进程崩溃留下,阻碍写操作)③ <b>dreaming agent 从没 consume 过任何 entry</b>(可能是夜间登录挂起导致的死循环)。修它们需要 reindex / 清锁(<b>写操作</b>)。Doctor 只读,只报告,没动过。等你授权。</span>
-    <span class="en">In your live store: ① <b>vector-index drift in 16 rooms</b> (e.g., aam/goals: index=4 actual=24 → retrieval errors) ② <b>22-day stale lock</b> (left by a crashed process, blocks writes) ③ <b>dreaming agent never consumed any entry</b> (likely caused by the nightly-login hang creating a dead cycle). Fixing requires reindex / lock-cleanup (<b>write ops</b>). The doctor is read-only — it only reported, never wrote. Awaiting your authorization.</span></p>
+    <p style="margin-top:10px;"><b>3 · <span class="zh">✅ 已完成 — store-doctor 的 3 个真问题</span><span class="en">✅ DONE — the 3 real store-doctor findings</span></b></p>
+    <p><span class="zh">你授权后,<b>Loop 12 已在真实库修好全部 3 个</b>(16 room 漂移 / 23 天废锁 / null marker):<code>red → ok</code>,<b>零内容丢失</b>(对比备份验证)。doctor 的假阳性也一并修了,并建了可重复的 <code>ar repair</code> 工具 + 回归测试。详见上方 Loop 12。<b>这条不再需要你决定。</b></span>
+    <span class="en">Authorized → <b>Loop 12 fixed all 3 on the live store</b> (16-room drift / 23-day lock / null marker): <code>red → ok</code>, <b>zero content lost</b> (diff-verified vs backup). The doctor's false-positive was fixed too, and a repeatable <code>ar repair</code> tool + regression tests were added. See Loop 12 above. <b>No decision needed here anymore.</b></span></p>
   </div>
 
-  <div class="foot">11 loops complete · opt/autonomous-loops · NOT pushed · build green 499 tests · 2026-06-21</div>
+  <div class="foot">12 loops · opt/autonomous-loops · NOT pushed · build green 508 tests · live store red→ok · 2026-06-22</div>
 </div>
 
 <script>
