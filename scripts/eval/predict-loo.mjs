@@ -185,7 +185,13 @@ function predictBlind(leadIn, profile, priorCorrs, opts = {}) {
   const risks = [];
   for (const bs of profile.blind_spots) {
     const triggerSet = new Set(bs.trigger_keywords.map((k) => k.toLowerCase()));
-    const m = matchesBlindSpot(leadIn, bs, MIN_OVERLAP, semanticThreshold);
+    // Injectable matcher (A/B different fire decisions on the IDENTICAL harness —
+    // the predictable set + HIT judgment stay on recorded fields regardless). When
+    // no matchFn is given this is byte-identical to the keyword/semantic path the
+    // existing test pins. matchFn(leadIn, bs) → { fired, via, matched?, semanticScore? }.
+    const m = typeof opts.matchFn === "function"
+      ? opts.matchFn(leadIn, bs)
+      : matchesBlindSpot(leadIn, bs, MIN_OVERLAP, semanticThreshold);
     if (!m.fired) continue;
 
     // Anchor the risk to the prior correction whose signature best overlaps the
@@ -207,7 +213,7 @@ function predictBlind(leadIn, profile, priorCorrs, opts = {}) {
     risks.push({
       tendency: bs.tendency,
       severity: bs.severity,
-      matched: m.via === "keyword" ? m.matched : [`~semantic:${m.semanticScore.toFixed(2)}`],
+      matched: m.via === "keyword" ? m.matched : [`~${m.via}:${(m.semanticScore ?? 0).toFixed(2)}`],
       via: m.via,
       score: baseMatch * (bs.severity === "p0" ? 1.5 : 1),
       anchor,
