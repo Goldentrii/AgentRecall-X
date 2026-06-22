@@ -1,4 +1,4 @@
-<title>AgentRecall · 自主优化 13 Loops</title>
+<title>AgentRecall · 自主优化 14 Loops</title>
 <style>
 :root{--bg:#FAF7F0;--surface:#F1ECDD;--surface-2:#E8E1CC;--ink:#2B2520;--ink-soft:#5A4E3F;--ink-faint:#8C7F6B;--rule:#DCD1B5;--rule-soft:#E6DFC8;--accent:#8A6A3F;--accent-soft:#C9A56C;--accent-dim:rgba(138,106,63,.10);--good:#5C7A4A;--bad:#A6483C;--blue:#4E6E8E;--amber:#B07A2E;--shadow:0 1px 2px rgba(43,37,32,.05),0 6px 20px rgba(43,37,32,.07);}
 @media(prefers-color-scheme:dark){:root{--bg:#15120E;--surface:#1E1A14;--surface-2:#28231B;--ink:#ECE3D2;--ink-soft:#BBAE97;--ink-faint:#897C68;--rule:#322B21;--rule-soft:#261F18;--accent:#C9A56C;--accent-soft:#E0C088;--accent-dim:rgba(201,165,108,.13);--good:#9DBE84;--bad:#D98A7C;--blue:#8FB0CE;--amber:#D9A85A;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.4);}}
@@ -87,8 +87,8 @@ tr:last-child td{border-bottom:0;}
   <div class="topbar">
     <div class="logo">🔁</div>
     <div>
-      <h1 class="title"><span class="zh">自主优化 · 13 Loops</span><span class="en">Autonomous Optimization · 13 Loops</span></h1>
-      <div class="sub">AgentRecall · opt/autonomous-loops · 31 commits · NOT pushed · 2026-06-22</div>
+      <h1 class="title"><span class="zh">自主优化 · 14 Loops</span><span class="en">Autonomous Optimization · 14 Loops</span></h1>
+      <div class="sub">AgentRecall · opt/autonomous-loops · 33 commits · NOT pushed · 2026-06-22</div>
     </div>
     <div class="lang">
       <button id="zhBtn" class="on" onclick="setLang('zh')">中文</button>
@@ -167,6 +167,11 @@ tr:last-child td{border-bottom:0;}
         <span class="lbl"><span class="zh">嵌入实验</span><span class="en">Embedding</span></span>
         <span class="sc">9/10</span>
       </a>
+      <a class="win" data-target="loop-14">
+        <span class="num">⑭ ✅</span>
+        <span class="lbl"><span class="zh">L8 复验</span><span class="en">L8 re-verify</span></span>
+        <span class="sc">9/10</span>
+      </a>
       <a class="spec" data-target="final">
         <span class="num">★</span>
         <span class="lbl"><span class="zh">总评</span><span class="en">Final</span></span>
@@ -202,12 +207,13 @@ tr:last-child td{border-bottom:0;}
     <tr><td>5</td><td><span class="zh">本地语义匹配</span><span class="en">Local semantic matcher</span></td><td><span class="zh">recall <b>0/13 → 2/13 @ 0% FP</b>;改写鲁棒性 0/6 → 6/6;诚实命名「模糊词法」</span><span class="en">Recall <b>0/13 → 2/13 @ 0% FP</b>; paraphrase 0/6 → 6/6; honestly named fuzzy-lexical</span></td><td class="grade">9</td></tr>
     <tr><td>6</td><td><span class="zh">数学层 + store-doctor</span><span class="en">Math layer + store-doctor</span></td><td><span class="zh">MATH.md 诚实;doctor 在真实库发现 <b>3 个真问题</b></span><span class="en">MATH.md honest; store-doctor found <b>3 real issues</b> in live store</span></td><td class="grade">9</td></tr>
     <tr><td>7</td><td><span class="zh">捕获门幸存者偏差</span><span class="en">Capture-gate survivorship bias</span></td><td><span class="zh">76% 丢弃 / 60% 误拒 量化;round-table 抓到我轻微夸大</span><span class="en">76% discard / 60% false-reject quantified; round-table caught my slight overclaim</span></td><td class="grade">8</td></tr>
-    <tr><td>8</td><td><span class="zh">全文捕获门 v3</span><span class="en">Full-text gate v3</span></td><td><span class="zh">丢弃 <b>76% → 46%</b>;476 测试绿;round-table 被预算截断 → 仅自验证 ◑</span><span class="en">Discard <b>76% → 46%</b>; 476 tests green; round-table cut off by budget → self-verified only ◑</span></td><td class="grade">7.5</td></tr>
+    <tr><td>8</td><td><span class="zh">全文捕获门 v3</span><span class="en">Full-text gate v3</span></td><td><span class="zh">丢弃 <b>76% → 46%</b>(全文扫描占 72% 增益);<b>Loop 14 已独立 round-table 复验</b>:核心 SOUND,修了 1 个精度泄漏 + 纠正夸大</span><span class="en">Discard <b>76% → 46%</b> (full-text = 72% of the gain); <b>round-table-verified in Loop 14</b>: core SOUND, 1 precision leak fixed + overclaim corrected</span></td><td class="grade">8</td></tr>
     <tr><td>9</td><td><span class="zh">🎨 镜子</span><span class="en">🎨 The Mirror</span></td><td><span class="zh">可纠正自我模型,零编造,每行引用真实 id;thesis 微测 <b>0/25</b></span><span class="en">Correctable self-model, zero fabrication, every line cites real id; thesis test <b>0/25</b></span></td><td class="grade">9</td></tr>
     <tr><td>10</td><td><span class="zh">🎨 意图收敛实验</span><span class="en">🎨 Intent-convergence</span></td><td><span class="zh">「冗余→意图」<b>UNTESTABLE</b>(0 个 N≥3 簇);第 3 次确认稀疏天花板</span><span class="en">"Redundancy→intent" <b>UNTESTABLE</b> (0 N≥3 clusters); 3rd confirmation of sparsity ceiling</span></td><td class="grade">9.5</td></tr>
     <tr><td>11</td><td><span class="zh">🎨 零样本跨项目迁移</span><span class="en">🎨 Cross-project transfer</span></td><td><span class="zh">~27% 词法 / ~9% 实质;跨项目不能救稀疏天花板;第 4 次确认</span><span class="en">~27% lexical / ~9% substantive; cross-project cannot rescue sparsity ceiling; 4th confirmation</span></td><td class="grade">9</td></tr>
     <tr><td>12</td><td><span class="zh">✅ 真实库修复(store-repair)</span><span class="en">✅ Live-store repair</span></td><td><span class="zh">你授权后:3 个真问题在<b>真实库</b>修好(16 room 漂移 / 23 天废锁 / null marker),red→ok,<b>零内容丢失</b>;doctor 假阳性也修了;round-table 抓的 4 个问题全变回归守卫</span><span class="en">authorized: 3 real findings fixed on the <b>live store</b> (16-room drift / 23-day lock / null marker), red→ok, <b>zero content lost</b>; doctor false-positive fixed too; round-table's 4 issues all regression-guarded</span></td><td class="grade">9</td></tr>
     <tr><td>13</td><td><span class="zh">🎨 学得的语义表示(实验)</span><span class="en">🎨 Learned semantic representation</span></td><td><span class="zh">本地零 key 句向量(MiniLM):harness 上 <b>1/13</b> vs 词法 2/13;对抗改写只桥接 <b>2/8</b>;<b>诚实负数</b> —— 不值得加依赖,数据稀疏天花板第 <b>5</b> 次确认(skeptic 纠正了我的夸大)</span><span class="en">local zero-key MiniLM: <b>1/13</b> vs lexical 2/13 on the harness; adversarial paraphrase bridged only <b>2/8</b>; <b>honest negative</b> — not worth the dependency, <b>5th</b> confirmation of the data-density ceiling (skeptic corrected my overclaims)</span></td><td class="grade">9</td></tr>
+    <tr><td>14</td><td><span class="zh">✅ Loop 8 独立复验 + 修精度泄漏</span><span class="en">✅ Loop 8 re-verify + precision fix</span></td><td><span class="zh">补上 Loop 8 被截断的 round-table(2 个独立 reviewer 真跑测试):核心 v3 复验为 SOUND;发现并修了 hedged-filler 误收(GATE v4,recall 不变);纠正了夸大。<b>14 个 loop 现在全部独立复验过</b></span><span class="en">the round-table Loop 8 never got (2 reviewers, both ran the tests): v3 core re-verified SOUND; found+fixed a hedged-filler false-accept (GATE v4, recall unchanged); corrected the overclaim. <b>All 14 loops now independently verified</b></span></td><td class="grade">9</td></tr>
     <tr><td>+</td><td><span class="zh">2 个评测诚实性补丁</span><span class="en">2 eval-honesty patches</span></td><td><span class="zh">active_predictable 第二分母 · 词法↔语义对称提醒(非 loop,补丁)</span><span class="en">active_predictable denominator · symmetric lexical/semantic caveat (patches, not loops)</span></td><td class="grade">—</td></tr>
   </table></div>
 
@@ -482,8 +488,8 @@ tr:last-child td{border-bottom:0;}
   <!-- LOOP 8 -->
   <section class="loop" id="loop-8">
     <div class="loop-hdr">
-      <h2>⑧ <span class="zh">全文捕获门 v3 ◑</span><span class="en">Full-text capture gate v3 ◑</span></h2>
-      <span class="st part">7.5 / 10 · ◑ <span class="zh">自验证</span><span class="en">self-verified</span></span>
+      <h2>⑧ <span class="zh">全文捕获门 v3</span><span class="en">Full-text capture gate v3</span></h2>
+      <span class="st win">8 / 10 · ✅ <span class="zh">已 round-table 复验(Loop 14)</span><span class="en">round-table-verified (Loop 14)</span></span>
     </div>
     <div class="meta">commit 3b875a8 · <span class="zh">主题:结构化修复</span><span class="en">Theme: structured fix</span></div>
     <div class="blks">
@@ -497,10 +503,16 @@ tr:last-child td{border-bottom:0;}
           <span class="metric">noise held</span>
         </div>
       </div>
-      <div class="blk lo">
-        <div class="blk-label"><span class="zh">诚实标记 ◑ — 需要补做 round-table</span><span class="en">Honest flag ◑ — needs round-table re-verify</span></div>
-        <p><span class="zh">代码在预算耗尽前提交,但 round-table 复验被 session 限制打断 —— <b>只有我自验证,没经独立 round-table</b>。这是整个 11 loop 里最该补一次验证的地方。其它 loop 都经历了至少一次独立 reviewer 的质疑。这个没有。</span>
-        <span class="en">Code committed before budget ran out, but the round-table re-verify was cut off by the session limit — <b>self-verified only, no independent round-table.</b> This is the single place in the entire 11-loop run that most needs an independent verification pass. Every other loop faced at least one skeptic. This one didn't.</span></p>
+      <div class="blk se">
+        <div class="blk-label"><span class="zh">✅ round-table 复验完成(Loop 14)— 核心 SOUND,两处诚实修正</span><span class="en">✅ round-table done (Loop 14) — core SOUND, two honest corrections</span></div>
+        <p><span class="zh">当时 round-table 被预算截断、只有自验证;<b>Loop 14 补上了</b>(2 个独立 reviewer 都真跑了测试/eval)。核心 v3 复验为 <b>SOUND</b>(16/16 软纠正召回、14/14 噪声拒绝、76→46 全部复现)。但 reviewer 抓到两点,都已诚实处理:</span>
+        <span class="en">The round-table was budget-cut at the time (self-verified only); <b>Loop 14 supplied it</b> (2 independent reviewers, both ran the tests/evals). The v3 core re-verified <b>SOUND</b> (16/16 soft-correction recall, 14/14 noise rejection, 76→46 all reproduced). But the reviewers caught two things, both handled honestly:</span></p>
+        <ul class="blk ul">
+          <li><span class="zh"><b>1 个 MEDIUM 精度泄漏(已修):</b>bare 弱动词(use/should/avoid)会误收闲聊「I think we should use it」→ 拆 STRONG/WEAK + hedge 帧,GATE v4,recall 零回退(eval 不变)+ 6 新单测。</span><span class="en"><b>1 MEDIUM precision leak (fixed):</b> bare weak verbs accepted filler ("I think we should use it") → split STRONG/WEAK + hedge frame, GATE v4, zero recall regression (eval unchanged) + 6 new unit tests.</span></li>
+          <li><span class="zh"><b>夸大已纠正:</b>「假拒绝 0%」是<b>循环</b>的(fixture 取自 v2 拒绝日志);真实库仍漏 ~7%(「X 不是 Y」这类纠正事实);全文扫描占 72% 增益、不是 100%。</span><span class="en"><b>Overclaim corrected:</b> the "0% false-reject" was <b>circular</b> (fixture sampled from the v2 reject log); the live corpus still drops ~7% (corrective-fact forms); full-text = 72% of the gain, not 100%.</span></li>
+        </ul>
+        <p><span class="zh">残余的误收(「we should stop if…」这种无 hedge 的弱动词闲聊)我没硬修 —— 完美区分「闲聊」和「纠正」就是 L13 那道语义墙,如实记录、用 rejected-log 监控,而不是再堆正则。</span>
+        <span class="en">The residual false-accepts (non-hedged weak-verb filler like "we should stop if…") were left unfixed on purpose — perfectly separating filler from correction IS the L13 semantic wall; recorded honestly and monitored via the rejected-log rather than piling on more regex.</span></p>
       </div>
     </div>
   </section>
@@ -693,11 +705,42 @@ tr:last-child td{border-bottom:0;}
     </div>
   </section>
 
+  <!-- LOOP 14 -->
+  <section class="loop" id="loop-14">
+    <div class="loop-hdr">
+      <h2>⑭ ✅ <span class="zh">Loop 8 独立复验 + 修精度泄漏</span><span class="en">Loop 8 re-verify + precision fix</span></h2>
+      <span class="st win">9 / 10 · <span class="zh">关掉最后一个缺口</span><span class="en">closes the last gap</span></span>
+    </div>
+    <div class="meta">commit d2f3a46 · <span class="zh">主题:补 Loop 8 那次被预算截断的 round-table</span><span class="en">Theme: the round-table Loop 8 never got</span></div>
+    <div class="blks">
+      <div class="blk">
+        <div class="blk-label"><span class="zh">问题</span><span class="en">Problem</span></div>
+        <p><span class="zh">Loop 8 是 14 个 loop 里<b>唯一</b>只经过自验证的(当时 round-table 被 session 预算截断)。在谈合并前,这个缺口必须关掉 —— 否则「全部独立验证」是假的。</span>
+        <span class="en">Loop 8 was the <b>one</b> loop of the 14 that had only been self-verified (its round-table was cut off by the session budget at the time). Before talking merge, that gap had to close — otherwise "all independently verified" would be a lie.</span></p>
+      </div>
+      <div class="blk hi">
+        <div class="blk-label"><span class="zh">怎么做</span><span class="en">How</span></div>
+        <p><span class="zh">2 个独立 reviewer,<b>都真跑了测试和 eval</b>(不是嘴上 review):一个查正确性/回归,一个当 skeptic 查那个 76→46 的数字。核心 v3 复验为 <b>SOUND</b>:全文扫描、小数点分句、16/16 软纠正召回、14/14 噪声拒绝,全部复现。</span>
+        <span class="en">2 independent reviewers, <b>both actually ran the tests and evals</b> (not eyeball-review): one for correctness/regressions, one a skeptic on the 76→46 number. The v3 core re-verified <b>SOUND</b>: full-text scan, decimal splitter, 16/16 soft-correction recall, 14/14 noise rejection — all reproduced.</span></p>
+      </div>
+      <div class="blk lo">
+        <div class="blk-label"><span class="zh">他们抓到 + 我修了</span><span class="en">What they caught + I fixed</span></div>
+        <p><span class="zh"><b>MEDIUM 精度泄漏:</b>bare 弱动词(use/should/avoid/stop/prefer)会误收一类闲聊(「I think we should use it」)。修法:把指令标记拆成 <b>STRONG</b>(到处都接受)和 <b>WEAK</b>(只在非 hedge 帧里接受),GATE 升 v4。<b>recall 零回退</b>(confusion eval 仍 16/16、0 新误收、46.9% 丢弃不变)+ 6 个新单测钉死两侧。<b>夸大也纠正了</b>(见上 Loop 8 卡)。</span>
+        <span class="en"><b>MEDIUM precision leak:</b> bare weak verbs accepted a class of filler ("I think we should use it"). Fix: split directive markers into <b>STRONG</b> (accept anywhere) vs <b>WEAK</b> (accept only outside a hedge frame), GATE → v4. <b>Zero recall regression</b> (confusion eval still 16/16, 0 new false-accepts, 46.9% discard unchanged) + 6 new unit tests pinning both sides. <b>Overclaim corrected too</b> (see the Loop 8 card above).</span></p>
+      </div>
+      <div class="blk se">
+        <div class="blk-label"><span class="zh">结果 + 一个诚实的连接</span><span class="en">Result + an honest connection</span></div>
+        <p><span class="zh"><b>14 个 loop 现在全部至少经过一次独立复验。</b>但这一轮也再次撞上同一道墙:完美区分「I think we should use it」(闲聊)和「I told you to use inline」(纠正)<b>就是 L13 那道语义墙</b>。所以我只摘了最明显的 hedged filler,残余如实记录、用 rejected-log 监控 —— 不再堆正则去硬碰一个已知是数据/语义层面的问题。</span>
+        <span class="en"><b>All 14 loops are now independently verified at least once.</b> But this loop hit the same wall again: perfectly separating "I think we should use it" (filler) from "I told you to use inline" (correction) <b>IS the L13 semantic wall</b>. So I took only the clearest hedged filler and recorded the residual honestly (monitored via the rejected-log) — rather than piling on more regex against a problem that is, at root, data/semantic.</span></p>
+      </div>
+    </div>
+  </section>
+
   <!-- FINAL -->
   <div class="sech" id="final" style="border-color:var(--accent);">★ <span class="zh">总评 —— 自主 11-loop 跑 + Loops 12–13 授权延伸</span><span class="en">Final self-evaluation — the autonomous 11-loop run + Loops 12–13 authorized follow-up</span></div>
   <div class="card">
-    <p><b><span class="zh">11/11 自主完成,Loops 12–13(你授权)已落地:真实库修复 + 学得表示实验。全程 build 绿(508 测试)。分支 opt/autonomous-loops,31 个 commit,<u>从未 push、未升版本、未删文件 —— 红线全程守住</u>。</span>
-    <span class="en">11/11 autonomous loops done; Loops 12–13 (authorized) landed: live-store repair + the learned-representation experiment. Build green throughout (508 tests). Branch opt/autonomous-loops, 31 commits — nothing pushed, no version bump, no deletes. REDLINE held the entire run.</span></b></p>
+    <p><b><span class="zh">11/11 自主完成,Loops 12–14(你授权)已落地:真实库修复 + 学得表示实验 + Loop 8 独立复验。<b>14 个 loop 现在全部至少经过一次独立复验。</b>全程 build 绿(513 测试)。分支 opt/autonomous-loops,33 个 commit,<u>从未 push、未升版本、未删文件 —— 红线全程守住</u>。</span>
+    <span class="en">11/11 autonomous loops done; Loops 12–14 (authorized) landed: live-store repair + the learned-representation experiment + the Loop 8 re-verify. <b>All 14 loops are now independently verified at least once.</b> Build green throughout (513 tests). Branch opt/autonomous-loops, 33 commits — nothing pushed, no version bump, no deletes. REDLINE held the entire run.</span></b></p>
 
     <p style="margin-top:12px;"><b><span class="zh">这次跑出来的唯一诚实结论:</span><span class="en">The one honest conclusion the run earned:</span></b></p>
     <p><span class="zh">AgentRecall 是个<b>真正不错的记忆系统</b>,落地了真实、可验证的成果(免登录整合、~1ms 实时识别、发现并<b>修复</b>真问题的 store-doctor/repair、把 recall 拉离零的语义匹配),并且现在<b>会测量自己有没有用,而不是假设有用</b>。但「理解」撞上了<b>同一道天花板,五种独立方式都确认</b>(L3 0/13 · L9 0/25 · L10 无法测 · L11 ~9% · <b>L13 嵌入也赢不了</b>):语料意图稀疏,而且天然没有「同意图、换了词」的对 —— 不是工具不行,是数据没有那个信号。</span>
@@ -708,18 +751,18 @@ tr:last-child td{border-bottom:0;}
     <span class="en">The highest-leverage bet was to replace token-overlap with a <b>learned semantic representation</b>. Loop 13 ran exactly that experiment with local zero-key embeddings — <b>no measurable benefit on your real corpus</b> (harness 1/13 vs lexical 2/13; adversarial paraphrase 2/8; natural paraphrase pairs 0). So the wall is <b>data density</b>, not an instrument artifact — now confirmed with the strongest tool. The real unlock isn't a better matcher; it's <b>more data carrying the "same intent, different wording" signal</b>. The harnesses built here (LOO / paraphrase / intent-convergence / cross-project + the pluggable <code>matchFn</code>) are the scoreboard any future representation must beat.</span></p>
 
     <p style="margin-top:12px;"><b><span class="zh">Orchestrator 自评:8.5 / 10。</span><span class="en">Orchestrator self-grade: 8.5 / 10.</span></b></p>
-    <p><span class="zh"><b>做对的:</b>诚实可验证的进步;红线全程守住;round-table <b>反复</b>抓到我自己的错(L1 死代码 · L4 掩盖 bug 的测试 · L7 夸大数字 · L12 配置发散等 4 个 · L13 循环测试+n=13 夸大),每次我都照实记下、当场修,而不是掩盖 —— 一个会犯错、但始终被不与它共享盲点的 reviewer 检查着的 orchestrator。</span>
-    <span class="en"><b>Right:</b> honest, verified, no-theater progress; REDLINE held; the round-table caught my own errors <b>again and again</b> (L1 dead-code · L4 bug-masking test · L7 overclaimed number · L12's 4 issues · L13's circular test + n=13 overclaim) and I recorded and fixed each plainly — an orchestrator that errs but is always checked by reviewers who don't share its blind spots.</span></p>
-    <p><span class="zh"><b>该改的(−1.5):</b>早期 5-agent 大扇出耗光了 session 预算,导致 Loop 8 只有自验证;应该从一开始就控制开销。另外有两次让夸大的措辞进了 commit 说明,是 reviewer 先抓到的。</span>
-    <span class="en"><b>Differently (−1.5):</b> early 5-agent fan-outs exhausted the budget and left Loop 8 self-verified — I should have paced spend from the start. Twice an overclaim reached a commit note that a reviewer, not I, caught first.</span></p>
+    <p><span class="zh"><b>做对的:</b>诚实可验证的进步;红线全程守住;round-table <b>反复</b>抓到我自己的错(L1 死代码 · L4 掩盖 bug 的测试 · L7 夸大数字 · L12 配置发散等 4 个 · L13 循环测试+n=13 夸大 · L14 hedged-filler 误收+夸大),每次我都照实记下、当场修,而不是掩盖 —— 一个会犯错、但始终被不与它共享盲点的 reviewer 检查着的 orchestrator。</span>
+    <span class="en"><b>Right:</b> honest, verified, no-theater progress; REDLINE held; the round-table caught my own errors <b>again and again</b> (L1 dead-code · L4 bug-masking test · L7 overclaimed number · L12's 4 issues · L13's circular test + n=13 overclaim · L14 hedged-filler false-accept + overclaim) and I recorded and fixed each plainly — an orchestrator that errs but is always checked by reviewers who don't share its blind spots.</span></p>
+    <p><span class="zh"><b>该改的(−1.5):</b>早期 5-agent 大扇出耗光了 session 预算,<b>一度</b>导致 Loop 8 只有自验证(本轮 <b>Loop 14 已补独立 round-table、缺口已关</b>);应该从一开始就控制开销。另外有几次让夸大的措辞进了 commit/记录,都是 reviewer 先抓到的 —— 我的初稿仍偏乐观,靠的是「永不自审」这条纪律兜底,而不是我自己更克制。</span>
+    <span class="en"><b>Differently (−1.5):</b> early 5-agent fan-outs exhausted the budget and <b>once</b> left Loop 8 self-verified (now <b>closed — Loop 14 supplied the independent round-table</b>); I should have paced spend from the start. And several times an overclaim reached a commit/record that a reviewer, not I, caught first — my first drafts still skew optimistic; what saves them is the "never self-review" discipline, not my own restraint.</span></p>
   </div>
 
   <!-- DECISIONS -->
   <div class="sech" id="decide" style="border-color:var(--amber);">⚑ <span class="zh">待你决定(只剩 #1;#2、#3 已完成)</span><span class="en">Your call (only #1 left; #2 & #3 done)</span></div>
   <div class="card decide">
     <p><b>1 · <span class="zh">合并 / 推送?</span><span class="en">Merge / push?</span></b></p>
-    <p><span class="zh">「合并到 main」= 把 31 个 commit 合进<b>本地电脑上的</b> main 分支(可逆,完全不碰 GitHub)。「push 到 GitHub」是<b>另一步</b>,属于红线范畴,需要你明确说「可以 push」。现在<b>两件都没做</b>,全在 <code>opt/autonomous-loops</code>。建议:先 review + 给 Loop 8 补一次 round-table 复验(这是唯一还没独立复验的 loop),再决定。</span>
-    <span class="en">"Merge to main" = merge the 31 commits into your <b>local machine's</b> main branch (reversible, doesn't touch GitHub at all). "Push to GitHub" is a <b>separate step</b>, REDLINE territory, requires your explicit "yes, push." <b>Both are currently undone</b> — all on <code>opt/autonomous-loops</code>. My rec: review + re-verify Loop 8 with an independent round-table (the one loop still un-re-verified) first, then decide.</span></p>
+    <p><span class="zh">「合并到 main」= 把 33 个 commit 合进<b>本地电脑上的</b> main 分支(可逆,完全不碰 GitHub)。「push 到 GitHub」是<b>另一步</b>,属于红线范畴,需要你明确说「可以 push」。现在<b>两件都没做</b>,全在 <code>opt/autonomous-loops</code>。<b>Loop 8 的复验缺口本轮已关(Loop 14),14 个 loop 全部独立验证过</b> —— 没有遗留阻塞项了。建议:你 review 满意后,我先做<b>本地合并</b>(可逆),push 仍等你单独点头。</span>
+    <span class="en">"Merge to main" = merge the 33 commits into your <b>local machine's</b> main branch (reversible, doesn't touch GitHub at all). "Push to GitHub" is a <b>separate step</b>, REDLINE territory, requires your explicit "yes, push." <b>Both are currently undone</b> — all on <code>opt/autonomous-loops</code>. <b>The Loop 8 verification gap is now closed (Loop 14); all 14 loops are independently verified</b> — no blockers remain. My rec: once your review is satisfied, I do the <b>local merge</b> (reversible); push still waits for your separate yes.</span></p>
 
     <p style="margin-top:10px;"><b>2 · <span class="zh">✅ 已回答 — 学得的语义表示</span><span class="en">✅ ANSWERED — learned semantic representation</span></b></p>
     <p><span class="zh"><b>Loop 13 做了这个实验</b>(你选的本地零 key 路线)。结论:在你真实语料上<b>没有可测收益</b>(harness 1/13 vs 词法 2/13;对抗改写只桥接 2/8;天然改写对为 0)。<b>决定:不加这个依赖</b> —— 没召回增益、会引入项目共现假阳性、且会失去「极轻量·零 key」。数据稀疏天花板第 5 次确认。诚实保留:更大模型能桥接更多改写,但数据天花板不变 —— 语料若变得更口语化,用 <code>matchFn</code> 钩子重测。详见 <code>docs/internal/loop13-embedding-experiment.md</code>。</span>
@@ -730,7 +773,7 @@ tr:last-child td{border-bottom:0;}
     <span class="en">Authorized → <b>Loop 12 fixed all 3 on the live store</b> (16-room drift / 23-day lock / null marker): <code>red → ok</code>, <b>zero content lost</b> (diff-verified vs backup). The doctor's false-positive was fixed too, and a repeatable <code>ar repair</code> tool + regression tests were added. See Loop 12 above. <b>No decision needed here anymore.</b></span></p>
   </div>
 
-  <div class="foot">13 loops · opt/autonomous-loops · NOT pushed · build green 508 tests · live store red→ok · 2026-06-22</div>
+  <div class="foot">14 loops · opt/autonomous-loops · NOT pushed · build green 513 tests · live store red→ok · all loops independently verified · 2026-06-22</div>
 </div>
 
 <script>
