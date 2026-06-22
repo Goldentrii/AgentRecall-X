@@ -5,7 +5,7 @@ import { smartRemember } from "agent-recall-core";
 export function register(server: McpServer): void {
   server.registerTool("remember", {
     title: "Remember",
-    description: "Use when the user asks to remember, store, note, or save a specific decision, fact, or insight.",
+    description: "[MID-SESSION WRITE — single fact/decision; saying it is not saving it] Use when the user asks to remember, store, note, or save a specific decision, fact, or insight.",
     inputSchema: {
       content: z.string().describe("What to remember."),
       context: z.string().optional().describe(

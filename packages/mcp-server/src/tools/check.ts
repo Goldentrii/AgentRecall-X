@@ -5,7 +5,7 @@ import { check } from "agent-recall-core";
 export function register(server: McpServer): void {
   server.registerTool("check", {
     title: "Check Understanding",
-    description: "Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent.",
+    description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent.",
     inputSchema: {
       goal: z.string().optional().describe("The goal or decision question you're checking alignment on. Required for alignment checks; optional when recording a pure decision trail (prior/posterior/evidence)."),
       understanding: z.string().optional().describe("Alias for goal — use when saying 'check my understanding: X'. Provide either goal or understanding."),

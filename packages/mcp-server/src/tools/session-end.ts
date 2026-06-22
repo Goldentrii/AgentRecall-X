@@ -36,7 +36,7 @@ export function register(server: McpServer): void {
     {
       title: "End Session",
       description:
-        "Use when the user asks to save, checkpoint, summarize, end, retain, or persist the current session. " +
+        "[ON SAVE/EXIT — YOU must call this; nothing auto-saves] Use when the user asks to save, checkpoint, summarize, end, retain, or persist the current session. " +
         "Optionally pass close_phase / open_phase to update the project pipeline narrative spine in the same call.",
       inputSchema: {
         summary: z

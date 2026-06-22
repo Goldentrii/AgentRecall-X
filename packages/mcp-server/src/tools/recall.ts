@@ -22,7 +22,7 @@ function formatResults(items: SmartRecallResultItem[]): string {
 export function register(server: McpServer): void {
   server.registerTool("recall", {
     title: "Recall",
-    description: "Use when the user asks to recall, search, find, or look up previous memory, context, or decisions.",
+    description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions.",
     inputSchema: {
       query: z.string().describe("What to search for."),
       project: z.string().default("auto"),

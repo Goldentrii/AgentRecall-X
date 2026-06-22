@@ -94,11 +94,11 @@ Usage:
   npx agent-recall-mcp --list-tools List available MCP tools (add --full to see full list)
 
 Default tools (5):
-  session_start          Load project context at session start — corrections, insights, warnings
-  session_end            Save journal, insights, trajectory — compounds memory over time
-  remember               Write a memory — auto-routes to the right store
-  recall                 Search all memory — BM25/keyword + RRF fusion + optional vector (OpenAI key)
-  check                  Record understanding; anticipates the likely correction before you make it
+  session_start          [ENTRY — call FIRST, before acting] Load project context at session start — corrections, insights, warnings
+  session_end            [ON SAVE/EXIT — YOU must call this; nothing auto-saves] Save journal, insights, trajectory — compounds memory over time
+  remember               [MID-SESSION WRITE — single fact/decision; saying it is not saving it] Write a memory — auto-routes to the right store
+  recall                 [RETRIEVE — use freely, any time] Search all memory — BM25/keyword + RRF fusion + optional vector (OpenAI key)
+  check                  [MID-SESSION — safe any time; for alignment, before risky decisions] Record understanding; anticipates the likely correction before you make it
 
 Full-mode additions (--full):
   memory_query           Pull-on-demand recall mid-task
@@ -136,11 +136,11 @@ const fullMode = args.includes("--full");
 
 if (args.includes("--list-tools")) {
   const coreTools = [
-    { name: "session_start", description: "Load project context at session start — corrections, insights, watch_for warnings" },
-    { name: "session_end", description: "Save journal, insights, and trajectory — compounds memory over time" },
-    { name: "remember", description: "Save a memory — auto-routes to the right store" },
-    { name: "recall", description: "Search all memory stores, return ranked results with feedback" },
-    { name: "check", description: "Record understanding; anticipates the likely correction before you make it" },
+    { name: "session_start", description: "[ENTRY — call FIRST, before acting] Load project context at session start — corrections, insights, watch_for warnings" },
+    { name: "session_end", description: "[ON SAVE/EXIT — YOU must call this; nothing auto-saves] Save journal, insights, and trajectory — compounds memory over time" },
+    { name: "remember", description: "[MID-SESSION WRITE — single fact/decision; saying it is not saving it] Save a memory — auto-routes to the right store" },
+    { name: "recall", description: "[RETRIEVE — use freely, any time] Search all memory stores, return ranked results with feedback" },
+    { name: "check", description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Record understanding; anticipates the likely correction before you make it" },
   ];
   const fullOnlyTools = [
     { name: "memory_query", description: "Pull-on-demand recall mid-task — query before decisions (--full)" },
