@@ -89,7 +89,13 @@ export interface RecognitionPayload {
   who: RecognitionWho;
   can_do: RecognitionCapabilities;
   project: RecognitionProject;
-  person: RecognitionPerson;
+  /**
+   * ABSENT-WHEN-EMPTY: buildRecognition always populates this, but
+   * session_start DROPS the field when `tendencies` is empty — the caveat
+   * string alone carries no actionable content and wastes payload bytes.
+   * Consumers must treat a missing `person` as "no tendencies known".
+   */
+  person?: RecognitionPerson;
 }
 
 export interface BuildRecognitionOptions {
@@ -111,7 +117,7 @@ export interface BuildRecognitionOptions {
  * corrections, so it is surfaced for orientation only — never as validated truth.
  */
 export const PERSON_LOW_CONFIDENCE_CAVEAT =
-  "low-confidence: derived tendencies, measured 0/13 predictive on real data (Loop 3) — orientation only, not validated.";
+  "low-confidence: 0/13 predictive (Loop 3) — not validated, orientation only.";
 
 /**
  * Trajectory-classification: a `## Next` line containing any of these reads as

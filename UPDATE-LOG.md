@@ -314,6 +314,120 @@ Repo-URL corrections and draft distribution artifacts. No functional code change
 
 ---
 
+## RMR Program — Wave 2 close-out (2026-07-03) — honest heed instrumentation + injection diet + A/B switch + dream audit
+
+Five loops independently reviewed and verified. 815 tests, 0 fail across 4 packages. B2 bench gates green throughout.
+
+---
+
+## RMR Program — C2: injection efficacy (2026-07-03)
+
+Goal: shrink the session_start correction payload without silently dropping behavioral rules. Verified independently by code-reviewer + verifier PASS.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| `SlimCorrection` payload shape | KPI counter fields (`retrieved_count`, `heeded_count`, `precision`, `proof_confidence`, etc.) stripped from injection; `context` included only when it adds ≥20 chars over `rule` | ~60 tokens per correction of internal bookkeeping that doesn't help the LLM act. Context omission saves ~50% of per-correction payload in the common case where rule == context |
+| Per-section char budgets (`SECTION_CHAR_LIMITS`) | corrections_total 1200 chars / insights_total 700 / rooms_total 500 / captures_total 550 (serialized JSON chars); per-field caps on rule (120), context (250), insight title (180), room one-liner (160) | Hard ceilings with concrete budget basis (chars / 4 ≈ tokens) to hit the ≤1500-token-median target; replaces unconstrained payload |
+| P0-never-trimmed guarantee (`applyCorrectionBudget`) | P0 corrections unconditionally survive the cap; when P0s alone exceed `corrections_total` the section intentionally exceeds its budget — controlled overflow, not silent truncation | Non-negotiable behavioral rules must never be silently dropped; P0 completeness beats the byte budget |
+| P0-overflow test | Explicit test: 5 P0 corrections at ≥120 chars each → budget exceeded, all 5 survive, 0 P1s admitted | Documents the exception so a future reader doesn't "fix" the overflow |
+| Context dedupe vs rule | `toSlimCorrection`: context field omitted when `ctx === rule` or `ctx.length ≤ rule.length + 20` | Common store pattern writes identical rule + context; deduping halves the per-correction footprint |
+| `recognition.person?` type honesty | `RecognitionPayload.person` made `optional` (was non-optional but always conditionally absent) in both the type and the session_start formatter (field dropped when `tendencies` is empty) | The old type lied — the formatter already dropped the field when empty, but the type said it was always present. An agent reading the type contract would expect it and be confused by its absence |
+| Verbose formatter renders `ctx` | `verbose:true` path now renders the slim correction's `context` field when present | The terse path hides context for space; the verbose path should show everything it has |
+
+**Numbers:** Median injection 2010→1489 tokens (Mem0 sits at ~7K; we're at 21% of that anchor). p95 latency 1132→363ms warm. Precision@5 57.5% — marked BLOCKED-ON-C3-DATA: the instrument-bias found by C3 contaminates this number; re-measure at C4 readout once C3 data accumulates.
+
+**REDLINE:** local commit only.
+
+---
+
+## RMR Program — C3: heed instrumentation (semantic break, boundary 2026-07-03)
+
+Goal: eliminate the default-heeded bias (heed rate 92.5% was instrument-optimistic with 0/3 evidence-grounded events). Replace with an evidence-grounded verdict taxonomy. Verifier PASS 8/8.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| Verdict taxonomy (`CorrectionOutcome.kind`) | Added `"triggered"`, `"not_triggered"`, `"unknown"` kinds to the existing `retrieved/heeded/recurred/predicted/predict_hit` set | Fills the taxonomy gaps that made the pre-C3 default-heeded path the only path to a verdict |
+| DEFAULT flipped: heeded → unknown | `session-end.ts` verdict logic (1b block, boundary 2026-07-03): when no positive trigger or recurrence evidence exists, the outcome is now `"unknown"` instead of `"heeded"` | Absence of evidence ≠ heeded. The old default inflated heed_rate to 92.5% on 1 real event; the honest reset produces 0/3 evidence-grounded verdicts on the existing corpus — which is the correct starting point |
+| `check-action` records `"triggered"` (1/day dedup) | Every matched correction gets a `"triggered"` outcome appended to `_outcomes.jsonl` (skipped when a triggered-or-stronger event already exists today for that id) | This is the authoritative trigger signal that lets session-end assign `heeded` (triggered + no recurrence marker) vs `recurred` (triggered + recurrence marker). Without it, session-end can only guess via topical overlap |
+| Meta-content guard (`hasGenuineRecurrenceMarker`) | Sentence-granularity guard: a recurrence marker only fires if its own containing sentence carries no eval-vocabulary anchor (`rmr`, `heed_rate`, `baseline`, `_outcomes`, etc.) | AR's own session summaries routinely discuss the measurement system ("the recurred count violated our baseline expectations") — report prose, not a violation admission. Guard prevents eval-vocabulary sentences from triggering false `recurred` verdicts |
+| `verdict_coverage` canonical definition | `getCorrectionKPIs` computes `verdict_coverage = (heeded + recurred + not_triggered) / injected` where "injected" = corrections with `retrieved_count > 0`; `triggered_count`, `unknown_count`, `not_triggered_count` added to `CorrectionKPI` | Reconciled the definition across `getCorrectionKPIs` and `rmr-report.mjs` — they were computing it differently (rmr-report was using total active instead of injected as denominator). Single canonical source now |
+| `recordOutcome` early-return for ledger-only kinds | `recordOutcome` returns early (no correction-record rewrite) for `"triggered"`, `"not_triggered"`, `"unknown"` | These kinds don't update the denormalized `heeded_count`/`recurrence_count`/`precision` fields on the correction record — they are ledger events only. Avoids the lost-update race (flagged in M1) on the new kinds |
+| `rmr-baseline/v2` artifact | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` with side-by-side pre/post numbers | Frozen snapshot at the C3 boundary so future loops can diff against it |
+| Replay honesty | `c3-synthetic-replay.mjs`: real-path coverage 60% (sessions with `check-action` calls), constructed-inclusive 80% (synthetic check-action events added to sessions that had topical overlap) | Replay tests cannot reach 100% on real data: most sessions predate check-action wiring. 80% constructed-inclusive is the honest ceiling; documented rather than papered over |
+
+**Reviewer finding:** 2 new recurrence events in the constructed replay were classified REAL (borderline) — their containing sentences passed the meta-content guard, confirming the guard's precision.
+
+**REDLINE:** local commit only.
+
+---
+
+## RMR Program — C3b: dream-fallback verdict audit (2026-07-03)
+
+Goal: close the 60→80% verdict coverage gap via a nightly dream that audits yesterday's unknown-verdict corrections and records `not_triggered` where evidence supports it. Reviewer found the critical output-shape bug pre-ship.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| `ar outcomes audit-candidates` CLI | Lists corrections retrieved on a given date whose verdict is still `unknown` (no `heeded`/`recurred`/`not_triggered` event). Output: JSON array with `{id, rule, severity, tags, retrieved_date, journal_file_paths}`. Default date: yesterday. `--project` required | Agent-first shape: the nightly dream calls this, reads the JSON, decides verdict, then calls `record` |
+| `ar outcomes record` CLI | Records a dream-audit verdict for a correction. Flags: `--project`, `--id`, `--kind not_triggered\|recurred\|heeded`, `--evidence`, `--audit-date` (defaults to yesterday). Evidence string is prefixed `"dream-audit:"` by the CLI | One-stop verb for the dream: audit-candidates → classify → record |
+| `not_triggered` single-producer enforcement (CORE level) | `recordOutcome` **throws** when `kind === "not_triggered"` and the `evidence` string does not start with `"dream-audit:"`. The CLI prepends this prefix — it cannot be forged without the prefix | `not_triggered` means "this correction was genuinely not relevant to this session" — a verdict that requires auditing the journal, which only the dream does. Session-end must never write it (it would have to scan all corrections for topical absence — too expensive and unreliable). Enforced at the core level, not just the CLI |
+| `listUnknownVerdicts` core helper | `corrections.ts`: scans `_outcomes.jsonl` for corrections with `retrieved_count > 0` and no `heeded`/`recurred`/`not_triggered` event on the target date. Exported from core barrel | The nightly dream needs this to know what to audit; exporting it also enables scripted audits and tests |
+| `recorded_at` forensic anchor | `recordOutcome` stamps `recorded_at: new Date().toISOString()` unconditionally on every call, regardless of the semantic `at` field | `at` (semantic) and `recorded_at` (forensic) diverge exactly when an event is recorded after the fact (the dream backdates `at` to the audited session's day). Readers can tell audit events from live events. Pre-C3b jsonl lines lack `recorded_at`; old readers ignore unknown fields |
+| Backdated `at` semantics verified | `--audit-date` sets the semantic `at` to `noon UTC on that date` — day-bucketed readers (`readOutcomesOnDate`, `listUnknownVerdicts`, 1/day dedup) classify the event onto the session it describes, not the dream's wall-clock day | Clean vs same-day logic: a dream running at 2am for yesterday correctly retroclassifies the event into yesterday's bucket |
+| `dream-prompt.md` Step 10 addendum | Documents the `ar outcomes audit-candidates → classify → ar outcomes record` loop as Step 10 of the dream prompt. Live copy at `~/.aam/dreams/` (backup `.bak-c3b`) | The dream needed explicit instructions for the new verb; Step 10 is addendum-only (Steps 1–9 unchanged) |
+
+**Reviewer finding (caught pre-ship, CRITICAL):** `ar projects` output shape was an object keyed by slug, not an array. The nightly dream's audit loop was iterating `Object.keys()` correctly — but the dream-prompt's Step 9 example had a line that would have called `projects.forEach(...)` and silently iterated nothing (empty array from `.forEach` on an object). Fixed in the CLI's `outcomes audit-candidates` to accept `--project` directly and not depend on `ar projects` output shape. Without this fix the nightly audit would have been a silent no-op.
+
+**REDLINE:** local commit only. Dream-prompt changes are in `~/.aam/` (outside repo) — not committed here.
+
+---
+
+## RMR Program — C4: A/B injection switch (2026-07-03) — opt-in, awaiting owner
+
+Goal: wire a deterministic A/B experiment that lets us measure whether correction injection at session_start actually reduces recurrence. OFF by default — no user degradation without explicit opt-in.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| `packages/core/src/storage/ab-experiment.ts` | `computeArm` (SHA-256 deterministic, pure, no `Math.random`), `assignArm` (appends assignment row to `_ab_arms.jsonl`), `logABResult` (appends result row after session_start resolves — append-only, never rewrite), `readABArms` (merges result rows onto assignment rows by `session_key`), `isExperimentEnabled`, `getForcedArm`, `warnForcedWithoutEnabled` | Full A/B ledger implementation |
+| OFF arm suppresses correction-derived surfaces | When `arm === "off"`: `corrections → []`, `watch_for → []`, `predicted_risks` absent, `blind_spots → []`, `mirror_available` absent, `alignment → null`, `recognition.person` absent (tendencies derive from blind spots). Capture, journaling, and session-end outcome recording stay ON in both arms | The experiment measures injection effect, not capture. All surfaces that derive from corrections are suppressed so the OFF arm means "this agent has no correction memory today" (orchestrator ruling 2026-07-03) |
+| No "retrieved" outcome in OFF sessions | `session-start.ts` skips the `recordOutcome({kind:"retrieved"})` call when `arm === "off"` | Recording retrieval for rules the agent never saw would corrupt the precision KPI and the experiment itself |
+| Append-only ledger / race fix | `logABResult` appends a SEPARATE result row; `readABArms` overlays them. The previous design rewrote the last assignment row in place — two concurrent same-project sessions would zero each other's counter fill (review CRITICAL, fixed) | Append-only is the physical invariant; a result row arriving from a concurrent session cannot corrupt another session's fill |
+| `AR_AB_ENABLED=1` opt-in, `AR_AB_FORCE` escape hatch | Experiment disabled by default. `AR_AB_FORCE=on\|off` overrides arm for demos/emergencies; forced sessions flagged `{forced:true}` in ledger and excluded from `ab-report.mjs` comparisons. `AR_AB_FORCE` without `AR_AB_ENABLED=1` is a LOUD no-op (one stderr warning) | Never degrade real user sessions without explicit intent |
+| `scripts/eval/ab-report.mjs` | McNemar discordant-pair scaffold: reads `_ab_arms.jsonl` + `_outcomes.jsonl`, pairs ON/OFF sessions by local date, computes discordant counts (ON-heeded/OFF-recurred vs ON-recurred/OFF-heeded). CANNOT-CLAIM gate: blocks conclusions when discordant pairs < 6; reports the count needed to reach the gate | McNemar is the right test for matched pairs; the CANNOT-CLAIM gate prevents premature conclusions. 6 pairs is the minimum where a binomial p < 0.1 is possible |
+| Bonus bug fixed | OFF arm was reaching the "No memory found" fallback path in the terse formatter (the empty corrections array triggered the zero-corrections branch which printed a fallback line). Formatter now checks `arm === "off"` and suppresses the fallback | An OFF-arm agent should see a clean payload with absent correction sections — not a "No memory found" banner that would tip it off to the experiment arm |
+
+**Status:** ledger and suppression logic are live. Accumulation starts when the owner sets `AR_AB_ENABLED=1`. Verifier PASS.
+
+**REDLINE:** local commit only.
+
+---
+
+## RMR Program — B4: reproduce-from-docs (2026-07-03)
+
+Goal: verify that a stranger on a fresh clone can reproduce the benchmark exactly following REPRODUCE.md, with no prior knowledge of the repo. Run verbatim in a temp clone; every discrepancy is a doc bug.
+
+**What changed (`docs/eval/REPRODUCE.md`):**
+
+| Item | Finding | Fix |
+|------|---------|-----|
+| MAJOR: phantom `bench-result/v1` dir claim | Step 4 said the artifact lands at `scripts/eval/baselines/correction-transfer-fixture-baseline.json` — correct — but Step 6 referenced a `scripts/eval/baselines/bench-result/v1/` directory that does not exist | Removed the phantom path; Step 6 reworded to describe what `--verify-baselines` actually does (re-derives metrics from `per_item`, asserts equality with stored `metrics`, recomputes `corpus_hash`) |
+| Wrong determinism message | Step 5 quoted the wrong success string — the actual output is `PASS: byte-identical after stripping generated_utc/environment`, not the string in the doc | Updated verbatim |
+| `.nvmrc` missing | Step 0/Prerequisites said "Node 20 or later" but gave no pinning mechanism; a stranger on Node 22+ saw different deprecation warnings and questioned whether the run was clean | Added `.nvmrc` pinning `20` to repo root; doc updated to say `nvm use` |
+| 6 MINOR frictions | Missing blank lines in code blocks, a redundant Step 0 note, an inconsistent env-var example, two broken cross-references to other docs | Fixed inline |
+
+**Verification:** all 7 steps re-run verbatim in the fresh clone after each fix. Final clone state: fixture hash matches, CI gates pass, `--verify-baselines` exits 0 with `all baselines verified`.
+
+**REDLINE:** local commit only.
+
+---
+
 ## Release — v3.4.34 (2026-06-23) — `ar corrections export` (egress contract for external memory backends)
 
 First-class, vendor-neutral, **fail-closed-scrubbed** export of corrections — backlog item #1 surfaced by the AgentRecall + Hindsight integration round-table (20-agent workflow). Before this, any external memory backend (Hindsight/Mem0/Zep) had to glob `~/.agent-recall/projects/*/corrections/*.json` directly (coupled to internal layout) and re-implement the secret scrub (which drifts and leaks the next token type). And AR's `scrubForCloud` is fail-**open** (returns original on error) — correct for the sync hot-path, wrong for a deliberate export.

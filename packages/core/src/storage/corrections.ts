@@ -97,12 +97,37 @@ export interface CorrectionOutcome {
    * the warning. "recurred" = same bug happened again.
    * Wave 5 — "predicted" = predictCorrection fired this risk before the user
    * corrected; "predict_hit" = that prediction later became a real recurrence.
+   *
+   * C3 (2026-07-03) — evidence-grounded verdict kinds:
+   * "triggered"     = correction was consulted via check/check-action (authoritative
+   *                   trigger signal; sets up heeded/recurred classification at session-end)
+   * "not_triggered" = correction was NOT relevant this session (positive evidence of absence)
+   * "unknown"       = no positive evidence for any verdict (NEW DEFAULT — replaces
+   *                   the pre-C3 default-heeded bias; see docs/proposals/c3-heed-instrumentation-design.md)
+   *
+   * Backward-compatibility: old readers that filter on the pre-C3 kind set skip
+   * these new kinds without error (confirmed: rmr-report.mjs, activity-feed.ts).
    */
-  kind: "retrieved" | "heeded" | "recurred" | "predicted" | "predict_hit";
-  /** ISO timestamp */
+  kind: "retrieved" | "heeded" | "recurred" | "predicted" | "predict_hit"
+      | "triggered" | "not_triggered" | "unknown";
+  /**
+   * SEMANTIC timestamp (ISO) — the day the outcome belongs to. The dream-audit
+   * path (C3b) deliberately backdates this to the audited day so day-bucketed
+   * readers (readOutcomesOnDate, listUnknownVerdicts, 1/day dedup) classify the
+   * verdict onto the session it describes.
+   */
   at: string;
   /** Free-text evidence — what made you decide. */
   evidence?: string;
+  /**
+   * FORENSIC timestamp (ISO, C3b) — wall-clock time the event was physically
+   * appended. Set unconditionally by recordOutcome() on every call, never
+   * backdated. `at` (semantic) and `recorded_at` (forensic) diverge exactly
+   * when an event was recorded after the fact (e.g. the nightly dream audit).
+   * Optional for backward-compat: pre-C3b jsonl lines lack it; old readers
+   * ignore unknown fields.
+   */
+  recorded_at?: string;
 }
 
 export interface CorrectionKPI {
@@ -120,6 +145,19 @@ export interface CorrectionKPI {
   high_signal: Array<{ id: string; rule: string; precision: number; retrieved: number }>;
   /** P4: active corrections untouched > STALE_DAYS — review candidates. */
   stale_candidates: Array<{ id: string; rule: string; last_seen: string }>;
+  /**
+   * C3 (2026-07-03) — evidence-grounded verdict coverage metrics.
+   * heed_rate = heeded / (heeded + recurred) — UNCHANGED formula, now evidence-grounded.
+   * verdict_coverage = (heeded + recurred + not_triggered) / retrieved_any (injected).
+   *   "injected" = corrections with retrieved_count > 0 (ever retrieved).
+   * triggered_count = corrections with a "triggered" event in their outcomes.
+   * unknown_count = corrections with "unknown" outcome (no positive evidence).
+   * not_triggered_count = corrections confirmed NOT relevant in a session.
+   */
+  verdict_coverage: number | null;
+  triggered_count: number;
+  unknown_count: number;
+  not_triggered_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -680,14 +718,52 @@ export function retractCorrection(
  * Record an outcome event for a correction (retrieved / heeded / recurred).
  * Appends to _outcomes.jsonl and also updates the correction JSON's counters
  * + precision cache. Atomic per-write.
+ *
+ * C3b invariants:
+ * - `recorded_at` (forensic wall-clock timestamp) is stamped on EVERY event,
+ *   unconditionally — callers cannot suppress or spoof it. The semantic `at`
+ *   stays caller-controlled (the dream audit backdates it to the audited day).
+ * - `not_triggered` is ONLY producible via the dream-audit path: the evidence
+ *   string MUST start with "dream-audit:". Any other producer throws. This is
+ *   the core-level enforcement of the single-producer contract (the CLI's
+ *   `ar outcomes record` is the one caller that adds the prefix).
  */
 export function recordOutcome(outcome: CorrectionOutcome): void {
+  // C3b single-producer gate: not_triggered without the dream-audit evidence
+  // prefix indicates an unauthorized producer — fail loudly, never silently.
+  if (
+    outcome.kind === "not_triggered" &&
+    !(outcome.evidence ?? "").startsWith("dream-audit:")
+  ) {
+    throw new Error(
+      `recordOutcome: kind "not_triggered" is only producible by the dream-audit path — ` +
+      `evidence must start with "dream-audit:". Use \`ar outcomes record --kind not_triggered\` ` +
+      `(it adds the prefix) instead of calling recordOutcome directly.`,
+    );
+  }
+
   const dir = correctionsDir(outcome.project);
   ensureDir(dir);
 
-  // Append jsonl event (audit trail).
-  const line = JSON.stringify(outcome) + "\n";
+  // Append jsonl event (audit trail). recorded_at is the forensic wall-clock
+  // stamp — always NOW, regardless of what the caller put in `at`.
+  const stamped: CorrectionOutcome = { ...outcome, recorded_at: new Date().toISOString() };
+  const line = JSON.stringify(stamped) + "\n";
   fs.appendFileSync(outcomesPath(outcome.project), line, "utf-8");
+
+  // C3: triggered / not_triggered / unknown are LEDGER-ONLY events — they change
+  // no per-record counter, so the read-modify-write below would recompute
+  // precision/proof_confidence to identical values and rewrite the file for
+  // nothing. Early-return after the jsonl append (the authoritative sink):
+  // avoids a wasted betaPosterior + atomic rewrite on every check-action call
+  // and keeps these hot-path kinds clear of the unlocked-RMW counter race.
+  if (
+    outcome.kind === "triggered" ||
+    outcome.kind === "not_triggered" ||
+    outcome.kind === "unknown"
+  ) {
+    return;
+  }
 
   // Update the per-correction file's counters.
   const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
@@ -971,7 +1047,151 @@ export function readOutcomesOnDate(
 }
 
 /**
+ * Read all outcome events for a project from _outcomes.jsonl, bucketed by correction_id.
+ * Returns a Map: correction_id → Set of all outcome kinds ever recorded for that id.
+ * Never throws — returns an empty Map on any fs/parse error.
+ *
+ * Used by getCorrectionKPIs to compute C3 verdict-coverage metrics without
+ * duplicating the outcomes log parsing logic.
+ */
+export function readAllOutcomeKinds(project: string): Map<string, Set<CorrectionOutcome["kind"]>> {
+  return bucketOutcomesBy(project, () => true);
+}
+
+/**
+ * C3b — Dream fallback audit: corrections retrieved on a given date whose
+ * verdict is still UNKNOWN (no heeded/recurred/not_triggered outcome).
+ *
+ * The dream job calls this to discover which corrections to audit overnight.
+ * A correction appears here when:
+ *   - It was retrieved on `date` (has a `retrieved` outcome event on that day), AND
+ *   - It has no heeded, recurred, or not_triggered outcome on that day.
+ *
+ * Returned records include the correction's journal file paths for that date
+ * so the dream agent can read context before recording a verdict.
+ *
+ * @param project - project slug
+ * @param date    - YYYY-MM-DD local date to audit (default: yesterday)
+ */
+export interface UnknownVerdictCandidate {
+  id: string;
+  rule: string;
+  severity: "p0" | "p1";
+  tags: string[];
+  /** Local-TZ date on which the correction was retrieved (matches `date` param). */
+  retrieved_date: string;
+  /** Journal file paths for that date (may be empty if no journal written yet). */
+  journal_file_paths: string[];
+}
+
+export function listUnknownVerdicts(
+  project: string,
+  date?: string,
+): UnknownVerdictCandidate[] {
+  // Default to yesterday
+  const targetDay: string = (() => {
+    if (date) {
+      try {
+        return new Date(date).toLocaleDateString("sv");
+      } catch {
+        return new Date(Date.now() - 86400000).toLocaleDateString("sv");
+      }
+    }
+    return new Date(Date.now() - 86400000).toLocaleDateString("sv");
+  })();
+
+  // Parse ALL outcomes for this project (not just today's) to bucket by day
+  const outcomesFile = outcomesPath(project);
+  if (!fs.existsSync(outcomesFile)) return [];
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(outcomesFile, "utf-8");
+  } catch {
+    return [];
+  }
+
+  // Bucket by correction_id → Set of kinds on targetDay
+  const retrievedOnDate = new Set<string>();
+  const coveredOnDate = new Set<string>(); // heeded | recurred | not_triggered
+
+  const COVERED_KINDS = new Set<CorrectionOutcome["kind"]>(["heeded", "recurred", "not_triggered"]);
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let evt: CorrectionOutcome;
+    try {
+      evt = JSON.parse(trimmed) as CorrectionOutcome;
+    } catch {
+      continue;
+    }
+    if (!evt || !evt.correction_id || !evt.at || !evt.kind) continue;
+    let day: string;
+    try {
+      day = new Date(evt.at).toLocaleDateString("sv");
+    } catch {
+      continue;
+    }
+    if (day !== targetDay) continue;
+    if (evt.kind === "retrieved") retrievedOnDate.add(evt.correction_id);
+    if (COVERED_KINDS.has(evt.kind)) coveredOnDate.add(evt.correction_id);
+  }
+
+  // Unknown = retrieved on targetDay but NOT covered on targetDay
+  const unknownIds = [...retrievedOnDate].filter((id) => !coveredOnDate.has(id));
+  if (unknownIds.length === 0) return [];
+
+  // Resolve correction records
+  const allCorrections = readCorrections(project);
+  const recordById = new Map(allCorrections.map((r) => [r.id, r]));
+
+  // Resolve journal file paths for targetDay
+  const root = getRoot();
+  const safe = (project || "unnamed")
+    .replace(/[^a-zA-Z0-9_\-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100) || "unnamed";
+  const jDir = path.join(root, "projects", safe, "journal");
+  const journalPaths: string[] = [];
+  if (fs.existsSync(jDir)) {
+    try {
+      const files = fs.readdirSync(jDir);
+      for (const f of files) {
+        if (
+          f.endsWith(".md") &&
+          f !== "index.md" &&
+          !f.includes("-log.md") &&
+          !f.includes("--capture--") &&
+          f.startsWith(targetDay)
+        ) {
+          journalPaths.push(path.join(jDir, f));
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const results: UnknownVerdictCandidate[] = [];
+  for (const id of unknownIds) {
+    const rec = recordById.get(id);
+    if (!rec) continue; // orphan — no current record; skip
+    results.push({
+      id: rec.id,
+      rule: rec.rule,
+      severity: rec.severity,
+      tags: rec.tags ?? [],
+      retrieved_date: targetDay,
+      journal_file_paths: journalPaths,
+    });
+  }
+  return results;
+}
+
+/**
  * Aggregate KPIs over all corrections for a project — the "is this learning loop working?" view.
+ * C3 (2026-07-03): adds verdict_coverage, triggered_count, unknown_count, not_triggered_count.
  */
 export function getCorrectionKPIs(project: string): CorrectionKPI {
   const all = readCorrections(project);
@@ -1004,6 +1224,36 @@ export function getCorrectionKPIs(project: string): CorrectionKPI {
     }
   }
 
+  // C3: verdict_coverage — CANONICAL DEFINITION, mirrored verbatim by
+  // buildVerdictLedger in scripts/eval/rmr-report.mjs. Change one → change both
+  // (cross-consistency test: c3-heed-instrumentation.test.mjs asserts they agree).
+  //   injected  = CURRENT correction records with retrieved_count > 0
+  //   covered   = injected ids whose outcome kinds include heeded | recurred | not_triggered
+  //   verdict_coverage = covered / injected   (bounded [0,1] by construction —
+  //   per-id membership, not per-verdict counting; orphan outcome ids whose
+  //   record no longer exists are dropped, they can never inflate the numerator)
+  const allOutcomeKinds = readAllOutcomeKinds(project);
+  const injectedIds = new Set<string>(all.filter((r) => (r.retrieved_count ?? 0) > 0).map((r) => r.id));
+  let coveredIds = 0;
+  for (const id of injectedIds) {
+    const kinds = allOutcomeKinds.get(id);
+    if (kinds && (kinds.has("heeded") || kinds.has("recurred") || kinds.has("not_triggered"))) {
+      coveredIds++;
+    }
+  }
+  // Informational counters stay GLOBAL (all outcome ids, orphans included) —
+  // they are observability tallies, not coverage-numerator components.
+  let triggeredCount = 0;
+  let unknownCount = 0;
+  let notTriggeredCount = 0;
+  for (const kinds of allOutcomeKinds.values()) {
+    if (kinds.has("triggered")) triggeredCount++;
+    if (kinds.has("unknown")) unknownCount++;
+    if (kinds.has("not_triggered")) notTriggeredCount++;
+  }
+  const injectedCount = injectedIds.size;
+  const verdictCoverage = injectedCount > 0 ? Number((coveredIds / injectedCount).toFixed(4)) : null;
+
   return {
     project,
     total: all.length,
@@ -1015,6 +1265,10 @@ export function getCorrectionKPIs(project: string): CorrectionKPI {
     noise_candidates: noise,
     high_signal: hot,
     stale_candidates: stale,
+    verdict_coverage: verdictCoverage,
+    triggered_count: triggeredCount,
+    unknown_count: unknownCount,
+    not_triggered_count: notTriggeredCount,
   };
 }
 

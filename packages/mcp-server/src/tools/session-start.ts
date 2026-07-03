@@ -62,8 +62,7 @@ function formatTerse(result: SessionStartResult): string {
     lines.push("");
     lines.push("⛔ HARD RULES (always follow, no exceptions):");
     for (const c of result.corrections) {
-      const weight = c.weight !== undefined ? ` (w:${c.weight})` : "";
-      lines.push(`  [${c.severity.toUpperCase()}${weight}] ${trunc(c.rule, 120)}`);
+      lines.push(`  [${c.severity.toUpperCase()}] ${trunc(c.rule, 120)}`);
     }
   }
 
@@ -154,6 +153,14 @@ function formatTerse(result: SessionStartResult): string {
     lines.push("Hook-less host? call brief() once for lifecycle rules.");
   }
 
+  // ── C4 A/B experiment marker (quiet trailing tag, not a banner) ────────
+  // Intentionally understated — a loud banner would nudge the agent to behave
+  // differently depending on the arm, which would confound the measurement.
+  // The tag is for transcript review / dashboard display only.
+  if (result.ab_arm) {
+    lines.push(`[ab:${result.ab_arm}]`);
+  }
+
   return lines.join("\n");
 }
 
@@ -164,8 +171,11 @@ function formatVerbose(result: SessionStartResult): string {
     lines.push("## ⛔ HARD RULES — always follow, no exceptions");
     lines.push("These are behavioral constraints, not suggestions. Treat violations as errors.");
     for (const c of result.corrections) {
-      const weight = c.weight !== undefined ? ` (weight: ${c.weight})` : "";
-      lines.push(`[${c.severity.toUpperCase()}${weight}] ${c.rule}`);
+      lines.push(`[${c.severity.toUpperCase()}] ${c.rule}`);
+      // Slim corrections carry `context` only when it adds material content
+      // beyond the rule — verbose mode is where those bytes reach the agent.
+      // Terse mode stays rule-only by design.
+      if (c.context) lines.push(`  ctx: ${c.context}`);
     }
     lines.push("");
   }

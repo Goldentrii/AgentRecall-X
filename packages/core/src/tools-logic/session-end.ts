@@ -12,7 +12,7 @@ import { promoteConfirmedInsights } from "./insight-promotion.js";
 import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
-import { readCorrections, recordOutcome, readOutcomesForToday, readOutcomesBefore } from "../storage/corrections.js";
+import { readCorrections, recordOutcome, readOutcomesForToday, readOutcomesBefore, splitSentences } from "../storage/corrections.js";
 import { recomputeBlindSpots } from "../storage/blind-spots-store.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir } from "../storage/paths.js";
@@ -117,6 +117,45 @@ export interface SessionEndResult {
   pipeline_opened?: PipelinePhaseAction;
   /** Path to the handoff artifact written at session_end. Present on success. */
   handoff_path?: string;
+}
+
+/**
+ * C3 (2026-07-03) — recurrence markers, widened from the pre-C3 set.
+ * "same mistake" retained; added violated/violating/violation, "ignored the rule",
+ * "didn't follow". The bar for a `recurred` verdict is marker + trigger/topical
+ * evidence — widening markers alone does not produce more recurred verdicts.
+ */
+const RECURRENCE_MARKER =
+  /\b(again|recurred|repeated|violat(?:ed|ing|ion)|broke the rule|ignored the rule|didn'?t follow|same mistake)\b/i;
+
+/**
+ * C3 meta-content guard — eval-vocabulary anchors. This project's own summaries
+ * routinely DISCUSS the measurement system ("the recurred count violated our
+ * baseline expectations") — report prose, not a first-person violation admission.
+ * A recurrence marker inside a sentence that carries one of these anchors is
+ * meta-content and must not produce a `recurred` verdict. Prefix-matched
+ * (\binstrument covers instrumented/instrumentation, \bbenchmark covers
+ * benchmarking) — recall-safe because a genuine violation admission has no
+ * reason to name the instrument.
+ */
+const EVAL_VOCAB_ANCHOR =
+  /\b(rmr|heed[_\s-]?rate|baseline|_outcomes|recurrence[_\s-]?count|verdict[_\s-]?coverage|instrument|predict-loo|benchmark)/i;
+
+/**
+ * True when the summary contains a recurrence marker in a sentence that is NOT
+ * eval-meta prose. Sentence granularity via the decimal-safe splitSentences —
+ * a marker only counts if its own containing sentence carries no eval-vocabulary
+ * anchor, so a genuine admission ("I pushed without asking again.") still fires
+ * even when a DIFFERENT sentence in the same summary talks about baselines.
+ * Pure; exported for direct unit testing.
+ */
+export function hasGenuineRecurrenceMarker(summary: string): boolean {
+  for (const sentence of splitSentences(summary)) {
+    if (RECURRENCE_MARKER.test(sentence) && !EVAL_VOCAB_ANCHOR.test(sentence)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function checkInsightQuality(
@@ -232,15 +271,20 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     journalWriteError = err instanceof Error ? err.message : String(err);
   }
 
-  // 1b. P0-B: auto-record heeded/recurred outcomes for corrections that were
-  // retrieved today (last_retrieved date matches today). This is a default-heeded
-  // heuristic with recurrence detection — coarse but closes the learning loop
-  // automatically without requiring the agent to remember to call recordOutcome.
+  // 1b. C3 (2026-07-03): evidence-grounded verdict classification.
+  // SEMANTIC BREAK from pre-C3: the default outcome is now "unknown", NOT "heeded".
+  // See docs/proposals/c3-heed-instrumentation-design.md for full rationale.
   //
-  // Heuristic v1: classify "recurred" only when the session summary contains
-  // ≥ 2 content words from the correction rule (length ≥ 4, lowercased) AND
-  // also contains a recurrence marker. Default to "heeded" when markers absent.
-  // Precision improves when check_action wiring lands in a future sprint.
+  // Verdict logic (strongest evidence wins):
+  //   triggered (from check-action) + recurrence marker → recurred
+  //   triggered (from check-action) + no recurrence marker → heeded
+  //   topical overlap (≥2 content words) + recurrence marker → recurred
+  //   topical overlap only → unknown (cannot distinguish heeded vs recurred)
+  //   no trigger or topical evidence → unknown (absent evidence ≠ heeded)
+  //
+  // "not_triggered" is NOT recorded here — that would require actively scanning
+  // all corrections for topical absence, which is too expensive at session-end.
+  // The dream fallback (documented in the design doc) handles not_triggered.
   //
   // Fire-and-forget: outcome tracking must NEVER affect the session_end result.
   if (journalWritten) {
@@ -248,23 +292,8 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       // Local-TZ date matching (see session-start.ts guard comment).
       const todayStr = new Date().toLocaleDateString("sv");
       const nowISO = new Date().toISOString();
-      // Wave 5: HONEST heeded loop. Default-heeded is optimistic bias — it only
-      // fires now when there is NO real check_action outcome for that correction
-      // TODAY. The single source for "what already fired today" is
-      // readOutcomesForToday (audit trail), shared with check-action/session-start.
-      // Expect aggregate precision to DROP after this change — that is correct,
-      // not a regression (Risk #6): we stop manufacturing heeded events.
       const todayOut = readOutcomesForToday(slug);
-      // Loop 3 — cross-day prediction ledger. predict_hit must come from a
-      // prediction recorded on a STRICTLY EARLIER day (a genuine ahead-of-time
-      // call that later came true), NOT from a same-session predicted+recurred
-      // pair judged by the same matcher in the same pass (that would only measure
-      // lexical self-consistency). readOutcomesBefore reads the _outcomes.jsonl
-      // audit trail and EXCLUDES today's events by construction (day < today), so
-      // a same-day prediction can never satisfy this gate. This replaces the old
-      // `firedToday.has("predicted")` source, which was today-only and therefore
-      // mutually exclusive with the earlier-day requirement — that mismatch made
-      // predict_hit unreachable (the loop-1 known defect, now fixed).
+      // Loop 3 — cross-day prediction ledger (unchanged from pre-C3).
       const predictedBefore = readOutcomesBefore(slug, nowISO);
       const todays = readCorrections(slug).filter(
         (c) =>
@@ -273,13 +302,14 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
           c.active !== false &&
           !(c.last_outcome && new Date(c.last_outcome).toLocaleDateString("sv") === todayStr)
       );
-      const recurrenceMarker = /\b(again|recurred|repeated|violat|broke the rule|same mistake)\b/i;
+      // C3: recurrence detection = widened marker set + meta-content guard
+      // (hasGenuineRecurrenceMarker above). Computed ONCE per session — it depends
+      // only on the summary, not the correction.
+      const genuineRecurrence = hasGenuineRecurrenceMarker(input.summary);
       const summaryLower = input.summary.toLowerCase();
       // A genuine cross-day predict_hit requires: (1) a `predicted` event for this
       // correction on a strictly-earlier day (audit-trail truth), (2) a recurrence
-      // that fired TODAY, and (3) no predict_hit already booked today (dedup). The
-      // audit-trail check is authoritative; the scalar last_predicted is a coarse
-      // secondary signal that can drift, so it is NOT required.
+      // that fired TODAY, and (3) no predict_hit already booked today (dedup).
       const predictedOnEarlierDay = (id: string): boolean => {
         const before = predictedBefore.get(id);
         return !!before && before.has("predicted");
@@ -287,39 +317,72 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       for (const c of todays) {
         try {
           const firedToday = todayOut.get(c.id);
-          // A REAL outcome already exists today → never overwrite it with a
-          // default heuristic. This is the heart of the honesty fix.
+          // A REAL heeded/recurred outcome already exists today (from check-action
+          // or a prior session-end pass) → never overwrite with a heuristic.
           if (firedToday && (firedToday.has("heeded") || firedToday.has("recurred"))) {
-            // Close the predict-the-correction loop: a prediction recorded on an
-            // EARLIER day (audit trail) that has now actually recurred today is a
-            // genuine `predict_hit`. Same-day predicted+recurred is NOT a hit.
+            // Close the predict-the-correction loop (unchanged from pre-C3).
             if (firedToday.has("recurred") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c.id)) {
               recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
             }
             continue;
           }
-          // Extract content words (≥ 4 chars) from the rule text
+          // C3 trigger evidence: did check-action consult this correction today?
+          const hasTriggerEvidence = !!(firedToday && firedToday.has("triggered"));
+
+          // Topical-overlap heuristic (weak supplementary source):
+          // ≥2 content words (≥4 chars) from the rule appear in the session summary.
           const ruleWords = c.rule
             .toLowerCase()
             .split(/\W+/)
             .filter((w) => w.length >= 4);
-          const matchCount = ruleWords.filter((w) => summaryLower.includes(w)).length;
-          const hasRecurrenceMarker = recurrenceMarker.test(input.summary);
-          const violated = matchCount >= 2 && hasRecurrenceMarker;
-          recordOutcome({
-            correction_id: c.id,
-            project: slug,
-            kind: violated ? "recurred" : "heeded",
-            at: nowISO,
-            evidence: violated
-              ? "recurrence markers in session summary"
-              : "no recurrence evidence in session summary (default-heeded — no real outcome today)",
-          });
-          // If a correction predicted on an EARLIER day (audit trail) has now
-          // recurred today, it's a genuine cross-day hit. Same-day predicted+
-          // recurred is NOT a hit (self-confirming). Guard against double-counting.
-          if (violated && !firedToday?.has("predict_hit") && predictedOnEarlierDay(c.id)) {
-            recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
+          const uniqueRuleWords = [...new Set(ruleWords)];
+          const matchCount = uniqueRuleWords.filter((w) => summaryLower.includes(w)).length;
+          const hasTopicalOverlap = matchCount >= 2;
+
+          const hasRecurrenceMarker = genuineRecurrence;
+
+          // Verdict determination (strongest evidence wins):
+          if (hasRecurrenceMarker && (hasTriggerEvidence || hasTopicalOverlap)) {
+            // Violated: recurrence evidence + at least weak trigger/topical evidence
+            recordOutcome({
+              correction_id: c.id,
+              project: slug,
+              kind: "recurred",
+              at: nowISO,
+              evidence: hasTriggerEvidence
+                ? "recurrence marker in summary; correction was triggered via check-action"
+                : `recurrence marker in summary; topical overlap (${matchCount} content words matched)`,
+            });
+            // Predict-the-correction cross-day hit (unchanged logic).
+            if (!firedToday?.has("predict_hit") && predictedOnEarlierDay(c.id)) {
+              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
+            }
+          } else if (hasTriggerEvidence && !hasRecurrenceMarker) {
+            // Triggered via check-action, no recurrence detected → heeded
+            // This is the ONLY path to heeded at session-end (C3 semantic break).
+            recordOutcome({
+              correction_id: c.id,
+              project: slug,
+              kind: "heeded",
+              at: nowISO,
+              evidence: "correction consulted via check-action this session; no recurrence markers in summary",
+            });
+          } else {
+            // No positive trigger or recurrence evidence → unknown.
+            // Pre-C3: this path was "heeded" (default-heeded bias).
+            // Post-C3: this is "unknown" — absence of evidence ≠ heeded.
+            // Includes: topical overlap alone (cannot distinguish heeded vs recurred),
+            // and no overlap at all (retrieved but irrelevant to this session's work).
+            const evidenceNote = hasTopicalOverlap
+              ? `topical overlap detected (${matchCount} content words matched) but no trigger evidence — cannot determine heeded/recurred`
+              : "no trigger or topical evidence; correction was retrieved but not consulted via check-action";
+            recordOutcome({
+              correction_id: c.id,
+              project: slug,
+              kind: "unknown",
+              at: nowISO,
+              evidence: evidenceNote,
+            });
           }
         } catch {
           // Per-correction errors are swallowed — don't abort the loop

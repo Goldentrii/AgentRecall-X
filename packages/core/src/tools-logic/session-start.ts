@@ -31,6 +31,14 @@ import { getDreamHealth, type DreamHealth } from "../storage/dream-health.js";
 import { readBehaviorPolicies, recordPolicyLoad, type BehaviorRule } from "../storage/behavior-policies.js";
 import { buildRecognition, type RecognitionPayload } from "./recognition-builder.js";
 import { runStoreDoctor, storeDoctorBanner } from "./store-doctor.js";
+import {
+  isExperimentEnabled,
+  assignArm,
+  logABResult,
+  warnForcedWithoutEnabled,
+  type Arm,
+  type ABAssignment,
+} from "../storage/ab-experiment.js";
 
 /** Slice text at the nearest word boundary, avoiding mid-word truncation. */
 function sliceAtWord(text: string, maxLen: number): string {
@@ -38,6 +46,109 @@ function sliceAtWord(text: string, maxLen: number): string {
   const sliced = text.slice(0, maxLen);
   const lastSpace = sliced.lastIndexOf(" ");
   return lastSpace > maxLen * 0.6 ? sliced.slice(0, lastSpace) : sliced;
+}
+
+/**
+ * Project a full CorrectionRecord to the slim payload shape.
+ *
+ * KPI counters (retrieved_count, heeded_count, precision, proof_confidence, etc.)
+ * are stripped — they are internal bookkeeping and add ~60 tokens per correction
+ * without helping the LLM act. The agent reads `rule` + `severity` to comply.
+ *
+ * `context` is included only when it contains materially more text than `rule`
+ * (i.e. len > rule.len + 20 chars). When rule == context (the common case),
+ * omitting context saves ~50% of per-correction payload.
+ */
+function toSlimCorrection(c: CorrectionRecord): SlimCorrection {
+  const slim: SlimCorrection = {
+    id: c.id,
+    severity: c.severity,
+    rule: c.rule,
+  };
+  const ctx = (c.context ?? "").trim();
+  const rule = (c.rule ?? "").trim();
+  // Include context only when it adds ≥20 chars of additional content.
+  if (ctx && ctx !== rule && ctx.length > rule.length + 20) {
+    slim.context = sliceAtWord(ctx, 300);
+  }
+  return slim;
+}
+
+/**
+ * Hard per-section budget cap for the session_start payload.
+ *
+ * BUDGET BASIS: the `*_total` budgets are measured against the JSON-SERIALIZED
+ * length of each item (`JSON.stringify(item).length` summed per section), NOT
+ * raw field chars — so keys, quotes, and escapes count against the budget.
+ * Per-field limits (`correction_rule`, `insights_title`, …) ARE raw char caps
+ * applied to the field text before serialization.
+ *
+ * Token estimate: chars / 4 (conservative; real tokenizer would give ~same for English prose).
+ * P0 corrections ALWAYS survive the cap regardless of position — they are the
+ * highest-priority behavioral rules and must never be silently trimmed. When
+ * P0s alone exceed corrections_total, the section intentionally exceeds its
+ * budget (see applyCorrectionBudget).
+ *
+ * Budget allocation (serialized chars — divide by 4 for token equiv):
+ *   corrections:     1200 (~300 tokens)  — P0s always kept, may overflow on dense P0s
+ *   insights:        700  (~175 tokens)
+ *   active_rooms:    500  (~125 tokens)
+ *   recent_captures: 550  (~140 tokens)
+ *   recent briefs:   300+250 raw chars (today+yesterday, per-field caps)
+ *   behavior_rules:  per-field caps only (when≤100, do≤120 raw chars)
+ *   other sections:  unbounded (already small or absent-when-empty)
+ *
+ * Total: ~6000 serialized chars → ~1500 tokens (target: ≤1500 tokens median).
+ */
+const SECTION_CHAR_LIMITS = {
+  correction_rule: 120,      // per item rule field (raw chars)
+  correction_context: 250,   // per item context field (raw chars, only when included)
+  corrections_total: 1200,   // total serialized corrections budget (JSON chars)
+  insights_title: 180,       // per insight title (raw chars)
+  insights_total: 700,       // total insights budget (JSON chars)
+  rooms_one_liner: 160,      // per room one_liner (raw chars)
+  rooms_total: 500,          // total rooms budget (JSON chars)
+  recent_today: 300,         // today brief (raw chars)
+  recent_yesterday: 250,     // yesterday brief (raw chars)
+  capture_question: 80,      // per capture question (raw chars)
+  capture_answer: 180,       // per capture answer (raw chars)
+  captures_total: 550,       // total captures budget (JSON chars)
+  rule_when: 100,            // behavior rule when (raw chars)
+  rule_do: 120,              // behavior rule do (raw chars)
+} as const;
+
+/** Apply per-section char limits to slim corrections, respecting P0 priority. */
+function applyCorrectionBudget(corrections: SlimCorrection[]): SlimCorrection[] {
+  // P0s are unconditionally included (they are the non-negotiable behavioral rules).
+  // P1s fill remaining budget. Both categories are already ranked by rankCorrections.
+  const p0s = corrections.filter(c => c.severity === "p0");
+  const p1s = corrections.filter(c => c.severity !== "p0");
+
+  const trimmedP0s: SlimCorrection[] = p0s.map(c => ({
+    ...c,
+    rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
+    context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
+  }));
+
+  // INTENTIONAL P0 OVERFLOW: P0s always survive — when the trimmed P0s alone
+  // exceed corrections_total, `budget` goes NEGATIVE, zero P1s are admitted,
+  // and the section EXCEEDS its cap. P0 completeness beats the byte budget:
+  // silently dropping a non-negotiable behavioral rule is worse than a fat
+  // payload. Controlled, not accidental — covered by the P0-overflow test.
+  let budget = SECTION_CHAR_LIMITS.corrections_total - JSON.stringify(trimmedP0s).length;
+  const trimmedP1s: SlimCorrection[] = [];
+  for (const c of p1s) {
+    const trimmed: SlimCorrection = {
+      ...c,
+      rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
+      context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
+    };
+    const itemSize = JSON.stringify(trimmed).length;
+    if (budget - itemSize < 0) break; // no room left for P1s
+    trimmedP1s.push(trimmed);
+    budget -= itemSize;
+  }
+  return [...trimmedP0s, ...trimmedP1s];
 }
 
 /**
@@ -63,6 +174,20 @@ export interface SessionStartInput {
   context?: string;
 }
 
+/**
+ * Slim correction record — only the fields an LLM needs at session orientation.
+ * KPI counters (retrieved_count, heeded_count, precision, proof_confidence, etc.)
+ * are internal bookkeeping and omitted here to reduce payload size.
+ * Context is omitted when it is identical to rule (saves ~50% of correction tokens).
+ */
+export interface SlimCorrection {
+  id: string;
+  severity: "p0" | "p1";
+  rule: string;
+  /** Only present when meaningfully different from rule (i.e. has more content). */
+  context?: string;
+}
+
 export interface SessionStartResult {
   project: string;
   identity: string;
@@ -77,7 +202,7 @@ export interface SessionStartResult {
    */
   recent_captures: Array<{ date: string; question: string; answer: string }>;
   watch_for: WatchForPattern[];
-  corrections: CorrectionRecord[];
+  corrections: SlimCorrection[];
   resume: {
     last_date: string | null;
     last_trajectory: string | null;
@@ -133,9 +258,10 @@ export interface SessionStartResult {
   blind_spots: Array<{ tendency: string; severity: "p0" | "p1"; evidence_count: number }>;
   /**
    * Wave 5 — forward anticipation against the active phase goal + latest `## Next`
-   * trajectory (top 2 risks). Empty when likelihood is low or no profile exists.
+   * trajectory (top 2 risks). OMITTED (undefined) when likelihood is low or no
+   * profile exists — absent from JSON when empty, saving ~20 bytes per cold project.
    */
-  predicted_risks: Array<{ tendency: string; likelihood: "high" | "medium" | "low"; matched: string[] }>;
+  predicted_risks?: Array<{ tendency: string; likelihood: "high" | "medium" | "low"; matched: string[] }>;
   /**
    * Loop 4 — real-time RECOGNITION. A compact, deterministically-ordered
    * snapshot of WHO / WHAT-THEY-CAN-DO / PROJECT+PROGRESS / WHAT-KIND-OF-PERSON,
@@ -156,6 +282,25 @@ export interface SessionStartResult {
    */
   mirror_available?: string;
   empty_state?: string;
+  /**
+   * C4 A/B experiment — which arm this session ran.
+   *
+   * Present ONLY when AR_AB_ENABLED=1. When the experiment is disabled (default)
+   * this field is absent from the JSON payload — no bytes wasted, no agent nudge.
+   *
+   * "on"  = full injection as normal.
+   * "off" = "this agent has no correction memory today" (ruling 2026-07-03):
+   *         the ENTIRE correction-derived surface is absent/empty —
+   *         corrections:[], watch_for:[], predicted_risks absent,
+   *         blind_spots:[], mirror_available absent, alignment:null,
+   *         recognition.person absent. Insights/rooms/captures (journal
+   *         lineage) are IDENTICAL across arms — v1 manipulates corrections
+   *         only; insights remain a documented non-manipulated variable.
+   *
+   * The terse formatter appends a quiet trailing marker (not a banner) so the
+   * transcript records the arm without priming the agent to behave differently.
+   */
+  ab_arm?: Arm;
 }
 
 export async function sessionStart(input: SessionStartInput): Promise<SessionStartResult> {
@@ -164,6 +309,25 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
 
   const slug = await resolveProject(input.project);
   ensurePalaceInitialized(slug);
+
+  // C4 A/B experiment — assign the arm FIRST so every correction-derived
+  // section below can gate on it. OFF semantics (orchestrator ruling
+  // 2026-07-03): "this agent has no correction memory today" — corrections,
+  // watch_for, predicted_risks, blind_spots, mirror_available, the alignment
+  // KPI block, and correction-derived recognition tendencies are ALL
+  // absent/empty in OFF payloads. Insights/rooms/captures (journal lineage)
+  // stay in both arms — v1 manipulates corrections only.
+  //
+  // When AR_AB_ENABLED is not set (default), abAssignment is null and every
+  // session gets full injection as before — no degradation, no ledger write.
+  // AR_AB_FORCE without AR_AB_ENABLED=1 is a loud no-op (stderr warning).
+  let abAssignment: ABAssignment | null = null;
+  if (isExperimentEnabled()) {
+    abAssignment = assignArm(slug);
+  } else {
+    warnForcedWithoutEnabled();
+  }
+  const abArm: Arm | null = abAssignment?.arm ?? null;
 
   // 1. Identity — first meaningful lines, skipping YAML frontmatter keys and empty template stubs
   const rawIdentity = readIdentity(slug);
@@ -298,50 +462,60 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
         const brief = extractSection(content, "brief");
         const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
-        const entry = sliceAtWord(stripMarkdownHeaders(raw), 400);
+        const entry = sliceAtWord(stripMarkdownHeaders(raw), SECTION_CHAR_LIMITS.recent_today);
         todayBrief = todayBrief ? `${todayBrief} | ${entry}` : entry;
       } else if (d === yesterday && !yesterdayBrief) {
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
         const brief = extractSection(content, "brief");
         const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
-        yesterdayBrief = sliceAtWord(stripMarkdownHeaders(raw), 400);
+        yesterdayBrief = sliceAtWord(stripMarkdownHeaders(raw), SECTION_CHAR_LIMITS.recent_yesterday);
       } else if (d < yesterday) {
         olderCount++;
       }
     }
   }
 
-  // 6. Watch for — predictive warnings from past corrections
-  const alignLog = readAlignmentLog(slug);
-  const watch_for = extractWatchPatterns(alignLog, 2);
+  // 6. Watch for — predictive warnings from past corrections.
+  // A/B OFF arm: suppressed entirely (correction-derived; ruling 2026-07-03).
+  const watch_for: WatchForPattern[] = [];
+  if (abArm !== "off") {
+    const alignLog = readAlignmentLog(slug);
+    watch_for.push(...extractWatchPatterns(alignLog, 2));
 
-  // 8b. Decision calibration warnings
-  const calibration = computeDecisionCalibration(slug);
-  for (const cal of calibration) {
-    watch_for.push({
-      pattern: cal.pattern,
-      frequency: cal.sample_size,
-      suggestion: cal.suggestion,
-    });
+    // 8b. Decision calibration warnings
+    const calibration = computeDecisionCalibration(slug);
+    for (const cal of calibration) {
+      watch_for.push({
+        pattern: cal.pattern,
+        frequency: cal.sample_size,
+        suggestion: cal.suggestion,
+      });
+    }
   }
 
   // 7. P0 corrections — always-load behavioral rules (max 10).
   // P5: rank by severity → proof_confidence → recency → proof_count so the most
   // authoritative, evidence-backed rules win the cap (was: arbitrary newest-10).
-  const corrections = rankCorrections(readP0Corrections(slug), 10);
+  // We read the FULL records for outcome tracking, then slim them for the payload.
+  const rawCorrections = rankCorrections(readP0Corrections(slug), 10);
 
   // P0-B: auto-record "retrieved" outcome for each surfaced correction.
   // Automaticity Law: only automatic instrumentation captures real data.
   // Guard: fire at most once per correction per calendar day — prevents
   // double-counting if session_start is called twice in the same session
   // (e.g. on reconnect or tool retry).
-  {
+  //
+  // A/B: "retrieved" is ONLY recorded when the correction is actually injected
+  // (arm ON or experiment disabled). In the OFF arm the agent never sees the
+  // corrections — recording "retrieved" would falsely inflate the precision
+  // numerator and corrupt the KPI that measures injection effectiveness.
+  if (abArm !== "off") {
     // Local-TZ date for the 1/day guard (Sprint-0 review: toISOString is UTC,
     // which breaks the guard for users in UTC+5..+14 — e.g. 07:50 local in UTC+8
     // is "yesterday" in UTC). "sv" locale formats as YYYY-MM-DD.
     const todayStr = new Date().toLocaleDateString("sv");
     const nowISO = new Date().toISOString();
-    for (const c of corrections) {
+    for (const c of rawCorrections) {
       if (c.last_retrieved && new Date(c.last_retrieved).toLocaleDateString("sv") === todayStr) continue; // already counted today
       try {
         recordOutcome({
@@ -356,6 +530,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       }
     }
   }
+
+  // Slim corrections: strip KPI fields, keep only what the LLM acts on.
+  // applyCorrectionBudget ensures P0s always survive the total char cap.
+  // A/B OFF arm: corrections is an empty array — the agent never sees them.
+  const correctionsSlim = applyCorrectionBudget(rawCorrections.map(toSlimCorrection));
+  const corrections: SlimCorrection[] = abArm === "off" ? [] : correctionsSlim;
 
   // 8. Resume block — structured re-entry briefing for returning sessions
   const sessionsCount = olderCount + (yesterdayBrief ? 1 : 0) + (todayBrief ? 1 : 0);
@@ -420,8 +600,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   const hasPalaceContent = allRooms.some((r) => countRoomEntries(slug, r.slug) > 0);
   const hasCaptures = recentCaptures.length > 0 || hasCaptureLogs(slug);
 
+  // A/B: use correctionsSlim (pre-suppression), NOT the arm-gated `corrections`,
+  // so empty-state detection is arm-independent — an OFF-arm session on a
+  // corrections-only project must not flash the "No memory found" banner.
   const isEmpty = !resume &&
-    corrections.length === 0 &&
+    correctionsSlim.length === 0 &&
     !todayBrief && !yesterdayBrief &&
     olderCount === 0 &&
     !hasCaptures &&
@@ -445,19 +628,22 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Wrapped in try/catch so a corrupt or unreadable corrections dir never
   // breaks session orientation. Null when no outcome data exists yet
   // (retrieved === 0) — no fake claims.
+  // A/B OFF arm: suppressed (correction-derived KPI; ruling 2026-07-03).
   let alignment: SessionStartResult["alignment"] = null;
-  try {
-    const kpis = getCorrectionKPIs(slug);
-    if (kpis.retrieved > 0) {
-      alignment = {
-        precision: kpis.precision,
-        retrieved: kpis.retrieved,
-        heeded: kpis.heeded,
-        recurred: kpis.recurred,
-      };
+  if (abArm !== "off") {
+    try {
+      const kpis = getCorrectionKPIs(slug);
+      if (kpis.retrieved > 0) {
+        alignment = {
+          precision: kpis.precision,
+          retrieved: kpis.retrieved,
+          heeded: kpis.heeded,
+          recurred: kpis.recurred,
+        };
+      }
+    } catch {
+      // alignment remains null — session_start must always succeed
     }
-  } catch {
-    // alignment remains null — session_start must always succeed
   }
 
   // Dream cron health — surface when broken for ≥2 nights
@@ -501,54 +687,66 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // — never break orientation. Derivation runs async in consolidation; here we
   // only READ the profile and run the (synchronous) predictor over the active
   // phase goal + latest `## Next` trajectory.
+  // A/B OFF arm: blind_spots + predicted_risks are correction-derived —
+  // suppressed entirely (ruling 2026-07-03). The predictor is not even run.
   let blindSpots: SessionStartResult["blind_spots"] = [];
-  let predictedRisks: SessionStartResult["predicted_risks"] = [];
-  try {
-    const profile = readBlindSpots(slug);
-    if (profile) {
-      blindSpots = profile.blind_spots.slice(0, 2).map((b) => ({
-        tendency: sliceAtWord(b.tendency, 160),
-        severity: b.severity,
-        evidence_count: b.evidence_count,
-      }));
-    }
-  } catch {
-    blindSpots = [];
-  }
-  try {
-    const planParts: string[] = [];
-    if (pipeline?.active_phase_goal) planParts.push(pipeline.active_phase_goal);
-    if (resume?.last_trajectory) planParts.push(resume.last_trajectory);
-    const planText = planParts.join(". ").trim();
-    if (planText) {
-      const pred = await predictCorrection({ plan: planText, project: slug });
-      if (pred.likelihood !== "low" && pred.top_risks.length > 0) {
-        predictedRisks = pred.top_risks.slice(0, 2).map((r) => ({
-          tendency: sliceAtWord(r.tendency, 160),
-          likelihood: pred.likelihood,
-          matched: r.matched,
+  // predicted_risks is optional — undefined when empty (absent from JSON, saves ~20 bytes/project).
+  let predictedRisks: NonNullable<SessionStartResult["predicted_risks"]> | undefined;
+  if (abArm !== "off") {
+    try {
+      const profile = readBlindSpots(slug);
+      if (profile) {
+        blindSpots = profile.blind_spots.slice(0, 2).map((b) => ({
+          tendency: sliceAtWord(b.tendency, 160),
+          severity: b.severity,
+          evidence_count: b.evidence_count,
         }));
       }
+    } catch {
+      blindSpots = [];
     }
-  } catch {
-    predictedRisks = [];
+    try {
+      const planParts: string[] = [];
+      if (pipeline?.active_phase_goal) planParts.push(pipeline.active_phase_goal);
+      if (resume?.last_trajectory) planParts.push(resume.last_trajectory);
+      const planText = planParts.join(". ").trim();
+      if (planText) {
+        const pred = await predictCorrection({ plan: planText, project: slug });
+        if (pred.likelihood !== "low" && pred.top_risks.length > 0) {
+          predictedRisks = pred.top_risks.slice(0, 2).map((r) => ({
+            tendency: sliceAtWord(r.tendency, 160),
+            likelihood: pred.likelihood,
+            matched: r.matched,
+          }));
+        }
+      }
+    } catch {
+      predictedRisks = undefined;
+    }
   }
 
   // Loop 9 — cheap pointer to The Mirror. We do NOT assemble the reflection on
   // the hot path; we only note it EXISTS when there is real data to reflect (a
   // stored blind-spots profile OR ≥1 active correction). Best-effort: a failure
   // here leaves the pointer null and never breaks orientation.
+  // A/B OFF arm: suppressed — the pointer names correction counts (correction-
+  // derived). With corrections=[] and blindSpots=[] it would self-suppress
+  // anyway, but the explicit gate keeps the contract robust to future edits.
   let mirrorAvailable: string | undefined;
-  try {
-    const hasProfile = blindSpots.length > 0;
-    const activeCorrections = corrections.filter((c) => c.active !== false).length;
-    if (hasProfile || activeCorrections > 0) {
-      mirrorAvailable =
-        `The Mirror is available — run \`ar mirror --project ${slug}\` to see, and correct, ` +
-        `what I've noticed about how you think (${activeCorrections} corrections grounding it).`;
+  if (abArm !== "off") {
+    try {
+      const hasProfile = blindSpots.length > 0;
+      // corrections is now SlimCorrection[] (no `active` field) — count length directly.
+      // All surfaced corrections are already active (readP0Corrections filters inactive).
+      const activeCorrections = corrections.length;
+      if (hasProfile || activeCorrections > 0) {
+        mirrorAvailable =
+          `The Mirror is available — run \`ar mirror --project ${slug}\` to see, and correct, ` +
+          `what I've noticed about how you think (${activeCorrections} corrections grounding it).`;
+      }
+    } catch {
+      mirrorAvailable = undefined;
     }
-  } catch {
-    mirrorAvailable = undefined;
   }
 
   // Loop 4 — real-time recognition snapshot. Pure-local assembler over the
@@ -566,32 +764,108 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     };
   }
 
-  return {
+  // A/B OFF arm: recognition.person tendencies derive from the blind-spots
+  // profile (corrections lineage) — strip the person block regardless of
+  // content (ruling 2026-07-03). who/can_do/project are NOT correction-derived
+  // and stay.
+  if (abArm === "off" && recognition.person) {
+    const { person: _correctionDerived, ...rest } = recognition;
+    recognition = rest;
+  }
+
+  // Apply per-section char budgets to insights and rooms.
+  const insightsBudgeted = (() => {
+    let budget = SECTION_CHAR_LIMITS.insights_total;
+    const out: typeof insights = [];
+    for (const i of insights) {
+      const trimmed = { ...i, title: sliceAtWord(i.title, SECTION_CHAR_LIMITS.insights_title) };
+      const size = JSON.stringify(trimmed).length;
+      if (budget - size < 0) break;
+      out.push(trimmed);
+      budget -= size;
+    }
+    return out;
+  })();
+
+  const roomsBudgeted = (() => {
+    let budget = SECTION_CHAR_LIMITS.rooms_total;
+    const out: typeof active_rooms = [];
+    for (const r of active_rooms) {
+      const trimmed = { ...r, one_liner: sliceAtWord(r.one_liner, SECTION_CHAR_LIMITS.rooms_one_liner) };
+      const size = JSON.stringify(trimmed).length;
+      if (budget - size < 0) break;
+      out.push(trimmed);
+      budget -= size;
+    }
+    return out;
+  })();
+
+  // recent_captures: suppress "Auto-captured" label (not useful), apply budget.
+  const capturesBudgeted = (() => {
+    let budget = SECTION_CHAR_LIMITS.captures_total;
+    const out: Array<{ date: string; question: string; answer: string }> = [];
+    for (const c of recentCaptures) {
+      // Suppress generic "Auto-captured" question — it adds no signal for the agent.
+      const q = c.question && c.question !== "Auto-captured"
+        ? sliceAtWord(c.question, SECTION_CHAR_LIMITS.capture_question)
+        : "";
+      const a = sliceAtWord(c.answer, SECTION_CHAR_LIMITS.capture_answer);
+      const item = { date: c.date, question: q, answer: a };
+      const size = JSON.stringify(item).length;
+      if (budget - size < 0) break;
+      out.push(item);
+      budget -= size;
+    }
+    return out;
+  })();
+
+  // behavior_rules: apply per-field char limits to when/do.
+  const rulesBudgeted = behaviorRules.map((r) => ({
+    ...r,
+    when: sliceAtWord(r.when, SECTION_CHAR_LIMITS.rule_when),
+    do: sliceAtWord(r.do, SECTION_CHAR_LIMITS.rule_do),
+  }));
+
+  const result: SessionStartResult = {
     project: slug,
     identity,
-    insights,
-    active_rooms,
+    insights: insightsBudgeted,
+    active_rooms: roomsBudgeted,
     cross_project,
     recent: { today: todayBrief, yesterday: yesterdayBrief, older_count: olderCount },
-    recent_captures: recentCaptures.map((c) => ({
-      date: c.date,
-      question: sliceAtWord(c.question, 120),
-      answer: sliceAtWord(c.answer, 200),
-    })),
+    recent_captures: capturesBudgeted,
     watch_for,
     corrections,
     resume,
-    behavior_rules: behaviorRules,
+    behavior_rules: rulesBudgeted,
     dream_health: dreamHealth,
     store_doctor: storeDoctorLine,
     pipeline,
     alignment,
     blind_spots: blindSpots,
-    predicted_risks: predictedRisks,
-    recognition,
+    // Omit predicted_risks entirely when empty — absent from JSON saves bytes.
+    predicted_risks: predictedRisks && predictedRisks.length > 0 ? predictedRisks : undefined,
+    // Suppress recognition.person when tendencies is empty — the caveat string alone
+    // wastes ~70 bytes with no actionable content. RecognitionPayload.person is
+    // optional (absent-when-empty contract); destructuring drops the key entirely.
+    recognition: recognition.person && recognition.person.tendencies.length === 0
+      ? (({ person: _omitEmptyPerson, ...rest }: RecognitionPayload): RecognitionPayload => rest)(recognition)
+      : recognition,
     mirror_available: mirrorAvailable,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
+    // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
+    ab_arm: abArm ?? undefined,
   };
+
+  // C4: fill in the injected_count + payload_tokens in the ledger row now that
+  // we know the final payload shape. Best-effort — never delays the return.
+  if (abAssignment) {
+    const injectedCount = corrections.length; // 0 for OFF arm
+    const payloadTokens = Math.round(JSON.stringify(corrections).length / 4);
+    logABResult(slug, abAssignment.session_key, injectedCount, payloadTokens);
+  }
+
+  return result;
 }
 
 async function autoBackfill(project: string): Promise<void> {

@@ -408,15 +408,21 @@ export function verifyBaseline(file) {
   }
 
   const schema = result.schema_version;
-  if (schema !== BENCH_ARTIFACT_VERSION && schema !== "rmr-baseline/v1") {
+  if (
+    schema !== BENCH_ARTIFACT_VERSION &&
+    schema !== "rmr-baseline/v1" &&
+    schema !== "rmr-baseline/v2"
+  ) {
     throw new Error(
       `verifyBaseline: unknown schema_version "${schema}" in ${file}`,
     );
   }
 
-  // rmr-baseline/v1 has a different structure — verify what we can
-  if (schema === "rmr-baseline/v1") {
-    // Nothing to recompute for old schema; just confirm it parses
+  // rmr-baseline/v1|v2 have a different structure — verify what we can.
+  // v2 (C3, 2026-07-03) adds c3_* verdict-coverage fields; parse-check only,
+  // same as v1 (no per_item to recompute from).
+  if (schema === "rmr-baseline/v1" || schema === "rmr-baseline/v2") {
+    // Nothing to recompute for these schemas; just confirm they parse
     return { ok: true, benchmark: "rmr-report" };
   }
 

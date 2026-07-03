@@ -16,7 +16,7 @@
  */
 
 import { resolveProject } from "../storage/project.js";
-import { readActiveCorrections, type CorrectionRecord } from "./../storage/corrections.js";
+import { readActiveCorrections, recordOutcome, readOutcomesForToday, type CorrectionRecord } from "./../storage/corrections.js";
 import { readBehaviorPolicies, type BehaviorRule } from "../storage/behavior-policies.js";
 import { readAwarenessState } from "../palace/awareness.js";
 
@@ -224,6 +224,34 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
     // A blocked plan leads with the override banner — corrections OVERRIDE the model.
     if (verdict === "blocked") {
       warning = `⛔ CONFLICT: a human correction OVERRIDES this plan — reconcile before proceeding.\n${warning}`;
+    }
+  }
+
+  // C3 (2026-07-03): record a "triggered" outcome for each matched correction.
+  // This is the authoritative trigger signal — the agent consulted this correction
+  // before acting. Session-end uses this to determine heeded/recurred without
+  // falling back to the default-heeded bias.
+  // One-per-day dedup: if a "triggered" event already fired today for this correction,
+  // skip to avoid log inflation on repeated check-action calls in the same session.
+  // Best-effort: trigger recording must NEVER affect the check-action result.
+  if (topCorrections.length > 0) {
+    try {
+      const nowISO = new Date().toISOString();
+      const todayOut = readOutcomesForToday(slug);
+      for (const c of topCorrections) {
+        const firedToday = todayOut.get(c.id);
+        // Skip if a triggered (or stronger) outcome already exists today
+        if (firedToday && firedToday.has("triggered")) continue;
+        recordOutcome({
+          correction_id: c.id,
+          project: slug,
+          kind: "triggered",
+          at: nowISO,
+          evidence: `check-action consulted before "${action.slice(0, 60)}" (tokens: ${c.matched_tokens.join(", ")})`,
+        });
+      }
+    } catch {
+      // Trigger recording is fire-and-forget — never affect the result
     }
   }
 

@@ -60,11 +60,15 @@ import * as os from "node:os";
 // Config
 // ───────────────────────────────────────────────────────────────────────────
 
-const GENERATED_DATE = "2026-07-02";
+const GENERATED_DATE = "2026-07-03";
 const ARTIFACT_PATH = new URL(
-  "../../scripts/eval/baselines/rmr-baseline-2026-07-02.json",
+  "../../scripts/eval/baselines/rmr-baseline-2026-07-03.json",
   import.meta.url
 ).pathname;
+
+// C3 semantic boundary: date when the default-heeded bias was eliminated.
+// Pre-C3 heed events are instrument-generated; post-C3 require positive trigger evidence.
+const C3_SEMANTIC_BOUNDARY = "2026-07-03";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Wilson 95% CI
@@ -174,7 +178,7 @@ function readOutcomes(root, project) {
       } catch {
         localDay = "unknown";
       }
-      out.push({ correction_id: evt.correction_id, kind: evt.kind, at: evt.at, localDay });
+      out.push({ correction_id: evt.correction_id, kind: evt.kind, at: evt.at, localDay, evidence: evt.evidence ?? "" });
     } catch {
       // skip malformed lines
     }
@@ -260,6 +264,117 @@ function buildHeedLedger(outcomes) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// C3: verdict-coverage ledger — evidence-grounded metrics
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * C3 (2026-07-03) verdict ledger. Distinct from the pre-C3 heed ledger:
+ *   - heed_yes / heed_no remain UNCHANGED (backward-compat numerators)
+ *   - NEW: counts of the C3 evidence-grounded kinds per correction (distinct corrections,
+ *     not events — avoid multi-fire inflation)
+ *
+ * Pre-C3 "heeded" events: identified by evidence containing "default-heeded" — these
+ * are instrument-generated, not evidence-grounded. They count in heed_yes (unchanged)
+ * but are flagged separately so consumers can discount them.
+ *
+ * verdict_coverage — CANONICAL DEFINITION, mirrored verbatim by getCorrectionKPIs
+ * in packages/core/src/storage/corrections.ts. Change one → change both
+ * (cross-consistency test: c3-heed-instrumentation.test.mjs asserts they agree).
+ *   injected  = CURRENT correction records with retrieved_count > 0
+ *   covered   = injected ids whose outcome kinds include heeded | recurred | not_triggered
+ *   verdict_coverage = covered / injected   (bounded [0,1] by construction —
+ *   per-id membership, not per-verdict counting; orphan outcome ids whose record
+ *   no longer exists are dropped, they can never inflate the numerator)
+ */
+function buildVerdictLedger(outcomes, corrections) {
+  // Per-correction kind sets (deduplicated)
+  const byId = new Map();
+  for (const evt of outcomes) {
+    let set = byId.get(evt.correction_id);
+    if (!set) { set = new Set(); byId.set(evt.correction_id, set); }
+    set.add(evt.kind);
+    // Tag pre-C3 instrument-generated heeded events.
+    // Pre-C3 evidence strings: "no recurrence evidence in session summary" (and the longer
+    // form with "default-heeded"). Both are instrument-generated (default-heeded bias).
+    // Post-C3 evidence: "correction consulted via check-action this session; no recurrence markers"
+    //
+    // BRITTLENESS WARNING: this matches the exact prose session-end.ts happened to
+    // write before 2026-07-03 — a heuristic over free-text `evidence`. If those
+    // strings are ever edited retroactively, or another writer emits a heeded event
+    // with coincidentally similar prose, the pre/post attribution drifts silently.
+    // The DURABLE discriminator is the c3_semantic_boundary date: events at/after
+    // 2026-07-03 come from the evidence-grounded path regardless of prose. Prefer
+    // the date in future consumers; this string match exists only because pre-C3
+    // events carry no structural marker.
+    if (evt.kind === "heeded" && evt.evidence && (
+      /default-heeded/i.test(evt.evidence) ||
+      /no recurrence evidence in session summary/i.test(evt.evidence)
+    )) {
+      set.add("__instrument_heeded__");
+    }
+  }
+
+  // "injected" = CURRENT corrections with retrieved_count > 0 (ever retrieved)
+  const injectedIds = new Set(corrections.filter((r) => (r.retrieved_count ?? 0) > 0).map((r) => r.id));
+
+  let heededEvidenceIds = 0;     // heeded events WITHOUT the instrument-bias marker
+  let heededInstrumentIds = 0;   // heeded events that are instrument-generated (pre-C3)
+  let recurredIds = 0;
+  let triggeredIds = 0;
+  let unknownIds = 0;
+  let notTriggeredIds = 0;
+  // C3b: dream-audit verdicts — outcomes whose evidence string is prefixed "dream-audit:"
+  // Counted per CORRECTION (distinct ids), not per event.
+  let dreamAuditIds = 0;
+
+  // Collect dream-audit correction ids from the raw event list (one pass)
+  const dreamAuditCorrectionIds = new Set();
+  for (const evt of outcomes) {
+    if (evt.evidence && /^dream-audit:/i.test(evt.evidence)) {
+      dreamAuditCorrectionIds.add(evt.correction_id);
+    }
+  }
+
+  for (const [id, kinds] of byId) {
+    if (kinds.has("heeded")) {
+      if (kinds.has("__instrument_heeded__")) heededInstrumentIds++;
+      else heededEvidenceIds++;
+    }
+    if (kinds.has("recurred")) recurredIds++;
+    if (kinds.has("triggered")) triggeredIds++;
+    if (kinds.has("unknown")) unknownIds++;
+    if (kinds.has("not_triggered")) notTriggeredIds++;
+    if (dreamAuditCorrectionIds.has(id)) dreamAuditIds++;
+  }
+
+  // Canonical coverage: per-id membership over the injected set (see docblock).
+  let coveredIds = 0;
+  for (const id of injectedIds) {
+    const kinds = byId.get(id);
+    if (kinds && (kinds.has("heeded") || kinds.has("recurred") || kinds.has("not_triggered"))) {
+      coveredIds++;
+    }
+  }
+  const injectedCount = injectedIds.size;
+  const verdictCoverage = injectedCount > 0 ? Number((coveredIds / injectedCount).toFixed(4)) : null;
+
+  return {
+    injected_ids: injectedCount,
+    heeded_evidence_ids: heededEvidenceIds,     // evidence-grounded heeded (post-C3)
+    heeded_instrument_ids: heededInstrumentIds,  // instrument-generated heeded (pre-C3 bias)
+    recurred_ids: recurredIds,
+    triggered_ids: triggeredIds,
+    unknown_ids: unknownIds,
+    not_triggered_ids: notTriggeredIds,
+    // C3b: distinct corrections that received at least one dream-audit verdict
+    // (any kind whose evidence string starts with "dream-audit:").
+    // This measures the dream fallback's contribution to closing the coverage gap.
+    dream_audit_count: dreamAuditIds,
+    verdict_coverage: verdictCoverage,
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Per-project aggregation
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -341,6 +456,9 @@ function aggregateProject(root, project) {
   const [heedCI_lo, heedCI_hi] =
     heedDenom > 0 ? wilsonCI(heedYes, heedDenom) : [null, null];
 
+  // C3: evidence-grounded verdict metrics
+  const c3 = buildVerdictLedger(outcomes, corrections);
+
   return {
     project,
     sessions,
@@ -358,6 +476,15 @@ function aggregateProject(root, project) {
     heed_rate: heedRate !== null ? Number(heedRate.toFixed(4)) : null,
     heed_rate_wilson95_lo: heedCI_lo !== null ? Number(heedCI_lo.toFixed(4)) : null,
     heed_rate_wilson95_hi: heedCI_hi !== null ? Number(heedCI_hi.toFixed(4)) : null,
+    // C3 evidence-grounded verdict metrics
+    c3_verdict_coverage: c3.verdict_coverage,
+    c3_heeded_evidence: c3.heeded_evidence_ids,
+    c3_heeded_instrument: c3.heeded_instrument_ids,
+    c3_triggered: c3.triggered_ids,
+    c3_unknown: c3.unknown_ids,
+    c3_not_triggered: c3.not_triggered_ids,
+    // C3b: corrections that received at least one dream-audit verdict (evidence "dream-audit:…")
+    c3_dream_audit: c3.dream_audit_count,
   };
 }
 
@@ -382,6 +509,15 @@ function aggregatePooled(perProject, sessionsAllProjects) {
   let heedYes = 0;
   let heedNo = 0;
   let heedUnknown = 0;
+  // C3 evidence-grounded counters
+  let c3HeededEvidence = 0;
+  let c3HeededInstrument = 0;
+  let c3Triggered = 0;
+  let c3Unknown = 0;
+  let c3NotTriggered = 0;
+  let c3InjectedTotal = 0;
+  // C3b: pooled dream-audit verdict count
+  let c3DreamAudit = 0;
 
   for (const p of perProject) {
     sessionsCorrectionsProjects += p.sessions;
@@ -392,6 +528,15 @@ function aggregatePooled(perProject, sessionsAllProjects) {
     heedYes += p.heed_yes;
     heedNo += p.heed_no;
     heedUnknown += p.heed_unknown;
+    c3HeededEvidence += p.c3_heeded_evidence ?? 0;
+    c3HeededInstrument += p.c3_heeded_instrument ?? 0;
+    c3Triggered += p.c3_triggered ?? 0;
+    c3Unknown += p.c3_unknown ?? 0;
+    c3NotTriggered += p.c3_not_triggered ?? 0;
+    c3DreamAudit += p.c3_dream_audit ?? 0;
+    // Approximate injected (corrections with retrieved_count>0) from per-project unknown
+    // We don't have per-project injected_ids count, so derive from heed+recurred+unknown
+    // as the "ever had an outcome" proxy. The verdict_coverage metric is per-project.
   }
 
   const rmrCorrections =
@@ -408,6 +553,15 @@ function aggregatePooled(perProject, sessionsAllProjects) {
   const [heedCI_lo, heedCI_hi] =
     heedDenom > 0 ? wilsonCI(heedYes, heedDenom) : [null, null];
 
+  // C3: pooled evidence-grounded heed_rate (only counts evidence-grounded heeded)
+  // This is the POST-C3 honest metric. Pre-C3 instrument-generated heeded events
+  // are in c3_heeded_instrument and are excluded from this rate.
+  const c3RecurredPooled = heedNo; // same as heed_no (recurred events in outcomes)
+  const c3HeedDenom = c3HeededEvidence + c3RecurredPooled;
+  const c3HeedRate = c3HeedDenom > 0 ? Number((c3HeededEvidence / c3HeedDenom).toFixed(4)) : null;
+  const [c3CI_lo, c3CI_hi] =
+    c3HeedDenom > 0 ? wilsonCI(c3HeededEvidence, c3HeedDenom) : [null, null];
+
   return {
     sessions_corrections_projects: sessionsCorrectionsProjects,
     sessions_all_projects: sessionsAllProjects,
@@ -423,6 +577,17 @@ function aggregatePooled(perProject, sessionsAllProjects) {
     heed_rate: heedRate,
     heed_rate_wilson95_lo: heedCI_lo !== null ? Number(heedCI_lo.toFixed(4)) : null,
     heed_rate_wilson95_hi: heedCI_hi !== null ? Number(heedCI_hi.toFixed(4)) : null,
+    // C3: evidence-grounded metrics (post-C3 semantic boundary)
+    c3_heeded_evidence: c3HeededEvidence,
+    c3_heeded_instrument: c3HeededInstrument,
+    c3_triggered: c3Triggered,
+    c3_unknown: c3Unknown,
+    c3_not_triggered: c3NotTriggered,
+    c3_heed_rate_evidence_grounded: c3HeedRate,
+    c3_heed_rate_wilson95_lo: c3CI_lo !== null ? Number(c3CI_lo.toFixed(4)) : null,
+    c3_heed_rate_wilson95_hi: c3CI_hi !== null ? Number(c3CI_hi.toFixed(4)) : null,
+    // C3b: distinct corrections across all projects that received a dream-audit verdict
+    c3_dream_audit: c3DreamAudit,
   };
 }
 
@@ -468,6 +633,7 @@ function renderReport(pooled, perProject, root) {
   lines.push("══════════════════════════════════════════════════════════════");
   lines.push(`  corpus root        ${root}`);
   lines.push(`  generated          ${GENERATED_DATE}`);
+  lines.push(`  C3 semantic boundary: ${C3_SEMANTIC_BOUNDARY} — default-heeded bias eliminated`);
   lines.push("");
   const extraSessions = pooled.sessions_all_projects - pooled.sessions_corrections_projects;
   lines.push("  ── POOLED ──────────────────────────────────────────────────");
@@ -483,12 +649,29 @@ function renderReport(pooled, perProject, root) {
   lines.push("");
   lines.push(`  RMR_proxy (corrections projects)  ${fmtNum(pooled.rmr_proxy_corrections_projects)} per 100 sessions  (${pooled.recurrence_events}/${pooled.sessions_corrections_projects})`);
   lines.push(`  RMR_proxy (ALL sessions)          ${fmtNum(pooled.rmr_proxy_all_sessions)} per 100 sessions  (${pooled.recurrence_events}/${pooled.sessions_all_projects})`);
-  lines.push(`  HEED_RATE                  ${fmtRate(pooled.heed_rate)}  (${pooled.heed_yes}/${pooled.heed_yes + pooled.heed_no})`);
+  lines.push("");
+  lines.push("  ── HEED METRICS: OLD VS NEW (C3 semantic break) ────────────");
+  lines.push("  PRE-C3 (instrument-biased, default-heeded — historical data before 2026-07-03):");
+  lines.push(`    HEED_RATE [pre-C3]         ${fmtRate(pooled.heed_rate)}  (${pooled.heed_yes}/${pooled.heed_yes + pooled.heed_no})`);
   if (pooled.heed_rate !== null) {
     lines.push(
-      `  HEED_RATE Wilson 95% CI    [${(pooled.heed_rate_wilson95_lo * 100).toFixed(1)}%, ${(pooled.heed_rate_wilson95_hi * 100).toFixed(1)}%]  (too wide to act on at this n — upper-bound instrument, see notes)`
+      `    Wilson 95% CI [pre-C3]     [${(pooled.heed_rate_wilson95_lo * 100).toFixed(1)}%, ${(pooled.heed_rate_wilson95_hi * 100).toFixed(1)}%]  (instrument-biased upper bound)`
     );
   }
+  lines.push(`    heeded (instrument-gen):   ${pooled.c3_heeded_instrument}  (default-heeded, no trigger evidence)`);
+  lines.push("");
+  lines.push("  POST-C3 (evidence-grounded — requires check-action trigger):");
+  lines.push(`    HEED_RATE [post-C3]        ${fmtRate(pooled.c3_heed_rate_evidence_grounded)}  (${pooled.c3_heeded_evidence}/${pooled.c3_heeded_evidence + pooled.heed_no})`);
+  if (pooled.c3_heed_rate_evidence_grounded !== null) {
+    lines.push(
+      `    Wilson 95% CI [post-C3]    [${(pooled.c3_heed_rate_wilson95_lo * 100).toFixed(1)}%, ${(pooled.c3_heed_rate_wilson95_hi * 100).toFixed(1)}%]`
+    );
+  }
+  lines.push(`    heeded (evidence):         ${pooled.c3_heeded_evidence}  (check-action trigger + no recurrence)`);
+  lines.push(`    triggered (consulted):     ${pooled.c3_triggered}  (check-action match, heeded/recurred TBD at session-end)`);
+  lines.push(`    unknown:                   ${pooled.c3_unknown}  (retrieved, no trigger/topical evidence)`);
+  lines.push(`    not_triggered:             ${pooled.c3_not_triggered}  (confirmed irrelevant this session)`);
+  lines.push(`    dream_audit verdicts:      ${pooled.c3_dream_audit ?? 0}  (C3b: corrections with a dream-audit: evidence prefix)`);
   lines.push("");
 
   // Top 5 by n_total (non-empty projects)
@@ -542,10 +725,12 @@ function renderReport(pooled, perProject, root) {
   lines.push("  ── NOTES ───────────────────────────────────────────────────");
   lines.push("  recurrence_count is a per-record integer, NOT a list.");
   lines.push("  It is incremented by recordOutcome(kind='recurred') in session-end.ts.");
-  lines.push("  Only 1 correction has recurrence_count > 0 in this corpus (see data quality notes).");
   lines.push("  heed_rate denominator = heeded+recurred events from _outcomes.jsonl (not heeded_count field).");
-  lines.push("  heed_rate is an instrument-optimistic UPPER BOUND: the default session-end outcome is");
-  lines.push("  'heeded'; 'recurred' requires ≥2 marker words in the summary + same-day retrieval.");
+  lines.push("  C3 semantic break (2026-07-03): pre-C3 heed_rate is instrument-biased (default-heeded).");
+  lines.push("    Pre-C3 heeded = retrieved + no recurrence markers → assumed heeded.");
+  lines.push("    Post-C3 heeded = check-action trigger + no recurrence → evidence-grounded.");
+  lines.push("    c3_heeded_instrument counts pre-C3 instrument-generated events.");
+  lines.push("    c3_heed_rate_evidence_grounded uses only evidence-grounded heeded events.");
   lines.push("  Wilson CI assumes independence of events (events per correction×day pair).");
   lines.push("══════════════════════════════════════════════════════════════");
   return lines.join("\n");
@@ -645,8 +830,17 @@ function main() {
 
   const extraSessions = pooled.sessions_all_projects - pooled.sessions_corrections_projects;
   const artifact = {
-    schema_version: "rmr-baseline/v1",
+    schema_version: "rmr-baseline/v2",
     generated: GENERATED_DATE,
+    // C3: semantic break metadata — consumers must carry the boundary date to
+    // distinguish instrument-biased pre-C3 data from evidence-grounded post-C3 data.
+    c3_semantic_boundary: C3_SEMANTIC_BOUNDARY,
+    c3_note: "Pre-C3 heed_yes (before 2026-07-03) includes instrument-generated 'heeded' events " +
+      "(default-heeded bias: the session-end default was 'heeded' when no recurrence markers appeared). " +
+      "Post-C3 heeded requires positive trigger evidence from check-action. " +
+      "c3_heeded_instrument in pooled{} counts the instrument-generated events; " +
+      "c3_heeded_evidence counts the evidence-grounded ones. " +
+      "c3_heed_rate_evidence_grounded is the honest post-C3 metric.",
     denominator_note:
       "A session = one .md file in <project>/journal/ whose filename starts with " +
       "YYYY-MM-DD, excluding index.md, -log.md (capture logs), and --capture-- " +
@@ -698,9 +892,10 @@ function main() {
         `(${Math.round((recsZeroHeeded / Math.max(1, pooled.n_total)) * 100)}%) have heeded_count=0. ` +
         `Most are retracted (${pooled.n_retracted} retracted) — they never accumulated outcome evidence ` +
         "before being archived.",
-      "The 'recurred' heuristic in session-end.ts requires ≥2 recurrence-marker words in the session " +
-        "summary. This is a high bar; the default is 'heeded'. The single recurrence on record " +
-        "(AgentRecall project) is the only time the heuristic fired.",
+      "C3 (2026-07-03) semantic break: the default session-end outcome is now 'unknown' (not 'heeded'). " +
+        "Post-C3 heeded requires check-action trigger evidence. Expect heed_yes to drop and c3_unknown " +
+        "to rise in future baseline runs — this is correct, not a regression. " +
+        "c3_heed_rate_evidence_grounded is the honest post-C3 metric.",
     ],
     // Sanitized to "<corpus-root>" in the emitted JSON (public-baseline hygiene).
     corpus_root: root,

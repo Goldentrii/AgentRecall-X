@@ -89,6 +89,17 @@ META:
   ar knowledge write --category <cat> --title "t" --what "w" --cause "c" --fix "f" [--severity critical|important|minor]
   ar knowledge read [--category <cat>]
 
+OUTCOMES (dream-audit verdicts — C3b):
+  ar outcomes audit-candidates [--project <slug>] [--date YYYY-MM-DD]
+      List corrections retrieved on that date with no verdict yet (JSON array).
+      Default date: yesterday. Output: [{id, rule, severity, tags, retrieved_date, journal_file_paths}]
+  ar outcomes record --project <slug> --id <correction-id> --kind not_triggered|recurred|heeded --evidence "<text>" [--audit-date YYYY-MM-DD]
+      Record a dream-audit verdict. Evidence string is prefixed "dream-audit:".
+      not_triggered is ONLY accepted from this path (enforced). 1/day dedup on audit-date.
+      --audit-date defaults to yesterday; pass matching value from audit-candidates retrieved_date.
+  ar outcomes --help
+      Show detailed help with agent instructions.
+
 DIAGNOSTICS:
   ar stats             Show memory system health: corrections, feedback, insights, graph edges
   ar corrections rejected [--stats] [--json]  Survivorship-bias probe: corrections the capture gate discarded
@@ -2229,6 +2240,226 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         process.stderr.write(`Unknown setup subcommand: ${rest[0] ?? "(none)"}\nUsage: ar setup supabase [--backfill]\n`);
         process.exit(1);
       }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // ar outcomes — dream-audit verdict surface (C3b)
+    // -----------------------------------------------------------------------
+    case "outcomes": {
+      const sub = rest[0];
+      const outRest = rest.slice(1);
+
+      if (sub === "--help" || sub === "-h" || !sub) {
+        output(`ar outcomes — dream-audit verdict surface (C3b)
+
+SUBCOMMANDS:
+  ar outcomes audit-candidates [--project <slug>] [--date YYYY-MM-DD]
+      List corrections retrieved on <date> (default: yesterday) whose verdict is
+      still unknown (no heeded/recurred/not_triggered recorded). Output is JSON.
+      Fields: id, rule, severity, tags, retrieved_date, journal_file_paths
+
+  ar outcomes record --project <slug> --id <correction-id> \\
+      --kind not_triggered|recurred|heeded --evidence "<text>" [--audit-date YYYY-MM-DD]
+      Record a dream-audit verdict for one correction. Rules:
+        - evidence string is REQUIRED and prefixed "dream-audit:" automatically.
+        - not_triggered is ONLY accepted from this path (enforced here).
+        - --audit-date sets the outcome timestamp (default: yesterday). Pass the
+          same date used in audit-candidates so dedup works correctly.
+        - 1/day dedup: if a covered verdict already exists for this id×audit-date, skipped.
+      Output: { success, correction_id, project, kind, evidence, at, audit_date, skipped_reason? }
+
+agent_instruction: use "audit-candidates" to list unknown-verdict corrections for a date,
+  then "record" to write a verdict. Always pass --audit-date matching the retrieved_date
+  from audit-candidates output. Quote session evidence in --evidence. Never default to heeded.`);
+        break;
+      }
+
+      if (sub === "audit-candidates") {
+        const auditProject = getFlag("--project", outRest) ?? project;
+        const auditDate = getFlag("--date", outRest);
+
+        if (!auditProject) {
+          process.stderr.write(
+            `Error: --project is required for outcomes audit-candidates\n` +
+            `Usage: ar outcomes audit-candidates --project <slug> [--date YYYY-MM-DD]\n` +
+            `agent_instruction: provide --project <slug> to scope the audit\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+        if (auditDate && !/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+          process.stderr.write(
+            `Error: --date must be YYYY-MM-DD, got: "${auditDate}"\n` +
+            `agent_instruction: use ISO date format YYYY-MM-DD (e.g. 2026-07-02)\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        try {
+          const slug = await core.resolveProject(auditProject);
+          const candidates = core.listUnknownVerdicts(slug, auditDate);
+          output(candidates);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          process.stderr.write(
+            `Error listing audit candidates: ${msg}\n` +
+            `agent_instruction: check that project slug is valid and has a corrections store\n`
+          );
+          process.exitCode = 1;
+        }
+        break;
+      }
+
+      if (sub === "record") {
+        const recProject = getFlag("--project", outRest) ?? project;
+        const recId = getFlag("--id", outRest);
+        const recKindRaw = getFlag("--kind", outRest);
+        const recEvidence = getFlag("--evidence", outRest);
+        // --audit-date: the date being audited (YYYY-MM-DD). The outcome's `at` timestamp
+        // is set to noon UTC on this date so that listUnknownVerdicts finds it as covered
+        // when re-queried for that date. Defaults to yesterday (the dream audits yesterday's sessions).
+        const auditDateRaw = getFlag("--audit-date", outRest);
+
+        // Validate required args
+        const missingArgs: string[] = [];
+        if (!recProject) missingArgs.push("--project");
+        if (!recId) missingArgs.push("--id");
+        if (!recKindRaw) missingArgs.push("--kind");
+        if (!recEvidence) missingArgs.push("--evidence");
+        if (missingArgs.length > 0) {
+          process.stderr.write(
+            `Error: missing required flags: ${missingArgs.join(", ")}\n` +
+            `Usage: ar outcomes record --project <slug> --id <correction-id> --kind not_triggered|recurred|heeded --evidence "<text>" [--audit-date YYYY-MM-DD]\n` +
+            `agent_instruction: provide all required flags; --evidence must contain the actual evidence text\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        // Validate --audit-date if supplied
+        if (auditDateRaw && !/^\d{4}-\d{2}-\d{2}$/.test(auditDateRaw)) {
+          process.stderr.write(
+            `Error: --audit-date must be YYYY-MM-DD, got: "${auditDateRaw}"\n` +
+            `agent_instruction: use ISO date YYYY-MM-DD for --audit-date (e.g. yesterday's date)\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        // Validate kind — only these three are accepted from this path
+        const ALLOWED_KINDS = ["not_triggered", "recurred", "heeded"] as const;
+        type AllowedKind = typeof ALLOWED_KINDS[number];
+        if (!ALLOWED_KINDS.includes(recKindRaw as AllowedKind)) {
+          process.stderr.write(
+            `Error: --kind must be one of: not_triggered, recurred, heeded (got: "${recKindRaw}")\n` +
+            `agent_instruction: use exactly one of: not_triggered (correction never triggered), ` +
+            `recurred (agent violated it), heeded (agent followed it with check-action evidence)\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+        const recKind = recKindRaw as AllowedKind;
+
+        // Enforce: not_triggered is ONLY produced from this dream-audit path.
+        // The evidence prefix "dream-audit:" is the MANDATORY marker. Any not_triggered
+        // without this prefix would indicate an unauthorized producer; we enforce it here.
+        if (!recEvidence || recEvidence.trim().length < 4) {
+          process.stderr.write(
+            `Error: --evidence must be non-empty (min 4 chars); quote the actual session evidence\n` +
+            `agent_instruction: evidence must describe what you observed in the journal — ` +
+            `quote the session text or describe the absence of the trigger topic explicitly\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        // Prefix is mandatory and identifies dream-audit as the producer.
+        // Strip any user-supplied leading "dream-audit:" (case-insensitive,
+        // repeated) BEFORE prepending — a spoofed/echoed prefix must not
+        // double-stack ("dream-audit:dream-audit:…") or inflate ledger counts.
+        let bareEvidence = recEvidence!.trim();
+        while (/^dream-audit:/i.test(bareEvidence)) {
+          bareEvidence = bareEvidence.replace(/^dream-audit:/i, "").trim();
+        }
+        if (bareEvidence.length < 4) {
+          process.stderr.write(
+            `Error: --evidence must contain ≥4 chars of actual evidence after removing any "dream-audit:" prefix\n` +
+            `agent_instruction: pass the evidence text WITHOUT the prefix — the CLI adds it\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+        const evidenceWithPrefix = `dream-audit:${bareEvidence}`;
+
+        try {
+          const slug = await core.resolveProject(recProject!);
+
+          // Resolve the audit date: explicit --audit-date, or yesterday (default for nightly dream).
+          // The outcome's `at` is timestamped to noon UTC on the audit date so that
+          // listUnknownVerdicts (which buckets by local-TZ day) classifies this event
+          // as occurring on the same day the correction was retrieved. This is what lets
+          // the audit-candidates re-query show the correction as covered after record runs.
+          const auditDay = auditDateRaw
+            ? auditDateRaw
+            : new Date(Date.now() - 86400000).toLocaleDateString("sv");
+          // noon UTC on the audit day (date-TZ agnostic — "sv" locale gives YYYY-MM-DD already)
+          const atForAuditDay = `${auditDay}T12:00:00.000Z`;
+
+          // 1/day dedup: check if a covered verdict already exists for this id on the audit date.
+          const auditDayOutcomes = core.readOutcomesOnDate(slug, auditDay);
+          const existingKinds = auditDayOutcomes.get(recId!);
+          const COVERED = new Set(["heeded", "recurred", "not_triggered"]);
+          if (existingKinds && [...existingKinds].some((k) => COVERED.has(k))) {
+            const existing = [...existingKinds].filter((k) => COVERED.has(k));
+            output({
+              success: false,
+              skipped_reason: "1/day dedup: a covered verdict already exists for this correction on the audit date",
+              correction_id: recId,
+              project: slug,
+              existing_verdicts: existing,
+              audit_date: auditDay,
+            });
+            break;
+          }
+
+          core.recordOutcome({
+            correction_id: recId!,
+            project: slug,
+            kind: recKind,
+            at: atForAuditDay,
+            evidence: evidenceWithPrefix,
+          });
+
+          output({
+            success: true,
+            correction_id: recId,
+            project: slug,
+            kind: recKind,
+            evidence: evidenceWithPrefix,
+            at: atForAuditDay,
+            audit_date: auditDay,
+          });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          process.stderr.write(
+            `Error recording outcome: ${msg}\n` +
+            `agent_instruction: check correction-id exists in the project and slug is valid\n`
+          );
+          process.exitCode = 1;
+        }
+        break;
+      }
+
+      // Unknown subcommand
+      process.stderr.write(
+        `Unknown outcomes subcommand: ${sub}\n` +
+        `Usage: ar outcomes audit-candidates|record [...]\n` +
+        `Run: ar outcomes --help\n` +
+        `agent_instruction: use "audit-candidates" to list unknowns, "record" to write a verdict\n`
+      );
+      process.exitCode = 1;
       break;
     }
 

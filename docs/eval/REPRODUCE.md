@@ -8,9 +8,11 @@ Commands that require `run-bench.mjs` are marked `# requires run-bench (Worker A
 
 ---
 
+All commands below run from the repo root (`agentrecall/` after cloning).
+
 ## Prerequisites
 
-- Node.js 20 or later
+- Node.js 20 or later (`.nvmrc` pins `20`; run `nvm use` if you use nvm)
 - npm 10 or later (ships with Node 20)
 - A POSIX shell (bash or sh)
 - No global binaries required — everything is installed via `npm ci`
@@ -26,7 +28,8 @@ npm ci
 ```
 
 `npm ci` installs from the lockfile and builds all workspace packages. No network
-access is needed after this step for fixture runs.
+access is needed after this step for fixture runs. Expect deprecation warnings and
+a vulnerabilities summary in the output; exit code 0 is the success signal.
 
 ---
 
@@ -82,8 +85,15 @@ Exit code must be 0.
 TZ=UTC node scripts/eval/run-bench.mjs --corpus fixture
 ```
 
-Expected: exits 0. Produces a `bench-result/v1` artifact and prints a summary
-including `n_on_disk: 26`, `n_counted: 23`, `excluded: 3`.
+Expected: exits 0. The artifact is written to
+`scripts/eval/baselines/correction-transfer-fixture-baseline.json` (envelope
+`schema_version: "bench-result/v1"`). The accounting chain in the printed summary
+reads (verbatim excerpt):
+
+```
+  n_on_disk            26  (export records; raw files=26)
+  n_counted            23  (= 26 − 3 dropped_from_corpus: missing rule/date)
+```
 
 ---
 
@@ -98,7 +108,11 @@ TZ=UTC node scripts/eval/run-bench.mjs --corpus fixture --check-determinism
 This runs the scorer twice and byte-diffs the output after stripping
 `generated_utc` and `environment`. Any difference exits non-zero.
 
-Expected: exits 0 with message `determinism check passed`.
+Expected: exits 0 with message:
+
+```
+  PASS: byte-identical after stripping generated_utc/environment
+```
 
 ---
 

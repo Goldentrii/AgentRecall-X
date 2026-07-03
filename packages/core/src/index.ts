@@ -240,6 +240,18 @@ export type {
 export { detectCorrectionConflicts, reviewSupersessions } from "./tools-logic/supersession.js";
 export type { SupersessionMatch, SupersessionReview } from "./tools-logic/supersession.js";
 
+// Storage — A/B injection experiment (C4)
+export {
+  computeArm,
+  assignArm,
+  logABResult,
+  readABArms,
+  isExperimentEnabled,
+  getForcedArm,
+  warnForcedWithoutEnabled,
+} from "./storage/ab-experiment.js";
+export type { Arm, ABLedgerRow, ABResultRow, ABAssignment } from "./storage/ab-experiment.js";
+
 // Storage — durable intent (save-trigger vocabulary + arbiter)
 export { DURABLE_INTENT_PATTERNS, saveTriggerKind } from "./storage/durable-intent.js";
 
@@ -360,7 +372,7 @@ export { fetchVerbatim, type VerbatimKey, type VerbatimSource } from "./tools-lo
 export { buildPriors, type PriorCorrection } from "./tools-logic/prior-builder.js";
 
 // Tool logic — v3.4 composite tools (5-tool surface)
-export { sessionStart, type SessionStartInput, type SessionStartResult } from "./tools-logic/session-start.js";
+export { sessionStart, type SessionStartInput, type SessionStartResult, type SlimCorrection } from "./tools-logic/session-start.js";
 export {
   buildRecognition,
   PERSON_LOW_CONFIDENCE_CAVEAT,
@@ -538,15 +550,17 @@ export type { SkillRecallInput, SkillRecallResult, SkillRecallHit } from "./tool
 export { skillList } from "./tools-logic/skill-list.js";
 export type { SkillListInput, SkillListResult, SkillListItem } from "./tools-logic/skill-list.js";
 
-// Corrections — outcome tracking (V9)
+// Corrections — outcome tracking (V9 + C3 + C3b)
 export {
   recordOutcome,
   getCorrectionKPIs,
   readOutcomesForToday,
   readOutcomesBefore,
   readOutcomesOnDate,
+  readAllOutcomeKinds,
+  listUnknownVerdicts,
 } from "./storage/corrections.js";
-export type { CorrectionOutcome, CorrectionKPI } from "./storage/corrections.js";
+export type { CorrectionOutcome, CorrectionKPI, UnknownVerdictCandidate } from "./storage/corrections.js";
 
 // Wave 5 — corrections-prediction (north-star) + compression remainder
 export { deriveBlindSpots } from "./helpers/blind-spots.js";
