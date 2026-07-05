@@ -15,7 +15,7 @@
 // ~/.agent-recall data is touched. Each test builds a tiny JSONL fixture in a temp dir,
 // writes the Stop-hook stdin JSON (with `transcript_path` + `session_id`), and asserts on
 // the resulting archive files.
-import { describe, it, after } from "node:test";
+import { describe, it, after, before } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -26,6 +26,28 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(__dirname, "..", "dist", "index.js");
 const TEST_ROOT = path.join(os.tmpdir(), "ar-p3-backstop-" + Date.now());
+
+/**
+ * Isolated HOME directory for this test file's hook-end invocations.
+ *
+ * The hook-end lockFile lives at os.homedir()/.agent-recall/.hook-end-lock — a
+ * global path that persists across test runs and is also written by hook-end-archive.test.mjs
+ * (which may run concurrently with this file under node --test). Two races cause the flake:
+ *
+ *  1. Cross-file concurrency: hook-end-archive.test.mjs and this file run in separate
+ *     worker threads simultaneously. A lock written by the archive suite can collide with
+ *     a test here that has the same sid-derived lock key.
+ *
+ *  2. Cross-run staleness: this file's deterministic nextSid() always produces the same
+ *     UUID sequence. After a prior run, the lockFile may still contain a stale key that
+ *     matches a test's sid on the next run, causing the first runHookEnd() call to silently
+ *     exit 0 (lock match) before any archive is written.
+ *
+ * Fix: pass HOME=ISOLATED_HOME to each hook-end invocation. os.homedir() inside the child
+ * process resolves to ISOLATED_HOME, placing the lockFile at ISOLATED_HOME/.agent-recall/
+ * .hook-end-lock — fully isolated from the real home and from other test files.
+ */
+const ISOLATED_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ar-p3-home-"));
 
 /** Unique session-id-shaped UUID for each test. */
 let _seq = 0;
@@ -83,13 +105,20 @@ function writeTmpTranscript(sid, content) {
 /**
  * Run the hook-end handler with the given Stop stdin JSON.
  * Returns { code, stdout, stderr }.
+ *
+ * HOME is overridden to ISOLATED_HOME so the lockFile at os.homedir()/.agent-recall/
+ * .hook-end-lock does not collide with the real home dir, other test files running
+ * concurrently (hook-end-archive.test.mjs), or stale keys from a prior run.
  */
 function runHookEnd(project, stdinPayload) {
   return new Promise((resolve) => {
     const child = spawn(
       "node",
       [CLI, "--root", TEST_ROOT, "--project", project, "hook-end"],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: ISOLATED_HOME },
+      },
     );
     let stdout = "";
     let stderr = "";
@@ -114,11 +143,21 @@ function listArchiveFiles(project) {
 }
 
 // ---------------------------------------------------------------------------
-// Cleanup all temp data after the suite
+// Isolation setup and cleanup
 // ---------------------------------------------------------------------------
 const tempDirs = [];
+
+before(() => {
+  // Ensure ISOLATED_HOME/.agent-recall exists so the lockFile path is writable,
+  // and pre-create it clean. This runs once before any test in this file.
+  try {
+    fs.mkdirSync(path.join(ISOLATED_HOME, ".agent-recall"), { recursive: true });
+  } catch { /* already exists */ }
+});
+
 after(() => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
+  try { fs.rmSync(ISOLATED_HOME, { recursive: true, force: true }); } catch { /* best-effort */ }
   for (const d of tempDirs) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
@@ -241,7 +280,8 @@ describe("P3 backstop — (c) NO-DOUBLE-ARCHIVE: idempotent on same session", ()
     // but even if the lock is stale, archiveSession is idempotent (file-level check
     // at archive-write.ts:97). Either way: no second file should appear.
     // We remove the lock file to force the second run through the full archive path.
-    const lockFile = path.join(os.homedir(), ".agent-recall", ".hook-end-lock");
+    // NOTE: lock lives in ISOLATED_HOME (not os.homedir()) because runHookEnd passes HOME=ISOLATED_HOME.
+    const lockFile = path.join(ISOLATED_HOME, ".agent-recall", ".hook-end-lock");
     try { fs.unlinkSync(lockFile); } catch { /* lock may not exist */ }
 
     const run2 = await runHookEnd("p3-dedup", payload);
