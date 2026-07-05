@@ -1,3 +1,11 @@
+/**
+ * Previously: project_board text render path (MCP smoke).
+ * DELETED tool: project_board MCP tool removed 2026-07-05 (P3b purity, owner-approved).
+ * The underlying projectBoard() core logic still exists and is tested via ar status CLI.
+ *
+ * Replacement: check_action smoke — verifies the only surviving --full MCP tool works.
+ */
+
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -8,15 +16,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(__dirname, "..", "dist", "index.js");
 
-describe("project_board text render path (MCP smoke)", () => {
-  it("project_board with format='text' returns text containing the board separator bar character", async () => {
+describe("check_action MCP smoke (surviving --full tool)", () => {
+  it("check_action with a safe command returns a result without isError=true", async () => {
     const transport = new StdioClientTransport({
       command: "node",
       args: [ENTRY, "--full"],
     });
 
     const client = new Client(
-      { name: "board-text-smoke-client", version: "1.0.0" },
+      { name: "check-action-smoke-client", version: "1.0.0" },
       { capabilities: {} }
     );
 
@@ -24,20 +32,19 @@ describe("project_board text render path (MCP smoke)", () => {
 
     let result;
     try {
-      result = await client.callTool({ name: "project_board", arguments: { format: "text" } });
+      result = await client.callTool({
+        name: "check_action",
+        arguments: { action_description: "git status — check working tree" },
+      });
     } finally {
       await client.close();
     }
 
-    assert.ok(result, "project_board returned no result");
+    assert.ok(result, "check_action returned no result");
     assert.ok(Array.isArray(result.content), "result.content is not an array");
     assert.ok(result.content.length > 0, "result.content is empty");
-
-    const text = result.content[0].text;
-    assert.ok(typeof text === "string", "result.content[0].text is not a string");
-    assert.ok(
-      text.includes("─"),
-      `project_board text render missing separator bar character '─'\n  Got: ${text.slice(0, 200)}`
-    );
+    assert.ok(typeof result.content[0].text === "string", "result.content[0].text is not a string");
+    // A safe command should not trigger isError
+    assert.ok(!result.isError, `check_action flagged safe command as error: ${result.content[0]?.text}`);
   });
 });

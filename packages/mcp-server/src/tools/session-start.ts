@@ -198,7 +198,7 @@ function formatVerbose(result: SessionStartResult): string {
 export function register(server: McpServer): void {
   server.registerTool("session_start", {
     title: "Start Session",
-    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Set mode='lite' for a ≤500-token briefing (good for fresh conversations where the agent will pull memory on demand via recall/memory_query/skill_recall).",
+    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Set mode='lite' for a ≤500-token briefing (good for fresh conversations where the agent will pull memory on demand via recall()).",
     inputSchema: {
       project: z.string().default("auto"),
       context: z.string().optional().describe("Optional context for matching cross-project insights"),
@@ -213,7 +213,7 @@ export function register(server: McpServer): void {
         lite.identity_oneliner ? `Intention: ${lite.identity_oneliner}` : "",
         lite.active_phase ? `▶ Active phase: ${lite.active_phase}${lite.active_phase_goal ? ` — ${lite.active_phase_goal}` : ""}` : "",
         lite.open_corrections_p0_count > 0 ? `⛔ ${lite.open_corrections_p0_count} P0 corrections active — call recall() if working on related code.` : "",
-        lite.total_skills > 0 ? `🛠  ${lite.total_skills} skills available — call skill_recall({intent}) before non-trivial tasks.` : "",
+        lite.total_skills > 0 ? `🛠  ${lite.total_skills} skills stored — use ar skill recall <intent> via CLI before non-trivial tasks.` : "",
         "",
         lite.hint,
       ].filter(Boolean).join("\n");

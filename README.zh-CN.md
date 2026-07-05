@@ -1,3 +1,5 @@
+> ⚠️ 本文对应旧版 README;英文版已于 2026-07-05 重写为实测口径,中文版待同步。
+
 [English](README.md) · **中文**
 
 <h1 align="center">AgentRecall</h1>

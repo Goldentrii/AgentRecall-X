@@ -11,26 +11,8 @@ import { register as registerRecall } from "./tools/recall.js";
 import { register as registerSessionEnd } from "./tools/session-end.js";
 import { register as registerCheck } from "./tools/check.js";
 
-// ── Extended --full tools (non-quarantined) ───────────────────────────────
-import { register as registerProjectBoard } from "./tools/project-board.js";
-import { register as registerProjectStatus } from "./tools/project-status.js";
-import { register as registerBootstrap } from "./tools/bootstrap.js";
-import { register as registerMemoryQuery } from "./tools/memory-query.js";
-
-// ── Skill tools (procedural memory layer) ─────────────────────────────────
-import { register as registerSkillWrite } from "./tools/skill-write.js";
-import { register as registerSkillRecall } from "./tools/skill-recall.js";
-import { register as registerSkillList } from "./tools/skill-list.js";
-
-// ── Dashboard + reflection ───────────────────────────────────────────────
-import { register as registerDashboardExport } from "./tools/dashboard-export.js";
-import { register as registerSessionEndReflect } from "./tools/session-end-reflect.js";
-
-// ── Pre-action proactive matcher ─────────────────────────────────────────
+// ── Pre-action proactive matcher (--full) ────────────────────────────────
 import { register as registerCheckAction } from "./tools/check-action.js";
-
-// ── Cross-surface adapter (P4): brief ────────────────────────────────────
-import { register as registerBrief } from "./tools/brief.js";
 
 // ── AR_EXTRAS quarantine zone — purity-census-2026-07-05 ─────────────────
 // These tools are ZOMBIE/low-use (pipeline: 1 organic use in 60d; register_rule: 2;
@@ -75,6 +57,19 @@ import { register as registerDigest } from "./tools/digest.js";
 // import { register as registerKnowledgeRead } from "./tools/knowledge-read.js";
 // import { register as registerPalaceRead } from "./tools/palace-read.js";
 // import { register as registerPalaceLint } from "./tools/palace-lint.js";
+// DELETED 2026-07-05 (P3b purity — owner checkmarks, all zero organic MCP use):
+// import { register as registerProjectBoard } from "./tools/project-board.js";
+// import { register as registerProjectStatus } from "./tools/project-status.js";
+// import { register as registerBootstrap } from "./tools/bootstrap.js";
+// import { register as registerMemoryQuery } from "./tools/memory-query.js";
+// import { register as registerSkillWrite } from "./tools/skill-write.js";
+// import { register as registerSkillRecall } from "./tools/skill-recall.js";
+// import { register as registerSkillList } from "./tools/skill-list.js";
+// import { register as registerDashboardExport } from "./tools/dashboard-export.js";
+// import { register as registerSessionEndReflect } from "./tools/session-end-reflect.js";
+// import { register as registerBrief } from "./tools/brief.js";
+// NOTE: bootstrap CLI command STAYS (ar bootstrap); skill logic stays (palace/skills.ts);
+//       session_end_reflect logic stays (ar consolidate); project_board logic stays (ar status).
 
 import { register as registerJournalResources } from "./resources/journal-resources.js";
 import { register as registerAwarenessResource } from "./resources/awareness-resource.js";
@@ -93,9 +88,7 @@ Everything else fires automatically via hooks or is available on demand with --f
 
 Usage:
   npx agent-recall-mcp              Start with 5 default tools (session_start, session_end, remember, recall, check)
-  npx agent-recall-mcp --full       Start with all active tools (adds memory_query, check_action, skill_*,
-                                    dashboard_export, session_end_reflect, project_board, project_status,
-                                    bootstrap, brief)
+  npx agent-recall-mcp --full       Start with all active tools (adds check_action)
   AR_EXTRAS=1 npx agent-recall-mcp --full  Add quarantined extras (pipeline_*, register_rule, digest)
   npx agent-recall-mcp --help       Show this help
   npx agent-recall-mcp --list-tools List available MCP tools (add --full to see full list)
@@ -108,18 +101,7 @@ Default tools (5):
   check                  [MID-SESSION — safe any time; for alignment, before risky decisions] Record understanding; anticipates the likely correction before you make it
 
 Full-mode additions (--full):
-  memory_query           Pull-on-demand recall mid-task
   check_action           Pre-action safety check (publish/push/deploy warnings)
-  skill_write            Save a procedural IF-THEN rule
-  skill_recall           Find skills matching an intent
-  skill_list             Browse all skills in a project
-  dashboard_export       Generate agent-readable dashboard.json snapshot
-  session_end_reflect    Park-2023 reflection bundle — distills last N journals
-  project_board          Status board across all projects
-  project_status         Quick project health check
-  bootstrap_scan         Discover existing projects on this machine
-  bootstrap_import       Import discovered projects into AgentRecall
-  brief                  Compact LLM-free re-orientation briefing (≤200 tokens, read-only)
 
 Quarantined extras (AR_EXTRAS=1 --full only):
   pipeline_open          Open a project narrative phase
@@ -154,19 +136,10 @@ if (args.includes("--list-tools")) {
     { name: "recall", description: "[RETRIEVE — use freely, any time] Search all memory stores, return ranked results with feedback" },
     { name: "check", description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Record understanding; anticipates the likely correction before you make it" },
   ];
+  // P3b purity-census-2026-07-05: only check_action remains in --full (owner-approved deletion of 11 tools).
+  // Default 5 / full 6 (core 5 + check_action) / extras 6+7=13.
   const fullOnlyTools = [
-    { name: "memory_query", description: "Pull-on-demand recall mid-task — query before decisions (--full)" },
     { name: "check_action", description: "Pre-action safety matcher — warns on publish/push/deploy (--full)" },
-    { name: "skill_write", description: "Save a procedural IF-THEN rule (--full)" },
-    { name: "skill_recall", description: "Find skills matching an intent (--full)" },
-    { name: "skill_list", description: "Browse all skills in a project (--full)" },
-    { name: "dashboard_export", description: "Generate agent-readable dashboard.json snapshot (--full)" },
-    { name: "session_end_reflect", description: "Park-2023 reflection bundle — distills last N journals (--full)" },
-    { name: "project_board", description: "Status board across all projects (--full)" },
-    { name: "project_status", description: "Quick project health check (--full)" },
-    { name: "bootstrap_scan", description: "Discover existing projects on this machine (--full)" },
-    { name: "bootstrap_import", description: "Import discovered projects into AgentRecall (--full)" },
-    { name: "brief", description: "Compact LLM-free re-orientation briefing ≤200 tokens, read-only (--full)" },
   ];
   // Quarantined extras: registered only when AR_EXTRAS=1 (purity-census-2026-07-05)
   const extrasTools = [
@@ -196,29 +169,12 @@ registerRecall(server);
 registerCheck(server);
 
 // ── Extended tools (--full mode only) ────────────────────────────────────────
-// Use when you need skills, dashboards, project boards, on-demand queries, or first-time bootstrap.
-// Start server with: npx agent-recall-mcp --full
+// P3b purity-census-2026-07-05: stripped to check_action only.
+// skill_write/recall/list, dashboard_export, session_end_reflect, project_board,
+// project_status, bootstrap_scan/import, memory_query, brief all removed from MCP
+// surface (owner-approved 2026-07-05). CLI paths for these remain intact.
 if (fullMode) {
-  // On-demand recall + pre-action safety
-  registerMemoryQuery(server);
   registerCheckAction(server);
-
-  // Cross-surface adapter (P4): brief — compact LLM-free re-orientation
-  registerBrief(server);
-
-  // Procedural memory layer
-  registerSkillWrite(server);
-  registerSkillRecall(server);
-  registerSkillList(server);
-
-  // Dashboard + reflection
-  registerDashboardExport(server);
-  registerSessionEndReflect(server);
-
-  // Project status boards, bootstrap
-  registerProjectBoard(server);
-  registerProjectStatus(server);
-  registerBootstrap(server);
 }
 
 // ── AR_EXTRAS quarantine zone (purity-census-2026-07-05) ─────────────────────

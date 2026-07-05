@@ -7,8 +7,10 @@
  *   2. Fabricated scan_result — bootstrap_import without a valid nonce is REJECTED.
  *   3. Secret content — files with fake AKIA.../ghp_... are skipped/redacted.
  *   4. Consent gate — bootstrapScan reads NO file content (preview == "").
- *   5. brief output is deterministic + ≤200 tokens + read-only.
- *   6. brief is --full-only (registered inside fullMode block, not default surface).
+ *
+ * NOTE: Tests 5 (brief determinism) and 6 (brief --full-only) were removed
+ * 2026-07-05: brief MCP tool deleted in P3b purity pass (owner-approved).
+ * The bootstrap security tests (1-4) are unchanged.
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -16,13 +18,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import * as url from "node:url";
 
 import {
   bootstrapScan,
   bootstrapImport,
-  brief,
-  LIFECYCLE_TEXT,
   scrubSecretContent,
 } from "../dist/index.js";
 import { tmpdir } from "node:os";
@@ -478,205 +477,7 @@ describe("Guard 4 — consent gate: bootstrapScan reads NO file content", () => 
   });
 });
 
-// ---------------------------------------------------------------------------
-// 5. brief tool — deterministic + ≤200 tokens + read-only
-// ---------------------------------------------------------------------------
 
-describe("brief tool — deterministic, token-budgeted, read-only", () => {
-  let arRoot;
-
-  beforeEach(() => {
-    arRoot = makeTempDirUnderHome("ar-sec-brief-");
-    process.env.AGENT_RECALL_ROOT = arRoot;
-  });
-
-  afterEach(() => {
-    delete process.env.AGENT_RECALL_ROOT;
-    try { fs.rmSync(arRoot, { recursive: true, force: true }); } catch { /* ignore */ }
-  });
-
-  it("brief() returns a result without throwing (empty store)", async () => {
-    const result = await brief({ project: undefined });
-    assert.ok(result, "brief must return a result");
-    assert.ok(typeof result.project === "string", "project must be a string");
-    assert.ok(typeof result.lifecycle_text === "string", "lifecycle_text must be present");
-    assert.ok(Array.isArray(result.trigger_vocab), "trigger_vocab must be an array");
-    assert.ok(result.trigger_vocab.length > 0, "trigger_vocab must be non-empty");
-  });
-
-  it("brief() lifecycle_text matches LIFECYCLE_TEXT constant", async () => {
-    const result = await brief({});
-    assert.equal(result.lifecycle_text, LIFECYCLE_TEXT, "lifecycle_text must match the exported constant");
-  });
-
-  it("brief() JSON output is ≤200 tokens (≤1200 chars conservative proxy) — empty store", async () => {
-    const result = await brief({});
-    const json = JSON.stringify(result);
-    assert.ok(
-      json.length <= 1200,
-      `brief JSON is too large (${json.length} chars, expected ≤1200 for ≤200-token budget)`,
-    );
-  });
-
-  it("brief() JSON output is ≤1200 chars on a POPULATED store (P0 corrections + rules + watch_for)", async () => {
-    // Seed a realistic populated store directly on disk (bypass the capture gate
-    // which would reject synthetic text in a unit-test environment).
-    const slug = "test-populated";
-    const correctionsDir = path.join(arRoot, "projects", slug, "corrections");
-    const palaceProjectDir = path.join(arRoot, "projects", slug, "palace");
-    fs.mkdirSync(correctionsDir, { recursive: true });
-    fs.mkdirSync(palaceProjectDir, { recursive: true });
-
-    // Seed 5 P0 corrections with long rules to stress-test the budget
-    const longRule = "Always verify the exact contract before calling an external API — check docs first and never assume defaults match what was working in dev.";
-    const longContext = "The agent called the Stripe API with incorrect param names (amount_cents vs amount), causing silent failures for 3 sessions. Never assume field names without reading the official SDK reference.";
-    for (let i = 0; i < 5; i++) {
-      const date = `2026-06-1${i}`;
-      const record = {
-        id: `${date}-api-contract-verify`,
-        date,
-        severity: "p0",
-        project: slug,
-        rule: longRule,
-        context: longContext,
-        tags: ["api", "contract", "verification"],
-        kind: "correction",
-        active: true,
-        weight: 0.9,
-      };
-      fs.writeFileSync(
-        path.join(correctionsDir, `${date}-api-contract-verify.json`),
-        JSON.stringify(record, null, 2),
-      );
-    }
-
-    // Seed 3 behavior rules with long when/do fields
-    const policies = {
-      rules: [
-        {
-          id: "rule_test_001",
-          name: "Voice-to-text normalization before acting on instructions",
-          when: "The user is sending messages that appear to have been voice-transcribed (missing punctuation, phonetic spellings, fragmented sentences, or run-on phrasing)",
-          do: "Silently normalize and disambiguate the input before acting — do not ask for clarification unless the intent is genuinely ambiguous after normalization",
-          created: "2026-06-18T10:00:00Z",
-          hits: 5,
-        },
-        {
-          id: "rule_test_002",
-          name: "Never version-bump or publish without explicit approval",
-          when: "About to run npm publish, bump a version field, or push a release tag",
-          do: "Stop immediately and request explicit human approval — confidence in correctness does NOT equal permission to deploy",
-          created: "2026-06-17T10:00:00Z",
-          hits: 3,
-        },
-        {
-          id: "rule_test_003",
-          name: "Verify egress paths before syncing to Supabase",
-          when: "About to call syncToSupabase with file content or user journal entries",
-          do: "Always wrap content in scrubForCloud() before passing to the sync function — never skip even if the content appears clean",
-          created: "2026-06-16T10:00:00Z",
-          hits: 7,
-        },
-      ],
-    };
-    fs.writeFileSync(
-      path.join(palaceProjectDir, "behavior-policies.json"),
-      JSON.stringify(policies, null, 2),
-    );
-
-    // Call brief with the explicit populated project slug
-    const result = await brief({ project: slug });
-    const json = JSON.stringify(result);
-
-    assert.ok(
-      json.length <= 1200,
-      `brief JSON exceeds budget on populated store: ${json.length} chars (expected ≤1200). ` +
-      `Truncation in enforceTokenBudget() is insufficient — tighten per-field limits in brief.ts.`,
-    );
-
-    // Confirm the output actually contains correction and rule data (not vacuous)
-    assert.ok(result.corrections_top.length > 0, "populated store must yield corrections_top");
-    assert.ok(result.rules_top.length > 0, "populated store must yield rules_top");
-  });
-
-  it("brief() is deterministic — two calls with same store yield identical output", async () => {
-    const r1 = await brief({});
-    const r2 = await brief({});
-    assert.deepEqual(r1, r2, "brief must be deterministic: same store → same output");
-  });
-
-  it("brief() host_hint is set in hook-less environments", async () => {
-    delete process.env.CLAUDE_CODE_HOOKS;
-    const result = await brief({});
-    assert.ok(
-      typeof result.host_hint === "string" && result.host_hint.length > 0,
-      "host_hint must be present in hook-less environments",
-    );
-    assert.ok(result.host_hint.includes("brief()"), "host_hint should mention brief()");
-  });
-
-  it("brief() corrections_top contains ≤3 items", async () => {
-    const result = await brief({});
-    assert.ok(result.corrections_top.length <= 3, "corrections_top must have ≤3 items");
-  });
-
-  it("brief() watch_for_top contains ≤2 items", async () => {
-    const result = await brief({});
-    assert.ok(result.watch_for_top.length <= 2, "watch_for_top must have ≤2 items");
-  });
-
-  it("brief() rules_top contains ≤3 items", async () => {
-    const result = await brief({});
-    assert.ok(result.rules_top.length <= 3, "rules_top must have ≤3 items");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 6. brief is --full-only (structural: registered in fullMode block)
-// ---------------------------------------------------------------------------
-
-describe("brief is --full-only (not in default MCP surface)", () => {
-  const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-
-  it("brief is exported from core (available to --full surface)", async () => {
-    const mod = await import("../dist/index.js");
-    assert.ok(typeof mod.brief === "function", "brief must be exported from core barrel");
-  });
-
-  it("LIFECYCLE_TEXT is exported from core and references both session tools", async () => {
-    const mod = await import("../dist/index.js");
-    assert.ok(typeof mod.LIFECYCLE_TEXT === "string", "LIFECYCLE_TEXT must be exported");
-    assert.ok(mod.LIFECYCLE_TEXT.includes("session_start"), "LIFECYCLE_TEXT must reference session_start");
-    assert.ok(mod.LIFECYCLE_TEXT.includes("session_end"), "LIFECYCLE_TEXT must reference session_end");
-  });
-
-  it("brief MCP tool file exists at mcp-server/src/tools/brief.ts", () => {
-    const toolPath = path.resolve(__dirname, "../../mcp-server/src/tools/brief.ts");
-    assert.ok(fs.existsSync(toolPath), `brief MCP tool must exist at ${toolPath}`);
-  });
-
-  it("registerBrief() call appears after the if(fullMode) guard in index.ts", () => {
-    const indexPath = path.resolve(__dirname, "../../mcp-server/src/index.ts");
-    const src = fs.readFileSync(indexPath, "utf-8");
-
-    const fullModeIdx = src.indexOf("if (fullMode)");
-    assert.ok(fullModeIdx >= 0, "index.ts must have a fullMode block");
-
-    const registerBriefCallIdx = src.indexOf("registerBrief(server)");
-    assert.ok(registerBriefCallIdx > fullModeIdx, "registerBrief(server) must appear inside the if(fullMode) block");
-  });
-
-  it("registerBrief(server) is NOT called before the fullMode block", () => {
-    const indexPath = path.resolve(__dirname, "../../mcp-server/src/index.ts");
-    const src = fs.readFileSync(indexPath, "utf-8");
-
-    const fullModeIdx = src.indexOf("if (fullMode)");
-    const defaultSurface = src.slice(0, fullModeIdx);
-
-    // Only check for the CALL (with server arg), not the import line
-    assert.ok(
-      !defaultSurface.includes("registerBrief(server)"),
-      "registerBrief(server) must not be called in the default surface (before if(fullMode))",
-    );
-  });
-});
+// Sections 5 & 6 (brief tool tests) removed 2026-07-05.
+// brief MCP tool and brief() core function deleted in P3b purity pass (owner-approved).
+// bootstrap CLI command and bootstrapScan/bootstrapImport core logic are unaffected.

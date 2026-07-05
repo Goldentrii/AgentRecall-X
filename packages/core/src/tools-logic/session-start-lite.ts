@@ -75,8 +75,7 @@ export async function sessionStartLite(input: SessionStartLiteInput): Promise<Se
     total_skills: skills.length,
     store_doctor: storeDoctorLine,
     hint:
-      "Lite mode. Call recall(query) for memories, memory_query({file_path}) for file-scoped, " +
-      "skill_recall({intent}) for procedural how-tos, pipeline_show for narrative spine. " +
+      "Lite mode. Call recall(query) for memories. " +
       "Call session_start without mode='lite' for the full briefing.",
   };
 }

@@ -90,7 +90,7 @@ Load full context for a specific project in two MCP calls.
   Awareness     ~/.agent-recall/awareness.md
                 └─ 10 insights · 3 cross-project matches
 
-  Last session  2026-04-21 — project_board MCP tool shipped in v3.3.22
+  Last session  2026-04-21 — project status board feature shipped in v3.3.22
   Next          Publish v3.3.22 to npm; collect 10 real sessions
 
   ⚠ watch_for  "No dark backgrounds for new products"   corrected 3×
@@ -212,23 +212,13 @@ Calls `recall({ query, project })` and displays results ranked by relevance.
 
 ---
 
-## `/arsave-quick`
-
-Lightweight session save — faster than `/arsave`. Records a brief summary and key completions without full palace consolidation.
-
-**Usage:** `/arsave-quick`
-
-Calls `session_end` with minimal fields. Use when the session was short or low-stakes.
-
----
-
 ## `/arbootstrap`
 
 Import existing projects from your machine into AgentRecall. Discovers git repos, Claude memory files, and CLAUDE.md files.
 
 **Usage:** `/arbootstrap`
 
-Calls `bootstrap_scan` then `bootstrap_import` after confirmation. Safe — read-only scan before any writes.
+Calls `ar bootstrap` then `ar bootstrap --import` after confirmation. Safe — read-only scan before any writes.
 
 ---
 

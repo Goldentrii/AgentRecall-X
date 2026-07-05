@@ -386,19 +386,8 @@ export {
 export { sessionEnd, checkInsightQuality, type SessionEndInput, type SessionEndResult, type InsightQualityWarning, type MergeSuggestion } from "./tools-logic/session-end.js";
 export { promoteConfirmedInsights, type PromotionResult } from "./tools-logic/insight-promotion.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta } from "./tools-logic/check.js";
-export { memoryQuery, type MemoryQueryInput, type MemoryQueryResult, type MemoryQueryItem } from "./tools-logic/memory-query.js";
-export { projectStatus, type ProjectStatusInput, type ProjectStatusResult } from "./tools-logic/project-status.js";
-
-// Tool logic — cross-surface adapter (P4): brief + bootstrap exports
-export {
-  brief,
-  LIFECYCLE_TEXT,
-  type BriefInput,
-  type BriefResult,
-  type BriefCorrection,
-  type BriefWatchFor,
-  type BriefRule,
-} from "./tools-logic/brief.js";
+// Tool logic — cross-surface adapter (P4): bootstrap exports
+// brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)
 export {
   bootstrapScan,
   bootstrapImport,
@@ -607,16 +596,7 @@ export type { SessionStartLiteInput, SessionStartLiteResult } from "./tools-logi
 export { sessionEndReflect } from "./tools-logic/session-end-reflect.js";
 export type { ReflectInput, ReflectResult, ReflectInputBundle } from "./tools-logic/session-end-reflect.js";
 
-// Dashboard export (V8)
-export { dashboardExport } from "./tools-logic/dashboard-export.js";
-export type {
-  DashboardExportInput,
-  DashboardExportResult,
-  DashboardSnapshot,
-  DashboardProjectSnapshot,
-  DashboardDreamHealth,
-  DreamHealthCell,
-} from "./tools-logic/dashboard-export.js";
+// Dashboard export removed 2026-07-05 (owner-approved P3b purity deletions)
 
 // Helpers — activity feed
 export { buildRecentActivity } from "./helpers/activity-feed.js";

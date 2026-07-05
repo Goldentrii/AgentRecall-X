@@ -23,7 +23,7 @@ export const CONSOLIDATION_PROMPT_TEMPLATE = `# AgentRecall consolidation prompt
 You are the agent reviewing your own recent work. From the inputs below, produce:
 
 1. **Three high-level questions** this period raised (Park 2023 style).
-2. **Procedural skills** that crystallized — anything repeated >=2x is a candidate (call skill_write).
+2. **Procedural skills** that crystallized — anything repeated >=2x is a candidate (write to palace/skills/ via ar palace write).
 3. **Cross-session patterns** not yet in awareness — distilled insights worth promoting.
 4. **Noise to archive** — corrections with low precision that should be retired.
 

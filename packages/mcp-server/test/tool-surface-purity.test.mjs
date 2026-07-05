@@ -5,8 +5,15 @@
  * must update the EXPECTED_* sets below and survive code review.
  *
  * Invariants (a) default listing is exactly the alive set
- *            (b) --full WITHOUT AR_EXTRAS does NOT include quarantined names
+ *            (b) --full WITHOUT AR_EXTRAS contains exactly check_action
  *            (c) AR_EXTRAS=1 --full restores exactly the quarantined set
+ *
+ * P3b owner-approved deletion (2026-07-05, all seven items checkmarked):
+ *   Removed from --full surface: skill_write, skill_recall, skill_list,
+ *   dashboard_export, session_end_reflect, project_board, project_status,
+ *   bootstrap_scan, bootstrap_import, memory_query, brief (11 MCP tools).
+ *   New matrix: default 5 / full 6 (core 5 + check_action) / extras 6+7=13.
+ *   CLI bootstrap, ar status, ar consolidate, palace/skills logic untouched.
  */
 
 import { describe, it } from "node:test";
@@ -33,7 +40,10 @@ const EXPECTED_DEFAULT = new Set([
 
 /**
  * The --full surface WITHOUT AR_EXTRAS=1.
- * 5 core + 12 active extended = 17 total.
+ * 5 core + 1 active extended = 6 total.
+ * All formerly-full tools (skill_*, dashboard_export, session_end_reflect,
+ * project_board, project_status, bootstrap_scan, bootstrap_import, memory_query,
+ * brief) were deleted 2026-07-05 (P3b purity, owner-approved).
  * Quarantined tools (pipeline_*, register_rule, digest) must NOT appear here.
  */
 const EXPECTED_FULL_NO_EXTRAS = new Set([
@@ -42,18 +52,7 @@ const EXPECTED_FULL_NO_EXTRAS = new Set([
   "remember",
   "recall",
   "check",
-  "memory_query",
   "check_action",
-  "skill_write",
-  "skill_recall",
-  "skill_list",
-  "dashboard_export",
-  "session_end_reflect",
-  "project_board",
-  "project_status",
-  "bootstrap_scan",
-  "bootstrap_import",
-  "brief",
 ]);
 
 /**
@@ -111,7 +110,7 @@ describe("Tool-surface purity — purity-census-2026-07-05", () => {
     }
   });
 
-  it("(b) --full WITHOUT AR_EXTRAS excludes all quarantined tools", async () => {
+  it("(b) --full WITHOUT AR_EXTRAS is exactly 6 tools (5 core + check_action only)", async () => {
     const names = await listTools(["--full"]);
     const got = new Set(names);
 

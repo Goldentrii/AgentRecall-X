@@ -1,7 +1,7 @@
 # README Rewrite Proposal — 2026-07-04
 
 **Loop:** D1 (Writer-worker)  
-**Status:** DRAFT — human taste gate required before applying  
+**Status:** APPLIED 2026-07-05 (owner-approved, both flagged sentences retained)  
 **Scope:** README.md only. README.zh-CN.md excluded (same pass needed later — see Note at bottom).
 
 ---

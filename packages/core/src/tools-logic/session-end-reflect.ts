@@ -136,7 +136,7 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
 
   const prompt = buildPrompt(slug, bundle, lookback);
   const nextActions = [
-    "After reading the bundle, call skill_write for any IF-THEN production rule worth saving (procedural memory).",
+    "After reading the bundle, write any IF-THEN production rule worth saving to palace/skills/ via ar palace write skills/<slug>.",
     "Call session_end again with insights[] containing distilled cross-session patterns.",
     "If a correction's precision < 0.3 across ≥3 retrievals, suggest archiving it (set active:false).",
   ];

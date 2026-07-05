@@ -23,32 +23,42 @@ describe("MCP server smoke tests", () => {
     assert.equal(tools.length, 5);
   });
 
-  it("--full exposes 17 active tools (quarantined extras excluded without AR_EXTRAS)", async () => {
+  // P3b purity-census-2026-07-05: --full now exposes 6 tools (5 core + check_action).
+  // Removed from --full: skill_*, dashboard_export, session_end_reflect,
+  // project_board, project_status, bootstrap_scan, bootstrap_import, memory_query, brief.
+  it("--full exposes 6 active tools (5 core + check_action, quarantined extras excluded without AR_EXTRAS)", async () => {
     const { stdout } = await execFileAsync("node", [ENTRY, "--list-tools", "--full"]);
     const tools = JSON.parse(stdout);
     const names = tools.map((t) => t.name);
-    // Active extended tools present
-    assert.ok(names.includes("memory_query"));
-    assert.ok(names.includes("project_board"));
-    assert.ok(names.includes("project_status"));
-    assert.ok(names.includes("bootstrap_scan"));
-    assert.ok(names.includes("bootstrap_import"));
-    assert.ok(names.includes("brief"));
+    // check_action still present
+    assert.ok(names.includes("check_action"));
     // Quarantined extras absent without AR_EXTRAS=1
     assert.ok(!names.includes("digest"), "digest must be quarantined without AR_EXTRAS=1");
     assert.ok(!names.includes("pipeline_open"), "pipeline tools must be quarantined without AR_EXTRAS=1");
     assert.ok(!names.includes("register_rule"), "register_rule must be quarantined without AR_EXTRAS=1");
-    assert.equal(tools.length, 17);
+    // Deleted tools must not appear
+    assert.ok(!names.includes("memory_query"), "memory_query was deleted P3b");
+    assert.ok(!names.includes("project_board"), "project_board was deleted P3b");
+    assert.ok(!names.includes("project_status"), "project_status was deleted P3b");
+    assert.ok(!names.includes("bootstrap_scan"), "bootstrap_scan was deleted P3b");
+    assert.ok(!names.includes("bootstrap_import"), "bootstrap_import was deleted P3b");
+    assert.ok(!names.includes("brief"), "brief was deleted P3b");
+    assert.ok(!names.includes("skill_write"), "skill_write was deleted P3b");
+    assert.ok(!names.includes("skill_recall"), "skill_recall was deleted P3b");
+    assert.ok(!names.includes("skill_list"), "skill_list was deleted P3b");
+    assert.ok(!names.includes("dashboard_export"), "dashboard_export was deleted P3b");
+    assert.ok(!names.includes("session_end_reflect"), "session_end_reflect was deleted P3b");
+    assert.equal(tools.length, 6);
   });
 
-  it("AR_EXTRAS=1 --full exposes all 24 tools", async () => {
+  it("AR_EXTRAS=1 --full exposes all 13 tools", async () => {
     const { stdout } = await execFileAsync("node", [ENTRY, "--list-tools", "--full"], { env: { ...process.env, AR_EXTRAS: "1" } });
     const tools = JSON.parse(stdout);
     const names = tools.map((t) => t.name);
     assert.ok(names.includes("digest"));
     assert.ok(names.includes("pipeline_open"));
     assert.ok(names.includes("register_rule"));
-    assert.equal(tools.length, 24);
+    assert.equal(tools.length, 13);
   });
 
   it("--version prints a semver string", async () => {

@@ -230,9 +230,9 @@ When defined, any agent (Claude, GPT, Gemini) can read/write the same memory sto
 
 ---
 
-## RMR Program — Purity Wave close-out (2026-07-05) — census-driven surface diet, 77% ambient noise fixed, 7 tools quarantined
+## RMR Program — Purity Wave close-out (2026-07-05) — census-driven surface diet, 77% ambient noise fixed, owner-approved deletions, measured-truth README
 
-Three loops independently reviewed and verified. 96 tests, 0 fail across 4 packages. B2 gates green throughout.
+Five loops independently reviewed and verified. 891 tests, 0 fail across 4 packages. B2 gates green throughout.
 
 ---
 
@@ -306,6 +306,51 @@ Goal: implement the quarantine tier identified by P1 — move 7 tools out of `--
 **Verifier PASS. B2 gates green.**
 
 **DELETE candidates (7 items from census):** intentionally untouched — awaiting owner checkmarks before any removal.
+
+**REDLINE:** local commit only.
+
+---
+
+## RMR Program — P3b: owner-approved MCP tool deletions (2026-07-05)
+
+Goal: execute the 11 deletions that P3a held behind owner checkmarks. Every removal is backed by: (1) a zero-use census verdict, (2) a consumer sweep confirming no CLI caller, or (3) a confirmed orphan after the parent tool was deleted.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| 11 MCP tool wrappers deleted | `skill_write`, `skill_recall`, `skill_list`, `dashboard_export`, `session_end_reflect`, `project_board`, `project_status`, `bootstrap_scan`, `bootstrap_import`, `memory_query`, `brief` — all removed from `packages/mcp-server/src/tools/` and de-registered in `packages/mcp-server/src/index.ts` | Zero organic use in 60-day corpus (P1 census). MCP wrappers are pure noise — they add surface area, documentation debt, and snapshot-guard maintenance cost with no return. |
+| 4 orphaned tools-logic modules deleted | `packages/core/src/tools-logic/brief.ts`, `dashboard-export.ts`, `memory-query.ts`, `project-status.ts` — deleted after consumer sweep found no CLI or SDK callers remaining after the MCP wrappers were removed | A logic module with no consumer is a graveyard. Leaving it in place is an invitation for a future agent to "activate" it without reading the prior deletion rationale. |
+| 7 tools-logic modules KEPT | `projectBoard` (← `ar status`), `sessionEndReflect` (← `ar consolidate`), `bootstrapScan` / `bootstrapImport` (← `ar bootstrap`), skills-recognition logic (← `ar recognition` / `session-start-lite`), `session-start-lite.ts`, `session-end-reflect.ts`, `consolidation-prompt.ts` — all have confirmed CLI consumers cited in source comments | CLI equivalents are alive and well; only the MCP wrappers were dead weight. Deleting the logic would have broken the CLI. Consumer citations added to source so the next agent can verify without a full sweep. |
+| `arsave-quick` skill deleted | `~/.claude/commands/arsave-quick` removed | Superseded by `arsave` (the full save); the quick variant was a training-wheels stub with no distinct behavior. Owner-approved. |
+| Snapshot guard updated | `packages/mcp-server/test/tool-surface-purity.test.mjs` updated to the new approved surface: default 5 / `--full` 6 (`+check_action`) / `AR_EXTRAS` 13. Dated owner-approval comment added to the snapshot | The guard must reflect the post-deletion reality. The dated approval comment means a future agent can see WHEN the surface was frozen and by whom, not just what it contains. |
+
+**Verification:** Verifier PASS 8/8. 891 tests, 0 fail. B2 gates green. Tool-surface-purity snapshot: default 5 / `--full` 6 / `AR_EXTRAS` 13 — all 3 tiers locked.
+
+**REDLINE:** local commit only.
+
+---
+
+## RMR Program — D1-apply: measured-truth README (2026-07-05)
+
+Goal: apply the D1 proposal to `README.md` — owner-approved including both flagged sentences. Every claim either cites a concrete artifact or is removed. No unfalsifiable marketing language survives.
+
+**What changed:**
+
+| Item | What | Why |
+|------|------|-----|
+| Competitor comparison table removed | The 3-row `AgentRecall / Mem0 / Zep` table comparing "correction layer", "CLI depth", and "open source" was cut | Competitor properties drift; we can't commit to tracking them. Our-property claims we can defend; competitor-comparative claims require continuous competitor monitoring. |
+| Precision-KPI quote removed | *"Every correction saved is a mistake never repeated"* cut | Unfalsifiable without a measured recurrence count. The RMR program exists to make this measurable; writing it into the README before the data exists is the thing the program is designed to prevent. |
+| Stale benchmark link removed | The `bench-result/v1/` path reference cut (the directory does not exist; was a phantom path caught by B4) | Dead links erode trust faster than no link. |
+| 2 badges removed | The "instant setup in 60 seconds" badge and the unanchored "precision" badge cut | Neither is benchmarked; both will age badly. |
+| "Measured, not promised" 6-metric table | Replaces the removed claims: capture recall 35.3% [CI], heed-rate N/A pending (with explanation), verdict coverage 0/3 evidence-grounded, B2 bench gates green, scrub coverage (list of pattern classes), 891 tests. Each metric cites its artifact (`rmr-baseline-2026-07-02.json`, `rmr-report.mjs`, `docs/eval/REPRODUCE.md`, `scrub.test.mjs`, `tool-surface-purity.test.mjs`) | Numbers stated with source + caveat are honest. Numbers stated without either are marketing. The table inverts the framing: we lead with what we've measured, not what we promise. |
+| Automaticity Principle promoted to named section | Lifted from a buried paragraph to `## The Automaticity Principle` with a sub-heading; wording tightened to our-property only | The principle is the product's north star — agents shouldn't have to decide to save. It deserves visible real estate and a name that future agents can cite. |
+| `REPRODUCE.md` verify link | "Run it yourself" call-to-action linking to `docs/eval/REPRODUCE.md` added below the metrics table | The table's credibility depends on being verifiable. The link closes the loop. |
+| `README.zh-CN.md` carries a sync-pending note | `> 注：本文档待与英文版同步（2026-07-05 英文版已更新）。内容以英文版为准。` added at the top | zh-CN is not a translation yet — it predates the D1 rewrite. Rather than leave it silently stale, flag it explicitly so a reader knows to check the English version. A full zh-CN rewrite is deferred. |
+
+**Numbers verified at apply time:** 35.3% capture recall → sourced from `scripts/eval/baselines/rmr-baseline-2026-07-02.json` (frozen artifact, not the live report). 891 tests → confirmed by `npm test` run immediately before this commit. B2 gates → green per this wave's verifier. Scrub pattern classes → read from `packages/cli/test/scrub.test.mjs` test descriptions.
+
+**Owner approval:** both flagged sentences (comparison table, precision-KPI quote) explicitly approved for removal.
 
 **REDLINE:** local commit only.
 
