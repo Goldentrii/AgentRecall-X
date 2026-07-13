@@ -329,3 +329,19 @@ Before starting work on AgentRecall, do this in order:
 ---
 
 *This protocol was formalized from a live session. It will improve over time — update this file when you discover a better pattern.*
+
+---
+
+## Harness Change Acceptance (added 2026-07-13)
+
+Any change to the harness itself — ~/.claude rules/hooks/settings, AgentRecall injection logic, loop/workflow tooling — is accepted only through this loop (external reference: Lilian Weng, "Harness Engineering for Self-Improvement", 2026-07; Self-Harness, arXiv:2606.09498):
+
+1. **Bounded edit** — one failure pattern per change, smallest surface that addresses it. No drive-by refactors.
+2. **Evaluator outside the loop** — the check that accepts the change must not be editable by the change (folder-lint baseline, bench exact-match gates, node --test suites, REDLINE permission gates all live outside).
+3. **Held-in regression** — the targeted failure class must be shown fixed (test or baseline delta).
+4. **Held-out regression** — existing suites/baselines must pass unchanged; a change that "fixes" its target by loosening an unrelated gate is rejected.
+5. **Independent verify** — reviewer/verifier is never the author (Sonnet worker → Sonnet reviewer → Sonnet verifier; orchestrator lands).
+6. **Human at the merge** — REDLINE actions (push/publish/version-bump/delete/deploy) remain owner-gated per change, no carryover.
+7. **Model floor** — self-modification loops run on the strongest available orchestrator model only; never delegate harness edits to weak models unsupervised (STOP, Zelikman 2023: recursion on weak models degrades).
+
+Landing pattern for repos with auto-commit hooks: work on a branch, land via cherry-pick of the intended commits onto main (branch may accumulate unrelated auto-sync commits).
