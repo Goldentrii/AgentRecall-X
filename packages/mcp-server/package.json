@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-mcp",
-  "version": "3.4.36",
+  "version": "3.4.37",
   "mcpName": "io.github.Goldentrii/agent-recall",
   "description": "Memory Palace MCP server for AI agents",
   "type": "module",
@@ -17,7 +17,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "agent-recall-core": "3.4.36",
+    "agent-recall-core": "3.4.37",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^3.24.0"
   },
