@@ -6,15 +6,15 @@
 
 <p align="center"><strong>你的 agent 不只是记得。它在学你怎么想。</strong></p>
 <p align="center">每一次纠正都是不会重复的错误。每一次复合都是不会重建的上下文。</p>
-<p align="center">持久、可复合的记忆 + 自动纠正捕获。MCP server + SDK + CLI。</p>
+<p align="center">持久、可复合的记忆 + 自动纠正捕获。MCP · SDK · CLI · Skill。</p>
 
 <p align="center">
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/MCP-5_tools_default-orange?style=flat-square" alt="Tools">
+  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/tools-5_default-orange?style=flat-square" alt="Tools">
   <img src="https://img.shields.io/badge/memory_layers-5-7C3AED?style=flat-square" alt="5 layers">
   <img src="https://img.shields.io/badge/cloud-zero_by_default-blue?style=flat-square" alt="Zero cloud by default">
   <img src="https://img.shields.io/badge/decay-FSRS--lite-3B82F6?style=flat-square" alt="FSRS-lite decay">
@@ -120,7 +120,7 @@ codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```bash
 mkdir -p ~/.claude/skills/agent-recall
 curl -o ~/.claude/skills/agent-recall/SKILL.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/SKILL.md
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/SKILL.md
 ```
 
 ### SDK 和 CLI
@@ -212,7 +212,7 @@ claude login
   <img src="warroom/static/preview.png" alt="AgentRecall War Room — 总览" width="900">
 </p>
 
-1. 从 [最新 GitHub Release](https://github.com/Goldentrii/AgentRecall/releases/latest) 下载 **`ar-warroom-v3.4.32.zip`**。
+1. 从 [最新 GitHub Release](https://github.com/Goldentrii/AgentRecall-X/releases/latest) 下载 **`ar-warroom-v3.4.32.zip`**。
 2. 解压后本地启动：
 
 ```bash
@@ -248,7 +248,7 @@ TypeScript monorepo，4 个发布包：`core`（存储 + 工具逻辑）、`mcp-
 - **更新日志** → [UPDATE-LOG.md](UPDATE-LOG.md) —— 逐阶段演进 + 设计推理
 - **基准报告** → [REPORT-2026-05-30.html](REPORT-2026-05-30.html) —— Phase 6 可视化报告
 - **Skill** → [SKILL.md](SKILL.md) —— Claude Code skill 定义
-- **社区** → [Telegram](https://t.me/+ywZwoHrg3AM0NDVi) · [GitHub Issues](https://github.com/Goldentrii/AgentRecall/issues)
+- **社区** → [Telegram](https://t.me/+ywZwoHrg3AM0NDVi) · [GitHub Issues](https://github.com/Goldentrii/AgentRecall-X/issues)
 
 ## 贡献
 

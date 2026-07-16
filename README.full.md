@@ -5,16 +5,16 @@
 <p align="center"><strong>Your agent doesn't just remember. It learns how you think.</strong></p>
 <p align="center"><strong>你的 agent 不只是记得。它在学你怎么想。</strong></p>
 <p align="center">Every correction saved is a mistake never repeated. Every insight compounded is tokens never wasted rebuilding context.<br/>每一次纠正都是不会重复的错误。每一次复合都是不会重建的上下文。</p>
-<p align="center">Persistent, compounding memory + automatic correction capture. MCP server + SDK + CLI.</p>
+<p align="center">Persistent, compounding memory + automatic correction capture. MCP · SDK · CLI · Skill.</p>
 
 <p align="center">
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
   <a href="https://lobehub.com/mcp/goldentrii-agentrecall"><img src="https://lobehub.com/badge/mcp/goldentrii-agentrecall" alt="MCP Badge"></a>
-  <img src="https://img.shields.io/badge/MCP-5_tools_default-orange?style=flat-square" alt="Tools">
+  <img src="https://img.shields.io/badge/tools-5_default-orange?style=flat-square" alt="Tools">
   <img src="https://img.shields.io/badge/memory_layers-5-7C3AED?style=flat-square" alt="5 layers">
   <img src="https://img.shields.io/badge/cloud-zero-blue?style=flat-square" alt="Zero Cloud">
   <img src="https://img.shields.io/badge/Obsidian-compatible-7C3AED?style=flat-square" alt="Obsidian">
@@ -263,7 +263,7 @@ codex mcp add agent-recall -- npx -y agent-recall-mcp
 ```bash
 mkdir -p ~/.claude/skills/agent-recall
 curl -o ~/.claude/skills/agent-recall/SKILL.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall/main/SKILL.md
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/SKILL.md
 ```
 
 ### SDK — for JS/TS applications
@@ -561,7 +561,7 @@ packages/
 ## Community · 社区
 
 - 💬 [Telegram](https://t.me/+ywZwoHrg3AM0NDVi) — questions, feedback, requests
-- 🐛 [GitHub Issues](https://github.com/Goldentrii/AgentRecall/issues) — bugs and feature requests
+- 🐛 [GitHub Issues](https://github.com/Goldentrii/AgentRecall-X/issues) — bugs and feature requests
 - 📦 [npm: agent-recall-mcp](https://www.npmjs.com/package/agent-recall-mcp)
 - 📦 [npm: agent-recall-sdk](https://www.npmjs.com/package/agent-recall-sdk)
 - 📦 [npm: agent-recall-cli](https://www.npmjs.com/package/agent-recall-cli)
