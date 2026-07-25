@@ -2,35 +2,33 @@
 //
 // Regression fixtures for a Codex-flagged retrieval-accounting audit of
 // packages/core/src/tools-logic/smart-recall.ts (v3.4.38, commit 1f36bde).
-// This file does NOT modify any production source — it only pins down, via
-// the real exported pipeline, what the code actually does today so a future
-// fix has a red test to turn green.
 //
-// ── Finding 1 — dedup is excerpt-based, not canonical-ID based ──────────────
-// applyRRF() (smart-recall.ts:293-307) keys its Map by `item.id`, where
+// ── Finding 1 — FIXED (v3.4.39) — was: dedup is excerpt-based, not
+// canonical-ID based ─────────────────────────────────────────────────────
+// Originally, applyRRF() keyed its Map by `item.id`, where
 // `item.id = stableId(source, title)`. `title` is built differently per
 // source (palace: `${room}/${file}`, journal: `${date} / ${section}`), so the
-// SAME conceptual memory found via two sources gets two DIFFERENT ids and is
+// SAME conceptual memory found via two sources got two DIFFERENT ids and was
 // inserted as two SEPARATE rrfMap entries. applyRRF's cross-source
-// accumulation branch (`existing.score += contribution`) can therefore never
-// fire across sources — only within a single source's own duplicate ids.
-// The later "Deduplicate by excerpt content" step (Step 5, ~line 480-490)
-// then silently collapses same-excerpt entries by first-inserted-wins (Map
-// iteration = insertion order: palace, then journal, then insight — see
-// smart-recall.ts:456-458), DISCARDING the other source's score entirely
-// (not summing/accumulating it).
-// `total_searched: results.length` (smart-recall.ts:646) reads the `results`
-// variable, which for every local-path branch (input.since — line 558;
-// non-remote backend — line 567/570; remote-timeout fallback — line 592) is
-// exactly what `localRecallSearch()` returns, i.e. Step 5's `deduped` array
-// (+ optional graph-walk pushes, still the same array, still pre-`slice`).
-// Nothing between that assignment and the `total_searched` return statement
-// (the feedback loop at 600-617, the re-sort at 620, the `.slice(0, limit)`
-// at 622 into a *different* `finalResults` variable) changes `results`'
-// length. So `total_searched` counts POST-dedup, POST-RRF-merge survivors —
-// directly contradicting the header's "Fix 4" comment (smart-recall.ts:44-47)
-// claiming it "counts candidate items from each source before final RRF
-// merge".
+// accumulation branch (`existing.score += contribution`) could therefore
+// never fire across sources — only within a single source's own duplicate
+// ids. The later "Deduplicate by excerpt content" step (Step 5) then
+// silently collapsed same-excerpt entries by first-inserted-wins (Map
+// iteration = insertion order: palace, then journal, then insight),
+// DISCARDING the other source's score entirely (not summing/accumulating
+// it). `total_searched: results.length` read the POST-dedup array length,
+// directly contradicting the header's "Fix 4" comment claiming it "counts
+// candidate items from each source before final RRF merge".
+//
+// FIX: applyRRF() now keys its fusion map by NORMALIZED EXCERPT CONTENT (the
+// same identity notion Step 5's dedup already used), so same-excerpt items
+// from different sources land in the SAME map entry from the start and
+// cross-source RRF accumulation fires naturally. Provenance is preserved via
+// `alsoFoundIn` on the fused item. `total_searched` now reports the true
+// pre-fusion candidate count via a side channel (see `CandidatesBySource` /
+// `candidates_by_source` in smart-recall.ts). Case A below now asserts the
+// FIXED behavior (was previously asserting the bug, to pin it down before a
+// future fix).
 //
 // ── Finding 2 — hot-window recency boost mishandles date-only strings ──────
 // The boost loop (smart-recall.ts:466-478) does
@@ -70,7 +68,7 @@ const normalize = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
 // Case A — cross-source dedup collapses total_searched
 // ---------------------------------------------------------------------------
 
-describe("Audit Finding 1 — excerpt-based dedup vs total_searched accounting", () => {
+describe("Audit Finding 1 (FIXED) — canonical-excerpt fusion vs total_searched accounting", () => {
   const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-audit-dedup-"));
   const PROJECT = "audit-dedup-test";
   const SAVED_ENV = {};
@@ -137,21 +135,44 @@ describe("Audit Finding 1 — excerpt-based dedup vs total_searched accounting",
     );
   });
 
-  it("localRecallSearch collapses 2 distinct source-candidates into 1 surviving result", async () => {
+  it("localRecallSearch fuses 2 distinct source-candidates into 1 canonical result via genuine cross-source RRF accumulation", async () => {
     const results = await localRecallSearch("xyzcanary9921 rollout", PROJECT, 10);
     assert.equal(
       results.length,
       1,
-      `BUG: expected the excerpt-collapse to reduce 2 distinct source-candidates (1 palace + 1 ` +
-      `journal) to exactly 1 surviving result; got ${results.length}`
+      `expected the 2 distinct source-candidates (1 palace + 1 journal), which represent the SAME ` +
+      `conceptual memory, to fuse into exactly 1 canonical result; got ${results.length}`
     );
-    // Whichever source's applyRRF() ran first wins the collapse (palace runs
-    // before journal — smart-recall.ts:456-458); the OTHER source's
-    // contribution is discarded outright, not merged/summed into the winner.
-    assert.equal(results[0].source, "palace", `expected the first-inserted source (palace) to win the collapse, got "${results[0].source}"`);
+    // Whichever source's applyRRF() ran first remains the primary/display
+    // source (palace runs before journal — smart-recall.ts fusion order);
+    // this is unchanged from before the fix.
+    assert.equal(results[0].source, "palace", `expected the first-processed source (palace) to be the primary/display source, got "${results[0].source}"`);
+
+    // FIX-VERIFICATION: this is the part that actually distinguishes "genuine
+    // cross-source fusion" from "one source silently won and the other's
+    // contribution was thrown away" (the pre-fix bug). Provenance from the
+    // OTHER contributing source must be preserved...
+    assert.deepEqual(
+      results[0].alsoFoundIn,
+      ["journal"],
+      `expected the fused item to record "journal" as an additional contributing source via alsoFoundIn ` +
+      `(proof the journal candidate was actually merged in, not discarded); got ${JSON.stringify(results[0].alsoFoundIn)}`
+    );
+    // ...and the score must reflect BOTH sources' rank-1 RRF contribution
+    // summed (1/(RRF_K+1) each, RRF_K=60), not just palace's alone. Neither
+    // item has a `date` (no date pattern in the seeded content), so the
+    // hot-window boost does not apply here and the raw RRF sum is exact.
+    const rrfContribution = 1 / (60 + 1);
+    const expectedFusedScore = rrfContribution * 2; // palace rank-1 + journal rank-1
+    assert.ok(
+      Math.abs(results[0].score - expectedFusedScore) < 1e-9,
+      `expected fused score ${expectedFusedScore} (both sources' rank-1 RRF contribution summed), got ` +
+      `${results[0].score} — a score of just ${rrfContribution} would mean the journal contribution was ` +
+      `silently discarded instead of accumulated`
+    );
   });
 
-  it("smartRecall's total_searched traces to the POST-dedup count, not the true distinct-candidate count", async () => {
+  it("smartRecall's total_searched now reports the true pre-fusion distinct-candidate count", async () => {
     const result = await smartRecall({ query: "xyzcanary9921 rollout", project: PROJECT });
     const trueDistinctCandidates = 2; // 1 palace + 1 journal — independently confirmed by the first `it` above
 
@@ -163,15 +184,23 @@ describe("Audit Finding 1 — excerpt-based dedup vs total_searched accounting",
 
     assert.equal(
       result.total_searched,
-      1,
-      `header comment (Fix 4, smart-recall.ts:44-47) claims total_searched counts "candidate items from ` +
-      `each source before final RRF merge" (would be ${trueDistinctCandidates} here); observed ` +
-      `total_searched=${result.total_searched} instead — it traces to the POST-dedup array length`
-    );
-    assert.notEqual(
-      result.total_searched,
       trueDistinctCandidates,
-      "total_searched should have equaled the true distinct-candidate count if Fix 4's header comment were accurate"
+      `header comment (Fix 4, smart-recall.ts) claims total_searched counts "candidate items from each ` +
+      `source before final RRF merge" — expected ${trueDistinctCandidates}, got ${result.total_searched}`
+    );
+    // The single DISPLAYED result is still correctly fused down to 1 — both
+    // sources agree it's the same memory. total_searched (breadth of search)
+    // and results.length (post-fusion survivor count) are now two distinct,
+    // independently-correct metrics rather than the same POST-dedup number.
+    assert.equal(
+      result.results.length,
+      1,
+      `expected exactly 1 displayed result (the fused canonical memory), got ${result.results.length}`
+    );
+    assert.deepEqual(
+      result.candidates_by_source,
+      { palace: 1, journal: 1, insight: 0 },
+      `expected the per-source raw-candidate diagnostic to match, got ${JSON.stringify(result.candidates_by_source)}`
     );
   });
 });
