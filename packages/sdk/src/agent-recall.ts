@@ -31,6 +31,13 @@ import {
   knowledgeWrite, type KnowledgeWriteInput,
   knowledgeRead, type KnowledgeReadInput,
   readAwareness, readAwarenessState,
+  // Modern (v3.4) composite API — same core functions the MCP tools
+  // session_start / remember / recall / session_end / check delegate to.
+  sessionStart, type SessionStartResult,
+  smartRemember, type SmartRememberResult,
+  smartRecall, type SmartRecallInput, type SmartRecallResult,
+  sessionEnd, type SessionEndInput, type SessionEndResult,
+  check, type CheckInput, type CheckResult,
   // Palace low-level
   ensurePalaceInitialized, createRoom, getRoomMeta, listRooms, roomExists,
   readGraph, addEdge, getConnectedRooms,
@@ -159,6 +166,32 @@ export class AgentRecall {
 
   async knowledgeRead(opts?: Omit<KnowledgeReadInput, never>): Promise<string> {
     return knowledgeRead(opts ?? {});
+  }
+
+  // --- Modern composite API (v3.4) ---
+  // These wrap the SAME core functions the MCP tools of the same name
+  // delegate to (session_start, remember, recall, session_end, check) —
+  // see packages/mcp-server/src/tools/{session-start,remember,recall,
+  // session-end,check}.ts for the 1:1 mapping this mirrors.
+
+  async sessionStart(opts?: { context?: string }): Promise<SessionStartResult> {
+    return sessionStart({ project: this.project, context: opts?.context });
+  }
+
+  async remember(content: string, opts?: { context?: string }): Promise<SmartRememberResult> {
+    return smartRemember({ content, context: opts?.context, project: this.project });
+  }
+
+  async recall(query: string, opts?: Omit<SmartRecallInput, "query" | "project"> & { project?: string }): Promise<SmartRecallResult> {
+    return smartRecall({ query, project: opts?.project ?? this.project, ...opts });
+  }
+
+  async sessionEnd(summary: string, opts?: Omit<SessionEndInput, "summary" | "project"> & { project?: string }): Promise<SessionEndResult> {
+    return sessionEnd({ summary, project: opts?.project ?? this.project, ...opts });
+  }
+
+  async check(input: Omit<CheckInput, "project"> & { project?: string }): Promise<CheckResult> {
+    return check({ ...input, project: input.project ?? this.project });
   }
 
   // --- Digest (context cache) ---

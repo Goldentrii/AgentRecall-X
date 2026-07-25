@@ -5,11 +5,17 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 // Phase 0 (PR A1) regression fixtures for the Codex P0 audit findings against
-// v3.4.38 (commit 1f36bde). These tests document TODAY's real (broken)
-// behavior. They are expected to FLIP once the corresponding fixes ship
-// (README/SDK API parity for Case A; per-instance root scoping for Case B).
+// v3.4.38 (commit 1f36bde).
 //
-// Do not "fix" these assertions without also shipping the corresponding
+// Case A (README/SDK API parity) has FLIPPED: `AgentRecall.recall(...)` now
+// wraps `smartRecall` from agent-recall-core (same core call the MCP `recall`
+// tool makes) — see packages/sdk/src/agent-recall.ts. This case now asserts
+// the CORRECT behavior and passes.
+//
+// Case B (per-instance root scoping) is still open and documents TODAY's
+// real (broken) behavior — it is expected to FAIL until that fix ships.
+//
+// Do not "fix" Case B's assertions without also shipping the corresponding
 // production fix — that would silently re-hide the bug this file exists to
 // pin down.
 
@@ -19,7 +25,7 @@ describe("SDK audit contract (Phase 0 regression fixtures)", () => {
     resetRoot();
   });
 
-  it("Case A: README Quick Start's memory.recall(...) does not exist on AgentRecall", async () => {
+  it("Case A: README Quick Start's memory.recall(...) exists and works on AgentRecall", async () => {
     const { AgentRecall } = await import("../dist/index.js");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sdk-audit-caseA-"));
 
@@ -31,27 +37,20 @@ describe("SDK audit contract (Phase 0 regression fixtures)", () => {
       assert.equal(captureResult.success, true, "capture() should work as documented");
 
       // README documents `await memory.recall("rate limiting")` as a real call.
-      // As of v3.4.38, no such method exists on AgentRecall (grep of
-      // packages/sdk/src/agent-recall.ts confirms the exported method list
-      // has no plain `recall`). This assertion documents TODAY's real (broken)
-      // behavior and PASSES now. It must be flipped to assert
-      // `typeof memory.recall === "function"` once B3 (SDK API parity) ships
-      // a real `recall` method — leaving it as-is after that point would mean
-      // this file is silently no longer testing anything.
-      assert.notEqual(
+      // FLIPPED (B3 — SDK API parity shipped): `recall` now wraps `smartRecall`
+      // from agent-recall-core, the same core function the MCP `recall` tool
+      // delegates to (packages/mcp-server/src/tools/recall.ts).
+      assert.equal(
         typeof memory.recall,
         "function",
-        "memory.recall unexpectedly became a function — if B3 (SDK API parity) " +
-          "shipped a real `recall` method, flip this assertion to " +
-          "`assert.equal(typeof memory.recall, \"function\")` instead of leaving it inverted."
+        "memory.recall should be a function now that B3 (SDK API parity) has shipped"
       );
 
-      // Calling it directly throws exactly as README users would experience.
-      assert.throws(
-        () => memory.recall("rate limiting"),
-        /memory\.recall is not a function|recall is not a function/,
-        "memory.recall(...) should throw a TypeError as written in the README Quick Start"
-      );
+      // Calling it resolves without throwing and returns smartRecall's result shape.
+      const result = await memory.recall("rate limiting");
+      assert.equal(result.query, "rate limiting");
+      assert.ok(Array.isArray(result.results), "recall() should return a results array (smartRecall shape)");
+      assert.ok(Array.isArray(result.sources_queried), "recall() should return sources_queried (smartRecall shape)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
