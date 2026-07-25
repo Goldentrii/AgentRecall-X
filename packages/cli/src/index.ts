@@ -2328,7 +2328,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
       const outRest = rest.slice(1);
 
       if (sub === "--help" || sub === "-h" || !sub) {
-        output(`ar outcomes — dream-audit verdict surface (C3b)
+        output(`ar outcomes — dream-audit verdict surface (C3b) + ledger rebuild (TOW2-321 follow-up)
 
 SUBCOMMANDS:
   ar outcomes audit-candidates [--project <slug>] [--date YYYY-MM-DD]
@@ -2346,9 +2346,72 @@ SUBCOMMANDS:
         - 1/day dedup: if a covered verdict already exists for this id×audit-date, skipped.
       Output: { success, correction_id, project, kind, evidence, at, audit_date, skipped_reason? }
 
+  ar outcomes rebuild --project <slug> [--apply] [--json]
+      Recompute every correction's outcome counters (retrieved/heeded/recurrence/
+      predicted/predict_hits + precision/predict_precision/proof_confidence) from
+      a full replay of the lossless _outcomes.jsonl ledger. Repairs records whose
+      materialized counters were corrupted by the pre-05b3699 unlocked
+      read-modify-write in recordOutcome (or diverged for any other reason).
+        - DRY-RUN by default: computes and reports the full before/after plan,
+          writes nothing. Pass --apply to actually rewrite the divergent records.
+        - Malformed ledger lines are quarantined (reported, never crash the run).
+        - Idempotent: re-running --apply on an already-rebuilt store is a no-op.
+
 agent_instruction: use "audit-candidates" to list unknown-verdict corrections for a date,
   then "record" to write a verdict. Always pass --audit-date matching the retrieved_date
-  from audit-candidates output. Quote session evidence in --evidence. Never default to heeded.`);
+  from audit-candidates output. Quote session evidence in --evidence. Never default to heeded.
+  Use "rebuild" (dry-run first, then --apply) after \`ar doctor\` flags outcomes_ledger_divergence.`);
+        break;
+      }
+
+      if (sub === "rebuild") {
+        const rebuildProject = getFlag("--project", outRest) ?? project;
+        if (!rebuildProject) {
+          process.stderr.write(
+            `Error: --project is required for outcomes rebuild\n` +
+            `Usage: ar outcomes rebuild --project <slug> [--apply] [--json]\n` +
+            `agent_instruction: provide --project <slug> to scope the rebuild\n`
+          );
+          process.exitCode = 1;
+          break;
+        }
+
+        const apply = hasFlag("--apply", outRest);
+        try {
+          const slug = await core.resolveProject(rebuildProject);
+          const result = core.runOutcomesRebuild(slug, { apply });
+
+          if (hasFlag("--json", outRest)) {
+            output(result);
+          } else {
+            const verb = result.apply ? "rebuilt" : "would rebuild (dry-run)";
+            const lines: string[] = [
+              `outcomes ${verb}: ${result.summary.changed}/${result.summary.totalCorrections} correction(s) changed` +
+                (result.summary.malformed > 0
+                  ? `, ${result.summary.malformed} malformed ledger row(s) quarantined`
+                  : ""),
+            ];
+            for (const c of result.corrections.filter((c) => c.changed).slice(0, 20)) {
+              lines.push(`  ${c.id}:`);
+              lines.push(`    before: ${JSON.stringify(c.before)}`);
+              lines.push(`    after:  ${JSON.stringify(c.after)}`);
+            }
+            if (result.malformedRows.length > 0) {
+              lines.push(
+                `  ⚠ malformed ledger row(s): ${result.malformedRows.slice(0, 5).map((m) => `line ${m.line} (${m.error})`).join("; ")}`,
+              );
+            }
+            if (!apply) lines.push("  (dry-run — pass --apply to write these changes)");
+            output(lines.join("\n"));
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          process.stderr.write(
+            `Error rebuilding outcomes: ${msg}\n` +
+            `agent_instruction: check that --project is a valid resolvable project slug\n`
+          );
+          process.exitCode = 1;
+        }
         break;
       }
 
@@ -2532,9 +2595,9 @@ agent_instruction: use "audit-candidates" to list unknown-verdict corrections fo
       // Unknown subcommand
       process.stderr.write(
         `Unknown outcomes subcommand: ${sub}\n` +
-        `Usage: ar outcomes audit-candidates|record [...]\n` +
+        `Usage: ar outcomes audit-candidates|record|rebuild [...]\n` +
         `Run: ar outcomes --help\n` +
-        `agent_instruction: use "audit-candidates" to list unknowns, "record" to write a verdict\n`
+        `agent_instruction: use "audit-candidates" to list unknowns, "record" to write a verdict, "rebuild" to recompute counters from the ledger\n`
       );
       process.exitCode = 1;
       break;

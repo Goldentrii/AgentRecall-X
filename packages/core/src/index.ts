@@ -558,8 +558,21 @@ export {
   readOutcomesOnDate,
   readAllOutcomeKinds,
   listUnknownVerdicts,
+  runOutcomesRebuild,
+  recomputeCorrectionCounters,
+  computeLedgerDivergence,
 } from "./storage/corrections.js";
-export type { CorrectionOutcome, CorrectionKPI, UnknownVerdictCandidate } from "./storage/corrections.js";
+export type {
+  CorrectionOutcome,
+  CorrectionKPI,
+  UnknownVerdictCandidate,
+  MalformedOutcomeRow,
+  RecomputedCounters,
+  DivergenceEntry,
+  OutcomesRebuildOptions,
+  OutcomesRebuildCorrectionDiff,
+  OutcomesRebuildResult,
+} from "./storage/corrections.js";
 
 // Wave 5 — corrections-prediction (north-star) + compression remainder
 export { deriveBlindSpots } from "./helpers/blind-spots.js";

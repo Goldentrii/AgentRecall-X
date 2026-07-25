@@ -16,7 +16,9 @@ const cjsFs = createRequire(import.meta.url)("fs");
  *
  * Verifies:
  *   - clean store → status 'ok', every check 'ok'
- *   - each of the 4 injected conditions flips the RIGHT check to RED/WARN
+ *   - each of the 5 injected conditions flips the RIGHT check to RED/WARN
+ *     (CHECK 5 — outcomes_ledger_divergence — is the TOW2-321 follow-up: a
+ *     hand-corrupted materialized outcome counter vs a ledger replay)
  *   - the doctor is strictly READ-ONLY (writeFileSync/mkdirSync stubbed to throw
  *     → doctor still runs and returns)
  *   - the doctor does NOT deadlock while a lock dir is held
@@ -28,6 +30,7 @@ let indexManager;
 let palaceWrite;
 let filelock;
 let typesMod;
+let corrections;
 
 const PROJECT = "doctor-proj";
 
@@ -63,6 +66,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     indexManager = await import("../dist/palace/index-manager.js");
     palaceWrite = await import("../dist/tools-logic/palace-write.js");
     filelock = await import("../dist/storage/filelock.js");
+    corrections = await import("../dist/storage/corrections.js");
 
     // A real project with palace content + a journal so it is enumerable and
     // its index is in sync with disk.
@@ -260,13 +264,14 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
 
     try {
       const r = doctor.runStoreDoctor();
-      // It returns a well-formed result with all 4 checks present.
+      // It returns a well-formed result with all 5 checks present.
       assert.ok(r && typeof r.status === "string");
-      assert.equal(r.checks.length, 4);
+      assert.equal(r.checks.length, 5);
       const names = r.checks.map((c) => c.name).sort();
       assert.deepEqual(names, [
         "dreaming_stale",
         "orphaned_consume_marker",
+        "outcomes_ledger_divergence",
         "stale_lock",
         "vector_index_drift",
       ]);
@@ -289,5 +294,85 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     } finally {
       release();
     }
+  });
+
+  it("CHECK 5: outcomes ledger and materialized counters in agreement stays OK", () => {
+    corrections.writeCorrection(PROJECT, {
+      id: "outcomes-clean",
+      date: "2026-06-20",
+      severity: "p1",
+      project: PROJECT,
+      rule: "Always double check before publishing",
+      context: "Test correction for the clean ledger/counter agreement case.",
+      tags: [],
+    });
+    corrections.recordOutcome({
+      correction_id: "outcomes-clean",
+      project: PROJECT,
+      kind: "retrieved",
+      at: "2026-06-20T00:00:00.000Z",
+    });
+    corrections.recordOutcome({
+      correction_id: "outcomes-clean",
+      project: PROJECT,
+      kind: "heeded",
+      at: "2026-06-21T00:00:00.000Z",
+    });
+
+    const r = doctor.runStoreDoctor();
+    const check = r.checks.find((c) => c.name === "outcomes_ledger_divergence");
+    assert.equal(check.level, "ok", check.detail);
+  });
+
+  it("CHECK 5: a hand-corrupted retrieved_count flips outcomes_ledger_divergence RED; `ar outcomes rebuild --apply` clears it", () => {
+    corrections.writeCorrection(PROJECT, {
+      id: "outcomes-corrupt",
+      date: "2026-06-20",
+      severity: "p1",
+      project: PROJECT,
+      rule: "Always double check before publishing",
+      context: "Test correction for the hand-corrupted counter case.",
+      tags: [],
+    });
+    // Two real, lock-protected recordOutcome calls -> retrieved_count should be 2.
+    corrections.recordOutcome({
+      correction_id: "outcomes-corrupt",
+      project: PROJECT,
+      kind: "retrieved",
+      at: "2026-06-20T00:00:00.000Z",
+    });
+    corrections.recordOutcome({
+      correction_id: "outcomes-corrupt",
+      project: PROJECT,
+      kind: "retrieved",
+      at: "2026-06-21T00:00:00.000Z",
+    });
+
+    // Confirmed clean BEFORE hand-corruption.
+    let check = doctor.runStoreDoctor().checks.find((c) => c.name === "outcomes_ledger_divergence");
+    assert.equal(check.level, "ok", check.detail);
+
+    // Hand-corrupt the materialized counter — simulates the TOW2-321-class lost
+    // increment (ledger says 2 retrievals; disk is manually forced to 1).
+    const dir = path.join(TEST_ROOT, "projects", PROJECT, "corrections");
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !f.startsWith("_"));
+    const file = files.find((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8")).id === "outcomes-corrupt");
+    const full = path.join(dir, file);
+    const onDisk = JSON.parse(fs.readFileSync(full, "utf-8"));
+    onDisk.retrieved_count = 1; // WRONG — a full ledger replay says 2
+    fs.writeFileSync(full, JSON.stringify(onDisk, null, 2), "utf-8");
+
+    const r = doctor.runStoreDoctor();
+    check = r.checks.find((c) => c.name === "outcomes_ledger_divergence");
+    assert.equal(check.level, "red", check.detail);
+    assert.equal(r.status, "red");
+    assert.match(check.detail, /outcomes-corrupt/);
+
+    // Repair via rebuild --apply, then confirm the doctor reports clean again.
+    const rebuildResult = corrections.runOutcomesRebuild(PROJECT, { apply: true });
+    assert.equal(rebuildResult.summary.changed, 1);
+
+    const after = doctor.runStoreDoctor().checks.find((c) => c.name === "outcomes_ledger_divergence");
+    assert.equal(after.level, "ok", after.detail);
   });
 });

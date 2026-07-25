@@ -31,6 +31,7 @@ import { palaceDir, archiveRawDir } from "../storage/paths.js";
 import { STALE_LOCK_MS } from "../storage/filelock.js";
 import { getDreamHealth } from "../storage/dream-health.js";
 import { resolveRetentionDays } from "../storage/retention.js";
+import { computeLedgerDivergence } from "../storage/corrections.js";
 import type { PalaceIndex } from "../types.js";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -70,7 +71,8 @@ export interface DoctorCheck {
     | "vector_index_drift"
     | "stale_lock"
     | "dreaming_stale"
-    | "orphaned_consume_marker";
+    | "orphaned_consume_marker"
+    | "outcomes_ledger_divergence";
   /** Worst level this check found. */
   level: DoctorLevel;
   /** Human-readable detail of what was (or wasn't) found. */
@@ -403,6 +405,73 @@ function checkOrphanedConsumeMarkers(): DoctorCheck {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Check 5 — OUTCOMES LEDGER vs MATERIALIZED-COUNTER DIVERGENCE
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * For every project, replay _outcomes.jsonl (the lossless, append-only ledger)
+ * and compare the recomputed retrieved/heeded/recurrence/predicted/predict_hit
+ * counters — plus their derived precision/predict_precision/proof_confidence —
+ * against what's CURRENTLY materialized on each correction's *.json file.
+ *
+ * This is the read-only detector for the class of corruption TOW2-321 fixed
+ * going forward (an unlocked read-modify-write in recordOutcome could lose
+ * concurrent increments): any correction whose materialized counters still
+ * disagree with a full ledger replay — from that bug, or any other future
+ * cause — shows up here. RED when at least one correction in at least one
+ * project diverges; this check never fixes anything, only reports.
+ *
+ * Shares its replay core (computeLedgerDivergence) with runOutcomesRebuild in
+ * storage/corrections.ts — one implementation, so the doctor and the repair
+ * tool it points at can never disagree about what "divergent" means.
+ *
+ * READ-ONLY: computeLedgerDivergence only reads _outcomes.jsonl and the
+ * per-project correction *.json files; it never writes or locks.
+ */
+function checkOutcomesDivergence(): DoctorCheck {
+  const base: DoctorCheck = {
+    name: "outcomes_ledger_divergence",
+    level: "ok",
+    detail: "Materialized outcome counters match a full ledger replay for every project.",
+    fix_hint: "",
+  };
+
+  const offenders: string[] = [];
+  let level: DoctorLevel = "ok";
+  let malformedTotal = 0;
+
+  try {
+    for (const proj of listAllProjects()) {
+      const { malformedRows, entries } = computeLedgerDivergence(proj.slug);
+      malformedTotal += malformedRows.length;
+      const changed = entries.filter((e) => e.changed);
+      if (changed.length > 0) {
+        level = "red";
+        offenders.push(`${proj.slug}: ${changed.length} correction(s) (${changed.slice(0, 4).map((e) => e.id).join(", ")})`);
+      }
+    }
+  } catch {
+    return {
+      ...base,
+      detail: "outcomes-divergence scan could not complete (store unreadable); skipped.",
+    };
+  }
+
+  if (level === "red") {
+    return {
+      name: "outcomes_ledger_divergence",
+      level,
+      detail:
+        `Materialized outcome counters diverge from the ledger replay in ${offenders.length} project(s): ` +
+        `${offenders.slice(0, 8).join("; ")}` +
+        (malformedTotal > 0 ? ` (${malformedTotal} malformed ledger row(s) skipped)` : ""),
+      fix_hint: "Run `ar outcomes rebuild --project <slug> --apply` to recompute counters from the lossless ledger.",
+    };
+  }
+  return base;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Public entry point
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -416,6 +485,7 @@ export function runStoreDoctor(): StoreDoctorResult {
     checkStaleLock(),
     checkDreamingStale(),
     checkOrphanedConsumeMarkers(),
+    checkOutcomesDivergence(),
   ];
   return { status: rollupStatus(checks), checks };
 }
