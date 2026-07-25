@@ -48,6 +48,30 @@
 // `new Date()` to a chosen instant while still delegating argument-based
 // parsing (`new Date("2026-07-25")`) to the real implementation — i.e. it
 // controls "now", not string-parsing semantics.
+//
+// ── Finding 3 — FIXED — insight excerpt was a weak, low-entropy identity
+// signal that collided across UNRELATED insights ───────────────────────────
+// fuseCanonical() (Fix 5 above) keys cross-source fusion by
+// `normalizeExcerpt(item.excerpt)`. For journal/palace sources `excerpt` is a
+// real matched text snippet, so this is a sound "same conceptual memory"
+// signal. For the insight source, smart-recall.ts synthesized the excerpt
+// from ONLY `severity` + `applies_when` — `[${i.severity}] ${i.applies_when
+// .join(", ")}` — completely omitting the insight's own distinguishing
+// `title`. Two totally unrelated insights that happen to share the same
+// severity + applies_when tag set (e.g. both `important` +
+// `["deployment", "database"]`) produced byte-identical synthesized excerpts
+// even though they describe completely different things. fuseCanonical()
+// then merged them into ONE canonical entry: one insight silently vanished
+// from localRecallSearch()/smartRecall() output, and the surviving one's
+// score was inflated by `existing.score += entry.score` with the unrelated
+// insight's RRF contribution — with no trace in `alsoFoundIn` (which only
+// records source NAMES like "insight", so a same-source collision looks
+// like an ordinary single-source hit).
+//
+// FIX: the insight excerpt now leads with `i.title` — the insight's actual
+// distinguishing content — before the `[severity] tags` suffix, so
+// normalizeExcerpt() hashes on real content, not just metadata. Two insights
+// can no longer collide merely by sharing a severity/tag combination.
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -60,7 +84,14 @@ import { journalCapture } from "../dist/tools-logic/journal-capture.js";
 import { palaceWrite } from "../dist/tools-logic/palace-write.js";
 import { journalSearch } from "../dist/tools-logic/journal-search.js";
 import { palaceSearch } from "../dist/tools-logic/palace-search.js";
-import { setRoot, resetRoot, resetRecallBackend } from "../dist/index.js";
+import {
+  setRoot,
+  resetRoot,
+  resetRecallBackend,
+  addIndexedInsight,
+  readInsightsIndex,
+  recallInsight,
+} from "../dist/index.js";
 
 const normalize = (s) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -335,6 +366,128 @@ describe("Audit Finding 2 — hot-window recency boost vs date-only journal date
       );
     } finally {
       restoreRealClock();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Case C — unrelated same-severity/tag insights collide on synthesized excerpt
+// ---------------------------------------------------------------------------
+
+describe("Audit Finding 3 — insight excerpt collision fuses UNRELATED same-severity/tag insights", () => {
+  const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-audit-insight-collision-"));
+  const PROJECT = "audit-insight-collision-test";
+  const SAVED_ENV = {};
+
+  const TITLE_A = "Always run zzzmigrationprobe7712 database migrations before deploying new code";
+  const TITLE_B = "Never hardcode zzzapikeyprobe6634 API keys directly in source files";
+  const SHARED_SEVERITY = "important";
+  const SHARED_TAGS = ["deployment", "database"];
+
+  before(async () => {
+    for (const k of ["OPENAI_API_KEY", "AGENT_RECALL_SUPABASE_URL", "AGENT_RECALL_SUPABASE_KEY"]) {
+      SAVED_ENV[k] = process.env[k];
+      delete process.env[k];
+    }
+    setRoot(TMP);
+    resetRecallBackend();
+
+    // Two insights with genuinely UNRELATED titles (no token overlap — see
+    // the setup-invariant test below) that happen to share the same
+    // severity + applies_when tag set. Seeded through the real production
+    // write path (addIndexedInsight), which runs findSimilarInsight's
+    // containment-based confirm-first check before admitting a new entry —
+    // exactly the write-time path the reproduction must go through.
+    addIndexedInsight({
+      title: TITLE_A,
+      source: "test-seed",
+      applies_when: [...SHARED_TAGS],
+      severity: SHARED_SEVERITY,
+    });
+    addIndexedInsight({
+      title: TITLE_B,
+      source: "test-seed",
+      applies_when: [...SHARED_TAGS],
+      severity: SHARED_SEVERITY,
+    });
+  });
+
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    for (const [k, v] of Object.entries(SAVED_ENV)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("test-setup invariant: findSimilarInsight's write-time containment check does NOT merge the two seeded insights", () => {
+    const index = readInsightsIndex();
+    assert.equal(
+      index.insights.length,
+      2,
+      `expected 2 DISTINCT insights in the index (titles must not overlap enough to trigger the ` +
+      `confirm-first merge), got ${index.insights.length}`
+    );
+  });
+
+  it("recallInsight() correctly returns BOTH distinct insights as separate entries", async () => {
+    const result = await recallInsight({ context: "zzzmigrationprobe7712 zzzapikeyprobe6634 deployment database", limit: 10 });
+    const titles = result.matching_insights.map((i) => i.title).sort();
+    assert.deepEqual(
+      titles,
+      [TITLE_A, TITLE_B].sort(),
+      `expected recallInsight() to surface BOTH distinct insights independently, got ${JSON.stringify(titles)}`
+    );
+  });
+
+  it("localRecallSearch must NOT collapse the two distinct insights into one canonical result", async () => {
+    const results = await localRecallSearch("zzzmigrationprobe7712 zzzapikeyprobe6634 deployment database", PROJECT, 10);
+    const insightResults = results.filter((r) => r.source === "insight");
+    const titles = insightResults.map((r) => r.title).sort();
+
+    assert.equal(
+      insightResults.length,
+      2,
+      `expected 2 DISTINCT insight results in localRecallSearch output, got ${insightResults.length}: ` +
+      `${JSON.stringify(titles)} — if only 1 survives, the insight excerpt (built from ONLY severity+tags) ` +
+      `collided in fuseCanonical() and one insight's score was silently absorbed into the other's`
+    );
+    assert.deepEqual(
+      titles,
+      [TITLE_A, TITLE_B].sort(),
+      `expected both original titles to survive distinctly, got ${JSON.stringify(titles)}`
+    );
+
+    // Neither should show the OTHER as an additional contributing source —
+    // a same-source excerpt collision is not genuine cross-source fusion,
+    // and (per the bug) would be invisible via alsoFoundIn even if it fired,
+    // since alsoFoundIn only records source NAMES ("insight"), not distinct
+    // documents.
+    for (const r of insightResults) {
+      assert.equal(
+        r.alsoFoundIn,
+        undefined,
+        `expected no alsoFoundIn on a standalone insight result, got ${JSON.stringify(r.alsoFoundIn)}`
+      );
+    }
+
+    // Each insight's own RRF rank-1 contribution must remain distinct/small —
+    // not inflated by silently absorbing the other insight's contribution.
+    // Both are rank-1 within the insight source's OWN ranking only if scores
+    // tie; regardless, neither fused score should equal 2x a single rank's
+    // contribution (which is what the bug produces for the surviving item).
+    const rrfContributionRank1 = 1 / (60 + 1);
+    const rrfContributionRank2 = 1 / (60 + 2);
+    for (const r of insightResults) {
+      const isDoubledUp = Math.abs(r.score - (rrfContributionRank1 + rrfContributionRank2)) < 1e-9;
+      assert.ok(
+        !isDoubledUp,
+        `expected this insight's score (${r.score}) to reflect only its OWN contribution, not both ` +
+        `insights' RRF contributions summed together (${rrfContributionRank1 + rrfContributionRank2}) — ` +
+        `that sum is what the collision bug produces on the surviving item`
+      );
     }
   });
 });
