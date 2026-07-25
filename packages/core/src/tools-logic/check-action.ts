@@ -83,17 +83,113 @@ const STOPWORDS = new Set([
   "my", "your", "our", "let", "lets", "going", "make", "made", "go", "want", "need",
 ]);
 
+// Latin-only strip: unchanged from the original grammar — collapses anything
+// that isn't a-z0-9/space/hyphen to whitespace. Applied AFTER NFKD so accented
+// Latin letters (e.g. "é" -> "e" + combining acute) decompose and the mark is
+// stripped, same as before this file went CJK-aware.
+const LATIN_STRIP_RE = /[^a-z0-9\s\-]+/g;
+
+// Detects/extracts Han-script runs (Chinese hanzi, and CJK-shared Kanji/Hanja).
+// `\p{Script=Han}` needs the `u` flag; both are widely supported (Node >=18,
+// this package's floor per root package.json "engines").
+const HAN_CHAR_RE = /\p{Script=Han}/u;
+const HAN_RUN_RE = /\p{Script=Han}+/gu;
+
+// Feature-detected once at module load. Node >=18 (this project's engines
+// floor) ships Intl.Segmenter unconditionally, but we still feature-detect
+// defensively rather than assume every runtime that imports this module is
+// Node >=18 — falls back to a deterministic character-bigram scheme below.
+let cjkSegmenter: Intl.Segmenter | undefined;
+try {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    cjkSegmenter = new Intl.Segmenter("zh", { granularity: "word" });
+  }
+} catch {
+  cjkSegmenter = undefined;
+}
+
+/**
+ * Deterministic fallback for runtimes without `Intl.Segmenter` (defensive
+ * only — Node >=18 always has it). Character bigrams approximate word-level
+ * CJK tokens well enough for overlap matching without a dictionary; a lone
+ * single-character run still yields a one-character token so it is never
+ * silently dropped (this is exactly the Layer-2 bug this fix closes).
+ */
+function bigramFallback(run: string): string[] {
+  const chars = Array.from(run); // code-point aware (avoids UTF-16 surrogate splits)
+  if (chars.length <= 1) return chars;
+  const out: string[] = [];
+  for (let i = 0; i < chars.length - 1; i++) out.push(chars[i] + chars[i + 1]);
+  return out;
+}
+
+/** Segments one Han-script run into word-level (or bigram-fallback) tokens. */
+function segmentHanRun(run: string): string[] {
+  if (cjkSegmenter) {
+    const out: string[] = [];
+    for (const seg of cjkSegmenter.segment(run)) {
+      // isWordLike is only meaningful with granularity:"word"; pure Han runs
+      // (already isolated by HAN_RUN_RE below) should all be word-like, but
+      // the check + HAN_CHAR_RE test are defense-in-depth against a segmenter
+      // ever handing back a stray non-ideograph segment.
+      if (seg.isWordLike !== false && HAN_CHAR_RE.test(seg.segment)) {
+        out.push(seg.segment);
+      }
+    }
+    return out;
+  }
+  return bigramFallback(run);
+}
+
 // Exported (Wave 4) so the prior-builder and predict-correction (Wave 5) reuse
 // the SAME tokenizer/overlap grammar instead of forking it.
+//
+// CJK fix (2026-07-25, audit-cjk-check-action.test.mjs): the tokenizer used to
+// be Latin-only — `[^a-z0-9\s\-]+` stripped every CJK character before any
+// splitting happened, so pure-Chinese rules/actions always tokenized to an
+// empty set (Layer 1). Fixing only that regex is not enough: the length>=3
+// floor below exists for English noise-word suppression (STOPWORDS already
+// removes literal stopwords; the floor additionally drops bare short tokens
+// like acronyms/fragments that survive the stopword list — see the original
+// 2026-06-03 commit message: "single-word matches ... produce too much
+// noise"). Most meaningful Chinese words are 1-3 CHARACTERS (发布, 确认,
+// 删除, 不要), so applying that same floor to CJK tokens would silently drop
+// them right back to empty on ordinary short phrases (Layer 2). The fix
+// below therefore keeps the length floor Latin-only and gives CJK tokens
+// their own script-aware path with NO length floor (STOPWORDS also does not
+// apply — it is an English word list) — Han-run extraction already excludes
+// punctuation/whitespace, so there is no "stray punctuation counted as a
+// token" risk to guard against per-token.
 export function tokenize(s: string): Set<string> {
-  return new Set(
-    s
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9\s\-]+/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
-  );
+  // NFKC first (compose full-width/compatibility forms — e.g. fullwidth
+  // Latin, CJK compatibility ideographs — into their canonical form; this is
+  // the better default for search/matching per the audit brief). Note this
+  // does NOT change Latin-path output below: NFKC on already-composed Latin
+  // text is a no-op, and the Latin path re-normalizes with NFKD immediately
+  // after, reproducing byte-identical behavior to the pre-fix pipeline.
+  const normalized = s.normalize("NFKC");
+
+  const tokens = new Set<string>();
+
+  // --- CJK path: extract Han-script runs and segment them independently of
+  // the Latin path (which would otherwise erase every Han character). ---
+  const hanRuns = normalized.match(HAN_RUN_RE);
+  if (hanRuns) {
+    for (const run of hanRuns) {
+      for (const tok of segmentHanRun(run)) tokens.add(tok);
+    }
+  }
+
+  // --- Latin path: byte-identical to the original grammar. ---
+  const latinTokens = normalized
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(LATIN_STRIP_RE, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  for (const t of latinTokens) tokens.add(t);
+
+  return tokens;
 }
 
 export function overlap(a: Set<string>, b: Set<string>): string[] {
