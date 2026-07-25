@@ -273,7 +273,7 @@ python3 -m http.server 8080
 
 TypeScript monorepo，4 个发布包：`core`（存储 + 工具逻辑）、`mcp-server`（轻量 MCP 包装）、`sdk`（编程 API）、`cli`（`ar` 命令）。所有记忆都是 `~/.agent-recall/projects/<slug>/` 下的本地 markdown——`journal/`、`corrections/` 和 `palace/`（rooms、skills、pipeline、awareness）。可选的 Supabase 镜像可加上 pgvector 语义召回；纯本地仍是默认。
 
-检索方式：关键词 + RRF（Cormack 2009）。FSRS-lite 衰减（Ebbinghaus → SuperMemo → FSRS-6）。代码库中包含一个 Modern Hopfield 重排序原语（Ramsauer 2020），但**未**接入默认路径——目前实际运行的是 BM25/关键词 + RRF，再加上设置了 `OPENAI_API_KEY` 时可选启用的向量检索。
+检索方式：关键词 + RRF（Cormack 2009）。FSRS-lite 衰减（Ebbinghaus → SuperMemo → FSRS-6）。代码库中包含一个 Modern Hopfield 重排序原语（Ramsauer 2020），但**未**接入默认路径——目前实际运行的是本地关键词/子串匹配（词干还原 + 同义词扩展 + 轻量 IDF、按来源排序）并通过 RRF 融合，再加上设置了 `OPENAI_API_KEY` 时可选启用的向量检索。没有倒排索引，也没有 BM25 的 k1/b 调参——真正的 BM25 索引是可能的未来升级方向，而非当前运行的算法。
 
 ## 平台兼容
 

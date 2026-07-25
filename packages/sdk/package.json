@@ -43,5 +43,11 @@
     "langchain",
     "crewai"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Goldentrii/AgentRecall-X.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/Goldentrii/AgentRecall-X#readme"
 }

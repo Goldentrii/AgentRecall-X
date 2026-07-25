@@ -97,7 +97,7 @@ Default tools (5):
   session_start          [ENTRY — call FIRST, before acting] Load project context at session start — corrections, insights, warnings
   session_end            [ON SAVE/EXIT — YOU must call this; nothing auto-saves] Save journal, insights, trajectory — compounds memory over time
   remember               [MID-SESSION WRITE — single fact/decision; saying it is not saving it] Write a memory — auto-routes to the right store
-  recall                 [RETRIEVE — use freely, any time] Search all memory — BM25/keyword + RRF fusion + optional vector (OpenAI key)
+  recall                 [RETRIEVE — use freely, any time] Search all memory — keyword/RRF fusion + optional vector (OpenAI key)
   check                  [MID-SESSION — safe any time; for alignment, before risky decisions] Record understanding; anticipates the likely correction before you make it
 
 Full-mode additions (--full):

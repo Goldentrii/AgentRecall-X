@@ -273,7 +273,7 @@ This is the recommended onboarding for Hermes / OpenClaw / OpenCode users too �
 
 TypeScript monorepo, 4 published packages: `core` (storage + tool logic), `mcp-server` (thin MCP wrappers), `sdk` (programmatic API), `cli` (the `ar` command). All memory is local markdown under `~/.agent-recall/projects/<slug>/` — `journal/`, `corrections/`, and `palace/` (rooms, skills, pipeline, awareness). An optional Supabase mirror adds pgvector semantic recall; all-local stays the default.
 
-Retrieval: keyword + RRF (Cormack 2009). FSRS-lite decay (Ebbinghaus → SuperMemo → FSRS-6). A Modern Hopfield re-rank primitive (Ramsauer 2020) is in the codebase but not wired into the default path — what runs today is BM25/keyword + RRF, plus optional vector search when `OPENAI_API_KEY` is set.
+Retrieval: keyword + RRF (Cormack 2009). FSRS-lite decay (Ebbinghaus → SuperMemo → FSRS-6). A Modern Hopfield re-rank primitive (Ramsauer 2020) is in the codebase but not wired into the default path — what runs today is local keyword/substring matching (stemming + synonym expansion + lightweight IDF, per-source ranking) merged via RRF, plus optional vector search when `OPENAI_API_KEY` is set. No inverted index or BM25 k1/b tuning — a real BM25 index is a possible future upgrade, not what's running now.
 
 ## Platform Compatibility
 

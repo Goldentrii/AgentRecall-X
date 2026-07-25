@@ -302,37 +302,30 @@ npx agent-recall-cli palace walk --depth active
     <td><code>session_start</code></td><td>Inhale — load context at session start (corrections, insights, watch_for warnings).</td><td>吸入——会话开始时加载上下文（纠正记录、insights、预测警告）。</td></tr>
 <tr><td><code>session_end</code></td><td>Exhale — save journal + insights + trajectory; compounds memory over time.</td><td>呼出——保存 journal + insights + trajectory；随时间复合记忆。</td></tr>
 <tr><td><code>remember</code></td><td>Write a memory, auto-routes to the right palace room.</td><td>写入一条记忆，自动路由到合适的 palace 房间。</td></tr>
-<tr><td><code>recall</code></td><td>Search all memory (BM25 + vector with RRF fusion + Hopfield rerank).</td><td>搜索所有记忆（BM25 + 向量 + RRF 融合 + Hopfield 重排）。</td></tr>
+<tr><td><code>recall</code></td><td>Search all memory (local keyword/substring matching + RRF fusion, plus optional vector + Hopfield rerank).</td><td>搜索所有记忆（本地关键词/子串匹配 + RRF 融合，再加上可选的向量 + Hopfield 重排）。</td></tr>
 <tr><td><code>check</code></td><td>Record agent understanding; the system anticipates the likely correction before you make it.</td><td>记录 agent 的理解；在你纠正之前预测最可能的纠正。</td></tr>
 <tr><td colspan="4" style="text-align:center;padding:6px 0"><b>— Full mode (<code>npx agent-recall-mcp --full</code>) —</b>&nbsp;&nbsp;|&nbsp;&nbsp;<b>— 完整模式 —</b></td></tr>
-<tr><td rowspan="3"><b>On-demand + safety</b><br/>按需 + 安全</td>
-    <td><code>memory_query</code></td><td>Pull-on-demand recall mid-task. Supports file-scoped queries.</td><td>任务中按需召回。支持按文件范围查询。</td></tr>
-<tr><td><code>check_action</code></td><td>Pre-action matcher — warns before publish/push/deploy/DROP TABLE.</td><td>操作前匹配器——publish/push/deploy 前给出警告。</td></tr>
-<tr><td><code>register_rule</code></td><td>Save an IF-THEN behavior policy (always-loaded rules channel).</td><td>保存一条 IF-THEN 行为策略（常驻加载规则通道）。</td></tr>
+<tr><td rowspan="1"><b>Safety</b><br/>安全</td>
+    <td><code>check_action</code></td><td>Pre-action matcher — warns before publish/push/deploy/DROP TABLE.</td><td>操作前匹配器——publish/push/deploy 前给出警告。</td></tr>
+<tr><td colspan="4" style="text-align:center;padding:6px 0"><b>— Quarantined extras (<code>AR_EXTRAS=1 npx agent-recall-mcp --full</code>) —</b>&nbsp;&nbsp;|&nbsp;&nbsp;<b>— 隔离区扩展工具 —</b></td></tr>
 <tr><td rowspan="5"><b>Pipeline</b><br/>叙事</td>
     <td><code>pipeline_open</code></td><td>Open a new project phase (Goal/Hard/Solved/Synthesis).</td><td>开启新的项目阶段（目标/难点/解决/提炼）。</td></tr>
 <tr><td><code>pipeline_close</code></td><td>Close active phase with reflection fields. Status: closed / abandoned / pivoted.</td><td>关闭当前阶段并填反思字段。状态：closed / abandoned / pivoted。</td></tr>
 <tr><td><code>pipeline_list</code></td><td>List all phases as JSON summaries.</td><td>列出所有阶段（JSON 摘要）。</td></tr>
 <tr><td><code>pipeline_current</code></td><td>Return full content of the currently active phase.</td><td>返回当前 active 阶段的完整内容。</td></tr>
 <tr><td><code>pipeline_show</code></td><td>Render a project's narrative spine — human-readable view of all phases.</td><td>渲染项目的叙事主干——所有阶段的人类可读视图。</td></tr>
-<tr><td rowspan="3"><b>Skills</b><br/>程序记忆</td>
-    <td><code>skill_write</code></td><td>Save an IF-THEN production rule (trigger / preconditions / steps / postconditions / pitfalls).</td><td>保存一条 IF-THEN 产生式规则（触发条件/前提/步骤/后置条件/陷阱）。</td></tr>
-<tr><td><code>skill_recall</code></td><td>Find skills matching an intent (deterministic trigger-keyword ranking).</td><td>按意图找到匹配的 skill（基于触发关键词的确定性排序）。</td></tr>
-<tr><td><code>skill_list</code></td><td>Browse all skills in a project.</td><td>浏览项目中所有 skill。</td></tr>
-<tr><td rowspan="2"><b>Reflection</b><br/>反思</td>
-    <td><code>dashboard_export</code></td><td>Generate agent-readable <code>dashboard.json</code> with all-project memory snapshot.</td><td>生成 agent 可读的 <code>dashboard.json</code>，包含所有项目记忆快照。</td></tr>
-<tr><td><code>session_end_reflect</code></td><td>Park-2023 reflection bundle — distills last N journals into reusable insights.</td><td>Park-2023 反思包——把最近 N 篇 journal 蒸馏成可复用的 insight。</td></tr>
-<tr><td rowspan="2"><b>Status boards</b><br/>状态看板</td>
-    <td><code>project_board</code></td><td>Status board across all projects — last activity, pending work, blockers.</td><td>所有项目的状态看板——最近活动、待办、阻塞。</td></tr>
-<tr><td><code>project_status</code></td><td>Quick health check for one project — lighter than session_start.</td><td>单项目快速健康检查——比 session_start 轻量。</td></tr>
-<tr><td rowspan="2"><b>Setup</b><br/>初始化</td>
-    <td><code>digest</code></td><td>Context cache — store/recall/read/invalidate pre-computed analysis.</td><td>上下文缓存——存储/召回/读取/失效预计算分析。</td></tr>
-<tr><td><code>bootstrap_scan</code> + <code>bootstrap_import</code></td><td>Discover existing projects on this machine and import in bulk.</td><td>发现本机已有项目并批量导入。</td></tr>
+<tr><td rowspan="2"><b>Behavior policy + cache</b><br/>行为策略 + 缓存</td>
+    <td><code>register_rule</code></td><td>Save an IF-THEN behavior policy (always-loaded rules channel).</td><td>保存一条 IF-THEN 行为策略（常驻加载规则通道）。</td></tr>
+<tr><td><code>digest</code></td><td>Context cache — store/recall/read/invalidate pre-computed analysis.</td><td>上下文缓存——存储/召回/读取/失效预计算分析。</td></tr>
 </table>
 
-> **Why only 5 by default?** The Automaticity Law (measured on the live corpus, 2026-06-12): push channels — `session_start`, `session_end`, correction hooks — show repeated behavior-changing usage. Pull channels (`check_action`, `skill_recall`, `pipeline_*`, `memory_query`) had zero organic calls in 44 projects over weeks of real use, including from the agent that built them. Every extra tool in the default surface burns tool-definition tokens every session for zero behavioral return. The two-verb model (inhale/exhale) carries all compounding value; everything else is opt-in via `--full`.
+> **Why only 5 by default?** The Automaticity Law (measured on the live corpus, 2026-06-12): push channels — `session_start`, `session_end`, correction hooks — show repeated behavior-changing usage. Pull channels had zero organic calls in 44 projects over weeks of real use, including from the agent that built them. Every extra tool in the default surface burns tool-definition tokens every session for zero behavioral return. The two-verb model (inhale/exhale) carries all compounding value; everything else is opt-in via `--full`, and the lowest-use tools (pipeline, register_rule, digest) are further gated behind `AR_EXTRAS=1`.
 >
-> **为什么默认只有 5 个工具？** 自动化定律（基于真实语料库测量，2026-06-12）：推送通道（`session_start`、`session_end`、纠正 hooks）有持续的行为改变使用记录；拉取通道（`check_action`、`skill_recall`、`pipeline_*`、`memory_query`）在 44 个项目、数周真实使用中有零次有机调用——包括构建它们的 agent 本身。默认工具面每多一个工具就会在每次会话燃烧 tool-definition tokens，但零行为回报。双动词模型（吸入/呼出）承载了所有复合价值；其余功能通过 `--full` 按需开启。
+> **为什么默认只有 5 个工具？** 自动化定律（基于真实语料库测量，2026-06-12）：推送通道（`session_start`、`session_end`、纠正 hooks）有持续的行为改变使用记录；拉取通道在 44 个项目、数周真实使用中有零次有机调用——包括构建它们的 agent 本身。默认工具面每多一个工具就会在每次会话燃烧 tool-definition tokens，但零行为回报。双动词模型（吸入/呼出）承载了所有复合价值；其余功能通过 `--full` 按需开启，使用率最低的工具（pipeline、register_rule、digest）进一步隔离在 `AR_EXTRAS=1` 之后。
+>
+> **P3b purity census (2026-07-05):** `memory_query`, `skill_write`/`skill_recall`/`skill_list`, `dashboard_export`, `session_end_reflect`, `project_board`, `project_status`, and `bootstrap_scan`/`bootstrap_import` were removed from the MCP tool surface entirely (zero organic MCP calls). Their underlying logic is not deleted — narrative/skill functionality remains reachable via the SDK (see SDK API below), and status/consolidate/bootstrap remain reachable via the CLI (`ar status`, `ar consolidate`, `ar bootstrap`).
+>
+> **P3b 纯净普查（2026-07-05）：** `memory_query`、`skill_write`/`skill_recall`/`skill_list`、`dashboard_export`、`session_end_reflect`、`project_board`、`project_status`、`bootstrap_scan`/`bootstrap_import` 已从 MCP 工具面完全移除（MCP 调用记录为零）。底层逻辑并未删除——叙事/skill 功能仍可通过 SDK 访问（见下文 SDK API），状态/consolidate/bootstrap 仍可通过 CLI 访问（`ar status`、`ar consolidate`、`ar bootstrap`）。
 
 ---
 
@@ -356,8 +349,8 @@ npx agent-recall-cli palace walk --depth active
 </tr>
 <tr>
 <td><b>RRF + Hopfield retrieval</b></td>
-<td>BM25 + vector merged via RRF (Cormack 2009), then optionally re-ranked by Modern Hopfield (Ramsauer 2020) for associative blend.</td>
-<td>BM25 + 向量通过 RRF 融合（Cormack 2009），再可选地用 Modern Hopfield 重排（Ramsauer 2020）做关联融合。</td>
+<td>Local keyword/substring matching merged with optional vector search via RRF (Cormack 2009), then optionally re-ranked by Modern Hopfield (Ramsauer 2020) for associative blend.</td>
+<td>本地关键词/子串匹配与可选的向量检索通过 RRF 融合（Cormack 2009），再可选地用 Modern Hopfield 重排（Ramsauer 2020）做关联融合。</td>
 </tr>
 <tr>
 <td><b>Correction precision KPI</b></td>
@@ -481,7 +474,7 @@ const hits = await memory.skillRecall({ intent: "set up cloudflare for new domai
 ```bash
 # Capture & recall
 ar capture "Question" "Answer"
-ar recall "topic"                # hybrid BM25 + vector + Hopfield re-rank
+ar recall "topic"                # hybrid keyword + vector + Hopfield re-rank
 ar recall "topic" --limit 5      # cap to top-5 hits
 
 # Sessions
