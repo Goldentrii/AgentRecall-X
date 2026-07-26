@@ -163,6 +163,13 @@ export interface CorrectionOutcome {
    * ignore unknown fields.
    */
   recorded_at?: string;
+  /**
+   * C2 (2026-07-26) — process-scoped session identity (getSessionId()) of the
+   * caller that recorded this event. ADDITIVE + OPTIONAL: purely a stamping
+   * field for cross-referencing outcomes against telemetry/lifecycle.jsonl;
+   * recordOutcome does not read or branch on it. Absent on pre-C2 lines.
+   */
+  session_id?: string;
 }
 
 export interface CorrectionKPI {

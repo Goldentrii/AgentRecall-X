@@ -13,6 +13,8 @@ import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
 import { writeCorrection, splitSentences } from "../storage/corrections.js";
 import { classifyFailureClass } from "./check-action.js";
+import { getSessionId } from "../storage/session.js";
+import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
   readAlignmentLog as readLog,
   extractWatchPatterns,
@@ -144,6 +146,12 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         // capture — keyword classifier over the FULL correction text, using
         // only the shared tokenize/overlap grammar. Zero/tied hits → "other".
         failure_class: classifyFailureClass(corrText),
+        // C2 (2026-07-26): stamp the recording session's identity into the
+        // existing `holder` field (documented as "who recorded this — defaults
+        // to date/session proxy") so corrections captured via check() carry a
+        // consistent session identity, same as corrections.ts's own recordOutcome
+        // call sites in session-start.ts/session-end.ts.
+        holder: getSessionId(),
       });
       if (!writeResult.written) {
         // Surface the gate rejection instead of silently dropping the
@@ -327,6 +335,11 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       "OVER-CONFIDENCE GUARD: a prior correction predicts this plan is likely to be corrected — reconcile first.";
     calibrationNote = calibrationNote ? `${calibrationNote} ${guardLine}` : guardLine;
   }
+
+  // C2 — lifecycle telemetry: counters only, never transcript content.
+  // check() has no idempotency-suppression concept (task scope is limited to
+  // session_start/session_end), so dup is always false here.
+  recordLifecycleEvent("check", getSessionId(), slug, false);
 
   return {
     recorded: true,

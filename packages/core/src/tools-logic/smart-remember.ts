@@ -14,6 +14,9 @@ import { palaceWrite } from "./palace-write.js";
 import { knowledgeWrite } from "./knowledge-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
 import { getRoot } from "../types.js";
+import { resolveProject } from "../storage/project.js";
+import { getSessionId } from "../storage/session.js";
+import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,6 +139,12 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
       result: { error: "Content too short (minimum 5 characters). Memory not saved." },
     };
   }
+
+  // C2 (2026-07-26): resolve the project slug once here for lifecycle
+  // telemetry. Downstream sub-tool calls below still receive input.project
+  // unchanged and independently resolve it (resolveProject is idempotent —
+  // this extra call changes no behavior, just gives us the slug to stamp).
+  const resolvedProject = await resolveProject(input.project);
 
   const route = classifyRoute(input.content, input.context);
   const slugResult = generateSlug(input.content);
@@ -312,6 +321,11 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
       )
       .catch(() => {});
   }
+
+  // C2 — lifecycle telemetry: counters only, never transcript content.
+  // smart_remember has no idempotency-suppression concept (task scope is
+  // limited to session_start/session_end), so dup is always false here.
+  recordLifecycleEvent("remember", getSessionId(), resolvedProject, false);
 
   return {
     success: true,

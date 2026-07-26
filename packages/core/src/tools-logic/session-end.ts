@@ -6,6 +6,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { journalWrite } from "./journal-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
 import { promoteConfirmedInsights } from "./insight-promotion.js";
@@ -22,7 +23,8 @@ import { todayISO } from "../storage/fs-utils.js";
 import { getRoot } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
-import { getSessionId } from "../storage/session.js";
+import { getSessionId, getCachedSessionEnd, setCachedSessionEnd } from "../storage/session.js";
+import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { enqueueConsolidation } from "../storage/consolidation-queue.js";
 import { runSafetyConsolidation } from "./safety-consolidation.js";
 import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme.js";
@@ -224,6 +226,43 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   }
 
   const slug = await resolveProject(input.project);
+  const sessionId = getSessionId();
+
+  // C2 (2026-07-26) — idempotency: fingerprint the semantically-meaningful
+  // subset of the input (what would actually change what gets written).
+  // getSessionId() is process-scoped, a workable identity for one MCP-server
+  // lifetime. If THIS exact call (same fingerprint) already ran for this
+  // process's session + project, it is a genuine duplicate (the doctrine's
+  // "session_end on every save plus at exit" double-call) — return the prior
+  // result as a no-op WITHOUT re-executing any writes (journal, awareness,
+  // outcomes, consolidation, pipeline). A session_end with genuinely NEW
+  // content (different summary/insights/trajectory/etc.) has a different
+  // fingerprint and proceeds normally below, appending as it does today
+  // (pre-existing same-day "## Brief" / "## Update HH:MM" heading logic is
+  // untouched — it only ever runs on non-duplicate calls now).
+  const fingerprint = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        summary: input.summary,
+        trajectory: input.trajectory ?? null,
+        insights: input.insights ?? null,
+        saveType: input.saveType ?? null,
+        sig: input.sig ?? null,
+        theme: input.theme ?? null,
+        close_phase: input.close_phase ?? null,
+        open_phase: input.open_phase ?? null,
+        deferConsolidation: input.deferConsolidation ?? false,
+      }),
+    )
+    .digest("hex");
+
+  const cachedResult = getCachedSessionEnd<SessionEndResult>(slug, fingerprint);
+  if (cachedResult) {
+    recordLifecycleEvent("session_end", sessionId, slug, true);
+    return cachedResult;
+  }
+
   let journalWritten = false;
   let journalWriteError: string | undefined;
   let insightsProcessed = 0;
@@ -323,7 +362,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
           if (firedToday && (firedToday.has("heeded") || firedToday.has("recurred"))) {
             // Close the predict-the-correction loop (unchanged from pre-C3).
             if (firedToday.has("recurred") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c.id)) {
-              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
+              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
             }
             continue;
           }
@@ -353,10 +392,11 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
               evidence: hasTriggerEvidence
                 ? "recurrence marker in summary; correction was triggered via check-action"
                 : `recurrence marker in summary; topical overlap (${matchCount} content words matched)`,
+              session_id: sessionId,
             });
             // Predict-the-correction cross-day hit (unchanged logic).
             if (!firedToday?.has("predict_hit") && predictedOnEarlierDay(c.id)) {
-              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today" });
+              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
             }
           } else if (hasTriggerEvidence && !hasRecurrenceMarker) {
             // Triggered via check-action, no recurrence detected → heeded
@@ -367,6 +407,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
               kind: "heeded",
               at: nowISO,
               evidence: "correction consulted via check-action this session; no recurrence markers in summary",
+              session_id: sessionId,
             });
           } else {
             // No positive trigger or recurrence evidence → unknown.
@@ -383,6 +424,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
               kind: "unknown",
               at: nowISO,
               evidence: evidenceNote,
+              session_id: sessionId,
             });
           }
         } catch {
@@ -503,6 +545,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
                     evidence:
                       `cross-project class join: failure_class "${candCls}" matched ` +
                       `seed ${seedMatch.id} (${slug}); signature overlap: ${shared.slice(0, 5).join(", ")}`,
+                    session_id: sessionId,
                   });
                   // Keep the in-memory dedup map coherent within this pass so a
                   // second seed matching the same candidate cannot double-fire.
@@ -799,7 +842,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     } catch { /* swallow — handoff is best-effort */ }
   }
 
-  return {
+  const result: SessionEndResult = {
     success: journalWritten || awarenessUpdated,
     journal_written: journalWritten,
     ...(journalWriteError ? { journal_write_error: journalWriteError } : {}),
@@ -817,4 +860,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     ...(pipelineOpened ? { pipeline_opened: pipelineOpened } : {}),
     ...(handoffPath ? { handoff_path: handoffPath } : {}),
   };
+
+  // C2: cache this result under (session, project, fingerprint) so an
+  // IDENTICAL repeat call short-circuits above as a no-op. A session_end call
+  // with different content computes a different fingerprint and simply
+  // overwrites this entry with its own new result.
+  setCachedSessionEnd(slug, fingerprint, result);
+  recordLifecycleEvent("session_end", sessionId, slug, false);
+
+  return result;
 }
