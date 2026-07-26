@@ -58,18 +58,41 @@ describe("description drift assertions", () => {
     }
   });
 
-  it("dist/server.js contains the carrier sentinel (arg-2 regression guard)", () => {
-    const src = fs.readFileSync(DIST_SERVER, "utf8");
+  it("server.ts wires lifecycleInstructions(tier) into the McpServer options arg (arg-2 regression guard)", () => {
+    // The literal instructions string now lives in agent-recall-core's
+    // canonical lifecycleInstructions() (see host-profile.ts), not inline
+    // in server.ts — so we assert the *wiring* structurally instead of
+    // grepping dist/server.js for the old hardcoded literal.
+    const src = fs.readFileSync(path.join(SRC, "server.ts"), "utf8");
     assert.ok(
-      src.includes(CARRIER_SENTINEL),
-      `dist/server.js missing sentinel '${CARRIER_SENTINEL}' — instructions may have been placed in arg 1 instead of arg 2`
+      /instructions:\s*lifecycleInstructions\(/.test(src),
+      "server.ts should pass lifecycleInstructions(tier) as the `instructions` field of the second McpServer() argument"
+    );
+    const dist = fs.readFileSync(DIST_SERVER, "utf8");
+    assert.ok(
+      /instructions:\s*\(0,\s*[\w$]+\.lifecycleInstructions\)/.test(dist) || dist.includes("lifecycleInstructions"),
+      "dist/server.js should reference lifecycleInstructions — instructions may have been placed in arg 1 instead of arg 2"
+    );
+  });
+
+  it("canonical lifecycleInstructions('B') contains the carrier sentinel", async () => {
+    const { lifecycleInstructions } = await import("agent-recall-core");
+    const text = lifecycleInstructions("B");
+    assert.ok(
+      text.includes(CARRIER_SENTINEL),
+      `lifecycleInstructions("B") missing sentinel '${CARRIER_SENTINEL}'`
     );
   });
 
   it("HANDSHAKE: MCP initialize result contains instructions with carrier sentinel", async () => {
+    // Force Tier B explicitly: this asserts the Tier-B baseline text
+    // regardless of the ambient environment the test runner happens to run
+    // in (e.g. CLAUDECODE=1 is set when this suite runs inside Claude Code
+    // itself, which would otherwise resolve to Tier A and a different string).
     const transport = new StdioClientTransport({
       command: "node",
       args: [ENTRY],
+      env: { AR_HOST: "codex" },
     });
 
     const client = new Client(

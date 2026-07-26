@@ -207,7 +207,25 @@ export type {
 } from "./tools-logic/check-action.js";
 export { getSessionId, journalFileName, captureLogFileName, resetOwnedFiles, resetSessionState } from "./storage/session.js";
 export type { SaveType, SmartNameOpts } from "./storage/session.js";
+// C2 (2026-07-26) — per-process lifecycle idempotency (session_start /
+// session_end double-call safety). See storage/session.ts for the doctrine.
+export {
+  claimSessionStartOnce,
+  getCachedSessionEnd,
+  setCachedSessionEnd,
+  resetIdempotencyState,
+} from "./storage/session.js";
+// C2 — zero-cloud lifecycle telemetry (counters only, no transcript content).
+export { recordLifecycleEvent, lifecycleStats } from "./storage/lifecycle-telemetry.js";
+export type { LifecycleEvent, LifecycleTelemetryRow, LifecycleStats } from "./storage/lifecycle-telemetry.js";
 export { acquireLock, withLock, STALE_LOCK_MS } from "./storage/filelock.js";
+
+// Host profile — 3-tier lifecycle-capability model (Tier A hooks / Tier B
+// mcp-instructions / Tier C manual) + the single canonical lifecycle-
+// instructions source consumed by packages/mcp-server/src/server.ts and by
+// AGENTS.md's authored content.
+export { resolveHostProfile, lifecycleInstructions } from "./host-profile.js";
+export type { HostTier, Lifecycle, HostProfile } from "./host-profile.js";
 
 // Storage — corrections
 export {
