@@ -6,6 +6,15 @@ import * as os from "node:os";
 import { VERSION, setRoot } from "agent-recall-core";
 import type { Importance, WalkDepth } from "agent-recall-core";
 import { detectCorrection } from "./utils/correction-detector.js";
+import {
+  extractTopicKeywords,
+  loadProfile as loadTopicProfile,
+  computeDecayedProfile,
+  profileOnlyTerms,
+  topicQuery,
+  appendTurn as appendTopicTurn,
+  sweepStaleProfiles,
+} from "./utils/topic-state.js";
 
 const args = process.argv.slice(2);
 
@@ -1327,6 +1336,55 @@ async function main(): Promise<void> {
         if (prompt.startsWith("/")) process.exit(0);
         if (SHORT_ACKS.test(prompt.trim())) process.exit(0);
 
+        // --- ROLLING TOPIC PROFILE (background-informed recall) ---
+        // Runs for every genuine prompt that reaches this point — deliberately
+        // BEFORE the rate-limit gate below, so a run of background turns that
+        // never individually fire injection (rate-limited) still deposits
+        // keywords into the profile. That's the whole point: 3 turns of
+        // "we're migrating the billing service... Postgres schema is the
+        // tricky part..." should inform recall on turn 4's generic "what
+        // should I watch out for?" even though turns 1-3 may not themselves
+        // have fired an injection. See packages/cli/src/utils/topic-state.ts.
+        const storeRoot = core.getRoot();
+        // Reuse the session id already resolved above (parsed.session_id,
+        // then CLAUDE_SESSION_ID/SESSION_ID env vars). Only when NONE of
+        // those produced a real id (sessionId === "default") do we fall back
+        // to a per-day-per-project key here — a bare "default" would merge
+        // every session-less caller's background topic into one file, which
+        // is worse than no profile at all.
+        const topicSessionKey = sessionId !== "default"
+          ? sessionId
+          : `noSessionId-${(project ?? "noProject")}-${new Date().toISOString().slice(0, 10)}`;
+
+        // Current-prompt keywords, English-only (existing extractor — kept
+        // exactly as the hook already used it for the current-prompt
+        // precision floor below). Extended with the CJK-aware tokenizer's
+        // output so Chinese prompts also contribute real keywords instead of
+        // extractKeywords' empty set (it strips all non-ASCII input).
+        const currentKeywords = core.extractKeywords(prompt, 6);
+        const topicKeywords = extractTopicKeywords(prompt);
+        const combinedCurrentKeywords = Array.from(new Set([...currentKeywords, ...topicKeywords]));
+
+        const priorTopicProfileFile = loadTopicProfile(storeRoot, topicSessionKey);
+        const priorProfileMap = computeDecayedProfile(priorTopicProfileFile?.turns ?? []);
+        // Profile terms NOT already covered by this turn's own keywords —
+        // shared by the query builder below AND the precision-tier gate
+        // further down, so both consume the identical term set.
+        const profileTerms = profileOnlyTerms(combinedCurrentKeywords, priorProfileMap);
+        const queryKeywords = topicQuery(combinedCurrentKeywords, priorProfileMap);
+
+        try {
+          // Persist THIS turn's keywords for future turns to accumulate on —
+          // uses the CJK-aware extraction so Chinese background chat also
+          // builds a profile.
+          appendTopicTurn(storeRoot, topicSessionKey, topicKeywords);
+          // Opportunistic hygiene: sweep sibling profile files untouched for
+          // 7+ days. Cheap (readdir + stat over a handful of small files) and
+          // best-effort — never blocks the hook.
+          sweepStaleProfiles(storeRoot);
+        } catch { /* non-blocking — profile persistence is best-effort */ }
+        // --- END ROLLING TOPIC PROFILE ---
+
         // Rate limiting: counter file per session
         const counterFile = path.join(os.homedir(), ".agent-recall", `.ambient-counter-${sessionId.replace(/[^a-z0-9_-]/gi, "_")}`);
         let counter = 0;
@@ -1355,11 +1413,15 @@ async function main(): Promise<void> {
           }
         } catch { /* non-blocking — priors are best-effort */ }
 
-        // Extract keywords and do smart recall
-        const keywords = core.extractKeywords(prompt, 6);
-        if (keywords.length === 0) process.exit(0);
+        // Build the recall query from current-prompt keywords PLUS the
+        // rolling topic profile computed above (background-informed recall —
+        // see the ROLLING TOPIC PROFILE block above this turn's rate-limit
+        // gate). When the profile is empty (no prior turns / stale / fresh
+        // session), queryKeywords === combinedCurrentKeywords and behavior is
+        // unchanged from before this feature.
+        if (queryKeywords.length === 0) process.exit(0);
 
-        const recalled = await core.smartRecall({ query: keywords.join(" "), project, limit: 3, drilldown: true });
+        const recalled = await core.smartRecall({ query: queryKeywords.join(" "), project, limit: 3, drilldown: true });
 
         // Ambient precision floor: require ≥2 overlapping content words (≥4 chars,
         // non-stopwords) between the query tokens and the result title+excerpt.
@@ -1381,7 +1443,11 @@ async function main(): Promise<void> {
             .split(/\s+/)
             .filter((w) => w.length >= 4 && !AMBIENT_STOPWORDS.has(w));
         }
-        const queryTokenSet = new Set(ambientTokens(keywords.join(" ")));
+        // CURRENT-prompt precision floor — unchanged from before this
+        // feature: built ONLY from this turn's own keywords, never from the
+        // topic profile. This is deliberate (see task spec): the existing
+        // ≥2-overlap floor for current-prompt matches must not regress.
+        const queryTokenSet = new Set(ambientTokens(currentKeywords.join(" ")));
 
         function wordOverlap(item: { title?: string; excerpt?: string }): number {
           if (queryTokenSet.size === 0) return 0;
@@ -1394,11 +1460,39 @@ async function main(): Promise<void> {
           return hits;
         }
 
-        // Require ≥2 overlapping content words AND a meaningful score floor.
+        // Topic-profile precision tier — a HIGHER bar than the current-prompt
+        // floor, not a lower one (background-informed recall, not "spray old
+        // topics at every prompt"). Uses core.tokenize (CJK-aware) rather than
+        // the current-prompt-only, Latin-only ambientTokens(), since profile
+        // terms themselves come from the CJK-aware extractor.
+        const profileTokenSet = new Set(profileTerms);
+
+        function profileOverlap(item: { title?: string; excerpt?: string }): number {
+          if (profileTokenSet.size === 0) return 0;
+          const itemText = (item.title ?? "") + " " + (item.excerpt ?? "");
+          const itemTokens = core.tokenize(itemText);
+          let hits = 0;
+          for (const t of itemTokens) {
+            if (profileTokenSet.has(t)) hits++;
+          }
+          return hits;
+        }
+
+        // Inclusion rule (exact, per task spec):
+        //   - currentOverlap >= 2                                  → include (existing floor, unchanged)
+        //   - profileOverlap >= 2 AND currentOverlap >= 1          → include (profile-assisted)
+        //   - profileOverlap >= 3 AND currentOverlap === 0         → include (pure background match, highest bar)
+        //   - otherwise                                            → excluded
         // Silence (empty output) is always preferred over low-relevance noise.
-        const allItems = (recalled.results ?? []).filter(item =>
-          item.score >= 0.03 && wordOverlap(item) >= 2
-        );
+        const allItems = (recalled.results ?? []).filter(item => {
+          if (item.score < 0.03) return false;
+          const curHits = wordOverlap(item);
+          if (curHits >= 2) return true;
+          const profHits = profileOverlap(item);
+          if (profHits >= 2 && curHits >= 1) return true;
+          if (profHits >= 3 && curHits === 0) return true;
+          return false;
+        });
         if (allItems.length === 0) process.exit(0);
 
         // Dedup window: filter out items already surfaced in recent fires
@@ -1443,7 +1537,7 @@ async function main(): Promise<void> {
 
           const surfacedData = {
             items: items.map(item => ({ id: item.id, title: item.title })),
-            query: keywords.join(" "),
+            query: queryKeywords.join(" "),
             timestamp: new Date().toISOString(),
             history: updatedHistory,
           };
