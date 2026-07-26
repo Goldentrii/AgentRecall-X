@@ -23,7 +23,7 @@ AgentRecall's real MCP surface is **5 tools by default**, **6 with `--full`**, *
 | `session_end` | Save journal, insights, trajectory. Call at EXIT, always, and on any durable-intent trigger. |
 | `remember` | Write a single fact/decision — auto-routes to the right store. Durable-intent trigger. |
 | `recall` | Search all memory — keyword/RRF fusion + optional vector. Safe to call any time. |
-| `check` | Record understanding; anticipates the likely correction before you make it. Safe to call any time. |
+| `check` | Record understanding; anticipates the likely correction before you make it. Pass `action_description` before a risky action (publish/deploy/delete/credential/external-send) for a matching + `blocked`/`advisory` verdict. Safe to call any time. |
 
 ### `--full` adds (1 more, 6 total)
 
