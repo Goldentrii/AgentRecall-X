@@ -32,10 +32,21 @@ describe("sanitizeName (naming-v2 shared sanitizer)", () => {
     assert.equal(sanitizeName("!!!wrapped!!!"), "wrapped");
   });
 
-  it("falls back to 'unnamed' for empty or fully-stripped input", () => {
+  it("falls back to bare 'unnamed' only for EMPTY input", () => {
     assert.equal(sanitizeName(""), "unnamed");
-    assert.equal(sanitizeName("!!!"), "unnamed");
-    assert.equal(sanitizeName("---"), "unnamed");
+  });
+
+  it("fully-stripped input gets a content-hashed 'unnamed-<hash8>' — distinct inputs never collide", () => {
+    // Pre-fix, every fully-stripped input returned bare "unnamed": two distinct
+    // same-day CJK-only correction rules computed the SAME filename and the
+    // second silently overwrote the first (see cjk-slug-collision.test.mjs).
+    const bang = sanitizeName("!!!");
+    const dash = sanitizeName("---");
+    assert.match(bang, /^unnamed-[0-9a-f]{8}$/);
+    assert.match(dash, /^unnamed-[0-9a-f]{8}$/);
+    assert.notEqual(bang, dash);
+    // Deterministic: the same input always re-slugs to the same name.
+    assert.equal(bang, sanitizeName("!!!"));
   });
 
   it("byte-caps a long ASCII slug at a word boundary when possible", () => {

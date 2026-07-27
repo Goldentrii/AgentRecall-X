@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.39] — 2026-07-27
+
+Patch release: the 2026-07-25 Codex audit fixes (Release Trains A–D, all 8 findings reproduced-then-fixed) plus ambient-recall groundwork.
+
+### Fixed
+
+- **Silent correction loss on slug collision** (found by a performance round-table during this release, reproduced before fixing): two distinct same-day corrections whose rules sanitize to the same slug were written to the same file — the second silently overwrote the first while both callers saw `written: true`. Pure-CJK rules made this the common case (every Chinese-only rule collapsed to the bare `unnamed` fallback). Two-layer fix: `sanitizeName`'s degenerate fallback is now `unnamed-<hash8>` (content-hashed, deterministic), and brand-new correction writes disambiguate an occupied filename with an id-hash suffix inside the slug field (the `--` delimiter grammar is preserved). Same-rule merging is unchanged. This also stops distinct pure-CJK **project names** from collapsing into one shared `unnamed` store directory. **Migration note:** a store that already has a bare `unnamed/` project directory (only possible if a pre-3.4.39 session ran with a fully-degenerate project name) will see new sessions write to the correctly-hashed directory instead — the old commingled directory stays readable on disk but no longer accumulates writes. That directory was already a defect (every degenerate project name shared it); resuming writes into it would preserve the bug.
+- **Concurrency**: `recordOutcome` / `retractCorrection` / merge-consolidation read-modify-write cycles now run inside the per-project file lock — concurrent sessions can no longer drop outcome-ledger rows or regenerate a stale index (TOW2-321).
+- **Retrieval fusion**: `smart_recall` cross-source fusion accumulates RRF scores on a canonical excerpt identity instead of object identity — the same fact found by 2–3 searchers now ranks above single-source hits, with `alsoFoundIn` provenance and true pre-fusion `total_searched` counts. Insight items carry a real fusion identity (title + excerpt), not severity + tags (TOW2-330, TOW2-331).
+- **CJK matching**: the check-action tokenizer is CJK-aware — Han runs segment via `Intl.Segmenter` with bigram fallback, and the token length floor is script-scoped — so Chinese P0 rules now match Chinese action descriptions (TOW2-325). Chinese absolute-prohibition markers (禁止 / 不得 / 不能 / 不要, with idiom guards for 不得不 / 不能不 and benign 不要-completions) join the durable-rule behavioral gate (TOW2-326).
+
+### Added
+
+- **Outcomes ledger rebuild**: `ar outcomes rebuild --project <slug> [--apply] [--json]` + a store-doctor divergence check — counters are recomputable from the append-only ledger; malformed rows are quarantined, dry-run is the default, apply runs inside the same lock as normal writes (TOW2-322).
+- **SDK modern composite API**: `sessionStart` / `remember` / `recall` / `sessionEnd` / `check` on the `AgentRecall` class — 1:1 with the MCP tools of the same names, additive alongside the existing low-level API (TOW2-323).
+- **3-tier host profiles**: hooks (Tier A, Claude Code) / mcp-instructions (Tier B, Codex, Cursor, raw MCP) / manual (Tier C, SDK + CLI), with `AR_HOST` override; `lifecycleInstructions(tier)` is the one canonical source both MCP server instructions and skill docs render from (TOW2-327).
+- **Idempotent lifecycle + local telemetry**: `session_start` claims are once-per-session-per-project, `session_end` dedupes by content fingerprint, and an append-only JSONL telemetry ledger (`lifecycleStats()`) records event counts by host tier — local-only, never leaves the machine (TOW2-328).
+- **Pre-action P0 blocking in `check`**: pass `action_description` and the default `check` tool consults active P0 corrections before the action runs — no extra tool call on the 5-tool surface (TOW2-329).
+- **Ambient topic profile (CLI)**: a rolling 8-turn topic state with distance decay powers ambient-recall precision tiers, so background conversation informs what gets recalled (TOW2-340).
+
+### CI
+
+- Full test suite + typecheck wired into `ci.yml` (SHA-pinned actions, failure-log artifact). The 2 tracked known gaps (SDK root isolation TOW2-324; standalone-prohibition capture design TOW2-326) are `todo`-marked, so a red CI now means new breakage only (TOW2-318).
+
+### Security
+
+- 10/12 `npm audit` findings resolved via transitive bumps (TOW2-320). The remaining 2 are the documented Hono / MCP-SDK pair whose fix requires a transport-removing SDK downgrade — tracked, not silently accepted.
+
 ## [3.4.38] — 2026-07-20
 
 ### Added

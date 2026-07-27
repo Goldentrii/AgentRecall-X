@@ -116,6 +116,49 @@
     <span style="font-size:20px;color:var(--accent);flex-shrink:0;">→</span>
   </a>
 
+  <!-- v3.4.39 -->
+  <section class="hero">
+    <div class="hero-head">
+      <div class="tagrow">
+        <span class="vbadge">v3.4.39</span>
+        <span class="major"><span class="en ">★ Audit hardening</span><span class="zh ">★ 审计加固</span></span>
+        <span class="date mono">2026-07-27</span>
+      </div>
+      <h2 class="hero-title"><span class="en ">Every audit finding reproduced, then fixed</span><span class="zh ">每个审计发现先复现，再修复</span></h2>
+      <p class="hero-lede"><span class="en ">An independent Codex audit filed 8 findings against the core. All 8 were <b>reproduced as failing tests first</b>, then fixed across four release trains: concurrency locks around every counter read-modify-write, genuine cross-source retrieval fusion, CJK-aware rule matching, and a rebuildable outcomes ledger. Plus the first ambient-recall groundwork: a rolling topic profile so background conversation informs what memory surfaces.</span><span class="zh ">一次独立的 Codex 审计对 core 提出 8 项发现。全部 8 项<b>先复现为失败测试</b>，再分四列发布车修复：所有计数器读改写包进并发锁、真正的跨源检索融合、中文规则匹配、可重建的 outcomes 账本。另加环境感知召回的第一块地基：滚动话题画像，让背景对话决定浮现哪些记忆。</span></p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <span class="ic">🔒</span>
+        <h3><span class="en ">Locks + a rebuildable ledger</span><span class="zh ">并发锁 + 可重建账本</span></h3>
+        <p><span class="en ">Outcome recording, retraction, and merge-consolidation now run inside the per-project file lock — concurrent sessions can't drop ledger rows or write a stale index. And because counters are derived state, <code>ar outcomes rebuild</code> recomputes them from the append-only ledger (dry-run default, malformed rows quarantined), with a store-doctor divergence check.</span><span class="zh ">结果记录、撤回、合并整合现在都在按项目文件锁内运行 —— 并发会话不再丢账本行或写出过期索引。计数器本是派生状态，<code>ar outcomes rebuild</code> 可从只追加账本重算（默认干跑，畸形行隔离），并配 store-doctor 分歧检查。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">🔀</span>
+        <h3><span class="en ">Real cross-source fusion</span><span class="zh ">真正的跨源融合</span></h3>
+        <p><span class="en ">smart_recall's three searchers used to fuse by object identity — the same fact found twice never accumulated score. Fusion now keys on a canonical excerpt identity: multi-source hits rank above single-source ones, with <code>alsoFoundIn</code> provenance. A pre-push review caught the second-order bug too: insights fuse on title+excerpt, not severity+tags.</span><span class="zh ">smart_recall 的三路搜索过去按对象身份融合 —— 同一事实被找到两次也不累积分数。现在按规范化摘录身份融合：多源命中排在单源之上，附 <code>alsoFoundIn</code> 溯源。推送前评审还抓住了二阶 bug：insight 按标题+摘录融合，而非 severity+tags。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">🈶</span>
+        <h3><span class="en ">Chinese rules now bite</span><span class="zh ">中文规则真正生效</span></h3>
+        <p><span class="en ">The pre-action rule matcher tokenized by whitespace — Chinese P0 rules could never match Chinese actions. Han runs now segment via <code>Intl.Segmenter</code> (bigram fallback), the length floor is script-scoped, and 禁止/不得/不能/不要 join the durable-rule gate with idiom guards (不得不 means <em>must</em>, not <em>must not</em> — it won't fire). And a data-loss bug caught during this very release: two same-day pure-CJK rules both slugified to <code>unnamed</code> and silently overwrote each other — degenerate slugs are now content-hashed (<code>unnamed-a1b2c3d4</code>) and occupied filenames get an id-hash suffix.</span><span class="zh ">行动前规则匹配器过去按空格分词 —— 中文 P0 规则永远匹配不上中文行动。现在汉字串经 <code>Intl.Segmenter</code> 分词（bigram 兜底），长度下限按文字系统区分，禁止/不得/不能/不要 进入持久规则门，并带成语守卫（不得不是"必须"，不会误触发）。还抓住一个本次发布期间才发现的数据丢失 bug：两条同日纯中文规则都被 slug 成 <code>unnamed</code> 而静默互相覆盖 —— 退化 slug 现在带内容哈希（<code>unnamed-a1b2c3d4</code>），被占用的文件名追加 id 哈希后缀。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">📡</span>
+        <h3><span class="en ">Hosts, lifecycle, ambient recall</span><span class="zh ">宿主、生命周期、环境感知召回</span></h3>
+        <p><span class="en ">3-tier host profiles (hooks / mcp-instructions / manual) with one canonical lifecycle-instruction source; session_start/end are idempotent (once-per-session claims, fingerprint dedup) with a local-only JSONL telemetry ledger. The SDK gains the modern composite API (<code>sessionStart/remember/recall/sessionEnd/check</code>), and the CLI gains a rolling topic profile — background conversation now informs ambient recall.</span><span class="zh ">3 层宿主画像（hooks / mcp-instructions / manual），生命周期指令单一权威来源；session_start/end 幂等（每会话一次领取、指纹去重），配纯本地 JSONL 遥测账本。SDK 获得现代复合 API（<code>sessionStart/remember/recall/sessionEnd/check</code>），CLI 获得滚动话题画像 —— 背景对话开始影响环境感知召回。</span></p>
+      </div>
+    </div>
+    <div class="verify">
+      <span class="vlabel"><span class="en ">Verified</span><span class="zh ">已验证</span></span>
+      <span class="pill">all 8 audit findings: failing test → fix → green</span>
+      <span class="pill">867 core tests · 0 fail</span>
+      <span class="pill">independent review per train</span>
+      <span class="pill">CI: red = new breakage only</span>
+    </div>
+    <div class="shipped"><span class="en "><b>Shipped 2026-07-27 (v3.4.39):</b> all 4 packages on npm; Release Trains A–D merged via PR #37/#39. Tracked, not shipped: SDK root isolation (TOW2-324), standalone-prohibition capture design (TOW2-326) — both todo-marked in CI.</span><span class="zh "><b>2026-07-27 发布 (v3.4.39)：</b>4 个包全部上 npm；发布车 A–D 经 PR #37/#39 合入。已跟踪未发布：SDK root 隔离（TOW2-324）、独立禁止句捕获设计（TOW2-326）—— 均在 CI 中标记 todo。</span></div>
+  </section>
+
   <!-- MAJOR: v3.4.38 -->
   <section class="hero">
     <div class="hero-head">

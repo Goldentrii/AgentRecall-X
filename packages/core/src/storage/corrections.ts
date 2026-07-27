@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
-import { sanitizeName } from "./sanitize.js";
+import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock } from "./filelock.js";
 
@@ -319,6 +319,13 @@ function slugify(text: string): string {
  * don't dedupe by id — every *.json file is a distinct record). Returns null
  * when no matching file is found (defensive fallback only; the record was
  * just read from this same directory by every current caller).
+ *
+ * KNOWN LIMITATION of the null-fallback recompute at the call sites: it
+ * produces the PLAIN `${date}--${slugify(rule)}.json` name and does NOT carry
+ * the id-hash suffix a collision-disambiguated record was originally written
+ * under (see writeCorrection's brand-new branch). Reachable only if a
+ * record's backing file vanishes from disk mid-call, inside the lock —
+ * defensive-only today, flagged by review 2026-07-27.
  */
 function findExistingCorrectionFile(dir: string, id: string): string | null {
   if (!fs.existsSync(dir)) return null;
@@ -859,8 +866,26 @@ export function writeCorrection(project: string, correction: CorrectionRecord): 
     }
 
     // Brand-new record — no existing file to preserve. v2 delimiter ("--").
-    const filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
-    const filepath = path.join(dir, filename);
+    let filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
+    let filepath = path.join(dir, filename);
+    if (fs.existsSync(filepath)) {
+      // Same-day slug collision with a DIFFERENT record: the active-rule merge
+      // loop above already claimed every same-rule case, so whatever lives at
+      // this path is a distinct rule whose slug happens to coincide (two
+      // CJK-heavy rules sharing one surviving Latin word, or a RETRACTED
+      // record the active-only merge scan skipped). Overwriting would silently
+      // destroy it — both callers would still see { written: true }. See
+      // test/cjk-slug-collision.test.mjs. Disambiguate inside the slug field
+      // with a short deterministic hash of this record's id: hex + single "-"
+      // join keeps the "--" field-delimiter grammar intact, and re-running the
+      // same write lands on the same name.
+      const idHash = crypto.createHash("sha256").update(record.id).digest("hex").slice(0, 8);
+      // 39 = 48 (corrections' slug byte budget) - 1 ("-" join) - 8 (hex hash):
+      // the disambiguated slug field stays inside the same 48-byte envelope.
+      const baseSlug = byteCap(slugify(record.rule || record.id), 39).replace(/-+$/g, "");
+      filename = `${record.date}--${baseSlug}-${idHash}.json`;
+      filepath = path.join(dir, filename);
+    }
 
     // Atomic write — tmp + rename, mode 0600
     writeRecordAtomic(filepath, record);

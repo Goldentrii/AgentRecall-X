@@ -22,12 +22,15 @@
  * Grammar: lowercase → Unicode NFC → collapse any run of non-`[a-z0-9-]`
  * characters (INCLUDING existing runs of "-" itself) to a single "-" → trim
  * leading/trailing "-" → byte-cap (never split a multi-byte codepoint) →
- * fallback "unnamed" for an empty result.
+ * fallback "unnamed-<hash8>" for an empty result (content-hashed so distinct
+ * degenerate inputs — e.g. two pure-CJK rules — never collide on one name).
  *
  * INVARIANT: the output never contains "--". This is what lets v2 filename
  * parsers use "--" as an unambiguous field delimiter — no well-formed slug
  * component can be mistaken for a field boundary.
  */
+
+import { createHash } from "node:crypto";
 
 /**
  * Byte-safe truncation of arbitrary text (NOT necessarily already
@@ -93,5 +96,19 @@ export function sanitizeName(input: string, maxBytes = 100): string {
     .replace(/-{2,}/g, "-") // collapse any resulting (or pre-existing) "--" runs
     .replace(/^-+|-+$/g, ""); // trim leading/trailing "-"
   const capped = byteCap(collapsed, maxBytes).replace(/^-+|-+$/g, "");
-  return capped || "unnamed";
+  if (capped) return capped;
+  // Degenerate input: every character fell outside [a-z0-9-] (e.g. a pure-CJK
+  // rule or project name). The old bare-"unnamed" fallback made ALL such
+  // inputs collide on one name — two distinct same-day CJK-only corrections
+  // silently overwrote each other (reproduced 2026-07-27; see
+  // test/cjk-slug-collision.test.mjs). Suffix a short content hash so distinct
+  // inputs get distinct names while the SAME input always re-slugs to the same
+  // name (rewrite paths stay stable). Hex is [0-9a-f]: grammar-safe, and the
+  // single "-" join preserves the no-"--" invariant.
+  const hash8 = createHash("sha256")
+    .update(input.normalize("NFC").toLowerCase())
+    .digest("hex")
+    .slice(0, 8);
+  const fallback = byteCap(`unnamed-${hash8}`, maxBytes).replace(/^-+|-+$/g, "");
+  return fallback || "unnamed";
 }
