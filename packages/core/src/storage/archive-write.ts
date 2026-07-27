@@ -19,6 +19,8 @@ import * as path from "node:path";
 import { archiveRawDir, sanitizeSlug } from "./paths.js";
 import { ensureDir, todayISO, writeJsonAtomic } from "./fs-utils.js";
 import { writeMemoryProtocol } from "./memory-protocol.js";
+import { ensureStoreManifest } from "./store-manifest.js";
+import { getRoot } from "../types.js";
 
 export interface ArchiveSessionInput {
   project: string;
@@ -122,8 +124,12 @@ export function archiveSession(input: ArchiveSessionInput): ArchiveSessionResult
       writeJsonAtomic(consumed, { lastConsumedOffset: 0, lastConsumedAt: null });
     }
 
-    // Write the self-describing protocol doc once.
+    // Write the self-describing protocol docs once each: the per-project
+    // MEMORY-PROTOCOL.md and its store-root sibling MANIFEST.md. Same
+    // lifecycle point, same write-once/best-effort contract — a cold agent
+    // dropped into a bare copy of the store needs both to orient itself.
     writeMemoryProtocol(slug);
+    ensureStoreManifest(getRoot());
 
     return { path: dest, bytes: input.rawTranscript.length };
   } catch {

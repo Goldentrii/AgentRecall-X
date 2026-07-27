@@ -63,7 +63,10 @@ lossless archive instead of answering thinly (the bridge).
 Raw dumps are queued for compression, never compressed inside the Stop turn:
 
 \`\`\`
-~/.agent-recall/.consolidation-queue/<date>.jsonl   ← one JSON job per line
+../../.consolidation-queue/<date>.jsonl   ← one JSON job per line, relative
+                                            to this file (../.. = the store
+                                            root, two levels up from
+                                            projects/<slug>/)
 \`\`\`
 
 A job looks like \`{ "project", "sessionId", "reason", "at", "done"? }\`.

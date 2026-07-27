@@ -179,6 +179,7 @@ export type { PruneRawArchiveOptions, PruneRawArchiveResult } from "./storage/ar
 export { enqueueConsolidation, drainConsolidationQueue } from "./storage/consolidation-queue.js";
 export type { ConsolidationJob, DrainReport } from "./storage/consolidation-queue.js";
 export { writeMemoryProtocol } from "./storage/memory-protocol.js";
+export { ensureStoreManifest } from "./storage/store-manifest.js";
 export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
