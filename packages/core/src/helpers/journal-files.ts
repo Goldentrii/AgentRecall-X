@@ -245,66 +245,156 @@ export function countLogEntries(logPath: string): number {
   return matches ? matches.length : 0;
 }
 
+/** One row of computed journal-index data, shared by index.md and index.jsonl. */
+interface JournalIndexRow {
+  date: string;
+  file: string;
+  title: string;
+  summary: string;
+  momentum: string;
+}
+
 /**
- * Update the index.md for a project.
+ * Read a journal entry's file content and derive its index row. This is the
+ * O(file size) step the incremental cache in `updateIndex` exists to avoid
+ * paying for every file on every call — only entries that are new or changed
+ * since the last index write go through this function.
+ */
+function computeIndexRow(entry: JournalEntry): JournalIndexRow {
+  const content = fs.readFileSync(path.join(entry.dir, entry.file), "utf-8");
+  const title = extractTitle(content);
+  const momentum = extractMomentum(content);
+  // Extract first non-heading, non-empty line as summary
+  let summary = "";
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("---") && !trimmed.startsWith(">")) {
+      summary = trimmed.slice(0, 120);
+      break;
+    }
+  }
+  return { date: entry.date, file: entry.file, title, summary, momentum };
+}
+
+/**
+ * Parse the EXISTING index.jsonl (if any) into a Map<filename, JournalIndexRow>
+ * so `updateIndex` can reuse previously-computed rows for files that haven't
+ * changed since the last write, instead of re-reading their content.
+ *
+ * Returns an empty map on ANY failure — missing file, corrupt/partial line,
+ * or a pre-incremental index.jsonl written before rows carried a `file` key.
+ * A cache miss just means "read this file fresh", so this always self-heals
+ * into a full rebuild rather than ever throwing into `updateIndex`'s caller.
+ */
+function readIndexJsonlCache(jsonlPath: string): Map<string, JournalIndexRow> {
+  const cache = new Map<string, JournalIndexRow>();
+  try {
+    if (!fs.existsSync(jsonlPath)) return cache;
+    const raw = fs.readFileSync(jsonlPath, "utf-8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as Partial<JournalIndexRow>;
+        if (parsed && typeof parsed.file === "string") {
+          cache.set(parsed.file, {
+            date: String(parsed.date ?? ""),
+            file: parsed.file,
+            title: String(parsed.title ?? ""),
+            summary: String(parsed.summary ?? ""),
+            momentum: String(parsed.momentum ?? ""),
+          });
+        }
+      } catch {
+        // one bad line never invalidates the rest of the cache
+      }
+    }
+  } catch {
+    // unreadable index.jsonl — fall back to an empty cache (full rebuild)
+  }
+  return cache;
+}
+
+/**
+ * Update the index.md (+ index.jsonl) for a project.
+ *
+ * PERF (2026-07-27, consumer audit in the accompanying commit): this used to
+ * re-read EVERY journal file's full content on EVERY call from all four
+ * journal write paths (journal_write/rollup/merge/archive) — measured
+ * 2846ms at 50k files — and paid that cost TWICE per call, since index.md's
+ * title/momentum and index.jsonl's title/summary/momentum were computed by
+ * two independent full passes over the same files.
+ *
+ * index.md is still a real consumer's source of truth — the MCP resource
+ * `agent-recall://{project}/index` (packages/mcp-server/src/resources/
+ * journal-resources.ts) reads it verbatim over `resources/read` — so this
+ * cannot simply stop being maintained on write (unlike a purely-internal
+ * cache). Instead it is now incremental: a file's content is only re-read
+ * when the file is NEWER than the index's own last write (mtimeMs); rows for
+ * unchanged files are reused from the previous index.jsonl, which now also
+ * carries the row's `file` name so lookups are by identity rather than
+ * fragile array position. index.md's table format is unchanged; index.jsonl
+ * gains one additive `file` field (nothing in-repo reads index.jsonl today —
+ * see audit — so this is a safe, backward-compatible addition).
+ *
+ * Degrades gracefully to a full rebuild — first run, a hand-deleted
+ * index.jsonl, or a pre-incremental jsonl with no `file` key — after which
+ * subsequent calls become fast again. Known limitation: on filesystems with
+ * coarser-than-millisecond mtime resolution, a file rewritten within the
+ * same tick as the previous index write could be missed until the next
+ * write touches it again; journal writes are human/agent-paced (seconds
+ * apart at minimum) so this is an accepted, low-probability tradeoff of
+ * mtime-based invalidation, not a correctness guarantee.
  */
 export function updateIndex(project: string): void {
   const dir = journalDir(project);
   ensureDir(dir);
   const indexPath = path.join(dir, "index.md");
+  const jsonlPath = path.join(dir, "index.jsonl");
 
   const entries = listJournalFiles(project);
+
+  // Threshold = the index's own last-write time. Missing index ⇒ threshold 0
+  // ⇒ every file counts as "newer" ⇒ full rebuild (matches legacy behavior
+  // on a first run).
+  let indexMtimeMs = 0;
+  try {
+    indexMtimeMs = fs.statSync(indexPath).mtimeMs;
+  } catch {
+    indexMtimeMs = 0;
+  }
+
+  const previous = readIndexJsonlCache(jsonlPath);
+  const rows: JournalIndexRow[] = [];
+  for (const entry of entries) {
+    let fileMtimeMs = Infinity; // unreadable stat ⇒ treat as changed, be safe
+    try {
+      fileMtimeMs = fs.statSync(path.join(entry.dir, entry.file)).mtimeMs;
+    } catch {
+      fileMtimeMs = Infinity;
+    }
+
+    const cached = fileMtimeMs <= indexMtimeMs ? previous.get(entry.file) : undefined;
+    // Re-anchor date/file to the CURRENT listing even on a cache hit — only
+    // the expensive derived fields (title/summary/momentum) come from cache.
+    rows.push(
+      cached
+        ? { date: entry.date, file: entry.file, title: cached.title, summary: cached.summary, momentum: cached.momentum }
+        : computeIndexRow(entry)
+    );
+  }
 
   let index = `# ${project} — Journal Index\n\n`;
   index += `> Auto-generated. ${entries.length} entries.\n\n`;
   index += `| Date | Title | Momentum |\n`;
   index += `|------|-------|----------|\n`;
-
-  for (const entry of entries) {
-    const content = fs.readFileSync(
-      path.join(entry.dir, entry.file),
-      "utf-8"
-    );
-    const title = extractTitle(content);
-    const momentum = extractMomentum(content);
-    index += `| ${entry.date} | ${title} | ${momentum} |\n`;
+  for (const row of rows) {
+    index += `| ${row.date} | ${row.title} | ${row.momentum} |\n`;
   }
-
   fs.writeFileSync(indexPath, index, "utf-8");
 
-  // Also write index.jsonl — one JSON object per entry for fast machine scanning
-  updateJsonlIndex(project, entries);
-}
-
-/**
- * Write index.jsonl alongside index.md.
- * Agents can scan this in ~100 tokens to find the right entry to read,
- * instead of parsing the markdown table.
- */
-function updateJsonlIndex(project: string, entries: JournalEntry[]): void {
-  const dir = journalDir(project);
-  const jsonlPath = path.join(dir, "index.jsonl");
-
-  const lines: string[] = [];
-  for (const entry of entries) {
-    const content = fs.readFileSync(
-      path.join(entry.dir, entry.file),
-      "utf-8"
-    );
-    const title = extractTitle(content);
-    const momentum = extractMomentum(content);
-    // Extract first non-heading, non-empty line as summary
-    let summary = "";
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("---") && !trimmed.startsWith(">")) {
-        summary = trimmed.slice(0, 120);
-        break;
-      }
-    }
-    lines.push(JSON.stringify({ date: entry.date, title, summary, momentum }));
-  }
-
+  // index.jsonl — one JSON object per entry for fast machine scanning, and
+  // the incremental cache source for the NEXT call to updateIndex.
+  const lines = rows.map((row) => JSON.stringify(row));
   fs.writeFileSync(jsonlPath, lines.join("\n") + "\n", "utf-8");
 }
 
