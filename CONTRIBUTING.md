@@ -5,8 +5,8 @@ Thanks for your interest. AgentRecall is a correction-first memory system for AI
 ## Quick Start
 
 ```bash
-git clone https://github.com/Goldentrii/AgentRecall-MCP.git
-cd AgentRecall-MCP
+git clone https://github.com/Goldentrii/AgentRecall-X.git
+cd AgentRecall-X
 npm install
 npm run build
 npm test
@@ -31,7 +31,7 @@ Most contributions touch `packages/core`. The MCP server is a thin wrapper — i
 
 **Search for an existing issue first.** If you're fixing a bug or adding a feature, open (or find) an issue before sending a PR. This avoids duplicate work and lets us align on direction.
 
-**Good first issues** are labeled [`good first issue`](https://github.com/Goldentrii/AgentRecall-MCP/issues?q=is%3Aissue+label%3A%22good+first+issue%22) on GitHub.
+**Good first issues** are labeled [`good first issue`](https://github.com/Goldentrii/AgentRecall-X/issues?q=is%3Aissue+label%3A%22good+first+issue%22) on GitHub.
 
 ## Making Changes
 
@@ -92,4 +92,4 @@ This is the canonical changelog.
 
 ## Questions
 
-Open a [GitHub Discussion](https://github.com/Goldentrii/AgentRecall-MCP/discussions) or file an issue. We respond to both.
+Open a [GitHub Discussion](https://github.com/Goldentrii/AgentRecall-X/discussions) or file an issue. We respond to both.
