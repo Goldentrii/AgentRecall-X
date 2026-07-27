@@ -375,6 +375,22 @@ export {
   type RepairStepProjects,
   type RepairStepLocks,
 } from "./tools-logic/store-repair.js";
+// hygiene — DETECTION-ONLY store trash audit (sibling to store-doctor above,
+// different axis: junk/trash rather than structural integrity). CLI/core
+// only — deliberately NOT wired as an MCP tool (see tool-surface-purity test).
+export {
+  runHygieneScan,
+  applyBaseline,
+  updateBaseline,
+  hygieneBaselinePath,
+  HYGIENE_BASELINE_FILENAME,
+  type HygieneFinding,
+  type HygieneScanResult,
+  type HygieneBaseline,
+  type ApplyBaselineResult,
+  type HygieneSeverity,
+  type HygieneGrade,
+} from "./storage/hygiene.js";
 export { palaceSearch, type PalaceSearchInput, type PalaceSearchResult } from "./tools-logic/palace-search.js";
 export { awarenessUpdate, type AwarenessUpdateInput, type AwarenessUpdateResult } from "./tools-logic/awareness-update.js";
 export { recallInsight, type RecallInsightInput, type RecallInsightResult } from "./tools-logic/recall-insight.js";

@@ -126,6 +126,13 @@ DIAGNOSTICS:
   ar mirror [--json]   The Mirror: first-person, citation-backed self-model from your real corrections/insights (personal-tier, local-only; omit --project for the cross-project mirror)
   ar doctor [--json]   READ-ONLY store integrity check: index drift, stale locks, stalled consolidation seam
   ar repair [--apply] [--json]  Remediate doctor findings (DRY-RUN unless --apply): reindex drift, remove dead locks, login-free drain
+  ar hygiene [--json] [--project <slug>] [--baseline-update]
+      DETECTION-ONLY store trash audit — junk project dirs, unbounded counter files, recurring-theme
+      epidemics, case-fold forks, stale derived caches, root-level secret-shaped strings, missing
+      corrections indexes, reserved-word slug collisions. NEVER mutates the store; the only write this
+      command can make is its own baseline file, and only with --baseline-update.
+      First run: \`ar hygiene --baseline-update\` to seed the baseline against everything already there.
+      Every later bare run reports only NEW findings since that baseline; exit 1 only on a NEW red finding.
   ar rooms             Show palace rooms with entry counts and topic keywords
   ar sync-memory       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
 
@@ -687,6 +694,89 @@ async function main(): Promise<void> {
         if (!apply) lines.push("  (dry-run — pass --apply to make these changes)");
         output(lines.join("\n"));
       }
+      break;
+    }
+    case "hygiene": {
+      // DETECTION-ONLY store trash audit (sibling to `doctor`/`repair`, but a
+      // different axis: trash, not structural integrity). NEVER mutates the
+      // store — its only possible write is its own baseline file, and only
+      // when --baseline-update is passed.
+      const root = core.getRoot();
+      const baselinePath = core.hygieneBaselinePath(root);
+      const scan = core.runHygieneScan(root);
+      const projectFilter = project ? project.toLowerCase() : undefined;
+      const inScope = (f: { path: string }): boolean =>
+        !projectFilter || f.path.toLowerCase().startsWith(`projects/${projectFilter}`);
+      const countsByCheck = (list: Array<{ check: string }>): Record<string, number> => {
+        const out: Record<string, number> = {};
+        for (const f of list) out[f.check] = (out[f.check] ?? 0) + 1;
+        return out;
+      };
+
+      if (hasFlag("--baseline-update", rest)) {
+        const baseline = core.updateBaseline(scan.findings, baselinePath);
+        const scopedKnown = scan.findings.filter(inScope);
+        if (hasFlag("--json", rest)) {
+          output({
+            grade: scan.grade,
+            counts: projectFilter ? countsByCheck(scopedKnown) : scan.counts,
+            fresh: [],
+            known: scopedKnown,
+            baseline_updated: true,
+            baseline_count: baseline.stable_ids.length,
+          });
+        } else {
+          output(
+            `baseline recorded: ${baseline.stable_ids.length} finding(s) → ${baselinePath}\n` +
+            `  (run \`ar hygiene\` from now on — only NEW findings will be reported)`,
+          );
+        }
+        break;
+      }
+
+      const { fresh, known } = core.applyBaseline(scan.findings, baselinePath);
+      const scopedFresh = fresh.filter(inScope);
+      const scopedKnown = known.filter(inScope);
+
+      if (hasFlag("--json", rest)) {
+        output({
+          grade: scan.grade,
+          counts: projectFilter ? countsByCheck([...scopedFresh, ...scopedKnown]) : scan.counts,
+          fresh: scopedFresh,
+          known_count: scopedKnown.length,
+          baseline_updated: false,
+        });
+      } else {
+        const icon = scan.grade === "red" ? "⛔" : scan.grade === "yellow" ? "⚠" : "✓";
+        const lines: string[] = [`${icon} hygiene: ${scan.grade.toUpperCase()}`];
+        if (scopedFresh.length === 0) {
+          lines.push("  no NEW findings since baseline");
+        } else {
+          lines.push("  NEW findings:");
+          const byCheck = new Map<string, typeof scopedFresh>();
+          for (const f of scopedFresh) {
+            const arr = byCheck.get(f.check) ?? [];
+            arr.push(f);
+            byCheck.set(f.check, arr);
+          }
+          for (const [checkName, items] of byCheck) {
+            for (const item of items) {
+              const mark = item.severity === "red" ? "⛔" : "⚠";
+              lines.push(`  ${mark} ${checkName} [${item.severity}] ${item.path} — ${item.evidence}`);
+              lines.push(`      agent_instruction: ${item.agent_instruction}`);
+            }
+          }
+        }
+        lines.push(`  ${scopedKnown.length} known finding(s) in baseline`);
+        if (!fs.existsSync(baselinePath)) {
+          lines.push("  (no baseline yet — run `ar hygiene --baseline-update` once to seed it)");
+        }
+        output(lines.join("\n"));
+      }
+
+      // Cron-friendly: exit 1 only on a NEW (post-baseline) red finding.
+      // Baseline-known findings and yellow findings never fail the run.
+      if (scopedFresh.some((f) => f.severity === "red")) process.exitCode = 1;
       break;
     }
     case "mirror": {
