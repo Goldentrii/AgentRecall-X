@@ -6,7 +6,8 @@
  */
 
 import { resolveProject } from "../storage/project.js";
-import { resetOwnedFiles } from "../storage/session.js";
+import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
+import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
 import { readIdentity } from "../palace/identity.js";
 import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awareness.js";
@@ -309,6 +310,18 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   const slug = await resolveProject(input.project);
   ensurePalaceInitialized(slug);
 
+  // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
+  // workable identity for one MCP-server lifetime. claimSessionStartOnce
+  // returns true only on the FIRST session_start call for (this session,
+  // slug); every subsequent call in the same process for the same project
+  // must skip the once-per-session write side effects below (correction
+  // "retrieved" outcomes, behavior-policy hit bump) while STILL recomputing
+  // and returning the full read-side payload — an agent recovering from a
+  // context wipe legitimately re-calls session_start and must still get full
+  // context.
+  const sessionId = getSessionId();
+  const isFirstCallThisSession = claimSessionStartOnce(slug);
+
   // C4 A/B experiment — assign the arm FIRST so every correction-derived
   // section below can gate on it. OFF semantics (orchestrator ruling
   // 2026-07-03): "this agent has no correction memory today" — corrections,
@@ -500,15 +513,18 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
 
   // P0-B: auto-record "retrieved" outcome for each surfaced correction.
   // Automaticity Law: only automatic instrumentation captures real data.
-  // Guard: fire at most once per correction per calendar day — prevents
-  // double-counting if session_start is called twice in the same session
-  // (e.g. on reconnect or tool retry).
+  // Guard 1 (C2, session-scoped): isFirstCallThisSession — a repeat
+  // session_start call within the SAME process session must never re-fire
+  // this loop at all (cheap idempotent re-read).
+  // Guard 2 (pre-existing, per-day): fire at most once per correction per
+  // calendar day — a secondary safety net that also covers a NEW process
+  // (e.g. MCP server restart) re-recording within the same day.
   //
   // A/B: "retrieved" is ONLY recorded when the correction is actually injected
   // (arm ON or experiment disabled). In the OFF arm the agent never sees the
   // corrections — recording "retrieved" would falsely inflate the precision
   // numerator and corrupt the KPI that measures injection effectiveness.
-  if (abArm !== "off") {
+  if (abArm !== "off" && isFirstCallThisSession) {
     // Local-TZ date for the 1/day guard (Sprint-0 review: toISOString is UTC,
     // which breaks the guard for users in UTC+5..+14 — e.g. 07:50 local in UTC+8
     // is "yesterday" in UTC). "sv" locale formats as YYYY-MM-DD.
@@ -523,6 +539,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
           kind: "retrieved",
           at: nowISO,
           evidence: "surfaced at session_start",
+          session_id: sessionId,
         });
       } catch {
         // Outcome tracking must NEVER break orientation — swallow all errors
@@ -620,7 +637,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Behavior policies — always-loaded high-salience rules. Bump hit counter
   // FIRST so the returned objects reflect post-bump state (the on-disk store
   // and the result payload agree on what an agent saw this session).
-  if (readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
+  // C2: gated on isFirstCallThisSession — the hits counter has no per-day
+  // guard of its own, so without this a repeat session_start call in the
+  // same session would double (or triple, ...) count every rule's hits.
+  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
   const behaviorRules = readBehaviorPolicies(slug).rules;
 
   // North-star alignment metric — correction precision (heeded/retrieved).
@@ -863,6 +883,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     const payloadTokens = Math.round(JSON.stringify(corrections).length / 4);
     logABResult(slug, abAssignment.session_key, injectedCount, payloadTokens);
   }
+
+  // C2 — lifecycle telemetry: counters only, never transcript content.
+  // dup=true means this call's write-phase was idempotent-suppressed (a
+  // repeat session_start for this process's session + project).
+  recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
 
   return result;
 }

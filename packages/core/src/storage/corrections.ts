@@ -11,6 +11,7 @@ import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
 import { sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
+import { withLock } from "./filelock.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,6 +163,13 @@ export interface CorrectionOutcome {
    * ignore unknown fields.
    */
   recorded_at?: string;
+  /**
+   * C2 (2026-07-26) — process-scoped session identity (getSessionId()) of the
+   * caller that recorded this event. ADDITIVE + OPTIONAL: purely a stamping
+   * field for cross-referencing outcomes against telemetry/lifecycle.jsonl;
+   * recordOutcome does not read or branch on it. Absent on pre-C2 lines.
+   */
+  session_id?: string;
 }
 
 export interface CorrectionKPI {
@@ -787,64 +795,80 @@ export function writeCorrection(project: string, correction: CorrectionRecord): 
   const severity = correction.severity ?? detectSeverity(`${correction.rule} ${correction.context}`);
   const record = applyCorrectionDefaults({ ...correction, severity }, todayDate());
 
-  // ── P1: on-write consolidation (refine-not-overwrite) ─────────────────────
-  // Borrow Hindsight's consolidation idea, AR-native: instead of accumulating a
-  // new dated file for a re-stated rule, fold it into the most similar ACTIVE
-  // correction of the SAME kind and bump that record's proof_count. The matched
-  // record keeps its id/date (stable document_id) and absorbs the new tags +
-  // higher severity/authority/weight. High-precision LOCAL gate — no key, no
-  // network — so this never runs an LLM on the storage hot path.
-  const normNew = normalizeRule(record.rule);
-  for (const existing of readActiveCorrections(project)) {
-    if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
-    if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
-    if (normalizeRule(existing.rule) !== normNew) continue;
-    const merged: CorrectionRecord = {
-      ...existing,
-      proof_count: (existing.proof_count ?? 1) + 1,
-      merged_from: [...(existing.merged_from ?? []), record.id],
-      tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),
-      // keep the STRONGER signal on every axis
-      severity: existing.severity === "p0" || record.severity === "p0" ? "p0" : "p1",
-      weight: Math.max(existing.weight ?? 0, record.weight ?? 0),
-      authoritative: Boolean(existing.authoritative || record.authoritative),
-      last_outcome: new Date().toISOString(),
-      // RD-1: keep the existing classification; adopt the incoming capture's
-      // class only when the existing record predates the field AND the
-      // incoming class is a REAL class. Review fix MEDIUM-1 (2026-07-14):
-      // writing "other" into a pre-RD-1 file changes nothing at read time
-      // (absent already reads as other) but permanently forecloses a future
-      // real classification — stored-wins would keep "other" forever. Note the
-      // merge gate is rule-text equality while classification runs on the full
-      // context text, so incoming classes CAN differ across merges; stored
-      // still wins in that case by design (durable classification).
-      ...(existing.failure_class
-        ? { failure_class: existing.failure_class }
-        : record.failure_class && record.failure_class !== "other"
-          ? { failure_class: record.failure_class }
-          : {}),
-    };
-    // Rewrite: reuse the EXISTING file's name (never recompute via slugify —
-    // see findExistingCorrectionFile doc). Falls back to a fresh v2 filename
-    // only in the defensive case where the file has vanished mid-call.
-    const mfile = findExistingCorrectionFile(dir, existing.id)
-      ?? `${merged.date}--${slugify(merged.rule || merged.id)}.json`;
-    writeRecordAtomic(path.join(dir, mfile), merged);
+  // ── LOCKED critical section (P0 data-loss fix, 2026-07-25) ────────────────
+  // From here on this is an unlocked read-all→find→mutate→atomic-rewrite→
+  // index-regen sequence: the consolidation scan below reads every *.json
+  // file, the merge branch rewrites the ONE matched record, and either branch
+  // ends by calling regenerateCorrectionsIndex, which re-reads the whole store
+  // and rewrites the ONE shared _index.md. Unlocked, two concurrent
+  // writeCorrection calls for the same project can (a) both miss each other's
+  // match and create duplicate un-merged records instead of consolidating, or
+  // (b) race on the shared index rewrite. Locked with `corrections-${project}`
+  // — PROJECT-scoped, not per-correction-id, because the index file is shared
+  // across every correction in the project (a per-id lock would still let two
+  // DIFFERENT corrections' index writes race). Mirrors retractCorrection /
+  // recordOutcome below and the existing `palace-index-${project}` /
+  // `digest-${project}` lock pattern elsewhere in this codebase.
+  return withLock(`corrections-${project}`, (): WriteCorrectionResult => {
+    // ── P1: on-write consolidation (refine-not-overwrite) ─────────────────────
+    // Borrow Hindsight's consolidation idea, AR-native: instead of accumulating a
+    // new dated file for a re-stated rule, fold it into the most similar ACTIVE
+    // correction of the SAME kind and bump that record's proof_count. The matched
+    // record keeps its id/date (stable document_id) and absorbs the new tags +
+    // higher severity/authority/weight. High-precision LOCAL gate — no key, no
+    // network — so this never runs an LLM on the storage hot path.
+    const normNew = normalizeRule(record.rule);
+    for (const existing of readActiveCorrections(project)) {
+      if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
+      if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
+      if (normalizeRule(existing.rule) !== normNew) continue;
+      const merged: CorrectionRecord = {
+        ...existing,
+        proof_count: (existing.proof_count ?? 1) + 1,
+        merged_from: [...(existing.merged_from ?? []), record.id],
+        tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),
+        // keep the STRONGER signal on every axis
+        severity: existing.severity === "p0" || record.severity === "p0" ? "p0" : "p1",
+        weight: Math.max(existing.weight ?? 0, record.weight ?? 0),
+        authoritative: Boolean(existing.authoritative || record.authoritative),
+        last_outcome: new Date().toISOString(),
+        // RD-1: keep the existing classification; adopt the incoming capture's
+        // class only when the existing record predates the field AND the
+        // incoming class is a REAL class. Review fix MEDIUM-1 (2026-07-14):
+        // writing "other" into a pre-RD-1 file changes nothing at read time
+        // (absent already reads as other) but permanently forecloses a future
+        // real classification — stored-wins would keep "other" forever. Note the
+        // merge gate is rule-text equality while classification runs on the full
+        // context text, so incoming classes CAN differ across merges; stored
+        // still wins in that case by design (durable classification).
+        ...(existing.failure_class
+          ? { failure_class: existing.failure_class }
+          : record.failure_class && record.failure_class !== "other"
+            ? { failure_class: record.failure_class }
+            : {}),
+      };
+      // Rewrite: reuse the EXISTING file's name (never recompute via slugify —
+      // see findExistingCorrectionFile doc). Falls back to a fresh v2 filename
+      // only in the defensive case where the file has vanished mid-call.
+      const mfile = findExistingCorrectionFile(dir, existing.id)
+        ?? `${merged.date}--${slugify(merged.rule || merged.id)}.json`;
+      writeRecordAtomic(path.join(dir, mfile), merged);
+      // W2-1: regenerate the materialized index on every corrections mutation.
+      regenerateCorrectionsIndex(project);
+      return { written: true, merged: true, id: merged.id };
+    }
+
+    // Brand-new record — no existing file to preserve. v2 delimiter ("--").
+    const filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
+    const filepath = path.join(dir, filename);
+
+    // Atomic write — tmp + rename, mode 0600
+    writeRecordAtomic(filepath, record);
     // W2-1: regenerate the materialized index on every corrections mutation.
     regenerateCorrectionsIndex(project);
-    return { written: true, merged: true, id: merged.id };
-  }
 
-  // Brand-new record — no existing file to preserve. v2 delimiter ("--").
-  const filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
-  const filepath = path.join(dir, filename);
-
-  // Atomic write — tmp + rename, mode 0600
-  writeRecordAtomic(filepath, record);
-  // W2-1: regenerate the materialized index on every corrections mutation.
-  regenerateCorrectionsIndex(project);
-
-  return { written: true, merged: false, id: record.id };
+    return { written: true, merged: false, id: record.id };
+  });
 }
 
 /**
@@ -907,33 +931,41 @@ export function retractCorrection(
 ): RetractCorrectionResult {
   const dir = correctionsDir(project);
 
-  // Find the correction record by id
-  const all = readCorrections(project);
-  const target = all.find((r) => r.id === id);
-  if (!target) {
-    return { success: false, error: `correction not found: ${id}` };
-  }
+  // ── LOCKED critical section (P0 data-loss fix, 2026-07-25) ────────────────
+  // read-all→find→mutate→atomic-rewrite→index-regen, unlocked, is exactly the
+  // race class this fix closes — see the matching note in writeCorrection
+  // above and recordOutcome below. Locked with `corrections-${project}`
+  // (PROJECT-scoped, matching regenerateCorrectionsIndex's one-shared-file-
+  // per-project shape; not per-correction-id — see writeCorrection's note).
+  return withLock(`corrections-${project}`, (): RetractCorrectionResult => {
+    // Find the correction record by id
+    const all = readCorrections(project);
+    const target = all.find((r) => r.id === id);
+    if (!target) {
+      return { success: false, error: `correction not found: ${id}` };
+    }
 
-  const updated: CorrectionRecord = {
-    ...target,
-    active: false,
-    retracted_at: new Date().toISOString(),
-    ...(reason !== undefined ? { retract_reason: reason } : {}),
-    // P2: forward pointer to the correction that replaced this one (audit trail).
-    ...(supersededBy !== undefined ? { superseded_by: supersededBy } : {}),
-  };
+    const updated: CorrectionRecord = {
+      ...target,
+      active: false,
+      retracted_at: new Date().toISOString(),
+      ...(reason !== undefined ? { retract_reason: reason } : {}),
+      // P2: forward pointer to the correction that replaced this one (audit trail).
+      ...(supersededBy !== undefined ? { superseded_by: supersededBy } : {}),
+    };
 
-  // Rewrite — reuse the EXISTING file's name (see findExistingCorrectionFile
-  // doc); never recompute via slugify, or a v1-named file would orphan.
-  const filename = findExistingCorrectionFile(dir, updated.id)
-    ?? `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
-  const filepath = path.join(dir, filename);
-  // Atomic rewrite — tmp + rename, mode 0600
-  writeRecordAtomic(filepath, updated);
-  // W2-1: regenerate the materialized index on every corrections mutation.
-  regenerateCorrectionsIndex(project);
+    // Rewrite — reuse the EXISTING file's name (see findExistingCorrectionFile
+    // doc); never recompute via slugify, or a v1-named file would orphan.
+    const filename = findExistingCorrectionFile(dir, updated.id)
+      ?? `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
+    const filepath = path.join(dir, filename);
+    // Atomic rewrite — tmp + rename, mode 0600
+    writeRecordAtomic(filepath, updated);
+    // W2-1: regenerate the materialized index on every corrections mutation.
+    regenerateCorrectionsIndex(project);
 
-  return { success: true, id };
+    return { success: true, id };
+  });
 }
 
 /**
@@ -987,77 +1019,558 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
     return;
   }
 
-  // Update the per-correction file's counters.
-  const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
-  if (!target) return; // outcome can still be replayed later if record is restored
+  // ── LOCKED critical section (P0 data-loss fix, 2026-07-25) ────────────────
+  // This is the exact read-all→find→mutate→atomic-rewrite→index-regen span the
+  // audit reproduced (24 procs × 20 calls losing 66-78% of retrieved_count
+  // increments): readCorrections() below re-reads every *.json file, so two
+  // concurrent processes can both read the SAME stale counter value, both
+  // increment it by one, and the last atomic rewrite to land silently discards
+  // the other's increment. Locked with `corrections-${project}` — PROJECT-
+  // scoped, not per-correction-id, because regenerateCorrectionsIndex rewrites
+  // ONE shared _index.md per project (a per-id lock would still let two
+  // DIFFERENT corrections' index writes race). See the matching note in
+  // writeCorrection/retractCorrection above; same lock name, same pattern as
+  // `palace-index-${project}` / `digest-${project}` elsewhere in this codebase.
+  withLock(`corrections-${outcome.project}`, () => {
+    // Update the per-correction file's counters.
+    const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
+    if (!target) return; // outcome can still be replayed later if record is restored
 
-  const updated: CorrectionRecord = {
-    ...target,
-    retrieved_count: target.retrieved_count ?? 0,
-    heeded_count: target.heeded_count ?? 0,
-    recurrence_count: target.recurrence_count ?? 0,
-  };
-  if (outcome.kind === "retrieved") {
-    updated.retrieved_count = (updated.retrieved_count ?? 0) + 1;
-    updated.last_retrieved = outcome.at;
-  } else if (outcome.kind === "heeded") {
-    updated.heeded_count = (updated.heeded_count ?? 0) + 1;
-    updated.last_outcome = outcome.at;
-  } else if (outcome.kind === "recurred") {
-    updated.recurrence_count = (updated.recurrence_count ?? 0) + 1;
-    updated.last_outcome = outcome.at;
-  } else if (outcome.kind === "predicted") {
-    // Wave 5: prediction fired — instrument the predict-the-correction loop.
-    updated.predicted_count = (updated.predicted_count ?? 0) + 1;
-    updated.last_predicted = outcome.at;
-  } else if (outcome.kind === "predict_hit") {
-    updated.predict_hits = (updated.predict_hits ?? 0) + 1;
+    const updated: CorrectionRecord = {
+      ...target,
+      retrieved_count: target.retrieved_count ?? 0,
+      heeded_count: target.heeded_count ?? 0,
+      recurrence_count: target.recurrence_count ?? 0,
+    };
+    if (outcome.kind === "retrieved") {
+      updated.retrieved_count = (updated.retrieved_count ?? 0) + 1;
+      updated.last_retrieved = outcome.at;
+    } else if (outcome.kind === "heeded") {
+      updated.heeded_count = (updated.heeded_count ?? 0) + 1;
+      updated.last_outcome = outcome.at;
+    } else if (outcome.kind === "recurred") {
+      updated.recurrence_count = (updated.recurrence_count ?? 0) + 1;
+      updated.last_outcome = outcome.at;
+    } else if (outcome.kind === "predicted") {
+      // Wave 5: prediction fired — instrument the predict-the-correction loop.
+      updated.predicted_count = (updated.predicted_count ?? 0) + 1;
+      updated.last_predicted = outcome.at;
+    } else if (outcome.kind === "predict_hit") {
+      updated.predict_hits = (updated.predict_hits ?? 0) + 1;
+    }
+    const r = updated.retrieved_count ?? 0;
+    // Clamp to [0,1]: `retrieved` is guarded 1/day but `heeded` can fire on every
+    // session_end, so raw heeded/retrieved can exceed 1.0 ("150% heeded" is
+    // nonsense). min(1, …) keeps the metric honest. (Root-cause follow-up: apply
+    // the same 1/day guard to heeded as retrieved has, for finer resolution.)
+    // NB (Wave 5): `precision` is heeded/retrieved ONLY — predict_* never touch it.
+    updated.precision = r > 0 ? Math.min(1, Number(((updated.heeded_count ?? 0) / r).toFixed(3))) : undefined;
+
+    // Wave 5: predict_precision = predict_hits / predicted_count, kept SEPARATE
+    // from `precision`. Undefined until at least one prediction has fired.
+    // A predict_hit implies a prior prediction. If data is inconsistent (hits
+    // recorded without a matching predicted_count — e.g. migrated/corrupt records),
+    // floor the denominator at predict_hits so the metric stays VISIBLE and bounded
+    // rather than silently undefined while hits exist.
+    const pc = updated.predicted_count ?? 0;
+    const ph = updated.predict_hits ?? 0;
+    const predictDenom = Math.max(pc, ph);
+    updated.predict_precision = predictDenom > 0
+      ? Math.min(1, Number((ph / predictDenom).toFixed(3)))
+      : undefined;
+
+    // P3: evidence-grounded proof_confidence. With NO outcome evidence yet, keep the
+    // authority prior (weight); once heeded/recurrence accrue, move to the Beta
+    // posterior so a rule that keeps being honored strengthens and one whose bug
+    // keeps recurring weakens. Kept SEPARATE from `precision` (heeded/retrieved) and
+    // from `weight` (static authority) — this is the evidence axis.
+    const heededC = updated.heeded_count ?? 0;
+    const recurC = updated.recurrence_count ?? 0;
+    updated.proof_confidence = (heededC + recurC) > 0
+      ? Number(betaPosterior(heededC, recurC).toFixed(3))
+      : (updated.weight ?? defaultWeight(updated.severity));
+
+    // Re-write the JSON file atomically (tmp + rename — prevents truncation on
+    // SIGTERM). Reuse the EXISTING filename (see findExistingCorrectionFile
+    // doc) — never recompute via slugify, or a v1-named file would orphan.
+    const filename = findExistingCorrectionFile(dir, updated.id)
+      ?? `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
+    const filepath = path.join(dir, filename);
+    writeRecordAtomic(filepath, updated);
+    // W2-1: regenerate the materialized index on every corrections mutation.
+    // (The ledger-only early-returns above for triggered/not_triggered/unknown
+    // touch no per-record field the index renders — severity/status/date/rule/
+    // failure_class are all unchanged — so they deliberately skip this call,
+    // preserving the existing hot-path optimization documented above.)
+    regenerateCorrectionsIndex(outcome.project);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Outcomes rebuild (TOW2-321 follow-up) — repair records corrupted by the
+// pre-fix unlocked read-modify-write in recordOutcome/retractCorrection/
+// writeCorrection (05b3699). _outcomes.jsonl is append-only and was ALWAYS
+// lossless (the bug only ever undercounted the MATERIALIZED *.json counters,
+// never the ledger) — so a correct repair is: replay every ledger event for a
+// correction id from scratch and recompute its counters with the EXACT same
+// formulas recordOutcome uses per-event. No event_id/dedup is needed; there
+// was never a duplicate-event problem, only a lost-increment one, and
+// replaying the lossless ledger from zero sidesteps that entirely.
+//
+// This is the shared replay core behind BOTH `runOutcomesRebuild` (the WRITE-
+// side repair, mirroring store-repair.ts's shape) and store-doctor.ts's new
+// `outcomes_ledger_divergence` check (READ-only) — one implementation, two
+// call sites, so the doctor can never disagree with what rebuild would do.
+// ---------------------------------------------------------------------------
+
+/** One `_outcomes.jsonl` line that failed to parse (or lacked required fields). */
+export interface MalformedOutcomeRow {
+  /** 1-based line number within _outcomes.jsonl. */
+  line: number;
+  /** Raw line content, verbatim (for manual inspection/recovery). */
+  raw: string;
+  /** Why the line was quarantined. */
+  error: string;
+}
+
+/**
+ * Every field recordOutcome derives from a correction's outcome history —
+ * both raw counters and the values computed from them (precision,
+ * predict_precision, proof_confidence). Optional throughout: a field is
+ * absent exactly when recordOutcome would never have touched it (e.g. no
+ * `predicted` event ever fired ⇒ predicted_count stays absent, not 0).
+ */
+export interface RecomputedCounters {
+  retrieved_count?: number;
+  heeded_count?: number;
+  recurrence_count?: number;
+  predicted_count?: number;
+  predict_hits?: number;
+  last_retrieved?: string;
+  last_outcome?: string;
+  last_predicted?: string;
+  precision?: number;
+  predict_precision?: number;
+  proof_confidence?: number;
+}
+
+/** Outcome kinds that affect per-correction counters (mirrors recordOutcome's early-return for triggered/not_triggered/unknown — those are ledger-only). */
+const COUNTER_KINDS = new Set<CorrectionOutcome["kind"]>([
+  "retrieved",
+  "heeded",
+  "recurred",
+  "predicted",
+  "predict_hit",
+]);
+
+/**
+ * Replay-order key for one ledger event.
+ *
+ * `recorded_at` (forensic, C3b) is the wall-clock instant recordOutcome() was
+ * actually CALLED — i.e. it IS the live call order. `at` (semantic) can be
+ * backdated by the dream-audit path, so two events can have `at` values out of
+ * order relative to when they were really recorded (a nightly dream-audit call
+ * backdates `at` to yesterday but is physically called well AFTER today's live
+ * calls). recordOutcome has NO "is this newer" guard — every relevant call
+ * unconditionally OVERWRITES last_retrieved/last_outcome/last_predicted with
+ * `outcome.at`. So the only way a replay reproduces bit-identical results to a
+ * lossless LIVE call sequence is to apply events in the order the CALLS
+ * happened (recorded_at), each one stamping its own `.at` value — NOT in
+ * semantic-day order. Falls back to `at` only for pre-C3b lines that lack
+ * `recorded_at` entirely: those lines predate the dream-audit backdating
+ * feature (C3b introduced both `recorded_at` AND backdating together), so for
+ * them `at` already WAS the wall-clock time — a safe, non-arbitrary fallback.
+ */
+function replayOrderKey(evt: CorrectionOutcome): number {
+  const ts = evt.recorded_at ?? evt.at;
+  const t = new Date(ts).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/**
+ * Sort events into live-call order for replay. Array.prototype.sort is stable
+ * (guaranteed since ES2019 / all supported Node versions), so ties — identical
+ * recorded_at, or both timestamps missing/invalid — keep original ledger line
+ * order, the next-best tie-break absent finer-grained sequencing.
+ */
+function sortForReplay(events: CorrectionOutcome[]): CorrectionOutcome[] {
+  return [...events]
+    .map((evt, idx) => ({ evt, idx }))
+    .sort((a, b) => replayOrderKey(a.evt) - replayOrderKey(b.evt) || a.idx - b.idx)
+    .map(({ evt }) => evt);
+}
+
+/**
+ * Pure replay of one correction's counter-affecting ledger events, already
+ * ordered by `sortForReplay`. Recomputes every field recordOutcome derives,
+ * applying the EXACT SAME per-event formulas (see recordOutcome, this file,
+ * ~L1032-1084) one event at a time — this is what makes the rebuild produce
+ * IDENTICAL results to a lossless live call sequence.
+ *
+ * `record` supplies ONLY the weight/severity fallback `proof_confidence` needs
+ * when no heeded/recurrence evidence exists yet (recordOutcome's own
+ * `updated.weight ?? defaultWeight(updated.severity)` fallback, L1084) — its
+ * counter fields are never read here; those are recomputed from scratch.
+ *
+ * Mirrors recordOutcome's asymmetry precisely: retrieved_count/heeded_count/
+ * recurrence_count are seeded to 0 as soon as ANY counter-kind event fires
+ * (recordOutcome's `{...target, retrieved_count: target.retrieved_count ?? 0, …}`
+ * runs unconditionally before the per-kind branch, L1032-1037), while
+ * predicted_count/predict_hits stay `undefined` until their OWN specific kind
+ * fires at least once (they are only ever seeded inline at their own
+ * increment site, L1049/L1052).
+ */
+export function recomputeCorrectionCounters(
+  events: CorrectionOutcome[],
+  record: Pick<CorrectionRecord, "weight" | "severity">,
+): RecomputedCounters {
+  let retrieved: number | undefined;
+  let heeded: number | undefined;
+  let recurrence: number | undefined;
+  let predicted: number | undefined;
+  let predictHits: number | undefined;
+  let lastRetrieved: string | undefined;
+  let lastOutcome: string | undefined;
+  let lastPredicted: string | undefined;
+
+  for (const evt of events) {
+    if (!COUNTER_KINDS.has(evt.kind)) continue; // ledger-only — mirror recordOutcome's early return (L1007-1013)
+
+    // Unconditional baseline seed on EVERY counter-kind event (recordOutcome L1032-1037).
+    retrieved = retrieved ?? 0;
+    heeded = heeded ?? 0;
+    recurrence = recurrence ?? 0;
+
+    if (evt.kind === "retrieved") {
+      retrieved = retrieved + 1;
+      lastRetrieved = evt.at;
+    } else if (evt.kind === "heeded") {
+      heeded = heeded + 1;
+      lastOutcome = evt.at;
+    } else if (evt.kind === "recurred") {
+      recurrence = recurrence + 1;
+      lastOutcome = evt.at;
+    } else if (evt.kind === "predicted") {
+      predicted = (predicted ?? 0) + 1;
+      lastPredicted = evt.at;
+    } else if (evt.kind === "predict_hit") {
+      predictHits = (predictHits ?? 0) + 1;
+    }
   }
-  const r = updated.retrieved_count ?? 0;
-  // Clamp to [0,1]: `retrieved` is guarded 1/day but `heeded` can fire on every
-  // session_end, so raw heeded/retrieved can exceed 1.0 ("150% heeded" is
-  // nonsense). min(1, …) keeps the metric honest. (Root-cause follow-up: apply
-  // the same 1/day guard to heeded as retrieved has, for finer resolution.)
-  // NB (Wave 5): `precision` is heeded/retrieved ONLY — predict_* never touch it.
-  updated.precision = r > 0 ? Math.min(1, Number(((updated.heeded_count ?? 0) / r).toFixed(3))) : undefined;
 
-  // Wave 5: predict_precision = predict_hits / predicted_count, kept SEPARATE
-  // from `precision`. Undefined until at least one prediction has fired.
-  // A predict_hit implies a prior prediction. If data is inconsistent (hits
-  // recorded without a matching predicted_count — e.g. migrated/corrupt records),
-  // floor the denominator at predict_hits so the metric stays VISIBLE and bounded
-  // rather than silently undefined while hits exist.
-  const pc = updated.predicted_count ?? 0;
-  const ph = updated.predict_hits ?? 0;
+  // precision — recordOutcome L1054/L1060.
+  const r = retrieved ?? 0;
+  const precision = r > 0 ? Math.min(1, Number(((heeded ?? 0) / r).toFixed(3))) : undefined;
+
+  // predict_precision — recordOutcome L1068-1073 (denominator floored at
+  // predict_hits when predicted_count is inconsistent/missing).
+  const pc = predicted ?? 0;
+  const ph = predictHits ?? 0;
   const predictDenom = Math.max(pc, ph);
-  updated.predict_precision = predictDenom > 0
-    ? Math.min(1, Number((ph / predictDenom).toFixed(3)))
-    : undefined;
+  const predictPrecision =
+    predictDenom > 0 ? Math.min(1, Number((ph / predictDenom).toFixed(3))) : undefined;
 
-  // P3: evidence-grounded proof_confidence. With NO outcome evidence yet, keep the
-  // authority prior (weight); once heeded/recurrence accrue, move to the Beta
-  // posterior so a rule that keeps being honored strengthens and one whose bug
-  // keeps recurring weakens. Kept SEPARATE from `precision` (heeded/retrieved) and
-  // from `weight` (static authority) — this is the evidence axis.
-  const heededC = updated.heeded_count ?? 0;
-  const recurC = updated.recurrence_count ?? 0;
-  updated.proof_confidence = (heededC + recurC) > 0
-    ? Number(betaPosterior(heededC, recurC).toFixed(3))
-    : (updated.weight ?? defaultWeight(updated.severity));
+  // proof_confidence — recordOutcome L1080-1084.
+  const heededC = heeded ?? 0;
+  const recurC = recurrence ?? 0;
+  const proofConfidence =
+    heededC + recurC > 0
+      ? Number(betaPosterior(heededC, recurC).toFixed(3))
+      : (record.weight ?? defaultWeight(record.severity));
 
-  // Re-write the JSON file atomically (tmp + rename — prevents truncation on
-  // SIGTERM). Reuse the EXISTING filename (see findExistingCorrectionFile
-  // doc) — never recompute via slugify, or a v1-named file would orphan.
-  const filename = findExistingCorrectionFile(dir, updated.id)
-    ?? `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
-  const filepath = path.join(dir, filename);
-  writeRecordAtomic(filepath, updated);
-  // W2-1: regenerate the materialized index on every corrections mutation.
-  // (The ledger-only early-returns above for triggered/not_triggered/unknown
-  // touch no per-record field the index renders — severity/status/date/rule/
-  // failure_class are all unchanged — so they deliberately skip this call,
-  // preserving the existing hot-path optimization documented above.)
-  regenerateCorrectionsIndex(outcome.project);
+  return {
+    retrieved_count: retrieved,
+    heeded_count: heeded,
+    recurrence_count: recurrence,
+    predicted_count: predicted,
+    predict_hits: predictHits,
+    last_retrieved: lastRetrieved,
+    last_outcome: lastOutcome,
+    last_predicted: lastPredicted,
+    precision,
+    predict_precision: predictPrecision,
+    proof_confidence: proofConfidence,
+  };
+}
+
+/**
+ * Bulk-read + split _outcomes.jsonl into per-correction event lists, quarantining
+ * malformed/shapeless lines instead of silently dropping them (unlike
+ * bucketOutcomesBy above, whose callers only need coarse kind-presence and
+ * already tolerate silent skips).
+ *
+ * BULK READ, not streamed: this mirrors bucketOutcomesBy's existing pattern in
+ * this exact file (fs.readFileSync + split("\n")) and keeps the doctor check
+ * that shares this function fully synchronous — store-doctor.ts's public API
+ * (runStoreDoctor) is synchronous today and is called from the session_start
+ * hot path; switching to a streaming reader would force it (and every caller)
+ * async, a much wider blast radius than this repair tool's scope. Acceptable
+ * per-project: _outcomes.jsonl is one project's correction-outcome history,
+ * not a global log.
+ */
+function parseOutcomesLedger(project: string): {
+  malformedRows: MalformedOutcomeRow[];
+  eventsByCorrectionId: Map<string, CorrectionOutcome[]>;
+} {
+  const malformedRows: MalformedOutcomeRow[] = [];
+  const eventsByCorrectionId = new Map<string, CorrectionOutcome[]>();
+  const p = outcomesPath(project);
+  if (!fs.existsSync(p)) return { malformedRows, eventsByCorrectionId };
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(p, "utf-8");
+  } catch (err) {
+    malformedRows.push({
+      line: 0,
+      raw: "",
+      error: `failed to read ledger: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return { malformedRows, eventsByCorrectionId };
+  }
+
+  const lines = raw.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const lineNo = i + 1;
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue; // blank line — not malformed, just skip
+
+    let evt: CorrectionOutcome;
+    try {
+      evt = JSON.parse(trimmed) as CorrectionOutcome;
+    } catch (err) {
+      malformedRows.push({
+        line: lineNo,
+        raw: lines[i],
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+    if (!evt || typeof evt !== "object" || !evt.correction_id || !evt.kind || !evt.at) {
+      malformedRows.push({
+        line: lineNo,
+        raw: lines[i],
+        error: "parsed but missing required field(s): correction_id, kind, at",
+      });
+      continue;
+    }
+
+    let arr = eventsByCorrectionId.get(evt.correction_id);
+    if (!arr) {
+      arr = [];
+      eventsByCorrectionId.set(evt.correction_id, arr);
+    }
+    arr.push(evt);
+  }
+  return { malformedRows, eventsByCorrectionId };
+}
+
+/** Snapshot of a correction's CURRENT on-disk counter/derived fields (before any rebuild). */
+function currentCountersOf(r: CorrectionRecord): RecomputedCounters {
+  return {
+    retrieved_count: r.retrieved_count,
+    heeded_count: r.heeded_count,
+    recurrence_count: r.recurrence_count,
+    predicted_count: r.predicted_count,
+    predict_hits: r.predict_hits,
+    last_retrieved: r.last_retrieved,
+    last_outcome: r.last_outcome,
+    last_predicted: r.last_predicted,
+    precision: r.precision,
+    predict_precision: r.predict_precision,
+    proof_confidence: r.proof_confidence,
+  };
+}
+
+const COUNTER_FIELD_NAMES: readonly (keyof RecomputedCounters)[] = [
+  "retrieved_count",
+  "heeded_count",
+  "recurrence_count",
+  "predicted_count",
+  "predict_hits",
+  "last_retrieved",
+  "last_outcome",
+  "last_predicted",
+  "precision",
+  "predict_precision",
+  "proof_confidence",
+];
+
+function countersEqual(a: RecomputedCounters, b: RecomputedCounters): boolean {
+  return COUNTER_FIELD_NAMES.every((k) => a[k] === b[k]);
+}
+
+/** One correction's before/after divergence, plus the on-disk record needed to apply the fix. */
+export interface DivergenceEntry {
+  id: string;
+  record: CorrectionRecord;
+  before: RecomputedCounters;
+  after: RecomputedCounters;
+  changed: boolean;
+}
+
+/**
+ * Shared replay-and-compare core for a single project. Read-only — never
+ * mutates, never locks. For every on-disk correction that has at least one
+ * counter-affecting ledger event, replays that event history from scratch
+ * (sortForReplay + recomputeCorrectionCounters) and compares the result
+ * against what's CURRENTLY materialized on disk.
+ *
+ * Corrections with ZERO ledger events for their id are deliberately EXCLUDED
+ * from the result — there is no ledger evidence to rebuild FROM, so "recompute
+ * from scratch" would mean zeroing out counters that might legitimately have
+ * come from a source other than this project's _outcomes.jsonl (e.g. a very
+ * old pre-ledger record). Rebuild only ever touches ids the lossless ledger
+ * can actually vouch for.
+ *
+ * This is the ONE implementation shared by `runOutcomesRebuild` (write-side,
+ * corrections.ts) and store-doctor.ts's `outcomes_ledger_divergence` check
+ * (read-only) — factored here so the two can never disagree.
+ */
+export function computeLedgerDivergence(project: string): {
+  malformedRows: MalformedOutcomeRow[];
+  entries: DivergenceEntry[];
+} {
+  const { malformedRows, eventsByCorrectionId } = parseOutcomesLedger(project);
+  const all = readCorrections(project);
+  const entries: DivergenceEntry[] = [];
+
+  for (const record of all) {
+    const raw = eventsByCorrectionId.get(record.id);
+    if (!raw || raw.length === 0) continue;
+    const relevant = raw.filter((e) => COUNTER_KINDS.has(e.kind));
+    if (relevant.length === 0) continue;
+
+    const ordered = sortForReplay(relevant);
+    const after = recomputeCorrectionCounters(ordered, record);
+    const before = currentCountersOf(record);
+    entries.push({ id: record.id, record, before, after, changed: !countersEqual(before, after) });
+  }
+
+  return { malformedRows, entries };
+}
+
+export interface OutcomesRebuildOptions {
+  /** Must be EXPLICITLY true to mutate. Default false (dry-run — computes and reports the plan only). */
+  apply?: boolean;
+}
+
+export interface OutcomesRebuildCorrectionDiff {
+  id: string;
+  before: RecomputedCounters;
+  after: RecomputedCounters;
+  changed: boolean;
+}
+
+export interface OutcomesRebuildResult {
+  /** false = dry-run (default). true = mutations were applied. */
+  apply: boolean;
+  malformedRows: MalformedOutcomeRow[];
+  corrections: OutcomesRebuildCorrectionDiff[];
+  summary: {
+    /** Corrections with ≥1 ledger event considered (excludes ids with no ledger evidence). */
+    totalCorrections: number;
+    /** Corrections whose recomputed values differ from disk (dry-run: WOULD change; apply: DID change). */
+    changed: number;
+    malformed: number;
+  };
+}
+
+function toPublicDiffs(entries: DivergenceEntry[]): OutcomesRebuildCorrectionDiff[] {
+  return entries.map(({ id, before, after, changed }) => ({ id, before, after, changed }));
+}
+
+/**
+ * Rebuild a project's materialized outcome counters from a full replay of the
+ * (lossless) _outcomes.jsonl ledger — the WRITE-side repair for records
+ * corrupted by the pre-05b3699 unlocked read-modify-write in recordOutcome.
+ *
+ * SAFETY INVARIANTS (mirrors store-repair.ts's StoreRepairOptions contract):
+ *   1. DRY-RUN BY DEFAULT. `opts.apply` must be EXPLICITLY true to mutate.
+ *   2. IDEMPOTENT. A second apply run recomputes from the SAME lossless ledger
+ *      and disk now matches it, so every entry's `changed` is false and
+ *      nothing is rewritten (not even the index).
+ *   3. LOCK SAFETY. The apply pass runs inside `withLock(\`corrections-${project}\`,
+ *      …)` — the SAME lock name recordOutcome/retractCorrection/writeCorrection
+ *      use (05b3699) — so a rebuild-apply can never race a live recordOutcome
+ *      call for the same project.
+ *   4. Only per-correction JSON files that actually differ are rewritten; the
+ *      shared _index.md is regenerated ONCE at the end, only if anything wrote.
+ */
+export function runOutcomesRebuild(
+  project: string,
+  opts: OutcomesRebuildOptions = {},
+): OutcomesRebuildResult {
+  const apply = opts.apply === true;
+
+  if (!apply) {
+    const plan = computeLedgerDivergence(project);
+    const corrections = toPublicDiffs(plan.entries);
+    return {
+      apply: false,
+      malformedRows: plan.malformedRows,
+      corrections,
+      summary: {
+        totalCorrections: corrections.length,
+        changed: corrections.filter((c) => c.changed).length,
+        malformed: plan.malformedRows.length,
+      },
+    };
+  }
+
+  // ── LOCKED apply pass ──────────────────────────────────────────────────────
+  // Re-derive the plan INSIDE the lock: a concurrent live recordOutcome call
+  // could append new ledger lines or rewrite a correction file between any
+  // earlier unlocked plan computation and acquiring this lock. Same lock name
+  // as writeCorrection/retractCorrection/recordOutcome above.
+  return withLock(`corrections-${project}`, (): OutcomesRebuildResult => {
+    const dir = correctionsDir(project);
+    const plan = computeLedgerDivergence(project);
+    let wrote = 0;
+
+    for (const entry of plan.entries) {
+      if (!entry.changed) continue;
+      const updated: CorrectionRecord = {
+        ...entry.record,
+        retrieved_count: entry.after.retrieved_count,
+        heeded_count: entry.after.heeded_count,
+        recurrence_count: entry.after.recurrence_count,
+        predicted_count: entry.after.predicted_count,
+        predict_hits: entry.after.predict_hits,
+        last_retrieved: entry.after.last_retrieved,
+        last_outcome: entry.after.last_outcome,
+        last_predicted: entry.after.last_predicted,
+        precision: entry.after.precision,
+        predict_precision: entry.after.predict_precision,
+        proof_confidence: entry.after.proof_confidence,
+      };
+      // Reuse the EXISTING file's name (see findExistingCorrectionFile doc) —
+      // never recompute via slugify, matching every other rewrite in this file.
+      const filename =
+        findExistingCorrectionFile(dir, updated.id) ??
+        `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
+      writeRecordAtomic(path.join(dir, filename), updated);
+      wrote++;
+    }
+
+    // Regenerate the shared index ONCE, only if something actually changed —
+    // keeps a clean second apply-run a true no-op (idempotency invariant #2).
+    if (wrote > 0) {
+      regenerateCorrectionsIndex(project);
+    }
+
+    const corrections = toPublicDiffs(plan.entries);
+    return {
+      apply: true,
+      malformedRows: plan.malformedRows,
+      corrections,
+      summary: {
+        totalCorrections: corrections.length,
+        changed: wrote,
+        malformed: plan.malformedRows.length,
+      },
+    };
+  });
 }
 
 /**

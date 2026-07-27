@@ -44,7 +44,61 @@
  * ### Fix 4: Consistent total_searched
  * Previously mixed "total matches" (palace), "returned results" (journal),
  * and "total in index" (insight) — three different metrics summed together.
- * Now counts candidate items from each source before final RRF merge.
+ * Counts candidate items from each source before final RRF merge — genuinely,
+ * via a raw-candidate-count side channel localRecallSearch attaches to its
+ * return value (see Fix 5; `total_searched` is NOT `results.length`, which is
+ * a post-fusion count and can legitimately be smaller).
+ *
+ * ### Fix 5: Canonical cross-source fusion, in two stages (v3.4.39)
+ * applyRRF() used to key its ONLY fusion map by a PER-SOURCE occurrence id —
+ * `stableId(source, title)`, where `title` is built differently per source
+ * (palace: "room/file", journal: "date / section"). The SAME conceptual
+ * memory found via two sources therefore got two DIFFERENT ids and landed in
+ * two separate map entries, so cross-source RRF accumulation
+ * (`existing.score += contribution`) could never fire — only within-source
+ * duplicates (same id) could. A later "dedup by excerpt" pass then silently
+ * collapsed same-excerpt entries by first-inserted-wins, DISCARDING the other
+ * source's score entirely instead of summing it in.
+ * Fix: fusion is now TWO stages. Stage 1 (applyRRF, unchanged key: `item.id`)
+ * still consolidates multiple hits from the SAME source document — e.g.
+ * palaceSearch legitimately returns one hit per matching LINE within a file,
+ * all sharing that file's id, and those must accumulate into one per-document
+ * entry, not fragment (an excerpt-only key at this stage was tried and
+ * REJECTED — it broke associative-link.test.mjs by starving genuinely-
+ * matched files of their combined per-file weight). Stage 2 (fuseCanonical)
+ * then re-keys those already-consolidated per-document entries by NORMALIZED
+ * EXCERPT CONTENT — the same identity notion the old post-hoc dedup pass
+ * already used to decide "same memory". Two per-document entries from
+ * different sources whose representative excerpt matches now land in the
+ * SAME canonical entry, so cross-source accumulation happens. Provenance
+ * from every contributing source is preserved via `alsoFoundIn` on the fused
+ * item (primary/display source is whichever source ran first — unchanged),
+ * rather than being dropped.
+ *
+ * ### Fix 5b: insight excerpt is too low-entropy to be a fusion identity
+ * Stage 2's "normalized excerpt content" identity assumption (Fix 5) is
+ * sound for palace/journal, whose `excerpt` is a real matched text snippet.
+ * It was broken for the insight source: its excerpt was synthesized from
+ * ONLY `severity` + `applies_when` (`[important] deployment, database`),
+ * omitting the insight's own distinguishing `title` entirely. Two UNRELATED
+ * insights sharing a severity + tag set produced byte-identical excerpts and
+ * silently fused into one — one insight vanished from results, and the
+ * survivor's score absorbed the other's RRF contribution with zero trace
+ * (same-source collisions don't show up in `alsoFoundIn`, which only records
+ * source NAMES). Fix: insight items now carry a separate `fusionKey`
+ * (`${title} [severity] tags`) that fuseCanonical() and the defensive dedup
+ * pass key on INSTEAD of `excerpt` when present (see `fusionKey`'s doc
+ * comment on `SmartRecallResultItem`). The displayed `excerpt` stays terse —
+ * embedding `title` into it would duplicate title text in every consumer
+ * that reads `excerpt` directly (recall.ts's display line, the CLI's
+ * ambient-injection word-overlap scorer, consistency/conflict-scan's
+ * `title + excerpt` concatenation), which for the word-overlap scorer would
+ * also double-count title tokens and inflate insight relevance versus other
+ * sources. Palace/journal items leave `fusionKey` unset (falls back to
+ * `excerpt`, unchanged from Fix 5) — insights are a distinct "confirmed
+ * pattern" memory type that isn't expected to share literal content with a
+ * journal/palace excerpt, so this doesn't reopen the cross-source fusion
+ * Fix 5 was built for; it only stops insights colliding WITH EACH OTHER.
  */
 
 import * as fs from "node:fs";
@@ -86,9 +140,35 @@ export interface SmartRecallInput {
 
 export interface SmartRecallResultItem {
   id: string;
+  /** Primary/display source — whichever source's RRF pass inserted this
+   *  canonical entry first (palace, then journal, then insight). Kept
+   *  singular for backward compatibility with existing consumers. */
   source: "palace" | "journal" | "insight";
+  /** Other sources that ALSO matched this same canonical memory (same
+   *  normalized excerpt) during RRF fusion. Present only when the item was
+   *  found in more than one source — see Fix 5 in the file header. */
+  alsoFoundIn?: Array<"palace" | "journal" | "insight">;
   title: string;
   excerpt: string;
+  /** Cross-source fusion identity override (Fix 5b). When present, fusion
+   *  (fuseCanonical() + the defensive dedup pass) keys on THIS instead of
+   *  `excerpt`. Needed for the insight source: its displayed `excerpt` is a
+   *  terse `[severity] tags` summary — good for compact display, but too
+   *  low-entropy to serve as a "same conceptual memory" signal, since two
+   *  genuinely UNRELATED insights sharing a severity + applies_when tag set
+   *  produce byte-identical excerpts. `fusionKey` embeds the insight's own
+   *  distinguishing content (its `title`) so it can't collide with another
+   *  insight's identity, WITHOUT duplicating that title into the displayed
+   *  `excerpt` (which recall.ts, the CLI's ambient-injection word-overlap
+   *  scorer, and consistency/conflict-scan's `title + excerpt` concatenation
+   *  all consume directly — embedding title there would double-count title
+   *  tokens for insights only, and would push `[severity] tags` out of the
+   *  80-char display truncation in recall.ts's formatResults()). Palace and
+   *  journal items leave this unset — their raw excerpt is already a strong,
+   *  content-derived identity signal (Fix 5's original design), and forcing
+   *  a synthetic fusionKey there would risk breaking their genuine
+   *  cross-source matches. */
+  fusionKey?: string;
   score: number;
   /** Human-readable confidence: "high", "medium", "low", "weak" */
   confidence: string;
@@ -122,6 +202,14 @@ export interface SmartRecallDegraded {
   backend: string;
 }
 
+/** Raw per-source candidate counts, captured BEFORE RRF fusion collapses
+ *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5). */
+export interface CandidatesBySource {
+  palace: number;
+  journal: number;
+  insight: number;
+}
+
 export interface SmartRecallResult {
   query: string;
   results: SmartRecallResultItem[];
@@ -132,6 +220,11 @@ export interface SmartRecallResult {
   degraded?: SmartRecallDegraded;
   /** Verbatim sources attached for low-confidence top hits (Wave 4 bridge). */
   bridged?: BridgedSource[];
+  /** Diagnostic: raw per-source candidate counts before RRF fusion (Fix 4/5).
+   *  Present only when results came from the local multi-source pipeline
+   *  (localRecallSearch); absent for remote/vector-backend results, which
+   *  don't have a "before fusion across 3 sources" notion. */
+  candidates_by_source?: CandidatesBySource;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +248,41 @@ const EBBINGHAUS_S = {
 // ---------------------------------------------------------------------------
 // Math helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalize excerpt text into a canonical cross-source identity key.
+ * Two items from different sources that describe the same conceptual memory
+ * typically carry byte-identical (or near-identical) excerpt text — this is
+ * the same identity notion the old post-hoc dedup pass (Step 5) already used
+ * to decide "same memory"; it's now applied at RRF fusion time instead
+ * (Fix 5), so cross-source accumulation happens naturally.
+ */
+function normalizeExcerpt(excerpt: string): string {
+  return excerpt.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Cross-source fusion identity for an item (Fix 5b). Prefers the item's
+ * `fusionKey` override (set by the insight source, whose displayed `excerpt`
+ * is too low-entropy — see `fusionKey`'s doc comment on
+ * `SmartRecallResultItem`) and falls back to the displayed `excerpt` for
+ * every other source, unchanged from Fix 5's original design.
+ */
+function fusionIdentity(item: SmartRecallResultItem): string {
+  return normalizeExcerpt(item.fusionKey ?? item.excerpt);
+}
+
+/**
+ * Internal side channel: raw per-source candidate counts (Fix 4/5), attached
+ * to the array localRecallSearch returns so smartRecall() can report a
+ * genuine pre-fusion total_searched without changing localRecallSearch's
+ * public return type (still a plain SmartRecallResultItem[] — several
+ * existing tests and recall-backend.ts depend on that exact shape).
+ */
+const RAW_CANDIDATE_COUNTS: unique symbol = Symbol("rawCandidateCounts");
+interface WithRawCandidateCounts {
+  [RAW_CANDIDATE_COUNTS]?: CandidatesBySource;
+}
 
 /** Simple stable hash for result IDs. */
 function stableId(source: string, title: string): string {
@@ -285,14 +413,38 @@ function getFeedbackCounts(
 // RRF merge
 // ---------------------------------------------------------------------------
 
+/** One fused entry in the RRF map: accumulated score, the primary/display
+ *  item, and the set of every source that contributed a hit merged into
+ *  this entry. */
+interface RRFEntry {
+  score: number;
+  item: SmartRecallResultItem;
+  sources: Set<SmartRecallResultItem["source"]>;
+}
+
 /**
  * Apply Reciprocal Rank Fusion scores from a ranked list of items.
  * Mutates the provided rrfMap in place.
  *   RRF_score += 1 / (k + rank)
+ *
+ * STAGE 1 of fusion — keyed by `item.id` (the per-source occurrence id,
+ * `stableId(source, title)`), exactly as before Fix 5. This intentionally
+ * stays id-keyed: a single source document can legitimately produce SEVERAL
+ * distinct-excerpt hits that share one `item.id` (e.g. palaceSearch returns
+ * one hit per matching LINE within the same room/file, all sharing that
+ * file's id) — those must accumulate into ONE per-document entry, not
+ * fragment into many. Keying this stage by excerpt instead (as an earlier
+ * version of this fix mistakenly did) breaks exactly that: it turned a
+ * single matched file into N separate low-score fragments and starved
+ * genuinely-different documents of their combined per-file RRF weight
+ * (caught by associative-link.test.mjs). Cross-SOURCE fusion (the actual
+ * bug this file's Fix 5 addresses) happens in a SEPARATE stage afterward —
+ * see fuseCanonical() below — once each source's own per-document hits are
+ * already consolidated here.
  */
 function applyRRF(
   rankedItems: SmartRecallResultItem[],
-  rrfMap: Map<string, { score: number; item: SmartRecallResultItem }>
+  rrfMap: Map<string, RRFEntry>
 ): void {
   rankedItems.forEach((item, idx) => {
     const rank = idx + 1;
@@ -301,9 +453,39 @@ function applyRRF(
     if (existing) {
       existing.score += contribution;
     } else {
-      rrfMap.set(item.id, { score: contribution, item });
+      rrfMap.set(item.id, { score: contribution, item, sources: new Set([item.source]) });
     }
   });
+}
+
+/**
+ * STAGE 2 of fusion (Fix 5) — cross-source canonical merge, run AFTER
+ * applyRRF() has consolidated each source's own per-document hits (Stage 1).
+ * Re-keys the (already within-source-deduped) entries by `fusionIdentity()`
+ * (Fix 5b: `item.fusionKey` when set, else `normalizeExcerpt(item.excerpt)`)
+ * — the same identity notion Step 5's old post-hoc dedup pass used to decide
+ * "same memory". Two per-document entries from DIFFERENT sources (or,
+ * rarely, the same source) whose identity is the same after normalization
+ * are now genuinely the SAME conceptual memory, so their scores are summed
+ * and their sources merged — instead of the old behavior where a later dedup
+ * pass silently discarded one side's score entirely.
+ * Iteration order of `rrfMap` is insertion order (palace's entries first,
+ * then journal, then insight — see localRecallSearch's call order), so ties
+ * keep the same source-precedence the rest of this file already assumes.
+ */
+function fuseCanonical(rrfMap: Map<string, RRFEntry>): Map<string, RRFEntry> {
+  const canonical = new Map<string, RRFEntry>();
+  for (const entry of rrfMap.values()) {
+    const key = fusionIdentity(entry.item);
+    const existing = canonical.get(key);
+    if (existing) {
+      existing.score += entry.score;
+      for (const s of entry.sources) existing.sources.add(s);
+    } else {
+      canonical.set(key, { score: entry.score, item: entry.item, sources: new Set(entry.sources) });
+    }
+  }
+  return canonical;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,12 +613,24 @@ export async function localRecallSearch(
       const confirmation = Math.min(1.0, Math.log2(i.confirmed + 1) / 3);
       const internalScore = relevance * 0.40 + exactness * 0.35 + confirmation * 0.25;
 
+      // Terse, display-friendly excerpt — deliberately just metadata (kept
+      // this way for recall.ts / CLI ambient-injection compactness; see
+      // `fusionKey`'s doc comment on SmartRecallResultItem for why the
+      // insight's `title` is NOT folded in here).
       const rawExcerpt = `[${i.severity}] ${i.applies_when.join(", ")}`;
+      // Fix 5b: `rawExcerpt` alone (severity+tags only) is too low-entropy to
+      // serve as a cross-source fusion identity — two UNRELATED insights that
+      // happen to share a severity + applies_when tag set would otherwise
+      // collide in fuseCanonical() and silently absorb one another's score.
+      // Leading with the insight's own `title` (its real distinguishing
+      // content) makes that structurally impossible.
+      const fusionSeed = `${i.title} ${rawExcerpt}`;
       insightItems.push({
         id,
         source: "insight",
         title: i.title,
         excerpt: rawExcerpt.length > 300 ? rawExcerpt.slice(0, 300) + "..." : rawExcerpt,
+        fusionKey: fusionSeed.length > 300 ? fusionSeed.slice(0, 300) + "..." : fusionSeed,
         score: internalScore,
         // internalScore is already 0..1 → cosine scale.
         ...label(internalScore, "cosine"),
@@ -452,10 +646,24 @@ export async function localRecallSearch(
   journalItems.sort((a, b) => b.score - a.score);
   insightItems.sort((a, b) => b.score - a.score);
 
-  const rrfMap = new Map<string, { score: number; item: SmartRecallResultItem }>();
+  // Fix 4/5: raw per-source candidate counts, captured BEFORE fusion
+  // collapses same-excerpt cross-source duplicates into one canonical entry.
+  // This is the number smartRecall()'s total_searched should report.
+  const rawCandidateCounts: CandidatesBySource = {
+    palace: palaceItems.length,
+    journal: journalItems.length,
+    insight: insightItems.length,
+  };
+
+  // Stage 1: within-source, per-document accumulation (unchanged from
+  // pre-Fix-5 behavior — see applyRRF's doc comment).
+  const rrfMap = new Map<string, RRFEntry>();
   applyRRF(palaceItems, rrfMap);
   applyRRF(journalItems, rrfMap);
   applyRRF(insightItems, rrfMap);
+
+  // Stage 2 (Fix 5): cross-source canonical fusion by normalized excerpt.
+  const fusedMap = fuseCanonical(rrfMap);
 
   // ── 4.5. Hot-window recency boost ──────────────────────────────────────
   // Very recent items get a score multiplier. In active project work,
@@ -463,7 +671,7 @@ export async function localRecallSearch(
   // This supplements Ebbinghaus decay (which handles medium-term) with
   // an ultra-short-term boost.
   // Palace items have date: undefined — they are timeless and unaffected.
-  for (const entry of rrfMap.values()) {
+  for (const entry of fusedMap.values()) {
     if (entry.item.date) {
       const hoursAgo = (Date.now() - new Date(entry.item.date).getTime()) / (1000 * 60 * 60);
       if (hoursAgo < 6) {
@@ -477,16 +685,38 @@ export async function localRecallSearch(
     }
   }
 
-  // ── 5. Deduplicate by excerpt content ────────────────────────────────────
+  // ── 5. Deduplicate by fusion identity ────────────────────────────────────
+  // Defensive pass only (Fix 5): fusedMap is already keyed by
+  // fusionIdentity() (Stage 2 above, Fix 5b), so it is structurally
+  // impossible for two entries already in fusedMap to share an identity —
+  // the real cross-source fusion job now happens in fuseCanonical(), not
+  // here. This loop is kept as a cheap safety net for any future code path
+  // that might append near-duplicate entries, and to keep score/label
+  // materialization + `alsoFoundIn` derivation in one place.
   const seen = new Set<string>();
   const deduped: SmartRecallResultItem[] = [];
-  for (const { score, item } of rrfMap.values()) {
-    const key = item.excerpt.toLowerCase().replace(/\s+/g, " ").trim();
+  for (const { score, item, sources } of fusedMap.values()) {
+    const key = fusionIdentity(item);
     if (seen.has(key)) continue;
     seen.add(key);
+    // Provenance: every OTHER source (besides the primary/display `item.source`)
+    // that contributed a hit fusing into this canonical entry (Fix 5).
+    const alsoFoundIn = [...sources].filter((s) => s !== item.source);
+    // fusionKey is an internal-only identity override (Fix 5b) — strip it
+    // before materializing the public result item so it never leaks into
+    // smart_recall's JSON output (the smart_recall MCP tool serializes
+    // SmartRecallResultItem[] verbatim via JSON.stringify), matching this
+    // file's existing discipline of keeping internal-only signals out of
+    // consumer-facing objects (see the RAW_CANDIDATE_COUNTS side channel).
+    const { fusionKey: _fusionKey, ...displayItem } = item;
     // Post-RRF (+ hot-window boost) score → rrf-local scale. This SET of
     // `calibrated` is what the bridge gate reads (NOT the later boosted score).
-    deduped.push({ ...item, score, ...label(score, "rrf-local") });
+    deduped.push({
+      ...displayItem,
+      score,
+      ...label(score, "rrf-local"),
+      ...(alsoFoundIn.length > 0 ? { alsoFoundIn } : {}),
+    });
   }
 
   // ── 6. Final sort ─────────────────────────────────────────────────────────
@@ -517,6 +747,11 @@ export async function localRecallSearch(
       }
     }
   }
+
+  // Attach the raw pre-fusion candidate counts as a hidden side channel
+  // (Fix 4/5) — invisible to JSON.stringify/Object.keys/for-in and to every
+  // existing consumer that treats this as a plain SmartRecallResultItem[].
+  (deduped as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS] = rawCandidateCounts;
 
   return deduped;
 }
@@ -640,11 +875,24 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     if (collected.length > 0) bridged = collected;
   }
 
+  // Fix 4/5: total_searched should be the true distinct-candidate count from
+  // BEFORE fusion, not results.length (which is the POST-fusion, post-dedup
+  // survivor count and can legitimately be smaller). The raw counts side
+  // channel is only present when `results` came straight from
+  // localRecallSearch's local multi-source pipeline; remote/vector-backend
+  // results have no "before fusion across 3 sources" notion, so fall back to
+  // results.length for those (unchanged prior behavior).
+  const rawCandidateCounts = (results as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS];
+  const totalSearched = rawCandidateCounts
+    ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight
+    : results.length;
+
   return {
     query: input.query,
     results: finalResults,
-    total_searched: results.length,
+    total_searched: totalSearched,
     sources_queried: [...new Set(results.map((r) => r.source))],
+    ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
     ...(bridged ? { bridged } : {}),
     ...(finalResults.length === 0

@@ -36,5 +36,11 @@
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Goldentrii/AgentRecall-X.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Goldentrii/AgentRecall-X#readme"
 }

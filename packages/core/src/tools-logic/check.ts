@@ -12,7 +12,9 @@ import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
 import { writeCorrection, splitSentences } from "../storage/corrections.js";
-import { classifyFailureClass } from "./check-action.js";
+import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
+import { getSessionId } from "../storage/session.js";
+import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
   readAlignmentLog as readLog,
   extractWatchPatterns,
@@ -43,6 +45,16 @@ export interface CheckInput {
   posterior?: number;
   outcome?: "confirmed" | "rejected" | "partial" | string;
   decision_id?: string;
+  /**
+   * C3 (TOW2-329) — what you're about to DO, one sentence, when this call is a
+   * pre-action safety check rather than (or in addition to) an alignment
+   * check. Provide this before publish/deploy/delete/credential/external-send/
+   * irreversible-write actions. When set, `check()` folds in check_action's
+   * matcher (see `action_check` on the result) so the SAME pre-action
+   * correction-matching capability is reachable through the default 5-tool
+   * surface, without exposing the standalone `check_action` tool.
+   */
+  action_description?: string;
 }
 
 export interface WatchFor {
@@ -78,6 +90,17 @@ export interface CheckResult {
    * Absent when prediction could not run or no blind-spots profile exists.
    */
   prediction?: PredictCorrectionResult;
+  /**
+   * C3 (TOW2-329) — present only when `action_description` was provided.
+   * REUSES check_action's matcher (`checkAction` in ./check-action.js) verbatim
+   * — no duplicated matching logic. Carries the same matching_rules /
+   * matching_corrections / matching_insights / warning / verdict shape as the
+   * standalone check_action tool. `verdict: "blocked"` means an authoritative
+   * P0 correction OVERRIDES the plan — matching_corrections is already sorted
+   * P0-before-P1 (severity DESC, then match strength), so the blocking
+   * correction (if any) always leads that list.
+   */
+  action_check?: CheckActionResult;
 }
 
 function alignmentLogPath(project: string): string {
@@ -144,6 +167,12 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         // capture — keyword classifier over the FULL correction text, using
         // only the shared tokenize/overlap grammar. Zero/tied hits → "other".
         failure_class: classifyFailureClass(corrText),
+        // C2 (2026-07-26): stamp the recording session's identity into the
+        // existing `holder` field (documented as "who recorded this — defaults
+        // to date/session proxy") so corrections captured via check() carry a
+        // consistent session identity, same as corrections.ts's own recordOutcome
+        // call sites in session-start.ts/session-end.ts.
+        holder: getSessionId(),
       });
       if (!writeResult.written) {
         // Surface the gate rejection instead of silently dropping the
@@ -328,6 +357,28 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     calibrationNote = calibrationNote ? `${calibrationNote} ${guardLine}` : guardLine;
   }
 
+  // 7. C3 (TOW2-329) — fold check_action's pre-action matcher into the default
+  // surface. Only runs when the caller supplied `action_description`; reuses
+  // `checkAction` verbatim (same matching_rules/corrections/insights + verdict
+  // semantics, incl. `blocked` for an authoritative P0 match) so the standalone
+  // check_action tool's capability is reachable through the default 5 tools
+  // without duplicating its matching logic. Best-effort: must never break the
+  // check flow.
+  let actionCheck: CheckActionResult | undefined;
+  const actionDescription = input.action_description?.trim();
+  if (actionDescription) {
+    try {
+      actionCheck = await checkAction({ action_description: actionDescription, project: slug });
+    } catch {
+      actionCheck = undefined;
+    }
+  }
+
+  // C2 — lifecycle telemetry: counters only, never transcript content.
+  // check() has no idempotency-suppression concept (task scope is limited to
+  // session_start/session_end), so dup is always false here.
+  recordLifecycleEvent("check", getSessionId(), slug, false);
+
   return {
     recorded: true,
     project: slug,
@@ -339,5 +390,6 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     calibration_note: calibrationNote,
     correction_gate_rejected: gateRejection,
     ...(prediction ? { prediction } : {}),
+    ...(actionCheck ? { action_check: actionCheck } : {}),
   };
 }

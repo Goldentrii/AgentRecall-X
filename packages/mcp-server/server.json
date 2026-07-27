@@ -3,7 +3,7 @@
   "name": "io.github.Goldentrii/agent-recall",
   "description": "Correction-first agent memory. Precision KPI tracks if agents heed warnings. 5 layers, local-only.",
   "repository": {
-    "url": "https://github.com/Goldentrii/AgentRecall-MCP",
+    "url": "https://github.com/Goldentrii/AgentRecall-X",
     "source": "github",
     "subfolder": "packages/mcp-server"
   },
