@@ -669,7 +669,18 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   let alignment: SessionStartResult["alignment"] = null;
   if (abArm !== "off") {
     try {
-      const kpis = getCorrectionKPIs(slug, allCorrectionsOnce);
+      // Deliberately NOT fed the `allCorrectionsOnce` snapshot: the P0-B loop
+      // above WROTE retrieved_count/last_retrieved to disk after that snapshot
+      // was taken, and this KPI must include those same-call increments — a
+      // never-retrieved P0 surfaced right now is exactly the moment `alignment`
+      // should first appear (kpis.retrieved > 0 gate below). Reproduced as a
+      // regression by the 2026-07-27 integration review; pinned by
+      // test/session-start-alignment-freshness.test.mjs. Cost: one extra
+      // corrections scan per session_start (2 total, down from 5 pre-dedup) —
+      // correctness over the last scan's savings, because re-deriving
+      // recordOutcome's guard semantics in memory here would be a second
+      // source of truth for the counter formulas.
+      const kpis = getCorrectionKPIs(slug);
       if (kpis.retrieved > 0) {
         alignment = {
           precision: kpis.precision,

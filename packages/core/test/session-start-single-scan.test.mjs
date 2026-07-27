@@ -20,10 +20,14 @@
  * isolated. Measured on real dist code at 50k correction files:
  * readCorrections() ≈1030ms/scan; session_start's end-to-end time was ≈3649ms.
  *
- * AFTER this fix: session_start reads the corrections directory exactly ONCE
- * and threads the in-memory array through all four call sites' optional
- * `preloaded`/`preloadedCorrections` parameters — pure filters from then on,
- * no further directory scans, byte-identical output.
+ * AFTER this fix: session_start reads the corrections directory ONCE up
+ * front and threads the in-memory array through call sites 1, 3, and 4.
+ * Call site 2 (getCorrectionKPIs) deliberately does its OWN fresh scan:
+ * the P0-B loop WRITES retrieved_count to disk after the snapshot is taken,
+ * and the alignment KPI must include those same-call increments (integration
+ * review 2026-07-27 caught a null-alignment regression when the snapshot was
+ * threaded there too — see session-start-alignment-freshness.test.mjs).
+ * Net: exactly 2 scans per session_start, down from 4.
  *
  * OUT OF SCOPE (deliberately untouched, see session-start.ts comments):
  * store-doctor's checkOutcomesDivergence also calls readCorrections(), but it
@@ -163,7 +167,10 @@ describe("session_start — single corrections-directory scan", () => {
     const result = await core.sessionStart({ project: proj });
     const scanCount = scansFor(correctionsModule.readCorrectionsScanLog, proj);
 
-    assert.equal(scanCount, 1, `expected exactly 1 corrections-dir scan per session_start call, got ${scanCount}`);
+    // 2, not 1: the shared up-front snapshot + getCorrectionKPIs' deliberate
+    // post-write fresh read (see file header). Anything above 2 means a
+    // derivation call site regressed to scanning on its own again.
+    assert.equal(scanCount, 2, `expected exactly 2 corrections-dir scans per session_start call (snapshot + post-write KPI refresh), got ${scanCount}`);
 
     // The fix must not starve any of the 4 call sites of data.
     assert.ok(result.corrections.length >= 1, "P0 correction should still surface in the payload");
@@ -193,6 +200,6 @@ describe("session_start — single corrections-directory scan", () => {
     await core.sessionStart({ project: proj }); // second call — isFirstCallThisSession is now false
     const scanCount = scansFor(correctionsModule.readCorrectionsScanLog, proj);
 
-    assert.equal(scanCount, 1, `expected exactly 1 corrections-dir scan on the repeat call too, got ${scanCount}`);
+    assert.equal(scanCount, 2, `expected exactly 2 corrections-dir scans on the repeat call too (snapshot + post-write KPI refresh), got ${scanCount}`);
   });
 });
