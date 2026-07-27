@@ -116,6 +116,49 @@
     <span style="font-size:20px;color:var(--accent);flex-shrink:0;">→</span>
   </a>
 
+  <!-- v3.4.40 -->
+  <section class="hero">
+    <div class="hero-head">
+      <div class="tagrow">
+        <span class="vbadge">v3.4.40</span>
+        <span class="major"><span class="en ">★ Naming at scale</span><span class="zh ">★ 规模化命名</span></span>
+        <span class="date mono">2026-07-27</span>
+      </div>
+      <h2 class="hero-title"><span class="en ">The store cleans itself up — and tells cold agents what it is</span><span class="zh ">store 学会自我体检——并向陌生 agent 自我介绍</span></h2>
+      <p class="hero-lede"><span class="en ">A 5-seat round table on "what happens at 10,000 files" produced this wave: a classifier fix that ends the biggest filename lie in the corpus, two measured hot-path cuts, a write-once root <code>MANIFEST.md</code> so a bare store directory explains itself to any agent, and <code>ar hygiene</code> — a detection-only trash scan with a baseline, wired for nightly runs.</span><span class="zh ">一场关于"一万个文件时会发生什么"的五席圆桌产出了这一波：终结语料库里最大文件名谎言的分类器修复、两处实测热路径削减、一个 write-once 根 <code>MANIFEST.md</code> 让裸 store 目录能向任何 agent 自我说明，以及 <code>ar hygiene</code>——带基线的检测-only 垃圾扫描，已可挂夜巡。</span></p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <span class="ic">🏷️</span>
+        <h3><span class="en ">Classifiers match conditions, not vocabulary</span><span class="zh ">分类器匹配条件，而非词汇</span></h3>
+        <p><span class="en "><code>\bmcp\b</code> saw the hyphen in "novada-mcp" as a word boundary — 90.6% of that project's journal filenames carried a false <code>mcp-unavailable</code> theme. Classifiers now require co-occurring condition signals in one clause: 29/32 false → 1/31, survivor genuine. Two shadow epidemics hiding behind priority order fixed in the same pass.</span><span class="zh "><code>\bmcp\b</code> 把 "novada-mcp" 里的连字符当词边界 —— 该项目 90.6% 的 journal 文件名挂着假 <code>mcp-unavailable</code> 主题。分类器现在要求同一子句内条件信号共现：29/32 误标 → 1/31，幸存者为真。藏在优先级后面的两个影子疫情同批修复。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">🧹</span>
+        <h3><span class="en "><code>ar hygiene</code> — the trash scan</span><span class="zh "><code>ar hygiene</code> —— 垃圾扫描</span></h3>
+        <p><span class="en ">8 detection-only checks: junk project dirs, counter-file pileups, theme epidemics, case-fold forks, stale caches, root credential patterns (pattern + line only, never the secret), missing indexes, reserved-word slugs. A baseline means repeat runs report only NEW findings — no alert fatigue. It never deletes anything; every finding carries an <code>agent_instruction</code>.</span><span class="zh ">8 项检测-only 检查：垃圾项目目录、计数器文件堆积、主题疫情、大小写分叉、过期缓存、根目录凭证模式（只报模式+行号，永不回显密钥）、缺失索引、保留字 slug。基线机制让复跑只报新增 —— 不产生告警疲劳。永不删除任何东西；每条发现自带 <code>agent_instruction</code>。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">🗺️</span>
+        <h3><span class="en ">Root <code>MANIFEST.md</code>: the store explains itself</span><span class="zh ">根 <code>MANIFEST.md</code>：store 自我说明</span></h3>
+        <p><span class="en ">Write-once, beside your data: cold-agent read order, sync / never-sync / regenerable classification (credentials file explicitly marked never-copy), and a condensed naming-grammar cheat-sheet — so a fresh agent in a VM with only the directory can orient without this repo's docs.</span><span class="zh ">Write-once，就在数据旁边：冷启动阅读顺序、可同步/禁同步/可再生分类（凭证文件明确标注永不复制）、命名语法速查 —— 在 VM 里只拿到目录的新 agent 无需本仓库文档即可定向。</span></p>
+      </div>
+      <div class="card">
+        <span class="ic">⚡</span>
+        <h3><span class="en ">Hot paths, measured then cut</span><span class="zh ">热路径：先测量，再削减</span></h3>
+        <p><span class="en ">session_start scanned the corrections dir 4× per call (a 4th hiding in the recognition chain) → now 2, with the KPI read deliberately fresh after this call's own outcome writes (an independent review caught the null-alignment regression the 986 green tests missed). The legacy journal index re-read every file body twice per write → incremental by mtime, kept because a live MCP resource reads it.</span><span class="zh ">session_start 每次调用扫 4 遍 corrections 目录（第 4 处藏在 recognition 链里）→ 现在 2 遍，其中 KPI 一读刻意保持在本次写入之后的新鲜态（独立评审抓到了 986 个绿测试没发现的 null-alignment 回归）。遗留 journal 索引每次写入把全部文件读两遍 → 按 mtime 增量，因有在线 MCP resource 消费而保留。</span></p>
+      </div>
+    </div>
+    <div class="verify">
+      <span class="vlabel"><span class="en ">Verified</span><span class="zh ">已验证</span></span>
+      <span class="pill">986 core tests · 0 fail</span>
+      <span class="pill">5 worktree trains · zero-conflict merge</span>
+      <span class="pill">independent review: 1 HIGH found & fixed</span>
+      <span class="pill">first real-store scan: 34 findings baselined</span>
+    </div>
+    <div class="shipped"><span class="en "><b>Shipped 2026-07-27 (v3.4.40):</b> all 4 packages on npm. The hygiene scan runs nightly in the owner's dream loop from tonight; first scan independently re-found every issue the round table had found by hand — including the credential sitting next to the pinned cold-start files.</span><span class="zh "><b>2026-07-27 发布 (v3.4.40)：</b>4 个包全部上 npm。hygiene 扫描今晚起进 owner 的 dream loop 夜巡；首扫独立复现了圆桌手工找到的每一个问题 —— 包括躺在冷启动 pinned 文件旁边的那条凭证。</span></div>
+  </section>
+
   <!-- v3.4.39 -->
   <section class="hero">
     <div class="hero-head">

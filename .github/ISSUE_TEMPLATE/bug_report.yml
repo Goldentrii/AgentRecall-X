@@ -1,0 +1,84 @@
+name: Bug Report
+description: Something is broken. Numbers > opinions — include a repro.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run `ar doctor` (or `ar --version` if `doctor` is unavailable) and paste the output below.
+        Honest repros with logs are far more useful than prose descriptions.
+
+  - type: input
+    id: version
+    attributes:
+      label: agent-recall-mcp version
+      description: Run `npx agent-recall-mcp --version` or `ar --version`
+      placeholder: "3.4.36"
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host / client
+      description: Claude Code, Cursor, Codex, Windsurf, VS Code, raw API, other
+      placeholder: "Claude Code"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Run `node --version`
+      placeholder: "v20.14.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ar doctor output
+      description: |
+        Run `ar doctor --json` and paste here. If the `doctor` subcommand is not available,
+        run `ar --version` instead and paste that output.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps. If the bug is in the MCP server, include the tool call and parameters.
+      placeholder: |
+        1. Install agent-recall-mcp via `claude mcp add ...`
+        2. Call `session_start` with project "foo"
+        3. Call `remember` with type "correction" and content "..."
+        4. Observe error / unexpected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include full error messages and stack traces.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: MCP server stderr, terminal output, or hook logs. Scrub secrets before pasting.
+      render: text

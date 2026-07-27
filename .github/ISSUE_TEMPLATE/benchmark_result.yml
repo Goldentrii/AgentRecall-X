@@ -1,0 +1,89 @@
+name: Benchmark Result
+description: Post your HeedBench numbers. Honest nulls and low scores are as useful as high ones.
+title: "[Bench] "
+labels: ["benchmark"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Post your `npm run bench` result here. Low scores and honest nulls are more useful
+        than vendor-selected positives — the field has enough of those. Minimum required:
+        `engine`, `n_counted`, `corpus_hash`, and the command you ran.
+
+        See [docs/eval/REPRODUCE.md](../docs/eval/REPRODUCE.md) for reproduction steps and
+        [docs/eval/BENCH-RESULT-SCHEMA.md](../docs/eval/BENCH-RESULT-SCHEMA.md) for field definitions.
+
+  - type: input
+    id: engine
+    attributes:
+      label: Engine / adapter
+      description: "AgentRecall built-in, Mem0 OSS, Letta, Zep, other"
+      placeholder: "AgentRecall built-in (keyword + RRF)"
+    validations:
+      required: true
+
+  - type: input
+    id: agent_recall_version
+    attributes:
+      label: agent-recall-mcp version
+      placeholder: "3.4.36"
+    validations:
+      required: true
+
+  - type: input
+    id: n_counted
+    attributes:
+      label: n_counted
+      description: Records passing the count rule (non-empty rule AND valid date). This is the denominator universe.
+      placeholder: "23"
+    validations:
+      required: true
+
+  - type: input
+    id: corpus_hash
+    attributes:
+      label: corpus_hash
+      description: SHA-256 of sorted record hashes from the bench-result/v1 artifact.
+      placeholder: "sha256:a1b2c3..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: headline_numbers
+    attributes:
+      label: Headline numbers
+      description: |
+        Paste the relevant metrics from the bench-result/v1 artifact. Include Wilson intervals
+        when den > 0. Render "CANNOT CLAIM" for any metric below its claim-gate threshold.
+      placeholder: |
+        transfer_recall_achievable: 0/8 [Wilson 0–32.4%]
+        false_fire_rate (lead-in level): 0/8 [Wilson 0–32.4%]
+        capture_recall: 35.3% [Wilson 17.3–58.7%, n=59]
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      description: Exact command that produced the artifact.
+      placeholder: "TZ=UTC node scripts/eval/run-bench.mjs --corpus fixture"
+    validations:
+      required: true
+
+  - type: textarea
+    id: full_artifact
+    attributes:
+      label: Full bench-result/v1 artifact (optional)
+      description: |
+        Paste the complete JSON artifact. If it contains internal paths, redact with
+        `--manifest=hash-only` mode or replace file paths with "<redacted>".
+      render: json
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / caveats
+      description: |
+        Corpus provenance (real use, synthetic, donated), any deviations from the standard
+        reproduction steps, known limitations. Honest nulls welcome — state the reason.

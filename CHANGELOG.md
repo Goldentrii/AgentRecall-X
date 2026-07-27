@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.40] — 2026-07-27
+
+Patch release: the naming-at-scale wave — slug/theme quality, hot-path performance, store self-description, and the hygiene "trash scan".
+
+### Fixed
+
+- **Theme/sig classifier over-matching**: `autoClassifyTheme`/`autoClassifySig` matched vocabulary, not conditions — `\bmcp\b` treated the hyphen in "novada-mcp" as a word boundary, so any summary mentioning that project name classified as `mcp-unavailable` (measured: 29/32 = 90.6% of one project's journal filenames). Classifiers now require co-occurring condition signals in the same clause; misclassification drops to 1/31 with the survivor genuine. Two shadow epidemics (`version-bump`, `agent-fix`) that would have surfaced behind the first fix are fixed in the same pass. Enums unchanged — old filenames parse forever.
+- **`alignment` KPI staleness**: the session_start scan-dedup initially threaded a pre-write snapshot into `getCorrectionKPIs`, making `alignment` null exactly when a never-retrieved P0 was first surfaced. The KPI call site reads fresh after this call's own retrieved-outcome writes (caught by independent integration review, pinned as a regression test).
+
+### Added
+
+- **`ar hygiene` — the trash scan**: 8 detection-only store checks (junk/test project dirs, ambient-counter accumulation, theme epidemics, case-fold fork dirs, stale derived caches, root-level credential patterns, missing `corrections/_index.md`, reserved-word slugs) with a baseline so repeat runs report only NEW findings. Detection-only by contract: it never deletes, renames, or quarantines; every finding carries an `agent_instruction`; secret findings report pattern name + line number, never the matched text. Fresh RED findings → exit 1 (cron-friendly). Not part of the MCP tool surface.
+- **Store-root `MANIFEST.md`** (write-once, generated beside the per-project `MEMORY-PROTOCOL.md`): makes a bare store directory self-describing for any agent with filesystem access — cold-agent read order, sync / never-sync / regenerable file classification (`config.json` explicitly marked never-sync, do-not-read), and a condensed naming-grammar cheat-sheet. All paths store-root-relative; the `MEMORY-PROTOCOL.md` template's hardcoded `~` path is now root-relative too.
+
+### Performance
+
+- **session_start corrections scans: 4 → 2.** One shared snapshot feeds P0 surfacing, prediction, and recognition; the KPI computation deliberately re-reads after this call's own outcome writes (see Fixed). At the measured 50k-file extreme this cuts ~2s from every session_start.
+- **Legacy journal index (`index.md`/`index.jsonl`) is incremental**: only files with mtime newer than the index are re-read; unchanged rows merge from the previous `index.jsonl` by filename. It previously re-read every journal body TWICE per `journal_write`/rollup/merge/archive (2.8s at 50k files; now pays only for what changed). Kept rather than removed because a live MCP resource (`agent-recall://{project}/index`) reads it verbatim.
+
 ## [3.4.39] — 2026-07-27
 
 Patch release: the 2026-07-25 Codex audit fixes (Release Trains A–D, all 8 findings reproduced-then-fixed) plus ambient-recall groundwork.

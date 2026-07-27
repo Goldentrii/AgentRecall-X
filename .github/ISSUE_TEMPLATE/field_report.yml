@@ -1,0 +1,86 @@
+name: Field Report
+description: Dogfood channel — what did AR do and what did you expect? Run `ar scrub` before pasting corrections.
+title: "[Field] "
+labels: ["field-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Field reports are the primary signal for improving the system. One honest report with
+        numbers beats ten opinions. **Run `ar scrub` before pasting any correction content** —
+        `ar scrub` is fail-closed: it exits non-zero if a secret survives. Do not paste content
+        that hasn't passed `ar scrub`.
+
+  - type: input
+    id: version
+    attributes:
+      label: agent-recall-mcp version
+      placeholder: "3.4.36"
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host / client
+      description: Claude Code, Cursor, Codex, Windsurf, other
+      placeholder: "Claude Code"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_doing
+    attributes:
+      label: What were you doing?
+      description: Brief context — project type, what the agent was helping with.
+      placeholder: "Reviewing a PR for a Next.js project. Asked the agent to add auth middleware."
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_ar_did
+    attributes:
+      label: What did AR do?
+      description: Specific tool calls, outputs, or lack of expected behavior.
+      placeholder: |
+        The agent called `session_start` but did not inject any corrections.
+        `ar doctor` shows 3 active corrections for this project.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What behavior would have been correct?
+    validations:
+      required: true
+
+  - type: textarea
+    id: correction
+    attributes:
+      label: Scrubbed correction (optional)
+      description: |
+        If you have a correction record that illustrates the issue, paste it here.
+        **Run `ar scrub` first** — paste only content that exited 0.
+        Format: the `rule` field text, or the full JSON from `ar corrections export`.
+      render: json
+
+  - type: dropdown
+    id: lifecycle
+    attributes:
+      label: Did session_start and session_end both fire in this session?
+      options:
+        - "Yes — both fired"
+        - "session_start fired, session_end did not"
+        - "Neither fired"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: ar doctor output, hook logs, or other context.
+      render: text
