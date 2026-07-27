@@ -20,6 +20,15 @@ export interface PredictCorrectionInput {
   /** The plan / action / goal text to evaluate. */
   plan: string;
   project?: string;
+  /**
+   * PERF (2026-07-27) — optional active corrections already loaded by the
+   * caller (e.g. session_start read the corrections directory once and
+   * derived this via readActiveCorrections(slug, allCorrections)). When
+   * provided, predictCorrection (and its lazy recomputeBlindSpots fallback)
+   * skip their own directory scan and use this array verbatim instead.
+   * Omitting it preserves the original behavior exactly.
+   */
+  preloadedCorrections?: CorrectionRecord[];
 }
 
 export interface PredictedRisk {
@@ -93,19 +102,23 @@ export async function predictCorrection(
   if (!plan) return empty;
 
   const slug = await resolveProject(input.project);
+  const preloaded = input.preloadedCorrections;
 
   // Load profile; lazily recompute if missing (no spawned agent — synchronous).
+  // PERF: pass `preloaded` through so a missing-profile fallback doesn't
+  // trigger its own corrections-directory scan when the caller already has
+  // the records in memory (see recomputeBlindSpots' preloadedCorrections doc).
   let profile = readBlindSpots(slug);
   if (!profile) {
     try {
-      profile = recomputeBlindSpots(slug);
+      profile = recomputeBlindSpots(slug, preloaded);
     } catch {
       profile = null;
     }
   }
   if (!profile || profile.blind_spots.length === 0) return empty;
 
-  const corrections = readActiveCorrections(slug);
+  const corrections = preloaded ?? readActiveCorrections(slug);
   const planTokens = tokenize(plan);
   if (planTokens.size === 0) return empty;
 

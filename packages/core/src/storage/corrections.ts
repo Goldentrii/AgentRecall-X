@@ -897,12 +897,45 @@ export function writeCorrection(project: string, correction: CorrectionRecord): 
 }
 
 /**
+ * TEST-ONLY instrumentation log — one entry (the project slug) appended per
+ * actual corrections-directory enumeration inside readCorrections() below
+ * (i.e., the fs.readdirSync(dir) call that lists corrections/*.json — NOT the
+ * derived readActiveCorrections/readP0Corrections/getCorrectionKPIs paths
+ * when they are given a `preloaded` array, since those never touch the
+ * filesystem). Logged per-project (not a flat counter) because a single
+ * session_start call also triggers store-doctor's checkOutcomesDivergence, a
+ * deliberate, SEPARATE, cross-project ledger scan that iterates every project
+ * in the store (including whichever one a test is targeting) — a flat global
+ * counter couldn't distinguish "this project scanned twice" from "two
+ * different projects scanned once each," so tests filter this log by slug.
+ *
+ * Exists so tests can assert "session_start scans a given project's
+ * corrections directory exactly once" (PERF fix, 2026-07-27) without
+ * depending on monkeypatching Node's `fs` module — verified infeasible:
+ * `import * as fs from "node:fs"` produces an ES module-namespace object
+ * whose bindings cannot be reassigned at runtime (throws "Cannot assign to
+ * read only property", even though `Object.getOwnPropertyDescriptor` reports
+ * `writable: true` for compat).
+ *
+ * Zero behavior/perf impact outside tests — a single array push on the
+ * already-taken scan path. Same "test-only export" convention as
+ * stripInterjections/dropHardNoise/splitSentences above.
+ */
+export const readCorrectionsScanLog: string[] = [];
+
+/** TEST-ONLY — reset the scan log between test cases. */
+export function resetReadCorrectionsScanLog(): void {
+  readCorrectionsScanLog.length = 0;
+}
+
+/**
  * Read all corrections for a project, sorted newest first.
  */
 export function readCorrections(project: string): CorrectionRecord[] {
   const dir = correctionsDir(project);
   if (!fs.existsSync(dir)) return [];
 
+  readCorrectionsScanLog.push(project);
   const files = fs.readdirSync(dir)
     .filter((f) => f.endsWith(".json"))
     .sort()
@@ -924,17 +957,28 @@ export function readCorrections(project: string): CorrectionRecord[] {
 
 /**
  * Read only active corrections, sorted newest first.
+ *
+ * PERF (2026-07-27, session_start single-scan fix): accepts an optional
+ * `preloaded` array of records already returned by a prior `readCorrections()`
+ * call. When provided, this is a pure in-memory filter — no directory scan.
+ * Order/semantics are byte-identical to the no-arg path: `.filter()` never
+ * reorders, so deriving from a `readCorrections(project)` result is
+ * indistinguishable from calling `readCorrections(project)` again. Existing
+ * callers that omit the second argument are unaffected (source-compatible).
  */
-export function readActiveCorrections(project: string): CorrectionRecord[] {
-  return readCorrections(project).filter((r) => r.active !== false);
+export function readActiveCorrections(project: string, preloaded?: CorrectionRecord[]): CorrectionRecord[] {
+  return (preloaded ?? readCorrections(project)).filter((r) => r.active !== false);
 }
 
 /**
  * Read only P0 corrections (always-load), sorted newest first.
  * Respects active field — archived corrections (active:false) are excluded.
+ *
+ * PERF (2026-07-27): see readActiveCorrections' `preloaded` doc above — same
+ * contract, same guarantee.
  */
-export function readP0Corrections(project: string): CorrectionRecord[] {
-  return readCorrections(project).filter((r) => r.severity === "p0" && r.active !== false);
+export function readP0Corrections(project: string, preloaded?: CorrectionRecord[]): CorrectionRecord[] {
+  return (preloaded ?? readCorrections(project)).filter((r) => r.severity === "p0" && r.active !== false);
 }
 
 export interface RetractCorrectionResult {
@@ -1958,9 +2002,14 @@ export function listUnknownVerdicts(
 /**
  * Aggregate KPIs over all corrections for a project — the "is this learning loop working?" view.
  * C3 (2026-07-03): adds verdict_coverage, triggered_count, unknown_count, not_triggered_count.
+ *
+ * PERF (2026-07-27): accepts an optional `preloaded` array of records already
+ * returned by a prior `readCorrections()` call, to avoid a redundant directory
+ * scan when the caller (e.g. session_start) already has them in memory. Same
+ * contract as readActiveCorrections/readP0Corrections above.
  */
-export function getCorrectionKPIs(project: string): CorrectionKPI {
-  const all = readCorrections(project);
+export function getCorrectionKPIs(project: string, preloaded?: CorrectionRecord[]): CorrectionKPI {
+  const all = preloaded ?? readCorrections(project);
   const active = all.filter((r) => r.active !== false);
   let retrieved = 0;
   let heeded = 0;

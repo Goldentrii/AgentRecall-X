@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { personalDir } from "./paths.js";
 import { ensureDir } from "./fs-utils.js";
-import { readActiveCorrections } from "./corrections.js";
+import { readActiveCorrections, type CorrectionRecord } from "./corrections.js";
 import { readAlignmentLog } from "../helpers/alignment-patterns.js";
 import { deriveBlindSpots, type BlindSpotProfile } from "../helpers/blind-spots.js";
 
@@ -80,9 +80,16 @@ export function readBlindSpots(project: string): BlindSpotProfile | null {
  * (NOT the Stop hook) and lazily by predictCorrection when the profile is
  * missing. Best-effort persistence — if the write fails, the freshly derived
  * profile is still returned so callers can use it in-memory.
+ *
+ * PERF (2026-07-27): accepts an optional `preloadedCorrections` array (already
+ * active-filtered) so a caller that already scanned the corrections directory
+ * this request (e.g. predictCorrection called from session_start) doesn't
+ * trigger a second scan via readActiveCorrections. Omitting it preserves the
+ * original behavior exactly (existing callers, e.g. session-end.ts, are
+ * source-compatible and unaffected).
  */
-export function recomputeBlindSpots(project: string): BlindSpotProfile {
-  const corrections = readActiveCorrections(project);
+export function recomputeBlindSpots(project: string, preloadedCorrections?: CorrectionRecord[]): BlindSpotProfile {
+  const corrections = preloadedCorrections ?? readActiveCorrections(project);
   const alignmentLog = readAlignmentLog(project);
   const profile = deriveBlindSpots(corrections, alignmentLog);
   try {

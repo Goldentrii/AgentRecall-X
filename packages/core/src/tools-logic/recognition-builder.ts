@@ -30,7 +30,7 @@ import { palaceDir, journalDirs } from "../storage/paths.js";
 import { readIdentity } from "../palace/identity.js";
 import { listSkills } from "../palace/skills.js";
 import { listRooms, isRoomStale } from "../palace/rooms.js";
-import { readActiveCorrections } from "../storage/corrections.js";
+import { readActiveCorrections, type CorrectionRecord } from "../storage/corrections.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 
@@ -107,6 +107,14 @@ export interface BuildRecognitionOptions {
   maxRooms?: number;
   /** Cap on person tendencies surfaced (default 3). */
   maxTendencies?: number;
+  /**
+   * PERF (2026-07-27) — active corrections already loaded by the caller (e.g.
+   * session_start read the corrections directory once and derived this via
+   * readActiveCorrections(slug, allCorrections)). When provided, readCapabilities
+   * uses this array verbatim instead of re-scanning corrections/*.json. Omitting
+   * it preserves the original behavior exactly.
+   */
+  preloadedCorrections?: CorrectionRecord[];
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -238,7 +246,12 @@ function readWho(project: string): RecognitionWho {
 }
 
 /** Assemble CAN_DO from the procedural skills store + capability-bearing corrections. */
-function readCapabilities(project: string, maxSkills: number, maxPermissions: number): RecognitionCapabilities {
+function readCapabilities(
+  project: string,
+  maxSkills: number,
+  maxPermissions: number,
+  preloadedCorrections?: CorrectionRecord[],
+): RecognitionCapabilities {
   // Skills — already deterministically slug-sorted by listSkills.
   const skills = listSkills(project)
     .slice(0, maxSkills)
@@ -250,7 +263,9 @@ function readCapabilities(project: string, maxSkills: number, maxPermissions: nu
     }));
 
   // Permission/capability signals from active corrections.
-  const permsAll = readActiveCorrections(project)
+  // PERF (2026-07-27): reuse the caller's preloaded active corrections when
+  // provided, instead of re-scanning corrections/*.json.
+  const permsAll = (preloadedCorrections ?? readActiveCorrections(project))
     .filter((c) => c.rule && PERMISSION_RE.test(c.rule))
     .map((c) => ({ id: c.id, rule: clean(c.rule, 160), severity: c.severity }));
 
@@ -372,7 +387,7 @@ export function buildRecognition(project: string, opts: BuildRecognitionOptions 
 
   return {
     who: readWho(project),
-    can_do: readCapabilities(project, maxSkills, maxPermissions),
+    can_do: readCapabilities(project, maxSkills, maxPermissions, opts.preloadedCorrections),
     project: readProjectProgress(project, maxRooms),
     person: readPerson(project, maxTendencies),
   };

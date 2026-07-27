@@ -16,7 +16,7 @@ import { journalDirs, projectSubPath } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
-import { readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
+import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
@@ -509,7 +509,25 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // P5: rank by severity → proof_confidence → recency → proof_count so the most
   // authoritative, evidence-backed rules win the cap (was: arbitrary newest-10).
   // We read the FULL records for outcome tracking, then slim them for the payload.
-  const rawCorrections = rankCorrections(readP0Corrections(slug), 10);
+  //
+  // PERF (2026-07-27): read the corrections directory ONCE for this whole
+  // request and reuse the in-memory array for every downstream derivation
+  // (readP0Corrections / getCorrectionKPIs / predictCorrection's active-list /
+  // buildRecognition -> readCapabilities' active-list) instead of each
+  // independently re-scanning corrections/*.json. Measured on real dist code
+  // at 50k correction files: readCorrections() ≈1030ms/scan, and
+  // session_start's end-to-end time was ≈3x that (≈3649ms) because the 3
+  // call sites named in the original ask each triggered their own scan;
+  // tracing the FULL call graph turned up a 4th independent scan site
+  // (buildRecognition's readCapabilities, also fixed here) that the original
+  // measurement's "3x" estimate had not isolated. All four now derive from
+  // this single read. (store-doctor's checkOutcomesDivergence — a separate,
+  // deliberately cross-PROJECT, read-only integrity scan documented as safe
+  // for the hot path — is NOT one of these; it scans every project's ledger,
+  // not just this one, and is out of scope for this project-scoped fix.)
+  const allCorrectionsOnce = readCorrections(slug);
+  const activeCorrectionsOnce = readActiveCorrections(slug, allCorrectionsOnce);
+  const rawCorrections = rankCorrections(readP0Corrections(slug, allCorrectionsOnce), 10);
 
   // P0-B: auto-record "retrieved" outcome for each surfaced correction.
   // Automaticity Law: only automatic instrumentation captures real data.
@@ -651,7 +669,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   let alignment: SessionStartResult["alignment"] = null;
   if (abArm !== "off") {
     try {
-      const kpis = getCorrectionKPIs(slug);
+      const kpis = getCorrectionKPIs(slug, allCorrectionsOnce);
       if (kpis.retrieved > 0) {
         alignment = {
           precision: kpis.precision,
@@ -730,7 +748,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       if (resume?.last_trajectory) planParts.push(resume.last_trajectory);
       const planText = planParts.join(". ").trim();
       if (planText) {
-        const pred = await predictCorrection({ plan: planText, project: slug });
+        const pred = await predictCorrection({ plan: planText, project: slug, preloadedCorrections: activeCorrectionsOnce });
         if (pred.likelihood !== "low" && pred.top_risks.length > 0) {
           predictedRisks = pred.top_risks.slice(0, 2).map((r) => ({
             tendency: sliceAtWord(r.tendency, 160),
@@ -773,7 +791,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Best-effort: a degraded recognition must never break orientation.
   let recognition: RecognitionPayload;
   try {
-    recognition = buildRecognition(slug);
+    // PERF: reuse the corrections array read once above instead of letting
+    // buildRecognition -> readCapabilities re-scan corrections/*.json.
+    recognition = buildRecognition(slug, { preloadedCorrections: activeCorrectionsOnce });
   } catch {
     recognition = {
       who: { name: "unknown", role: null, owner: null, unknown: true },
