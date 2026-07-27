@@ -34,7 +34,12 @@ import { detectCorrection } from "../dist/utils/correction-detector.js";
 const AUDIT_STRING = "不要在未经用户确认的情况下发布代码";
 
 describe("audit regression — CJK forward-looking prohibition capture gate", () => {
-  it("[EXPECTED TO CURRENTLY FAIL] '不要在未经用户确认的情况下发布代码' should be captured as a durable correction", () => {
+  // TODO(TOW2-326): a bare forward-looking prohibition has no CORRECTION_PATTERNS
+  // partner under the two-gate AND architecture — closing this needs a real
+  // design decision (third bypass path?), not a regex. Marked { todo: true }
+  // so the tracked gap stays visible without keeping CI red (owner call,
+  // 2026-07-27). Remove the todo flag when the design lands.
+  it("[EXPECTED TO CURRENTLY FAIL] '不要在未经用户确认的情况下发布代码' should be captured as a durable correction", { todo: true }, () => {
     const r = detectCorrection(AUDIT_STRING);
     assert.equal(
       r.captured,

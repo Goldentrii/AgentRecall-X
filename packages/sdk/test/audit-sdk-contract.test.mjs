@@ -56,7 +56,12 @@ describe("SDK audit contract (Phase 0 regression fixtures)", () => {
     }
   });
 
-  it("Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance", async () => {
+  // TODO(TOW2-324): flips to a real assertion when SDK root isolation ships.
+  // Marked { todo: true } so the KNOWN, tracked gap stays visible in test
+  // output without keeping CI red for every unrelated change (owner call,
+  // 2026-07-27). A failing todo does not fail the suite; when the fix lands,
+  // remove the todo flag so this becomes a hard regression guard again.
+  it("Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance", { todo: true }, async () => {
     const { AgentRecall } = await import("../dist/index.js");
     const tmpA = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sdk-audit-caseB-A-"));
     const tmpB = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sdk-audit-caseB-B-"));
