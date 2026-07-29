@@ -256,3 +256,25 @@ describe("Auto-naming — generateTopicName", () => {
     assert.equal(name, "Untitled");
   });
 });
+
+// Review follow-up (MEDIUM, 2026-07-29): the 4 architecture negative fixtures
+// above each contain only ONE bare signal word and already passed on pre-fix
+// code (below the old >=2-signal threshold) — they guard the enum, not the
+// coOccurs logic. This fixture is the real pin: THREE bare architecture-
+// vocabulary words (api + design + schema) co-occurring, which the OLD
+// threshold classified as "architecture"; the new condition logic must not.
+import { describe as describe2, it as it2 } from "node:test";
+import assert2 from "node:assert/strict";
+import { detectContentType as detect2 } from "../dist/helpers/auto-name.js";
+
+describe2("auto-name — architecture coOccurs real pin (fails on pre-fix code)", () => {
+  it2("multiple bare vocabulary words without a system-software condition stay non-architecture", () => {
+    const r = detect2("The new landing page design looks much cleaner after the color update. Also rotated the expired API key in the billing dashboard.");
+    assert2.notEqual(r, "architecture",
+      "design (visual) + api (key rotation) in separate clauses must not classify as architecture — old >=2-signal threshold did");
+  });
+  it2("genuine system-architecture text still classifies (guard against over-tightening)", () => {
+    const r = detect2("Redesigned the service architecture: split the API gateway schema into two system layers");
+    assert2.equal(r, "architecture");
+  });
+});
