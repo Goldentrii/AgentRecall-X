@@ -6,6 +6,8 @@
  * that understanding in a retrievable name.
  */
 
+import { coOccurs } from "./journal-sig-theme.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -37,20 +39,69 @@ type ContentType =
   | "lesson"
   | "general";
 
-const TYPE_SIGNALS: Record<ContentType, RegExp[]> = {
+/**
+ * A content-type signal is either a plain regex (safe when the word rarely
+ * means anything else) or a condition function requiring two signal words to
+ * CO-OCCUR near each other — see coOccurs() usage below and its doc comment
+ * in journal-sig-theme.ts for the "condition, not vocabulary" rationale.
+ */
+type ContentSignal = RegExp | ((text: string) => boolean);
+
+// --- tool-config: a tool NOUN (mcp/server/plugin) + an actual config/setup
+// ACTION nearby, not just any mention of either word alone. Audit 2026-07-29
+// (deferred from ace179a, 2026-07-27) found the bare-word version of this
+// category — /\bconfig\b/, /\bsetup\b/, /\binstall\b/, /\bmcp\b/, /\bserver\b/,
+// /\bplugin\b/, /\bconfigure\b/ — had an ~87% false-positive rate against the
+// real store corpus (novada-mcp/novada-mcpserver/aam-mcp bare PROJECT NAMES
+// tripped \bmcp\b; "Configure-MCP console" and "novada-mcp-console-config-*.md"
+// UI/filename tokens tripped \bconfigure\b/\bconfig\b; generic "npm install"
+// build-verification mentions tripped \binstall\b) — producing garbage slugs
+// like tool-config-090-nov-close and tool-config-tow2-owner-key for content
+// that was actually a product decision, a release, or a bug-fix postmortem.
+const TOOL_CONFIG_ACTION = "\\binstall(?:ed|ing|s)?\\b|\\bset ?up\\b|\\bconfigur(?:e[ds]?|ing)\\b|\\bconfig\\b";
+
+// --- architecture: system-design nouns (design/api/schema/structure) need to
+// co-occur with a genuine software/system context word — bare, they match UI
+// visual-design work ("design pass", "logos, chips"), generic API mentions
+// ("API key", "9 APIs with requireAdmin"), and bug reports ("schema bug").
+// Audit found ~83% false-positive rate (5/6 real-corpus matches). "architecture"
+// and "system design" stay bare — auditing the same corpus found no case where
+// either word meant something else.
+const ARCH_SYSTEM_NOUN = "\\barchitecture\\b|\\bsystem\\b|\\bschema\\b|\\bapi\\b|\\bbackend\\b|\\bdatabase\\b|\\binfrastructure\\b|\\bstack\\b|\\bpipeline\\b|\\bmicroservices?\\b|\\bmodule\\b|\\bdata model\\b";
+const ARCH_API_CONTEXT = "\\bdesign\\b|\\bschema\\b|\\bendpoint\\b|\\bcontract\\b|\\bspec\\b|\\barchitecture\\b|\\bversioning\\b";
+const ARCH_SCHEMA_CONTEXT = "\\bdesign\\b|\\bdatabase\\b|\\bapi\\b|\\barchitecture\\b|\\bmodel\\b|\\btable\\b|\\bmigration\\b";
+const ARCH_STRUCTURE_CONTEXT = "\\bsystem\\b|\\barchitecture\\b|\\bschema\\b|\\bapi\\b|\\bdatabase\\b|\\bmodule\\b|\\bcode\\b|\\bdata model\\b";
+
+const TYPE_SIGNALS: Record<ContentType, ContentSignal[]> = {
   "bug-fix": [/\bbug\b/i, /\bfix\b/i, /\bregression\b/i, /\bbroke\b/i, /\berror\b/i, /\bcrash\b/i, /\bbroken\b/i],
   lesson: [/\blesson\b/i, /\btakeaway\b/i, /\bnever again\b/i, /\balways remember\b/i, /\blearned that\b/i],
   decision: [/\bdecided\b/i, /\bchose\b/i, /\bwill use\b/i, /\bgoing with\b/i, /\bverdict\b/i, /\bpicked\b/i],
   insight: [/\blearned\b/i, /\brealized\b/i, /\binsight\b/i, /\bpattern\b/i, /\bobservation\b/i, /\bdiscovered\b/i],
-  architecture: [/\barchitecture\b/i, /\bdesign\b/i, /\bschema\b/i, /\bapi\b/i, /\bstructure\b/i, /\bsystem design\b/i],
-  "tool-config": [/\bconfig\b/i, /\bsetup\b/i, /\binstall\b/i, /\bmcp\b/i, /\bserver\b/i, /\bplugin\b/i, /\bconfigure\b/i],
+  architecture: [
+    /\barchitecture\b/i,
+    /\bsystem design\b/i,
+    (t) => coOccurs(t, "\\bdesign\\b", ARCH_SYSTEM_NOUN, 50),
+    (t) => coOccurs(t, "\\bapi\\b", ARCH_API_CONTEXT, 50),
+    (t) => coOccurs(t, "\\bschema\\b", ARCH_SCHEMA_CONTEXT, 50),
+    (t) => coOccurs(t, "\\bstructure\\b", ARCH_STRUCTURE_CONTEXT, 50),
+  ],
+  "tool-config": [
+    (t) => coOccurs(t, "\\bmcp\\b", TOOL_CONFIG_ACTION, 50),
+    (t) => coOccurs(t, "\\bserver\\b", TOOL_CONFIG_ACTION, 50),
+    (t) => coOccurs(t, "\\bplugin\\b", TOOL_CONFIG_ACTION, 50),
+  ],
   goal: [/\bgoal\b/i, /\bmilestone\b/i, /\bobjective\b/i, /\btarget\b/i, /\broadmap\b/i, /\bokr\b/i],
   blocker: [/\bblocker\b/i, /\bblocked\b/i, /\bstuck\b/i, /\bwaiting\b/i, /\bdependency\b/i, /\bblocking\b/i],
   general: [],
 };
 
+function testSignal(signal: ContentSignal, content: string): boolean {
+  return typeof signal === "function" ? signal(content) : signal.test(content);
+}
+
 /**
- * Detect the content type from text by counting signal word matches.
+ * Detect the content type from text by counting signal matches (each either
+ * a plain regex or a coOccurs condition — see ContentSignal).
  * Returns the type with the most matches; ties broken by declaration order.
  * Requires ≥2 distinct patterns matched to avoid false positives.
  */
@@ -58,11 +109,11 @@ export function detectContentType(content: string): ContentType {
   let bestType: ContentType = "general";
   let bestCount = 0;
 
-  for (const [type, patterns] of Object.entries(TYPE_SIGNALS) as Array<[ContentType, RegExp[]]>) {
+  for (const [type, signals] of Object.entries(TYPE_SIGNALS) as Array<[ContentType, ContentSignal[]]>) {
     if (type === "general") continue;
     let count = 0;
-    for (const pattern of patterns) {
-      if (pattern.test(content)) count++;
+    for (const signal of signals) {
+      if (testSignal(signal, content)) count++;
     }
     if (count > bestCount) {
       bestCount = count;

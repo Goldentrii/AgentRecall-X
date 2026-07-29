@@ -43,8 +43,13 @@ export const THEME_TAGS: readonly ThemeTag[] = [
  * near "unavailable"/"fell back" does. Audit 2026-07-27 found the bare-word
  * versions of these checks had 90%+ false-positive rates in the novada-mcp
  * journal (the project name alone tripped them).
+ *
+ * Exported (2026-07-29) so auto-name.ts's TYPE_SIGNALS content-type
+ * classifier can reuse the same condition-not-vocabulary primitive instead
+ * of duplicating it — see that module's tool-config/architecture signals,
+ * the deferred follow-up noted in this file's own bare-\bmcp\b fix above.
  */
-function coOccurs(text: string, patternA: string, patternB: string, window = 60): boolean {
+export function coOccurs(text: string, patternA: string, patternB: string, window = 60): boolean {
   const gap = `[^.!?\\n]{0,${window}}`;
   return new RegExp(`(?:${patternA})${gap}(?:${patternB})|(?:${patternB})${gap}(?:${patternA})`, "i").test(text);
 }

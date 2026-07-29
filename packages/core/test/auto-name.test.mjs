@@ -43,6 +43,106 @@ describe("Auto-naming — detectContentType", () => {
   });
 });
 
+describe("Auto-naming — detectContentType matches conditions, not vocabulary (2026-07-29 audit)", () => {
+  // Real-corpus audit (185 journal Brief sections across the live store, same
+  // grounding method as ace179a's journal-sig-theme fix) measured the OLD
+  // bare-word tool-config signals — /\bconfig\b/, /\bsetup\b/, /\binstall\b/,
+  // /\bmcp\b/, /\bserver\b/, /\bplugin\b/, /\bconfigure\b/ — at ~87% false
+  // positive (13-15/15 real matches), and the OLD bare architecture signals
+  // — /\bdesign\b/, /\bapi\b/, /\bschema\b/, /\bstructure\b/ — at ~83%
+  // (5/6). Fixtures below are shaped after the real false-positive cases
+  // found (paraphrased, not verbatim private content).
+
+  it("tool-config: bare MCP project name is NOT tool-config (bare \\bmcp\\b epidemic)", () => {
+    // Real case: "MCP console integration... Decisions from meeting: MCP
+    // integrates into novada.com as a product line" — a product/decision
+    // update, not the agent installing or configuring a tool.
+    assert.notEqual(
+      detectContentType("MCP console integration decisions from the meeting: MCP integrates into the product line as a new surface"),
+      "tool-config"
+    );
+  });
+
+  it("tool-config: MCP mentioned only as a build artifact is NOT tool-config", () => {
+    // Real case: "Both MCP and SDK compile clean after npm install + npm run
+    // build" — a release/build-verification narrative, not tool setup. Only
+    // ONE signal (mcp+install co-occurring) should fire here — below the
+    // ≥2-signal threshold — same as the real corpus text this mirrors.
+    assert.notEqual(
+      detectContentType(
+        "Published the AAM monorepo (packages/mcp, packages/cli, packages/sdk). Reviewer caught a real SDK/README mismatch. " +
+        "Fixed the public exports. Both MCP and SDK compile clean after npm install and npm run build."
+      ),
+      "tool-config"
+    );
+  });
+
+  it("tool-config: 'Configure-MCP' as a product feature name is NOT tool-config", () => {
+    // Real case: "reclassified BOTH the Configure-MCP console" — a UI
+    // feature/product name, not an instruction to configure a tool.
+    assert.notEqual(
+      detectContentType("Reclassified both the Configure-MCP console and the docs into the new taxonomy the team proposed"),
+      "tool-config"
+    );
+  });
+
+  it("tool-config: bare 'config'/'install'/'setup' with no tool noun is NOT tool-config", () => {
+    assert.notEqual(
+      detectContentType("Updated the deployment config, ran the install script, and finished the setup for the new environment"),
+      "tool-config"
+    );
+  });
+
+  it("tool-config: genuine install/configure of an MCP server plugin IS tool-config (preserved)", () => {
+    assert.equal(detectContentType("Install the MCP server plugin and configure the setup"), "tool-config");
+  });
+
+  it("tool-config: genuine plugin setup phrased differently IS tool-config", () => {
+    assert.equal(
+      detectContentType("Renamed the MCP server's config file, reinstalled the plugin, and restarted it to pick up the new setup"),
+      "tool-config"
+    );
+  });
+
+  it("architecture: bare 'design' in a UI/visual-design pass is NOT architecture", () => {
+    // Real case: "ported the founder-approved design pass... visual-review
+    // fixes (logos, chips, cursor removal...)" — product/visual design work.
+    assert.notEqual(
+      detectContentType("Ported the founder-approved design pass with visual-review fixes for the logos, chips, and cursor removal"),
+      "architecture"
+    );
+  });
+
+  it("architecture: bare 'api' in a security/key context is NOT architecture", () => {
+    // Real case: "URL-encoded API key redaction bypass" — a security bug,
+    // not an API design/architecture discussion.
+    assert.notEqual(
+      detectContentType("Found a URL-encoded API key redaction bypass and a fatal error handler credential leak during the review"),
+      "architecture"
+    );
+  });
+
+  it("architecture: 'schema bug' (schema + bug-fix context) is NOT architecture", () => {
+    // Real case: "Release worker caught+fixed schema bug live (int overflow
+    // from MAX_SAFE_INTEGER quota...)" — a bug-fix, not a schema design.
+    assert.notEqual(
+      detectContentType("The release worker caught and fixed a schema bug live: an int overflow from the quota constant"),
+      "architecture"
+    );
+  });
+
+  it("architecture: genuine architecture design (schema + database) IS architecture (preserved)", () => {
+    assert.equal(
+      detectContentType("Redesigned the database schema and added new API endpoints as part of the system architecture"),
+      "architecture"
+    );
+  });
+
+  it("architecture: 'PUSH/PULL architecture design' phrasing IS architecture (preserved)", () => {
+    assert.equal(detectContentType("Documented the PUSH/PULL architecture design for the new sync pipeline"), "architecture");
+  });
+});
+
 describe("Auto-naming — extractKeywords", () => {
   it("removes stopwords and returns top N", () => {
     const kws = extractKeywords("The quick brown fox jumps over the lazy dog", 3);
