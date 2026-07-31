@@ -13,7 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { getRoot, isValidProjectSlug } from "agent-recall-core";
+import { getRoot, isValidProjectSlug, utf8SafeEndBoundary, utf8SafeStartBoundary } from "agent-recall-core";
 
 export interface SessionInfo {
   /** Absolute path to the .jsonl file */
@@ -57,7 +57,19 @@ function readHeadTail(
     const tailBuf = Buffer.allocUnsafe(tailLen);
     fs.readSync(fd, tailBuf, 0, tailLen, tailStart);
 
-    return { head: headBuf.toString("utf8"), tail: tailBuf.toString("utf8") };
+    // M8 fix (review, 2026-07-31): a fixed-byte-offset window can land
+    // mid-UTF-8-sequence. The HEAD window's END (offset headLen, arbitrary)
+    // and the TAIL window's START (offset tailStart, arbitrary — the tail's
+    // OWN end is EOF, always a clean boundary for a well-formed file) both
+    // need back-off, or Node's lenient UTF-8 decode silently substitutes a
+    // U+FFFD replacement character for the incomplete sequence (repro'd).
+    const headEnd = utf8SafeEndBoundary(headBuf, headBuf.length);
+    const tailSafeStart = utf8SafeStartBoundary(tailBuf, 0);
+
+    return {
+      head: headBuf.subarray(0, headEnd).toString("utf8"),
+      tail: tailBuf.subarray(tailSafeStart).toString("utf8"),
+    };
   } finally {
     fs.closeSync(fd);
   }
@@ -415,7 +427,21 @@ export function readTranscriptByPath(filePath: string): TranscriptByPath | null 
       RAW_TAIL_TAIL_PRESERVE,
     );
     let rawTail: string;
-    if (stat.size <= archiveHead.length) {
+    // H3 fix (review, 2026-07-31): compare against the BYTE budget requested
+    // from readHeadTail (RAW_TAIL_HEAD_SAMPLE), never against `archiveHead.length`
+    // — a JS string's `.length` is UTF-16 CODE UNITS, not bytes. For CJK-heavy
+    // content (3 bytes/char in UTF-8, ~1 UTF-16 code unit/char for BMP
+    // ideographs), the string length is roughly 1/3 the byte size, so a file
+    // that fit ENTIRELY inside the head sample still failed the old
+    // `stat.size <= archiveHead.length` check and fell into the `else`
+    // branch below — which re-reads a full tail sample and concatenates it
+    // onto the SAME already-complete head, duplicating the whole file's
+    // content (repro'd: a 15,162-byte CJK fixture produced exactly 2x
+    // duplication). `headLen = Math.min(headBytes, size)` inside
+    // readHeadTail means the ENTIRE file was captured in archiveHead
+    // precisely when `size <= RAW_TAIL_HEAD_SAMPLE` — comparing against that
+    // byte constant directly sidesteps the byte-vs-code-unit mismatch entirely.
+    if (stat.size <= RAW_TAIL_HEAD_SAMPLE) {
       // Whole file fit in the head sample — nothing lost, no dedup needed.
       rawTail = archiveHead;
     } else {

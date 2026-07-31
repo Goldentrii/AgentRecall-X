@@ -306,6 +306,42 @@ describe("resurrect (F6)", () => {
     );
   });
 
+  it("M6: pre-filters card files by FILENAME date — a stale filename can't sneak in via a forged in-window frontmatter date", async () => {
+    // "Filename trap": filename date is FAR outside any window (so a
+    // filename-based pre-filter must reject it before ever reading the
+    // file), but the file's OWN frontmatter `date:` field claims to be
+    // freshly in-window. Before the fix, Source-3 opens+parses every card
+    // file regardless of filename, and the FRONTMATTER date wins over the
+    // filename date for the cutoff check (existing, unchanged behavior) —
+    // so this poison entry would wrongly survive and surface in the
+    // result. After the fix, the coarse filename pre-filter rejects the
+    // file before its frontmatter is ever read, so the forged in-window
+    // date inside it never gets a chance to matter.
+    const veryOldFilenameDate = isoDateNDaysAgo(400);
+    writeFile(
+      tmpDir,
+      `projects/trap-project/journal/${veryOldFilenameDate}--card--ffffffff-ffff-ffff-ffff-ffffffffffff.md`,
+      [
+        "---",
+        "sid: ffffffff-ffff-ffff-ffff-ffffffffffff",
+        `date: ${dateA}`, // forged IN-WINDOW frontmatter date, contradicting the filename
+        "slug: trap-project",
+        "source: hook-end",
+        "---",
+        "",
+        "# POISON_ENTRY_MUST_NEVER_SURFACE",
+      ].join("\n"),
+    );
+
+    const { resurrect } = await import("agent-recall-core");
+    const briefs = resurrect({ days: 30 });
+    const poisoned = briefs.find((b) => b.sid === "ffffffff-ffff-ffff-ffff-ffffffffffff");
+    assert.ok(
+      !poisoned,
+      `a card whose FILENAME date is outside the window must never surface, even with a forged in-window frontmatter date; got ${JSON.stringify(poisoned)}`,
+    );
+  });
+
   it("renderResurrectMarkdown renders a non-empty brief list and a 'nothing found' message for []", async () => {
     const { resurrect, renderResurrectMarkdown } = await import("agent-recall-core");
     const briefs = resurrect({ query: "TOW2-357", days: 30 });

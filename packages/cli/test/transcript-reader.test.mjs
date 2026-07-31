@@ -103,6 +103,57 @@ describe("transcript-reader (F1 + F1b, continuity wave 2026-07-31)", () => {
     it("returns null for a missing path (never throws)", () => {
       assert.equal(reader.readTranscriptByPath(path.join(tDir, "does-not-exist.jsonl")), null);
     });
+
+    it("H3: a CJK-heavy transcript whose BYTE size fits the head sample is not duplicated in rawTail", () => {
+      // The old check compared `stat.size` (BYTES) against `archiveHead.length`
+      // (a JS string's length — UTF-16 CODE UNITS). For CJK content (3 bytes
+      // per char in UTF-8, 1 UTF-16 code unit per char for BMP ideographs),
+      // the string length is roughly 1/3 the byte size — so a file that fits
+      // ENTIRELY inside the head sample still failed `stat.size <=
+      // archiveHead.length` and fell through to the `else` branch, which
+      // re-reads a full tail sample and concatenates it onto the SAME
+      // already-complete head, duplicating the whole file's content.
+      const sid = "h3-cjk-0001";
+      const marker = "决定完成会话摘要审查任务并记录后续步骤"; // 19 CJK chars, 3 bytes each = 57 bytes
+      const bigText = marker.repeat(260); // ~4940 chars, ~14820 bytes — comfortably under RAW_TAIL_HEAD_SAMPLE (20_000)
+      const record = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: bigText }] } });
+      const transcriptPath = path.join(tDir, sid + ".jsonl");
+      fs.writeFileSync(transcriptPath, record, "utf-8");
+
+      const byteSize = fs.statSync(transcriptPath).size;
+      assert.ok(
+        byteSize > 0 && byteSize < 20_000,
+        `fixture must be under RAW_TAIL_HEAD_SAMPLE to exercise the whole-file-fits branch; got ${byteSize} bytes`,
+      );
+
+      const result = reader.readTranscriptByPath(transcriptPath);
+      assert.ok(result);
+      const count = result.rawTail.split(bigText).length - 1;
+      assert.equal(count, 1, `rawTail must contain the CJK content exactly once, got ${count} occurrences`);
+    });
+
+    it("M8: readHeadTail's head window never emits a U+FFFD when it cuts mid-CJK-character", () => {
+      const sid = "m8-boundary-0001";
+      const transcriptPath = path.join(tDir, sid + ".jsonl");
+
+      // Place a 3-byte CJK char ("中" = E4 B8 AD) straddling the DEFAULT head
+      // window boundary (60_000 bytes): bytes at indices 59998,59999,60000 —
+      // so the [0,60000) head window captures only the first TWO bytes of
+      // the sequence (E4 B8), landing mid-character.
+      const filler = Buffer.alloc(59998, "A"); // ASCII filler, indices 0..59997
+      const cjkBytes = Buffer.from("中", "utf-8");
+      assert.equal(cjkBytes.length, 3, "sanity: 中 must be a 3-byte UTF-8 sequence");
+      const trailer = Buffer.from("\nTAIL_MARKER_AFTER_BOUNDARY\n" + "B".repeat(30_000), "utf-8");
+      const body = Buffer.concat([filler, cjkBytes, trailer]);
+      fs.writeFileSync(transcriptPath, body);
+
+      const result = reader.readTranscriptByPath(transcriptPath);
+      assert.ok(result, "must parse the fixture");
+      assert.ok(
+        !result.headText.includes("�"),
+        `headText must not contain a U+FFFD replacement char from a mid-character cut; tail of headText: ${JSON.stringify(result.headText.slice(-20))}`,
+      );
+    });
   });
 
   describe("F1 — resolveSessionProject (claim-not-generate)", () => {

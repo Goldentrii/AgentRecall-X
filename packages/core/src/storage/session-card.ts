@@ -23,7 +23,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
-import { ensureDir, todayISO } from "./fs-utils.js";
+import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +78,8 @@ const DECISIONS_CAP = 5;
 const NEXT_STEP_CAP = 3;
 const LAST_USER_CHAR_CAP = 300;
 const LAST_ASSISTANT_CHAR_CAP = 800;
+/** H4 fix: cap on F1's ranked slugCandidates list — see the call site in buildSessionCard. */
+const SLUG_CANDIDATES_CAP = 5;
 
 // NOTE (CHALLENGE — deviates from the design doc's literal regex): the spec
 // says `/[A-Z]{2,6}-\d+/g`, but that pattern cannot match THIS repo's own
@@ -157,11 +159,17 @@ function dedupCapped(items: string[], cap: number): string[] {
   return out;
 }
 
-/** Truncate to at most maxBytes, UTF-8 safe (never splits mid multi-byte char into garbage). */
+/**
+ * Truncate to at most maxBytes, UTF-8 safe (never splits mid multi-byte char
+ * into garbage). M8 fix (review, 2026-07-31): delegates to the shared
+ * `truncateUtf8Bytes` helper (fs-utils.ts) — the PREVIOUS local implementation
+ * here (`buf.subarray(0, maxBytes).toString("utf-8")`) only claimed to be
+ * UTF-8 safe; a cut landing mid-multi-byte-sequence silently produced one or
+ * more U+FFFD replacement characters (repro'd), which could even push the
+ * re-encoded byte length back OVER maxBytes.
+ */
 function truncateBytes(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf-8");
-  if (buf.length <= maxBytes) return text;
-  return buf.subarray(0, maxBytes).toString("utf-8");
+  return truncateUtf8Bytes(text, maxBytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,29 +235,57 @@ function extractArtifacts(lines: Record<string, unknown>[]): string[] {
 }
 
 /**
- * Linear IDs, scanned across the full record of every non-boilerplate
- * user/assistant turn (not just its "text" block) — a direct tool call
- * (e.g. mcp__agent-recall__remember, mcp__linear__*) carries the ID inside
- * a tool_use/tool_result payload, not necessarily a "text" content block.
- * Still boilerplate-excluded (fixture report §2: "TOW2-310/276 leak in from
- * unrelated projects" via hook-injected memory dumps) — this widens WHERE
- * we look inside a real turn, never loosens WHICH turns count as real.
+ * Linear IDs. M9 fix (review, 2026-07-31): scoped to content the
+ * USER/ASSISTANT actually AUTHORED this turn — a plain string message body,
+ * a `type: "text"` content block, or a `type: "tool_use"` block's OWN
+ * `input` (the assistant's intentional tool-call arguments, e.g.
+ * `mcp__linear__save_issue` called with `{identifier: "TOW2-360"}` — this is
+ * real, intentional content, not necessarily inside a "text" block, so it is
+ * still scanned). Explicitly EXCLUDES `type: "tool_result"` content blocks —
+ * those carry a tool's RETURNED data (e.g. the output of
+ * `mcp__agent-recall__recall` or `mcp__linear__list_issues`), which can
+ * legitimately contain OTHER, unrelated projects' ticket IDs the assistant
+ * never decided or acted on this session. The PREVIOUS implementation
+ * `JSON.stringify(rec.message)`'d the WHOLE message including tool_result
+ * payloads — that was the exact cross-project leak vector this fix closes
+ * (same failure CLASS as the incident's hook-boilerplate contamination,
+ * different channel).
  */
 function extractLinearRefs(lines: Record<string, unknown>[]): string[] {
   const refs: string[] = [];
+
+  const scan = (blob: string): void => {
+    LINEAR_REF_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = LINEAR_REF_RE.exec(blob)) !== null) refs.push(m[0]);
+  };
+
   for (const rec of lines) {
     if (isBoilerplateRecord(rec)) continue;
     if (rec.type !== "user" && rec.type !== "assistant") continue;
-    let blob: string;
-    try {
-      blob = JSON.stringify(rec.message ?? {});
-    } catch {
+    const msg = rec.message as Record<string, unknown> | undefined;
+    const content = msg?.content;
+
+    if (typeof content === "string") {
+      scan(content);
       continue;
     }
-    LINEAR_REF_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = LINEAR_REF_RE.exec(blob)) !== null) {
-      refs.push(m[0]);
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === "text" && typeof b.text === "string") {
+        scan(b.text);
+      } else if (b.type === "tool_use") {
+        // The assistant's OWN tool-call arguments — real, intentional
+        // content, unlike a tool_result's returned data (never scanned).
+        try {
+          scan(JSON.stringify(b.input ?? {}));
+        } catch {
+          /* unstringifiable input — skip */
+        }
+      }
+      // `tool_result` blocks are deliberately NOT scanned (M9).
     }
   }
   return dedupCapped(refs, LINEAR_REFS_CAP);
@@ -300,12 +336,24 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
     const decisions = extractLinesMatching(finalAssistantText, DECISION_LINE_RE, DECISIONS_CAP);
     const nextStep = extractLinesMatching(finalAssistantText, NEXT_STEP_LINE_RE, NEXT_STEP_CAP);
 
+    // H4 fix (review, 2026-07-31): cap slugCandidates to the top SLUG_CANDIDATES_CAP
+    // by count BEFORE frontmatter serialization. Every other list field on this
+    // card already has its own _CAP constant (ARTIFACTS_CAP, LINEAR_REFS_CAP, ...)
+    // — this one didn't, and F1's ranked candidate list is NOT length-limited
+    // upstream. An uncapped list let a single JSON.stringify'd frontmatter field
+    // alone consume the ENTIRE CARD_BYTE_CAP, so the whole-markdown byte
+    // truncation below cut mid-YAML — invalid frontmatter (no closing `---`),
+    // and every body section after the cut point silently vanished.
+    const cappedSlugCandidates = [...(raw?.meta?.slugCandidates ?? [])]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, SLUG_CANDIDATES_CAP);
+
     const frontmatter = generateFrontmatter({
       sid,
       date,
       slug,
       slug_confidence: Number((raw?.meta?.slugConfidence ?? 0).toFixed(3)),
-      slug_candidates: raw?.meta?.slugCandidates ?? [],
+      slug_candidates: cappedSlugCandidates,
       source: "hook-end",
     });
 
@@ -338,9 +386,17 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
       }
     }
 
-    let markdown = frontmatter + sections.join("\n");
-    // Hard cap, BYTE-based (CJK content can far exceed a char-based cap on disk).
-    markdown = truncateBytes(markdown, CARD_BYTE_CAP);
+    // H4 fix: byte-truncate ONLY the body, never the frontmatter. A cut
+    // mid-YAML produces an invalid card with no closing `---` and silently
+    // drops every section after the cut point. Frontmatter is now bounded
+    // (capped candidates above, plus the existing per-field caps on every
+    // other frontmatter value) so it always fits comfortably on its own; the
+    // body absorbs whatever budget remains, BYTE-based (CJK content can far
+    // exceed a char-based cap on disk).
+    const body = sections.join("\n");
+    const frontmatterBytes = Buffer.byteLength(frontmatter, "utf-8");
+    const bodyBudget = Math.max(0, CARD_BYTE_CAP - frontmatterBytes);
+    const markdown = frontmatter + truncateBytes(body, bodyBudget);
 
     return { markdown, title, artifacts, linearRefs, decisions, nextStep, sid, slug, date };
   } catch {

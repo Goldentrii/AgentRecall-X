@@ -153,6 +153,45 @@ describe("buildSessionCard (F3, continuity wave 2026-07-31)", () => {
     assert.ok(card.nextStep.some((n) => /待办/.test(n)));
   });
 
+  it("M9: linearRefs exclude tool_result payloads (cross-project leak vector) but still capture tool_use inputs and prose", () => {
+    const tail = [
+      line({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "abc",
+              content: [{ type: "text", text: "Found unrelated issue ZZZ9-123 in another project" }],
+            },
+          ],
+        },
+      }),
+      line({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "mcp__linear__save_issue", input: { team: "TongWu", identifier: "TOW2-999" } },
+          ],
+        },
+      }),
+      line({ type: "assistant", message: { content: [{ type: "text", text: "Decided on TOW2-500 for this session." }] } }),
+    ].join("\n");
+
+    const card = core.buildSessionCard({
+      rawHead: "",
+      rawTail: tail,
+      meta: { sid: "m9-test", slug: "auto", slugConfidence: 0, slugCandidates: [] },
+    });
+
+    assert.ok(
+      !card.linearRefs.includes("ZZZ9-123"),
+      `tool_result content must never leak into linearRefs; got ${JSON.stringify(card.linearRefs)}`,
+    );
+    assert.ok(card.linearRefs.includes("TOW2-999"), "a real tool_use call's own input must still be captured");
+    assert.ok(card.linearRefs.includes("TOW2-500"), "prose mentions in assistant text must still be captured");
+  });
+
   it("linearRefs are deduped", () => {
     const tail = [
       line({ type: "assistant", message: { content: [{ type: "text", text: "TOW2-358 and TOW2-358 again, plus TOW2-359" }] } }),
@@ -183,6 +222,51 @@ describe("buildSessionCard (F3, continuity wave 2026-07-31)", () => {
     assert.ok(card.markdown.includes("slug: demo-project"));
     assert.ok(card.markdown.includes("slug_confidence: 0.42"));
     assert.ok(card.markdown.includes("source: hook-end"));
+  });
+
+  it("M8: byte-truncating a CJK-heavy body never emits a U+FFFD replacement character", () => {
+    // Force the body truncation path: pad the final assistant text with a
+    // long CJK string so the whole markdown exceeds CARD_BYTE_CAP (2000
+    // bytes) and truncateBytes must cut somewhere inside it. A 3-byte-per-
+    // char CJK string of ~3000 bytes guarantees the byte cut lands mid-
+    // character for MOST cut points (only 1-in-3 byte offsets align to a
+    // char boundary).
+    const cjkPad = "决".repeat(1000); // 1000 chars, 3000 bytes
+    const tail = [
+      line({
+        type: "assistant",
+        message: { content: [{ type: "text", text: `Final notes: ${cjkPad}` }] },
+      }),
+    ].join("\n");
+    const card = core.buildSessionCard({
+      rawHead: "",
+      rawTail: tail,
+      meta: { sid: "m8-card-test", slug: "auto", slugConfidence: 0, slugCandidates: [] },
+    });
+    assert.ok(Buffer.byteLength(card.markdown, "utf-8") <= 2000, "card must still respect the byte cap");
+    assert.ok(!card.markdown.includes("�"), `truncated markdown must not contain a U+FFFD replacement char:\n${card.markdown}`);
+  });
+
+  it("H4: 200 synthetic slugCandidates never truncate the frontmatter mid-YAML — body sections still present", () => {
+    const manyCandidates = Array.from({ length: 200 }, (_, i) => ({ slug: `candidate-project-name-${i}`, count: 200 - i }));
+    const card = core.buildSessionCard({
+      rawHead: BOILERPLATE_HEAD,
+      rawTail: REAL_TAIL,
+      meta: {
+        sid: "h4-candidates-test",
+        slug: "novada-mcp",
+        slugConfidence: 0.1,
+        slugCandidates: manyCandidates,
+      },
+    });
+
+    // Frontmatter must close properly: exactly two "---" delimiter lines.
+    const delimiterCount = (card.markdown.match(/^---$/gm) || []).length;
+    assert.equal(delimiterCount, 2, `frontmatter must have a closing '---'; markdown:\n${card.markdown}`);
+    // Body content must survive the truncation, not just the frontmatter.
+    assert.ok(card.markdown.includes(`# ${card.title}`), "title heading must survive");
+    assert.ok(card.markdown.includes("TOW2-357"), "Linear ref from the real tail must survive");
+    assert.ok(card.markdown.includes("交付物2_MCP原型_V14.html"), "artifact-adjacent content must survive");
   });
 
   it("never throws on malformed/garbage input — degrades to a minimal valid card", () => {

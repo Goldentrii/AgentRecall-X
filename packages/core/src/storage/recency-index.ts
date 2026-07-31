@@ -35,6 +35,20 @@ import { getRoot } from "../types.js";
 
 const RECENCY_FILENAME = "recent-sessions.jsonl";
 const MAX_LINES = 500;
+/**
+ * H2 (review fix, 2026-07-31): only roll once the file is this far PAST
+ * MAX_LINES, trimming back down to MAX_LINES. Without this throttle, EVERY
+ * append past 500 lines triggered a fresh read→writeFileSync(tmp)→renameSync
+ * roll — a second process's plain `appendFileSync` straddling that rename
+ * lands on the unlinked inode: its write succeeds but the data silently
+ * vanishes once the rename swaps the directory entry to the new (trimmed)
+ * inode. Rolling only once every SLACK appends shrinks the number of roll
+ * events — and therefore the number of chances for another process's append
+ * to land inside one — by ~50x.
+ */
+const ROLL_SLACK = 50;
+/** H2: best-effort exclusive lock guarding the roll itself (see rollIfNeeded). */
+const ROLL_LOCK_STALE_MS = 5000;
 
 export interface RecentSessionEntry {
   /** ISO-8601 timestamp of the session (when the entry was appended). */
@@ -62,15 +76,57 @@ function recencyIndexPath(): string {
  * (packages/core/src/supabase/sync.ts:79-94): read back, filter blank
  * lines, keep only the last MAX_LINES, write to a temp file, then rename
  * over the original (avoids a reader ever observing a half-written file).
+ *
+ * H2 (review fix, 2026-07-31): two additional safeguards against a
+ * concurrent-append race that could otherwise silently lose a second
+ * process's just-written entry (see ROLL_SLACK's doc comment above):
+ *  1. Throttle — only roll once `lines.length` exceeds MAX_LINES + ROLL_SLACK
+ *     (not on every single append past MAX_LINES), shrinking how often the
+ *     read→write→rename window opens at all.
+ *  2. Best-effort exclusive lockfile (`<file>.lock`, O_EXCL create, stale
+ *     after ROLL_LOCK_STALE_MS) guarding the roll itself, so two processes
+ *     that both cross the threshold near-simultaneously can't run competing
+ *     rolls. Mirrors the O_EXCL-style lock convention used elsewhere in this
+ *     codebase (e.g. the CLI's `.hook-end-lock`) rather than the heavier
+ *     mkdir-based `filelock.ts` (that one busy-waits up to 5s on EVERY
+ *     acquire — overkill for an operation that fires once per ~50 appends).
+ *     Best-effort: if the lock can't be acquired (another process is
+ *     actively rolling), this call simply SKIPS its own roll — the file is a
+ *     little larger until the next append tries again; it never blocks or
+ *     throws. This is defense-in-depth on top of the throttle above, not a
+ *     complete substitute for it — the append itself is still lock-free.
  */
 function rollIfNeeded(filePath: string): void {
   const content = fs.readFileSync(filePath, "utf-8");
   const lines = content.split("\n").filter(Boolean);
-  if (lines.length <= MAX_LINES) return;
+  if (lines.length <= MAX_LINES + ROLL_SLACK) return;
   const trimmed = lines.slice(-MAX_LINES).join("\n") + "\n";
-  const tmpPath = filePath + ".tmp";
-  fs.writeFileSync(tmpPath, trimmed, "utf-8");
-  fs.renameSync(tmpPath, filePath);
+
+  const lockPath = filePath + ".lock";
+  let fd: number;
+  try {
+    fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+  } catch {
+    // Lock already held. If it's stale (a crashed writer, >ROLL_LOCK_STALE_MS
+    // old), force-break it and take it; otherwise skip this roll entirely.
+    try {
+      const stat = fs.statSync(lockPath);
+      if (Date.now() - stat.mtimeMs <= ROLL_LOCK_STALE_MS) return; // held by an active writer
+      fs.unlinkSync(lockPath);
+      fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+    } catch {
+      return; // lost the race to break the stale lock, or another fs error — skip, never throw
+    }
+  }
+
+  try {
+    const tmpPath = filePath + ".tmp";
+    fs.writeFileSync(tmpPath, trimmed, "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* already closed */ }
+    try { fs.unlinkSync(lockPath); } catch { /* already removed */ }
+  }
 }
 
 /**

@@ -112,4 +112,26 @@ describe("session_start — continuity card", () => {
     assert.ok(result.continuity[0].title.length <= 160, `title should be capped at 160 raw chars, got ${result.continuity[0].title.length}`);
     assert.ok(result.continuity[0].next_step.length <= 160, `next_step should be capped at 160 raw chars, got ${result.continuity[0].next_step.length}`);
   });
+
+  it("M7: CJK title/next_step are capped by BYTES, not chars — a char-based cap blows the real token budget", async () => {
+    // Each CJK char is 3 bytes in UTF-8 but 1 JS string char. A char-based
+    // cap of 160 lets 160 CJK chars through = 480 bytes, ~4x the intended
+    // byte budget (title<=120B, next_step<=160B per the fix).
+    const cjkTitle = "决".repeat(200); // 200 chars, 600 bytes
+    const cjkNext = "步".repeat(200);
+    core.appendRecentSession({ ts: new Date().toISOString(), sid: "s-cjk", slug: "proj", title: cjkTitle, next_step: cjkNext });
+    const result = await core.sessionStart({ project: "cjk-budget-project" });
+    assert.ok(result.continuity, "continuity should be present");
+    const entry = result.continuity[0];
+    assert.ok(
+      Buffer.byteLength(entry.title, "utf-8") <= 120,
+      `title must be capped at 120 BYTES, got ${Buffer.byteLength(entry.title, "utf-8")}`,
+    );
+    assert.ok(
+      Buffer.byteLength(entry.next_step, "utf-8") <= 160,
+      `next_step must be capped at 160 BYTES, got ${Buffer.byteLength(entry.next_step, "utf-8")}`,
+    );
+    assert.ok(!entry.title.includes("�"), "title must not contain a U+FFFD from a mid-character byte cut");
+    assert.ok(!entry.next_step.includes("�"), "next_step must not contain a U+FFFD from a mid-character byte cut");
+  });
 });

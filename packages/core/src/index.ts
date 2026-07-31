@@ -665,3 +665,6 @@ export type { HookFailureRow, HookHealthState } from "./storage/hook-health.js";
 // Continuity wave F6 — `ar resurrect` core: read-only cross-slug dead-session finder (2026-07-31)
 export { resurrect, renderResurrectMarkdown } from "./tools-logic/resurrect.js";
 export type { ContinuityBrief, ResurrectInput } from "./tools-logic/resurrect.js";
+
+// M8 (review fix, 2026-07-31) — shared UTF-8-safe byte-boundary truncation helpers
+export { truncateUtf8Bytes, utf8SafeEndBoundary, utf8SafeStartBoundary } from "./storage/fs-utils.js";

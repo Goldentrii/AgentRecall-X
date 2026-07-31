@@ -84,6 +84,7 @@ const MAX_LINEAR_REFS = 20;
 const MAX_NEXT_STEPS = 3;
 const MIN_PROSE_LEN = 20; // shorter "text" blocks are almost never real content
 const MAX_PROSE_LEN = 1500; // longer blocks are almost always a hook/system dump
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const BOILERPLATE_MARKERS = [
   "system-reminder",
@@ -490,6 +491,20 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       const nameMatch = file.match(/^(\d{4}-\d{2}-\d{2})--card--(.+)\.md$/);
       if (!nameMatch) continue;
       const [, fileDateFromName, sidFromName] = nameMatch;
+
+      // M6 fix (review, 2026-07-31): coarse pre-filter on the FILENAME date
+      // BEFORE opening/parsing the file — mirrors Source 2's raw-archive
+      // loop above, which already rejects out-of-window files by filename
+      // alone. Without this, resurrect() read+parsed EVERY card file ever
+      // written across every project on every call, scaling with
+      // total-cards-ever-written instead of with the requested window. ±1
+      // day padding because a card's FRONTMATTER date (which wins below,
+      // unchanged) can legitimately differ from its filename date by up to
+      // a day (e.g. a session that crossed local-midnight) — this coarse
+      // filter must never be stricter than the precise post-parse check
+      // that follows it.
+      const fileNameTs = Date.parse(`${fileDateFromName}T00:00:00.000Z`);
+      if (Number.isFinite(fileNameTs) && fileNameTs < cutoff - DAY_MS) continue;
 
       const filePath = path.join(dir, file);
       let content: string;

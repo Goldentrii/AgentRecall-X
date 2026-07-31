@@ -245,4 +245,63 @@ describe("smartRecall — explicit archive fallback source (F4)", () => {
     assert.ok(archiveItem.verbatimKey && archiveItem.verbatimKey.kind === "archive", "must carry an archive verbatimKey");
     assert.ok(result.sources_queried.includes("archive"), "sources_queried must include archive when the gate fired");
   });
+
+  // ---------------------------------------------------------------------------
+  // H1 (review fix, 2026-07-31) — archive fallback must resolve `project` via
+  // resolveProject(), not use the "auto"/undefined literal directly. Without
+  // this, the default MCP calling convention (project omitted, or the literal
+  // "auto") reached archiveSearch()/fetchVerbatim() unresolved, scanning a
+  // nonexistent projects/auto/ directory instead of the real detected project.
+  // ---------------------------------------------------------------------------
+  it("H1: project omitted (MCP default) still resolves via AGENT_RECALL_PROJECT and surfaces the archive hit", async () => {
+    const project = "archive-src-h1-auto";
+    const query = "flamingo turnstile ledger reconciliation";
+    const savedEnv = process.env.AGENT_RECALL_PROJECT;
+    process.env.AGENT_RECALL_PROJECT = project;
+    try {
+      archiveSession({
+        project,
+        sessionId: "a1111111-1111-2222-3333-444444444444",
+        rawTranscript: "meeting notes: flamingo turnstile ledger reconciliation pending review",
+      });
+
+      // Project OMITTED entirely — must still resolve to `project` via
+      // resolveProject()'s env-var signal, exactly like journalSearch/
+      // palaceSearch already do internally per-call.
+      const result = await smartRecall({ query });
+
+      const archiveItem = result.results.find((r) => r.source === "archive");
+      assert.ok(
+        archiveItem,
+        `expected an archive-source item once project resolves via AGENT_RECALL_PROJECT; got ${JSON.stringify(result.results)}`,
+      );
+      assert.ok(result.sources_queried.includes("archive"));
+    } finally {
+      if (savedEnv === undefined) delete process.env.AGENT_RECALL_PROJECT;
+      else process.env.AGENT_RECALL_PROJECT = savedEnv;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // M5 (review fix, 2026-07-31) — the `limit` contract must hold even when the
+  // archive fallback source fires: it used to push up to ARCHIVE_SOURCE_CAP
+  // items regardless of how many slots `limit` had left.
+  // ---------------------------------------------------------------------------
+  it("M5: limit contract holds when the archive source fires (limit:1 + 3 raw matches → exactly 1 result)", async () => {
+    const project = "archive-limit-m5";
+    const query = "wombat cordillera bakery inventory";
+    archiveSession({
+      project,
+      sessionId: "b2222222-1111-2222-3333-444444444444",
+      rawTranscript: [
+        "line one: wombat cordillera bakery inventory update pending review",
+        "line two: another mention of wombat cordillera bakery inventory count",
+        "line three: yet another wombat cordillera bakery inventory note",
+      ].join("\n"),
+    });
+
+    const result = await smartRecall({ query, project, limit: 1 });
+    assert.ok(result.results.length <= 1, `limit:1 must never return more than 1 result; got ${result.results.length}`);
+    assert.ok(result.sources_queried.includes("archive"), "archive gate must still be reported as queried even when budget was tight");
+  });
 });

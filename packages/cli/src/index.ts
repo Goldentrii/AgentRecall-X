@@ -43,6 +43,20 @@ function hasFlag(flag: string, flagArgs: string[]): boolean {
   return flagArgs.includes(flag);
 }
 
+/**
+ * L2 fix (review, 2026-07-31): word-boundary truncation with an ellipsis,
+ * matching the MCP-server's `trunc()` (packages/mcp-server/src/tools/
+ * session-start.ts). The continuity block previously used a bare
+ * `.slice(0, n)` — no word boundary, no ellipsis marker — unlike its MCP
+ * sibling rendering the SAME field.
+ */
+function truncWordBoundary(s: string, n: number): string {
+  if (s.length <= n) return s;
+  const sliced = s.slice(0, n);
+  const lastSpace = sliced.lastIndexOf(" ");
+  return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
+}
+
 function output(data: unknown): void {
   if (typeof data === "string") process.stdout.write(data + "\n");
   else process.stdout.write(JSON.stringify(data, null, 2) + "\n");
@@ -902,21 +916,27 @@ async function main(): Promise<void> {
 
         lines.push("[AgentRecall] Session context loaded");
 
-        // Project + identity — always show so agent knows the project
-        lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
-
         // ---- F2 continuity card (continuity wave 2026-07-31) ----
         // Top-3 most-recent sessions ACROSS projects, ranked by pure recency
-        // (readRecentSessions already returns newest-first) — right after the
-        // header line, per design. Absent entirely when the recency index has
-        // nothing yet (no noise on a fresh/solo-project store).
+        // (readRecentSessions already returns newest-first). L1 fix (review,
+        // 2026-07-31): rendered BEFORE the per-project header line, aligning
+        // with the MCP terse formatter (packages/mcp-server/src/tools/
+        // session-start.ts's formatTerse) — that renderer deliberately places
+        // continuity ahead of the header so "what was I doing, anywhere, most
+        // recently" is the first substantive thing read; the CLI previously
+        // rendered it AFTER the header, an unintentional divergence between
+        // the two renderers of the SAME field. Absent entirely when the
+        // recency index has nothing yet (no noise on a fresh/solo-project store).
         if (result.continuity && result.continuity.length > 0) {
           lines.push("⏪ Continuity (recent work, other projects included):");
           for (const c of result.continuity.slice(0, 3)) {
-            const next = c.next_step ? ` → next: ${c.next_step.slice(0, 80)}` : "";
-            lines.push(`   - ${c.ago} [${c.slug}] ${c.title.slice(0, 100)}${next}`);
+            const next = c.next_step ? ` → next: ${truncWordBoundary(c.next_step, 80)}` : "";
+            lines.push(`   - ${c.ago} [${c.slug}] ${truncWordBoundary(c.title, 100)}${next}`);
           }
         }
+
+        // Project + identity — always show so agent knows the project
+        lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
 
         // P0 corrections — always show, high priority (loaded before watch_for)
         if (result.corrections && result.corrections.length > 0) {

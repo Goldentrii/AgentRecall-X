@@ -113,6 +113,7 @@ import { getConnectedRooms } from "../palace/graph.js";
 import { palaceDir, archiveRawDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
+import { resolveProject } from "../storage/project.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -877,6 +878,25 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 }
 
 export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallResult> {
+  // H1 fix (continuity wave review, 2026-07-31): resolve `project` ONCE here,
+  // the same way journalSearch/palaceSearch already resolve it internally on
+  // every call. Without this, the archive-fallback gate and the Bridge's
+  // verbatim fetch below used `input.project ?? "auto"` VERBATIM — the
+  // literal default MCP calling convention (project omitted, or "auto")
+  // reached them unresolved, scanning a nonexistent projects/auto/ directory
+  // instead of the real detected project, while `sources_queried` still
+  // claimed "archive" was searched. Best-effort: resolveProject() can throw
+  // (invalid slug / cwd auto-detect failure with no override) — degrade to
+  // the literal input rather than breaking the whole call, mirroring how
+  // journalSearch/palaceSearch already swallow this same failure mode (each
+  // runs inside a try/catch in localRecallSearch below).
+  let resolvedProject: string;
+  try {
+    resolvedProject = await resolveProject(input.project);
+  } catch {
+    resolvedProject = input.project ?? "auto";
+  }
+
   // Process feedback first; reuse the returned log to avoid a second disk read
   const feedbackLog = (input.feedback && input.feedback.length > 0)
     ? processFeedback(input.feedback, input.query)
@@ -967,7 +987,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     );
     const collected: BridgedSource[] = [];
     for (const it of low.slice(0, 2)) {
-      const v = fetchVerbatim(input.project ?? "auto", it.verbatimKey);
+      const v = fetchVerbatim(resolvedProject, it.verbatimKey);
       if (v?.found) {
         collected.push({ forItemId: it.id, source: v.source, verbatim: v.text });
       }
@@ -988,11 +1008,33 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // already a raw excerpt and would gain nothing from being drilled into
   // itself.
   let archiveSourceRan = false;
+  // L3 (review, 2026-07-31; documented only — no behavior change this wave):
+  // `finalResults[0]` is rank-0 by the POST-FEEDBACK boosted `score` (see the
+  // `results.sort((a, b) => b.score - a.score)` above, which runs AFTER the
+  // Beta feedback multiplier), but `.calibrated` on that same item is its
+  // SCORING-TIME value, deliberately never re-derived from the boosted score
+  // (Risk #8, confidence.ts's module header). Those two orderings can
+  // disagree: the item that WINS the boosted-score sort is not guaranteed to
+  // be the item with the single highest `calibrated` value among
+  // `finalResults` — feedback history can lift a lower-calibrated item above
+  // a higher-calibrated one in rank without changing either item's
+  // `calibrated`. The gate below reads whichever item happens to be rank-0,
+  // not `Math.max(...finalResults.map(r => r.calibrated))` — a real,
+  // structural tension worth flagging, but changing the gate's semantics
+  // (e.g. to a true max-calibrated check) is out of scope for this fix wave.
   const topConfidence = finalResults.length > 0 ? finalResults[0].calibrated : 0;
   if (topConfidence < CONFIDENCE_FLOOR.medium) {
     archiveSourceRan = true;
-    const archiveItems = archiveSearch(input.project ?? "auto", input.query, ARCHIVE_SOURCE_CAP);
-    finalResults.push(...archiveItems);
+    // M5 fix (continuity wave review, 2026-07-31): never exceed the caller's
+    // requested `limit` — append at most the remaining budget. `archiveSourceRan`
+    // stays true (and therefore "archive" still lists in sources_queried, see
+    // below) even when the remaining budget is 0, so a caller can still see
+    // the gate fired without the item COUNT ever violating `limit`.
+    const remainingBudget = Math.max(0, limit - finalResults.length);
+    if (remainingBudget > 0) {
+      const archiveItems = archiveSearch(resolvedProject, input.query, Math.min(ARCHIVE_SOURCE_CAP, remainingBudget));
+      finalResults.push(...archiveItems);
+    }
   }
 
   // Fix 4/5: total_searched should be the true distinct-candidate count from

@@ -14,7 +14,7 @@ import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awar
 import { recallInsights, readInsightsIndex } from "../palace/insights-index.js";
 import { journalDirs, projectSubPath } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
-import { todayISO } from "../storage/fs-utils.js";
+import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
 import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
@@ -117,8 +117,11 @@ const SECTION_CHAR_LIMITS = {
   captures_total: 550,       // total captures budget (JSON chars)
   rule_when: 100,            // behavior rule when (raw chars)
   rule_do: 120,              // behavior rule do (raw chars)
-  continuity_title: 160,     // per continuity entry title (raw chars)
-  continuity_next_step: 160, // per continuity entry next_step (raw chars, only when present)
+  // M7 fix (review, 2026-07-31): BYTES, not raw chars. CJK runs ~1 char/token
+  // but 3 bytes/char in UTF-8 — a char-based cap (the old value here) let CJK
+  // titles blow the intended byte/token budget ~4-8x while "looking" capped.
+  continuity_title: 120,      // per continuity entry title (UTF-8 BYTES)
+  continuity_next_step: 160,  // per continuity entry next_step (UTF-8 BYTES, only when present)
   continuity_total: 500,     // total serialized continuity budget (JSON chars)
 } as const;
 
@@ -483,8 +486,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       continuity = recentSessions.map((s) => ({
         ago: formatAgo(s.ts),
         slug: s.slug,
-        title: sliceAtWord(s.title, SECTION_CHAR_LIMITS.continuity_title),
-        next_step: s.next_step ? sliceAtWord(s.next_step, SECTION_CHAR_LIMITS.continuity_next_step) : undefined,
+        // M7 fix: BYTE-based truncation (truncateUtf8Bytes), not sliceAtWord's
+        // char-based truncation — see continuity_title/continuity_next_step's
+        // doc comment above.
+        title: truncateUtf8Bytes(s.title, SECTION_CHAR_LIMITS.continuity_title),
+        next_step: s.next_step ? truncateUtf8Bytes(s.next_step, SECTION_CHAR_LIMITS.continuity_next_step) : undefined,
       }));
     }
   } catch {

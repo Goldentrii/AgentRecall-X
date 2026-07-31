@@ -202,6 +202,83 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
   });
 });
 
+describe("continuity wave — L1/L2 hook-start continuity rendering (review fixes, 2026-07-31)", () => {
+  it("L1: renders the ⏪ Continuity block BEFORE the 'Project:' header line, matching the MCP terse formatter's placement", async () => {
+    const root = path.join(os.tmpdir(), "ar-l1-root-" + Date.now());
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "recent-sessions.jsonl"),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        sid: "l1-test-sid",
+        slug: "some-other-project",
+        title: "L1 placement check",
+      }) + "\n",
+      "utf-8",
+    );
+    const home = isolatedHome();
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn("node", [CLI, "--root", root, "--project", "l1-current-project", "hook-start"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.end();
+    });
+    assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
+    const continuityIdx = stdout.indexOf("⏪ Continuity");
+    const projectIdx = stdout.indexOf("Project:");
+    assert.ok(continuityIdx >= 0, `expected a continuity block; stdout=${stdout}`);
+    assert.ok(projectIdx >= 0, `expected a Project: header line; stdout=${stdout}`);
+    assert.ok(
+      continuityIdx < projectIdx,
+      `continuity block must render BEFORE the Project: header; stdout=${JSON.stringify(stdout)}`,
+    );
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("L2: continuity title/next_step truncation uses a word-boundary + ellipsis, not a bare mid-word cut", async () => {
+    const root = path.join(os.tmpdir(), "ar-l2-root-" + Date.now());
+    fs.mkdirSync(root, { recursive: true });
+    const longTitle = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey";
+    fs.writeFileSync(
+      path.join(root, "recent-sessions.jsonl"),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        sid: "l2-test-sid",
+        slug: "some-other-project",
+        title: longTitle,
+      }) + "\n",
+      "utf-8",
+    );
+    const home = isolatedHome();
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn("node", [CLI, "--root", root, "--project", "l2-current-project", "hook-start"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, HOME: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.end();
+    });
+    assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
+    const continuityLine = stdout.split("\n").find((l) => l.includes("l2-test-sid") || l.includes("[some-other-project]"));
+    assert.ok(continuityLine, `expected a continuity line for the fixture; stdout=${stdout}`);
+    assert.ok(continuityLine.includes("…"), `expected a word-boundary ellipsis marker, not a bare mid-word cut; line=${continuityLine}`);
+    // The raw title must NOT appear whole (it exceeds the 100-char cap) and
+    // the cut must not land mid-word (no dangling partial word before the ellipsis).
+    assert.ok(!continuityLine.includes(longTitle), "the full long title must be truncated, not rendered whole");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe("continuity wave — `ar resurrect` (F6)", () => {
   it("finds a synthetic dead session cross-slug, even under a DIFFERENT --project context", async () => {
     const targetSlug = "resurrect-target-slug";

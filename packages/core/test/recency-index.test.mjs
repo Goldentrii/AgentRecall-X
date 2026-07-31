@@ -105,17 +105,63 @@ describe("recency-index — appendRecentSession / readRecentSessions", () => {
     assert.equal(result.length, 2, "corrupt/incomplete lines must be skipped, not counted");
   });
 
-  it("rolls the ledger at 500 lines, keeping only the most recent entries (logSyncError pattern)", () => {
-    for (let i = 0; i < 510; i++) {
+  it("H2: throttles the roll — appending at 506 lines (within SLACK of MAX_LINES=500) does NOT rewrite the file", () => {
+    const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
+    const seedLines = [];
+    for (let i = 0; i < 505; i++) {
+      seedLines.push(JSON.stringify({ ts: new Date(Date.now() - (505 - i) * 1000).toISOString(), sid: `seed${i}`, slug: "proj", title: `seed ${i}` }));
+    }
+    fs.writeFileSync(ledgerPath, seedLines.join("\n") + "\n", "utf-8");
+    const inodeBefore = fs.statSync(ledgerPath).ino;
+
+    core.appendRecentSession({ ts: new Date().toISOString(), sid: "extra1", slug: "proj", title: "extra append" });
+
+    const inodeAfter = fs.statSync(ledgerPath).ino;
+    assert.equal(
+      inodeAfter,
+      inodeBefore,
+      "appending at 506 lines (within SLACK of MAX_LINES=500) must NOT trigger a roll/rewrite — inode must stay stable",
+    );
+    const linesAfter = fs.readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean);
+    assert.equal(linesAfter.length, 506, "line should just be appended in place, not trimmed");
+  });
+
+  it("H2: rolls once the file grows past MAX_LINES + SLACK, trimming to MAX_LINES", () => {
+    const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
+    const seedLines = [];
+    for (let i = 0; i < 551; i++) {
+      seedLines.push(JSON.stringify({ ts: new Date(Date.now() - (551 - i) * 1000).toISOString(), sid: `seed${i}`, slug: "proj", title: `seed ${i}` }));
+    }
+    fs.writeFileSync(ledgerPath, seedLines.join("\n") + "\n", "utf-8");
+    const inodeBefore = fs.statSync(ledgerPath).ino;
+
+    core.appendRecentSession({ ts: new Date().toISOString(), sid: "extra2", slug: "proj", title: "extra append triggers roll" });
+
+    const inodeAfter = fs.statSync(ledgerPath).ino;
+    assert.notEqual(inodeAfter, inodeBefore, "crossing MAX_LINES+SLACK must trigger the roll (rewrite via rename)");
+    const linesAfter = fs.readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean);
+    assert.ok(linesAfter.length <= 500, `rolled file should be trimmed to MAX_LINES; got ${linesAfter.length}`);
+  });
+
+  it("rolls the ledger once past MAX_LINES+SLACK, keeping the count within MAX_LINES+SLACK (logSyncError pattern)", () => {
+    // H2 (review fix, 2026-07-31): rolling is now THROTTLED — it only fires
+    // once the file grows past MAX_LINES(500) + ROLL_SLACK(50), trimming back
+    // down to MAX_LINES(500), not on every single append past 500 (see
+    // recency-index.ts's ROLL_SLACK doc comment). So the steady-state
+    // invariant is "never exceeds MAX_LINES+SLACK", not "always exactly
+    // MAX_LINES" — a single continuous run of 560 appends crosses the
+    // threshold exactly ONCE (at append #551), rolls to 500, then the
+    // remaining 9 appends bring it back up to 509 without a second roll.
+    for (let i = 0; i < 560; i++) {
       core.appendRecentSession({ ts: new Date(Date.now() + i).toISOString(), sid: `s${i}`, slug: "proj", title: `entry ${i}` });
     }
     const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
     const lines = fs.readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean);
-    assert.ok(lines.length <= 500, `ledger should be capped at 500 lines, got ${lines.length}`);
+    assert.ok(lines.length <= 550, `ledger should never exceed MAX_LINES+SLACK (550), got ${lines.length}`);
 
-    // The OLDEST entries (entry 0..9) must have rolled off; the newest (entry 509) must survive.
+    // The OLDEST entries (entry 0..9) must have rolled off; the newest (entry 559) must survive.
     const result = core.readRecentSessions(1);
-    assert.equal(result[0].title, "entry 509");
+    assert.equal(result[0].title, "entry 559");
     const all = lines.map((l) => JSON.parse(l).title);
     assert.ok(!all.includes("entry 0"), "oldest entries must have been truncated off");
   });
