@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.41] — 2026-07-31
+
+Patch release: the continuity wave — born from a same-day incident where a fully-captured session was unretrievable the next session. Capture was never the problem; surfacing was.
+
+### Fixed
+
+- **Split-brain hook-end filing**: the raw archive used the transcript-derived project guess while the journal-summary path ignored it — one session's data landed in two project directories. Both paths now share a single `resolveSessionProject()` resolution (explicit `--project` still wins).
+- **Blind project guessing**: the old namer frequency-counted a path regex over raw transcript bytes — including hook-injected startup boilerplate, which routinely misfiled sessions (and misleads grep-based forensics the same way). The namer now prefers the transcript's own `cwd` signal, excludes attachment/boilerplate records, claims an existing store slug when one matches, and only mints a new slug above an evidence threshold (else `auto`, with confidence + candidates recorded in the card for later re-filing).
+- **Raw archive truncation direction**: the 80K cap kept the head and cut the tail — exactly where decisions and next-steps live. Now head ~20K + tail ~60K, byte-accurate: the old bytes-vs-UTF16 comparison also duplicated small CJK sessions wholesale, and hard byte cuts could split multi-byte characters (shared UTF-8-safe truncation helper).
+- **Test-suite pollution of the real sync-error log**: `logSyncError` hardcoded `os.homedir()` and bypassed `getRoot()`, so store-scoped test suites wrote their failures into the real user log (50 of 51 recent entries were fixtures). It now respects the same root resolution as the rest of the store.
+- **Accidental raw indexing + verbatim collision**: `journalDirs(includeArchive)` no longer descends into `archive/raw/` (rollup archives unchanged), and drill-down verbatim keys gained an explicit `archive` kind so raw dumps stop colliding with `${date}--` journal filenames.
+- **Recency-ledger roll race**: the rolling truncate no longer rewrites the file on every append past the cap (slack window + best-effort lock), closing a rename race that could silently drop a concurrent session's entry.
+
+### Added
+
+- **⏪ Continuity Card**: session_start (full, lite, and CLI hook-start) opens with the most recent sessions across ALL projects — recency-first, cwd-independent — sourced from a new rolling `recent-sessions.jsonl` ledger appended at hook-end.
+- **Unconditional session cards**: hook-end always distills a mechanical card (`<date>--card--<sid>.md`: title, artifacts from Write/Edit tool calls, Linear refs, decisions, next steps) into the normal journal layer — no longer gated on same-day `ar capture`. Cards ride the existing retrieval + consolidation pipelines; extraction is record-aware and excludes `tool_result` echoes (single-sourced in `storage/extraction.ts`).
+- **Explicit archive fallback in recall**: when palace/journal/insight confidence sits below the medium floor, an explicit raw-archive source surfaces `[raw-archive · low-confidence]` excerpts with provenance paths — bounded by the caller's `limit`.
+- **Fail-loud hook health**: hook failures persist to `hook-health.jsonl` + a derived state file; `ar health` prints it, and session start leads with a ⚠️ line when there were failures in the last 24h.
+- **`ar resurrect [query] [--days N] [--json]`**: incident-recovery forensics as one read-only command — finds "dead" sessions across every project slug (cards, raw archives, recency ledger), ranks by recency × keyword, and renders a continuity brief (goal, artifacts, Linear refs, next steps, provenance).
+
 ## [3.4.40] — 2026-07-27
 
 Patch release: the naming-at-scale wave — slug/theme quality, hot-path performance, store self-description, and the hygiene "trash scan".
