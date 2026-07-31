@@ -399,6 +399,130 @@ describe("resurrect (F6)", () => {
     }
   });
 
+  // --- fix3 (2026-07-31): record-aware goal/next-step extraction for raw-archive briefs ---
+  // (orchestrator's real-store read-only acceptance run: ranking/provenance/linear refs were
+  // correct, but brief body fields were garbage — goal picked up a remember()-style
+  // tool_result echo instead of the real user prompt, and "next steps" were raw JSONL
+  // lines themselves (attachment records etc.), not real assistant-authored content.)
+
+  it("fix3: raw-archive goal is the first REAL user-authored text — a tool_result echo (e.g. a remember() confirmation) never wins the goal slot, and next steps come only from the final real assistant text", async () => {
+    const { resurrect } = await import("agent-recall-core");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-resurrect-fix3-goal-"));
+    setRoot(tmp);
+    try {
+      const sid = "fix3-goal-01";
+      writeFile(
+        tmp,
+        `projects/fix3-goal-project/journal/archive/raw/${dateA}--${sid}.md`,
+        [
+          "---",
+          "project: fix3-goal-project",
+          `sessionId: ${sid}`,
+          `savedAt: ${dateA}T10:00:00.000Z`,
+          "source: hook-archive",
+          "---",
+          "",
+          '{"type":"attachment","text":"SessionStart:startup hook success"}',
+          // A tool_result block carries the TOOL's returned data (here: a
+          // remember() confirmation echo), not anything the user/assistant
+          // authored this turn — a naive flat "text":"..." regex scan over
+          // the raw body finds this nested field regardless of nesting and
+          // wrongly treats it as the session's goal (the orchestrator-
+          // observed defect). Its own text also contains "Next steps" to
+          // prove this must never leak into nextSteps either.
+          '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[{"type":"text","text":"Saved → ~/.agent-recall/projects/AgentRecall/palace/rooms/decision/novada-mcp-page.md [new] Find again: recall(\'novada mcp page\'). Next steps recorded internally."}]}]}}',
+          // The REAL first user-authored prompt.
+          '{"type":"user","message":{"content":[{"type":"text","text":"How much can you recall on the novada mcp page redesign before we resume?"}]}}',
+          '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__agent-recall__remember","input":{"content":"Saved decision"}}]}}',
+          // The REAL final assistant text — the only place a next-step line
+          // should ever be sourced from.
+          '{"type":"assistant","message":{"content":[{"type":"text","text":"Summarized the redesign decisions.\\nNext: verify the mcp page copy with the design team tomorrow."}]}}',
+        ].join("\n"),
+      );
+
+      const briefs = resurrect({ days: 30 });
+      const brief = briefs.find((b) => b.sid === sid);
+      assert.ok(brief, "the fix3-goal-project raw-only session must appear");
+
+      assert.equal(
+        brief.goalExcerpt,
+        "How much can you recall on the novada mcp page redesign before we resume?",
+        `goal must be the real user prompt, not a tool_result echo; got ${JSON.stringify(brief.goalExcerpt)}`,
+      );
+      assert.ok(!brief.goalExcerpt.includes("Saved"), brief.goalExcerpt);
+      assert.ok(!brief.goalExcerpt.includes("Find again"), brief.goalExcerpt);
+      assert.ok(brief.title.includes("How much can you recall"), brief.title);
+
+      assert.ok(
+        brief.nextSteps.some((s) => s.includes("verify the mcp page copy")),
+        `the real assistant next-step line must be captured; got ${JSON.stringify(brief.nextSteps)}`,
+      );
+      assert.ok(
+        !brief.nextSteps.some((s) => s.includes("recorded internally")),
+        `a tool_result-embedded 'next steps' phrase must never leak into nextSteps; got ${JSON.stringify(brief.nextSteps)}`,
+      );
+
+      // No brief field may ever contain a raw JSONL record verbatim.
+      for (const field of [brief.title, brief.goalExcerpt, ...brief.nextSteps]) {
+        assert.ok(!field.includes('{"type"'), `a brief field leaked a raw JSONL line: ${JSON.stringify(field)}`);
+        assert.ok(!field.includes('"tool_use_id"'), `a brief field leaked a raw JSONL line: ${JSON.stringify(field)}`);
+      }
+    } finally {
+      resetRoot();
+      setRoot(tmpDir);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fix3: an unparseable/boilerplate-only raw archive omits goal/title rather than falling back to a raw-body slice — and never crashes", async () => {
+    const { resurrect } = await import("agent-recall-core");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-resurrect-fix3-damaged-"));
+    setRoot(tmp);
+    try {
+      const sid = "fix3-damaged-01";
+      writeFile(
+        tmp,
+        `projects/fix3-damaged-project/journal/archive/raw/${dateA}--${sid}.md`,
+        [
+          "---",
+          "project: fix3-damaged-project",
+          `sessionId: ${sid}`,
+          `savedAt: ${dateA}T10:00:00.000Z`,
+          "source: hook-archive",
+          "---",
+          "",
+          '{"type":"attachment","text":"SessionStart:startup hook success"}',
+          // A legacy mid-JSON truncation (head/tail byte-offset sample cut
+          // off mid-record) — the ONLY other line in this fixture, so if it
+          // fails to parse, NOTHING real survives for this session.
+          '{"type":"assistant","message":{"content":[{"type":"text","text":"This line was cut off mid-JSON and has no closing',
+        ].join("\n"),
+      );
+
+      let briefs;
+      assert.doesNotThrow(() => {
+        briefs = resurrect({ days: 30 });
+      });
+      const brief = briefs.find((b) => b.sid === sid);
+      assert.ok(brief, "the damaged-only session must still appear (never dropped/crashed)");
+      assert.equal(
+        brief.goalExcerpt,
+        "",
+        `nothing parseable remains — goal must be OMITTED, not a raw-body slice; got ${JSON.stringify(brief.goalExcerpt)}`,
+      );
+      assert.equal(
+        brief.title,
+        "(untitled session)",
+        `nothing parseable remains — title must fall back to the generic placeholder, not raw JSONL garbage; got ${JSON.stringify(brief.title)}`,
+      );
+      assert.deepEqual(brief.nextSteps, []);
+    } finally {
+      resetRoot();
+      setRoot(tmpDir);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("raw-only session (no card) still excludes hook boilerplate from its title", async () => {
     const { resurrect } = await import("agent-recall-core");
     const briefs = resurrect({ days: 30 });

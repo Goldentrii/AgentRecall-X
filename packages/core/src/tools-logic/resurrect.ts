@@ -52,6 +52,20 @@
  *    `sid`/`date`/`slug`/`slug_confidence`/`source` per design §F3) so this
  *    stays buildable independent of W1's parallel work; only the shared
  *    extraction PRIMITIVES are imported, not the card build/write path.
+ *
+ * fix3 (2026-07-31 — round 2 of the same root-cause consolidation): fix2
+ * covered artifacts/Linear-refs/next-step-line-cosmetics; a real-store
+ * read-only acceptance run then found title/goalExcerpt AND the actual
+ * next-step VALUES for Source 2 were still derived by flat TEXT-level
+ * scanning of the raw JSONL body (a global `"text":"..."` regex for the
+ * goal; a per-line `NEXT_STEP_LINE_RE` grep over the whole raw body for
+ * next-steps) — the exact same class of bug fix2 fixed for artifacts/refs,
+ * just not yet extended to these two fields. Both now go through the SAME
+ * shared, record-based reduction session-card.ts uses for its own title
+ * fallback and finalAssistantText: `extractFirstUserTextFromRecords` (goal)
+ * and `extractLinesMatching` over `extractFinalRecordText(..., "assistant")`
+ * (next-steps) — see the Source 2 loop below for the full rationale and the
+ * "empty beats garbage" fallback rule this closes.
  */
 
 import * as fs from "node:fs";
@@ -59,6 +73,7 @@ import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { archiveRawDir, journalDir, projectsRootDir } from "../storage/paths.js";
 import { parseMemoryFile } from "../supabase/sync.js";
+import { truncateUtf8Bytes } from "../storage/fs-utils.js";
 import {
   NEXT_STEP_LINE_RE,
   parseJsonlLenient,
@@ -67,6 +82,8 @@ import {
   extractArtifactPathsFromText,
   extractLinearRefsFromText,
   extractLinesMatching,
+  extractFirstUserTextFromRecords,
+  extractFinalRecordText,
   unescapeJsonString,
 } from "../storage/extraction.js";
 
@@ -111,6 +128,16 @@ const MAX_NEXT_STEPS = 3;
 const MIN_PROSE_LEN = 20; // shorter "text" blocks are almost never real content
 const MAX_PROSE_LEN = 1500; // longer blocks are almost always a hook/system dump
 const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * fix3 (2026-07-31): title/goal byte caps for Source 2's record-aware
+ * extraction (first real user-authored text) — UTF-8-safe via the shared
+ * `truncateUtf8Bytes` helper, never a raw `.slice()` on JS char count, which
+ * can split a surrogate pair. RAW_TITLE_BYTE_CAP matches
+ * `extractTitleAndGoal`'s pre-existing markdown-heading title cap (160) for
+ * continuity across sources.
+ */
+const RAW_GOAL_BYTE_CAP = 200;
+const RAW_TITLE_BYTE_CAP = 160;
 
 const BOILERPLATE_MARKERS = [
   "system-reminder",
@@ -415,17 +442,45 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       const entry = getOrCreate(merged, slug, sid);
       if (!entry.date) entry.date = fileDate;
       entry.ts = Math.max(entry.ts, fileTs);
-      const { title, goalExcerpt } = extractTitleAndGoal(content);
-      if (!entry.title) entry.title = title;
-      if (!entry.goalExcerpt) entry.goalExcerpt = goalExcerpt;
 
       // Raw archive bodies embed near-verbatim JSONL transcript lines after
       // a frontmatter block — the SAME shape session-card.ts's rawHead/
-      // rawTail parses — so artifacts/linearRefs use the shared RECORD-based
-      // extractors (M9-protected: a tool_result-embedded ref cannot leak
-      // here). next-step lines stay text-based (no "final assistant text"
-      // reduction step exists for a raw dump; a per-line grep over the whole
-      // body is the same coarse, lossy signal this source always used).
+      // rawTail parses — so title/goal/artifacts/linearRefs/next-steps ALL
+      // use the shared RECORD-based extractors (M9-protected: a
+      // tool_result-embedded ref/echo cannot leak into any of them). Parsed
+      // ONCE and reused below — no separate per-field re-parse.
+      //
+      // fix3 (2026-07-31 — root-cause consolidation, round 2): title/goal
+      // and next-steps used to be derived by TEXT-level scanning of `content`
+      // itself (a flat `"text":"..."` regex scan for the goal, a per-line
+      // `NEXT_STEP_LINE_RE` grep over the raw JSONL for next-steps) — neither
+      // is record-aware, so (a) a `tool_result` block's nested text (e.g. a
+      // `remember()` call's own "Saved → ... Find again: recall(...)" echo)
+      // could win the flat regex scan and be reported AS the session's goal,
+      // and (b) a whole raw JSONL LINE containing the substring "next"/"待"
+      // anywhere inside an embedded JSON blob (attachment record, tool_use
+      // input, tool_result echo, system-reminder text, ...) was pushed
+      // VERBATIM as a "next step" (real-store acceptance run: rendered
+      // briefs showed raw `{"parentUuid":...}` records in this field). Both
+      // are now derived the SAME way session-card.ts derives its own
+      // title-fallback / finalAssistantText: `extractFirstUserTextFromRecords`
+      // (first real user-authored text; a `tool_result` block never
+      // qualifies — see that function's doc) for the goal, and
+      // `extractLinesMatching` run over ONLY `extractFinalRecordText(...,
+      // "assistant")`'s real text — never over raw `content` — for next
+      // steps, so a next-step line can only ever be something the assistant
+      // itself actually said.
+      //
+      // "Empty beats garbage" (Worker Done-Definition-adjacent rule stated
+      // explicitly for this fix): when nothing real parses at all — every
+      // line boilerplate/system-text/tool_result-only, or truncated
+      // mid-JSON (see the PRE-EXISTING recall-cost tradeoff note below) —
+      // `extractFirstUserTextFromRecords` returns null and title/goalExcerpt
+      // are left UNSET for this source (never a fallback slice of the raw
+      // frontmatter+JSONL body, which is exactly the garbage this fix
+      // removes). The per-project fallback to "(untitled session)" /
+      // goalExcerpt:"" at brief-build time (below) already handles an
+      // entirely-unset field.
       //
       // Known, PRE-EXISTING recall-cost tradeoff (not introduced by this
       // fix, only extended to this call site): archive-write.ts writes the
@@ -434,18 +489,29 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       // not a line-boundary-safe one — the last head line / first tail line
       // can be truncated mid-JSON-object. `parseJsonlLenient` requires a
       // whole line to `JSON.parse` and silently drops one that doesn't, so
-      // a `file_path`/Linear-ref sitting in exactly that truncated boundary
-      // line is missed here, whereas the OLD flat-regex scan (which pattern-
-      // matched substrings, not whole records) could sometimes still catch
-      // it. session-card.ts's own rawHead/rawTail parsing already accepted
-      // this exact tradeoff; this fix makes resurrect.ts consistent with it
-      // rather than introducing a new one.
+      // a `file_path`/Linear-ref/goal/next-step sitting in exactly that
+      // truncated boundary line is missed here, whereas the OLD flat-regex
+      // scan (which pattern-matched substrings, not whole records) could
+      // sometimes still catch it — at the cost of the garbage this fix
+      // removes. session-card.ts's own rawHead/rawTail parsing already
+      // accepted this exact tradeoff; this fix keeps resurrect.ts consistent
+      // with it rather than introducing a new one.
       const records = parseJsonlLenient(content);
+
+      const firstUserText = extractFirstUserTextFromRecords(records);
+      if (firstUserText) {
+        const clipped = firstUserText.replace(/\s+/g, " ").trim();
+        if (!entry.title) entry.title = truncateUtf8Bytes(clipped, RAW_TITLE_BYTE_CAP);
+        if (!entry.goalExcerpt) entry.goalExcerpt = truncateUtf8Bytes(clipped, RAW_GOAL_BYTE_CAP);
+      }
+
       for (const a of extractArtifactPathsFromRecords(records, MAX_ARTIFACTS)) entry.artifacts.add(a);
       for (const r of extractLinearRefsFromRecords(records, MAX_LINEAR_REFS)) entry.linearRefs.add(r);
+
+      const finalAssistantText = extractFinalRecordText(records, "assistant") ?? "";
       entry.nextSteps = dedupPushAll(
         entry.nextSteps,
-        extractLinesMatching(content, NEXT_STEP_LINE_RE, MAX_NEXT_STEPS),
+        extractLinesMatching(finalAssistantText, NEXT_STEP_LINE_RE, MAX_NEXT_STEPS),
         MAX_NEXT_STEPS,
       );
       entry.provenance.add(filePath);

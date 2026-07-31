@@ -29,11 +29,11 @@ import {
   DECISION_LINE_RE,
   NEXT_STEP_LINE_RE,
   parseJsonlLenient,
-  isBoilerplateRecord,
-  textFromContent,
   extractArtifactPathsFromRecords,
   extractLinearRefsFromRecords,
   extractLinesMatching,
+  extractFirstUserTextFromRecords,
+  extractFinalRecordText,
 } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
@@ -95,26 +95,15 @@ const SLUG_CANDIDATES_CAP = 5;
 // tools-logic/resurrect.ts. See that module for the "TOW2-357" digit-prefix
 // rationale previously documented inline here.
 
-const SYSTEM_PREFIXES = [
-  /^dangerously-skip/i,
-  /^<local-command/,
-  /^<command-name/,
-  /^<command-message/,
-  /^<command-args/,
-  /^<system-reminder/,
-  /^<user-prompt-submit/,
-];
-
 // ---------------------------------------------------------------------------
-// Lenient JSONL parsing, boilerplate/content-block helpers: imported from
-// ./extraction.ts (fix2, 2026-07-31) — single source shared with
-// tools-logic/resurrect.ts.
+// Lenient JSONL parsing, boilerplate/content-block/system-text helpers:
+// imported from ./extraction.ts (fix2 + fix3, 2026-07-31) — single source
+// shared with tools-logic/resurrect.ts. SYSTEM_PREFIXES/isSystemText/
+// extractFirstUserText/extractFinal used to be private copies here; they
+// are now extraction.ts's isSystemText/extractFirstUserTextFromRecords/
+// extractFinalRecordText (identical logic, same minLen defaults: 10 for the
+// first-user-text fallback, 1 for the final-record reduction below).
 // ---------------------------------------------------------------------------
-
-function isSystemText(text: string): boolean {
-  const t = text.trimStart();
-  return SYSTEM_PREFIXES.some((re) => re.test(t));
-}
 
 /**
  * Truncate to at most maxBytes, UTF-8 safe (never splits mid multi-byte char
@@ -143,37 +132,12 @@ function extractAiTitle(lines: Record<string, unknown>[]): string | null {
   return null;
 }
 
-/** First real (non-boilerplate, non-system) user message, for the title fallback. */
-function extractFirstUserText(lines: Record<string, unknown>[]): string | null {
-  for (const rec of lines) {
-    if (isBoilerplateRecord(rec)) continue;
-    if (rec.type !== "user") continue;
-    const msg = rec.message as Record<string, unknown> | undefined;
-    const text = textFromContent(msg?.content);
-    if (text.length < 10 || isSystemText(text)) continue;
-    return text;
-  }
-  return null;
-}
-
-/** Last real (non-boilerplate) user / assistant-with-text record, scanning from the end. */
-function extractFinal(lines: Record<string, unknown>[], type: "user" | "assistant"): string | null {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const rec = lines[i];
-    if (isBoilerplateRecord(rec)) continue;
-    if (rec.type !== type) continue;
-    const msg = rec.message as Record<string, unknown> | undefined;
-    const text = textFromContent(msg?.content);
-    if (!text || text.length < 1 || isSystemText(text)) continue;
-    return text;
-  }
-  return null;
-}
-
-// extractArtifacts / extractLinearRefs (M9-fixed) / extractLinesMatching now
-// live in ./extraction.ts as extractArtifactPathsFromRecords /
-// extractLinearRefsFromRecords / extractLinesMatching — imported above.
-// Single source shared with tools-logic/resurrect.ts (fix2, 2026-07-31).
+// extractFirstUserText / extractFinal / extractArtifacts / extractLinearRefs
+// (M9-fixed) / extractLinesMatching now live in ./extraction.ts as
+// extractFirstUserTextFromRecords / extractFinalRecordText /
+// extractArtifactPathsFromRecords / extractLinearRefsFromRecords /
+// extractLinesMatching — imported above. Single source shared with
+// tools-logic/resurrect.ts (fix2 + fix3, 2026-07-31).
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -196,15 +160,15 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
 
     const title = (
       extractAiTitle(allLines) ??
-      extractFirstUserText(allLines) ??
+      extractFirstUserTextFromRecords(allLines) ??
       "(untitled session)"
     ).slice(0, TITLE_CHAR_CAP);
 
     const artifacts = extractArtifactPathsFromRecords(allLines, ARTIFACTS_CAP);
     const linearRefs = extractLinearRefsFromRecords(allLines, LINEAR_REFS_CAP);
 
-    const finalAssistantText = extractFinal(allLines, "assistant") ?? "";
-    const finalUserText = extractFinal(allLines, "user") ?? "";
+    const finalAssistantText = extractFinalRecordText(allLines, "assistant") ?? "";
+    const finalUserText = extractFinalRecordText(allLines, "user") ?? "";
 
     const decisions = extractLinesMatching(finalAssistantText, DECISION_LINE_RE, DECISIONS_CAP);
     const nextStep = extractLinesMatching(finalAssistantText, NEXT_STEP_LINE_RE, NEXT_STEP_CAP);

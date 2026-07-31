@@ -212,6 +212,83 @@ export function extractLinearRefsFromRecords(lines: Record<string, unknown>[], c
 }
 
 // ---------------------------------------------------------------------------
+// System/injected-text exclusion + record-based "real text" reduction
+// ---------------------------------------------------------------------------
+// fix3 (2026-07-31, continuity wave): promoted from session-card.ts's private
+// isSystemText/extractFirstUserText/extractFinal (identical logic, same
+// minLen defaults) to a shared home here — resurrect.ts's raw-archive Source
+// 2 needs the SAME record-aware "first real user text" / "final real
+// assistant text" reduction session-card.ts already uses for its title
+// fallback and finalAssistantText/finalUserText, and reimplementing it a
+// second time (as a flat text-level regex scan, which is exactly what
+// resurrect.ts used to do — see the "additional findings" this fix closes)
+// is the precise class of bug fix2's consolidation already killed once.
+
+/** Harness/system-injected text markers a real user/assistant turn never authors verbatim (slash-command scaffolding, `<system-reminder>` blocks, etc.). */
+const SYSTEM_TEXT_PREFIXES = [
+  /^dangerously-skip/i,
+  /^<local-command/,
+  /^<command-name/,
+  /^<command-message/,
+  /^<command-args/,
+  /^<system-reminder/,
+  /^<user-prompt-submit/,
+];
+
+/** True when `text` opens with one of `SYSTEM_TEXT_PREFIXES` — never real user/assistant content. */
+export function isSystemText(text: string): boolean {
+  const t = text.trimStart();
+  return SYSTEM_TEXT_PREFIXES.some((re) => re.test(t));
+}
+
+/**
+ * First real (non-boilerplate-record, non-system-text) user message text
+ * from parsed transcript records, scanning forward. Record- and content-
+ * block-aware via `textFromContent`: a `tool_result` content block (a
+ * tool's RETURNED data — e.g. a `remember()` call's own confirmation echo,
+ * "Saved → ... Find again: recall(...)") is never returned here, because
+ * `textFromContent` only surfaces a `type:"text"` block, never a sibling
+ * `tool_result` block in the same content array. This is the "goal" side of
+ * M9's tool_result exclusion, generalized from Linear-ref scanning to
+ * free-text goal extraction.
+ */
+export function extractFirstUserTextFromRecords(records: Record<string, unknown>[], minLen = 10): string | null {
+  for (const rec of records) {
+    if (isBoilerplateRecord(rec)) continue;
+    if (rec.type !== "user") continue;
+    const msg = rec.message as Record<string, unknown> | undefined;
+    const text = textFromContent(msg?.content);
+    if (text.length < minLen || isSystemText(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+/**
+ * Last real (non-boilerplate-record, non-system-text) record of `type`,
+ * scanning from the end of `records`. Shared by session-card.ts's
+ * finalAssistantText/finalUserText reduction and resurrect.ts's raw-archive
+ * next-step derivation — both need "the final thing a user/assistant
+ * actually said", never a raw JSONL line matched by substring.
+ */
+export function extractFinalRecordText(
+  records: Record<string, unknown>[],
+  type: "user" | "assistant",
+  minLen = 1,
+): string | null {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i];
+    if (isBoilerplateRecord(rec)) continue;
+    if (rec.type !== type) continue;
+    const msg = rec.message as Record<string, unknown> | undefined;
+    const text = textFromContent(msg?.content);
+    if (!text || text.length < minLen || isSystemText(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Text-based extraction (flat prose/markdown — no record structure available)
 // ---------------------------------------------------------------------------
 
