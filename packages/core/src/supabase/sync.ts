@@ -1,7 +1,6 @@
 // packages/core/src/supabase/sync.ts
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { getSupabaseClient } from "./client.js";
 import { readSupabaseConfig } from "./config.js";
@@ -9,6 +8,7 @@ import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js"
 import { classifyStore } from "../storage/classification.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { exportCorrections } from "../tools-logic/export-corrections.js";
+import { getRoot } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Utilities (exported for testing)
@@ -77,7 +77,18 @@ export function deriveSlug(filePath: string): string {
 // ---------------------------------------------------------------------------
 
 export function logSyncError(message: string): void {
-  const logPath = path.join(os.homedir(), ".agent-recall", "sync-errors.log");
+  // Root-fix (2026-07-31, continuity wave F5): this used to hardcode
+  // os.homedir() directly, bypassing getRoot()'s AGENT_RECALL_ROOT/setRoot()
+  // override — the same resolver every other storage module (paths.ts,
+  // archive-write.ts, lifecycle-telemetry.ts) uses. Test suites that scope
+  // storage to a tmp dir via setRoot()/AGENT_RECALL_ROOT (not a HOME
+  // override) had every doSync() failure leak into the REAL user's
+  // ~/.agent-recall/sync-errors.log — confirmed empirically as test
+  // pollution (50/51 real-log entries were /var/folders/.../ar-*-test
+  // fixture paths). getRoot() still falls back to os.homedir() when no
+  // override is set, so this is a pure superset fix: same default behavior,
+  // now override-aware.
+  const logPath = path.join(getRoot(), "sync-errors.log");
   const timestamp = new Date().toISOString();
   const line = `${timestamp} ${message}\n`;
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
