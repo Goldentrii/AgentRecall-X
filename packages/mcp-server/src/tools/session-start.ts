@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { sessionStart, sessionStartLite, type SessionStartResult } from "agent-recall-core";
+import { sessionStart, sessionStartLite, type SessionStartResult, type SessionStartLiteResult } from "agent-recall-core";
 
 /** Truncate to nearest word boundary */
 function trunc(s: string, n: number): string {
@@ -10,7 +10,8 @@ function trunc(s: string, n: number): string {
   return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
 }
 
-function formatTerse(result: SessionStartResult): string {
+/** Exported for unit testing (F2 continuity wave, 2026-07-31) — pure formatter, no I/O. */
+export function formatTerse(result: SessionStartResult): string {
   const lines: string[] = [];
 
   // ── Dream cron failure banner (red, top priority) ─────────────────────
@@ -36,6 +37,22 @@ function formatTerse(result: SessionStartResult): string {
     const pct = Math.round(precision * 100);
     const recurrStr = recurred > 0 ? `, ${recurred} recurred` : "";
     lines.push(`🎯 Alignment: ${pct}% corrections heeded (${heeded}/${retrieved}${recurrStr})`);
+    lines.push("");
+  }
+
+  // ── Continuity (F2, continuity wave 2026-07-31) ──────────────────────────
+  // Cross-project RECENCY card — top of the substantive content, after the
+  // red-alert/integrity banners above (dream_health, store_doctor, alignment
+  // stay first-priority by design) but before the per-project header, so
+  // "what was I doing, anywhere, most recently" is the first thing an agent
+  // reads. Absent entirely when the recency index has nothing to show (no
+  // noise on a fresh/solo-project store).
+  if (result.continuity && result.continuity.length > 0) {
+    lines.push("⏪ Continuity (recent work, other projects included):");
+    for (const c of result.continuity) {
+      const next = c.next_step ? ` → next: ${trunc(c.next_step, 80)}` : "";
+      lines.push(`  - ${c.ago} [${c.slug}] ${trunc(c.title, 100)}${next}`);
+    }
     lines.push("");
   }
 
@@ -195,6 +212,25 @@ function formatVerbose(result: SessionStartResult): string {
   return lines.join("\n");
 }
 
+/**
+ * Lite-mode text composition, extracted (F2 continuity wave, 2026-07-31) so
+ * the "⏪ {continuity}" single-line placement can be unit tested without
+ * spawning the MCP server subprocess — mirrors the formatTerse/formatVerbose
+ * extraction convention already used in this file.
+ */
+export function formatLite(lite: SessionStartLiteResult): string {
+  return [
+    `AgentRecall (lite) — ${lite.project}   sessions: ${lite.total_sessions}   last: ${lite.last_session_date ?? "—"}`,
+    lite.continuity ? `⏪ ${lite.continuity}` : "",
+    lite.identity_oneliner ? `Intention: ${lite.identity_oneliner}` : "",
+    lite.active_phase ? `▶ Active phase: ${lite.active_phase}${lite.active_phase_goal ? ` — ${lite.active_phase_goal}` : ""}` : "",
+    lite.open_corrections_p0_count > 0 ? `⛔ ${lite.open_corrections_p0_count} P0 corrections active — call recall() if working on related code.` : "",
+    lite.total_skills > 0 ? `🛠  ${lite.total_skills} skills stored — use ar skill recall <intent> via CLI before non-trivial tasks.` : "",
+    "",
+    lite.hint,
+  ].filter(Boolean).join("\n");
+}
+
 export function register(server: McpServer): void {
   server.registerTool("session_start", {
     title: "Start Session",
@@ -208,15 +244,7 @@ export function register(server: McpServer): void {
   }, async ({ project, context, verbose, mode }) => {
     if (mode === "lite") {
       const lite = await sessionStartLite({ project });
-      const text = [
-        `AgentRecall (lite) — ${lite.project}   sessions: ${lite.total_sessions}   last: ${lite.last_session_date ?? "—"}`,
-        lite.identity_oneliner ? `Intention: ${lite.identity_oneliner}` : "",
-        lite.active_phase ? `▶ Active phase: ${lite.active_phase}${lite.active_phase_goal ? ` — ${lite.active_phase_goal}` : ""}` : "",
-        lite.open_corrections_p0_count > 0 ? `⛔ ${lite.open_corrections_p0_count} P0 corrections active — call recall() if working on related code.` : "",
-        lite.total_skills > 0 ? `🛠  ${lite.total_skills} skills stored — use ar skill recall <intent> via CLI before non-trivial tasks.` : "",
-        "",
-        lite.hint,
-      ].filter(Boolean).join("\n");
+      const text = formatLite(lite);
       return { content: [{ type: "text" as const, text }] };
     }
     const result = await sessionStart({ project, context });

@@ -649,3 +649,7 @@ export type { ReflectInput, ReflectResult, ReflectInputBundle } from "./tools-lo
 // Helpers — activity feed
 export { buildRecentActivity } from "./helpers/activity-feed.js";
 export type { ActivityEvent } from "./helpers/activity-feed.js";
+
+// F2 — cross-project recency index (continuity wave, 2026-07-31)
+export { appendRecentSession, readRecentSessions, formatAgo } from "./storage/recency-index.js";
+export type { RecentSessionEntry } from "./storage/recency-index.js";
