@@ -19,7 +19,13 @@ function label(score: number, scale: ConfidenceScale): { confidence: string; cal
 
 interface RecallResultItem {
   id: string;
-  source: "palace" | "journal" | "insight";
+  // Structural duplicate of SmartRecallResultItem["source"] (see the file-header
+  // comment on why this can't just import it). "archive" (F4, 2026-07-31) is
+  // included here ONLY to stay assignable from localRecallSearch()'s return
+  // type below — localRecallSearch itself never actually produces "archive"
+  // items; that source is appended separately by smartRecall(), never by the
+  // local fallback this file calls into.
+  source: "palace" | "journal" | "insight" | "archive";
   title: string;
   excerpt: string;
   score: number;

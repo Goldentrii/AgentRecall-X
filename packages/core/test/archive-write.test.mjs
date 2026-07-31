@@ -115,18 +115,36 @@ describe("archiveSession (Wave 2)", () => {
     assert.ok(!fs.existsSync(path.join(tmpDir, "etc", "passwd")));
   });
 
-  it("journalDirs(includeArchive=true) reaches journal/archive/raw; default does not", async () => {
+  it("journalDirs(includeArchive=true) does NOT reach journal/archive/raw (F4, 2026-07-31)", async () => {
+    // F4 (continuity wave): journal/archive/raw is an unstructured, judgment-free
+    // transcript dump whose filenames (`${date}--${sessionId}.md`) collide with
+    // the `${date}--` prefix convention smart-named journal files use. Letting
+    // journalDirs(..., true) descend into it made every includeArchive=true
+    // caller (journalSearch, readJournalFile's backlink resolution) an
+    // accidental, unlabeled 4th journal source — see journalDirs' doc comment
+    // in storage/paths.ts. It is REPLACED by smartRecall's explicit,
+    // confidence-gated "archive" source plus drill-down's `kind:"archive"`
+    // branch — both of which read via `archiveRawDir()` directly, never via
+    // journalDirs(). This assertion is inverted from its pre-F4 form on
+    // purpose: raw must now be reachable via NEITHER includeArchive=true NOR
+    // the default (counting) path.
     const { archiveSession, journalDirs } = await import("agent-recall-core");
     archiveSession({
       project: "demo-app",
       sessionId: "12121212-3434-5656-7878-909090909090",
       rawTranscript: "body",
     });
-    const withArchive = journalDirs("demo-app", true);
     const rawDir = path.join(tmpDir, "projects", "demo-app", "journal", "archive", "raw");
+
+    const withArchive = journalDirs("demo-app", true);
     assert.ok(
-      withArchive.some((d) => d === rawDir),
-      `includeArchive=true must include ${rawDir}; got ${JSON.stringify(withArchive)}`
+      !withArchive.some((d) => d === rawDir),
+      `includeArchive=true must NOT include ${rawDir} (F4); got ${JSON.stringify(withArchive)}`
+    );
+    // The rollup archive/ dir itself is still reached (unchanged behavior).
+    assert.ok(
+      withArchive.some((d) => d === path.join(tmpDir, "projects", "demo-app", "journal", "archive")),
+      "includeArchive=true must still include the rollup archive/ dir"
     );
 
     const defaultDirs = journalDirs("demo-app");
