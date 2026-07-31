@@ -16,6 +16,7 @@ import { readActiveCorrections } from "../storage/corrections.js";
 import { listMilestones } from "../palace/pipeline.js";
 import { listSkills } from "../palace/skills.js";
 import { runStoreDoctor, storeDoctorBanner } from "./store-doctor.js";
+import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
 
 export interface SessionStartLiteInput {
   project?: string;
@@ -32,6 +33,12 @@ export interface SessionStartLiteResult {
   total_skills: number;
   /** Store-integrity one-liner; null (and silent) when the store is healthy. */
   store_doctor: string | null;
+  /**
+   * F2 (continuity wave 2026-07-31) — single-line cross-project recency
+   * pointer: the most recent entry across ANY project's recency ledger,
+   * rendered as one line. Null (and silent) when the ledger is empty.
+   */
+  continuity: string | null;
   hint: string;
 }
 
@@ -64,6 +71,19 @@ export async function sessionStartLite(input: SessionStartLiteInput): Promise<Se
     storeDoctorLine = null;
   }
 
+  // Continuity — single-line cross-project recency pointer (F2). Best-effort:
+  // a missing/corrupt ledger must never break the lite briefing.
+  let continuityLine: string | null = null;
+  try {
+    const [top] = readRecentSessions(1);
+    if (top) {
+      const next = top.next_step ? ` → next: ${top.next_step.slice(0, 100)}` : "";
+      continuityLine = `${formatAgo(top.ts)} [${top.slug}] ${top.title.slice(0, 120)}${next}`;
+    }
+  } catch {
+    continuityLine = null;
+  }
+
   return {
     project: slug,
     identity_oneliner: identityLine,
@@ -74,6 +94,7 @@ export async function sessionStartLite(input: SessionStartLiteInput): Promise<Se
     total_sessions: journals.length,
     total_skills: skills.length,
     store_doctor: storeDoctorLine,
+    continuity: continuityLine,
     hint:
       "Lite mode. Call recall(query) for memories. " +
       "Call session_start without mode='lite' for the full briefing.",

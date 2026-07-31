@@ -22,6 +22,7 @@ import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
+import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSupabaseConfig } from "../supabase/config.js";
@@ -96,6 +97,7 @@ function toSlimCorrection(c: CorrectionRecord): SlimCorrection {
  *   recent_captures: 550  (~140 tokens)
  *   recent briefs:   300+250 raw chars (today+yesterday, per-field caps)
  *   behavior_rules:  per-field caps only (when≤100, do≤120 raw chars)
+ *   continuity:      500  (~125 tokens) — F2 continuity wave (2026-07-31)
  *   other sections:  unbounded (already small or absent-when-empty)
  *
  * Total: ~6000 serialized chars → ~1500 tokens (target: ≤1500 tokens median).
@@ -115,6 +117,9 @@ const SECTION_CHAR_LIMITS = {
   captures_total: 550,       // total captures budget (JSON chars)
   rule_when: 100,            // behavior rule when (raw chars)
   rule_do: 120,              // behavior rule do (raw chars)
+  continuity_title: 160,     // per continuity entry title (raw chars)
+  continuity_next_step: 160, // per continuity entry next_step (raw chars, only when present)
+  continuity_total: 500,     // total serialized continuity budget (JSON chars)
 } as const;
 
 /** Apply per-section char limits to slim corrections, respecting P0 priority. */
@@ -194,6 +199,18 @@ export interface SessionStartResult {
   insights: Array<{ title: string; confirmed: number; severity: string; trend?: string }>;
   active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }>;
   cross_project: Array<{ title: string; from_project: string; relevance: number }>;
+  /**
+   * Wave 2 (F2, continuity wave 2026-07-31) — cross-project RECENCY card.
+   * Top 3 most-recent entries from the global recent-sessions ledger
+   * (`recency-index.ts`), regardless of which project they were filed
+   * under. Deliberately NOT relevance-scored (that's `cross_project`
+   * above, via `recallInsights`) — pure "what happened most recently,
+   * anywhere", so a session that got misfiled under the wrong slug (the F1
+   * incident) is still visible from every other project's cold start.
+   * OMITTED (undefined) when the recency index is empty or unavailable —
+   * absent from JSON, no noise on a fresh/solo-project store.
+   */
+  continuity?: Array<{ ago: string; slug: string; title: string; next_step?: string }>;
   recent: { today: string | null; yesterday: string | null; older_count: number };
   /**
    * Capture-log entries written by `journal_capture` that have NOT yet been
@@ -453,6 +470,26 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     from_project: (i.projects?.[0] ?? (i.source ?? "unknown").replace(/\s+\d{4}-\d{2}-\d{2}.*$/, "")).slice(0, 30),
     relevance: Math.round((i.relevance ?? 0) * 100) / 100,
   }));
+
+  // 4b. Continuity — cross-project recency card (F2, continuity wave 2026-07-31).
+  // Pure recency, no relevance scoring (see `cross_project` above for that) —
+  // reads a project-agnostic ledger so recent work filed under ANOTHER slug
+  // stays visible even when THIS project has no journal entries of its own
+  // yet. Best-effort: a missing/corrupt index must never break orientation.
+  let continuity: SessionStartResult["continuity"];
+  try {
+    const recentSessions = readRecentSessions(3);
+    if (recentSessions.length > 0) {
+      continuity = recentSessions.map((s) => ({
+        ago: formatAgo(s.ts),
+        slug: s.slug,
+        title: sliceAtWord(s.title, SECTION_CHAR_LIMITS.continuity_title),
+        next_step: s.next_step ? sliceAtWord(s.next_step, SECTION_CHAR_LIMITS.continuity_next_step) : undefined,
+      }));
+    }
+  } catch {
+    continuity = undefined;
+  }
 
   // 5. Recent journal briefs — today + yesterday only
   const dirs = journalDirs(slug);
@@ -869,6 +906,25 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     return out;
   })();
 
+  // continuity: apply total JSON-serialized budget (per-field raw caps
+  // already applied above, at construction time). Omit the whole field
+  // (undefined) when nothing fits or the source array was empty — the
+  // established "absent-when-empty" contract shared by predicted_risks /
+  // mirror_available / ab_arm above.
+  const continuityBudgeted: SessionStartResult["continuity"] = continuity
+    ? (() => {
+        let budget = SECTION_CHAR_LIMITS.continuity_total;
+        const out: NonNullable<SessionStartResult["continuity"]> = [];
+        for (const c of continuity) {
+          const size = JSON.stringify(c).length;
+          if (budget - size < 0) break;
+          out.push(c);
+          budget -= size;
+        }
+        return out.length > 0 ? out : undefined;
+      })()
+    : undefined;
+
   // behavior_rules: apply per-field char limits to when/do.
   const rulesBudgeted = behaviorRules.map((r) => ({
     ...r,
@@ -882,6 +938,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     insights: insightsBudgeted,
     active_rooms: roomsBudgeted,
     cross_project,
+    continuity: continuityBudgeted,
     recent: { today: todayBrief, yesterday: yesterdayBrief, older_count: olderCount },
     recent_captures: capturesBudgeted,
     watch_for,

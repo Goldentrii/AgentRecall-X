@@ -1,0 +1,154 @@
+/**
+ * Cross-project recency index (F2, continuity wave 2026-07-31).
+ *
+ * A single, project-agnostic JSONL ledger of recent sessions. Written by the
+ * CLI hook-end path (Wave 2 integration wires the actual `appendRecentSession`
+ * call site — out of scope here, see packages/cli/src/index.ts) and read at
+ * `session_start` to render a "Continuity" card: what was worked on most
+ * recently, ACROSS projects, ranked by pure recency. This is deliberately
+ * NOT relevance-scored — `recallInsights` (session-start.ts's `cross_project`
+ * field) already covers semantic matching; this module's only job is "what
+ * happened most recently, anywhere".
+ *
+ * Root incident (2026-07-31 continuity-wave design doc, fact 6): session_start
+ * had zero recency signal outside the CURRENT project's own journal — a long
+ * work session captured under one slug was completely invisible from every
+ * OTHER slug's session_start next time around. This index is deliberately
+ * GLOBAL (stored directly under the AR root, not under projects/<slug>/) so
+ * it survives slug fragmentation (the F1 misfiling bug) by design: even when
+ * a session lands under the wrong/unexpected slug, its continuity entry is
+ * still visible from ANY project's cold start, because the reader never
+ * filters by the current slug.
+ *
+ * Storage: `<AR_ROOT>/recent-sessions.jsonl`, one JSON object per line,
+ * append-only, rolling-truncated at 500 lines — same append+roll shape as
+ * `logSyncError` (packages/core/src/supabase/sync.ts:79-94), except the path
+ * here resolves via `getRoot()` (respects `setRoot()` / `AGENT_RECALL_ROOT`)
+ * instead of sync.ts's hardcoded `os.homedir()`. That hardcoding is a KNOWN,
+ * separately-tracked test-pollution bug (design doc fact 8, fixed under F5) —
+ * this module is written correctly from the start rather than copying it.
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { getRoot } from "../types.js";
+
+const RECENCY_FILENAME = "recent-sessions.jsonl";
+const MAX_LINES = 500;
+
+export interface RecentSessionEntry {
+  /** ISO-8601 timestamp of the session (when the entry was appended). */
+  ts: string;
+  /** Claude Code session id. */
+  sid: string;
+  /** Project slug this session was filed under. */
+  slug: string;
+  /** F1 slug-resolution confidence (0 when "auto"/unresolved), if known. */
+  slug_confidence?: number;
+  /** Short session title/summary. */
+  title: string;
+  /** Best-effort next-step text, if one was distilled for this session. */
+  next_step?: string;
+  /** Count of artifacts (files touched) this session, if known. */
+  artifact_count?: number;
+}
+
+function recencyIndexPath(): string {
+  return path.join(getRoot(), RECENCY_FILENAME);
+}
+
+/**
+ * Rolling truncate at MAX_LINES, mirroring `logSyncError`'s pattern
+ * (packages/core/src/supabase/sync.ts:79-94): read back, filter blank
+ * lines, keep only the last MAX_LINES, write to a temp file, then rename
+ * over the original (avoids a reader ever observing a half-written file).
+ */
+function rollIfNeeded(filePath: string): void {
+  const content = fs.readFileSync(filePath, "utf-8");
+  const lines = content.split("\n").filter(Boolean);
+  if (lines.length <= MAX_LINES) return;
+  const trimmed = lines.slice(-MAX_LINES).join("\n") + "\n";
+  const tmpPath = filePath + ".tmp";
+  fs.writeFileSync(tmpPath, trimmed, "utf-8");
+  fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * Append one entry to the recency index.
+ *
+ * Best-effort: any fs failure (permissions, disk full, concurrent-write
+ * race) is swallowed. This ledger is a "nice to have" continuity aid, not a
+ * system of record — a broken write here must never break the caller's hot
+ * path (hook-end / session_end).
+ */
+export function appendRecentSession(entry: RecentSessionEntry): void {
+  try {
+    const filePath = recencyIndexPath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.appendFileSync(filePath, JSON.stringify(entry) + "\n", "utf-8");
+    rollIfNeeded(filePath);
+  } catch {
+    // Best-effort — never throw from an append-only telemetry ledger.
+  }
+}
+
+/**
+ * Read the last `n` entries, newest-first.
+ *
+ * Cross-project by design: this index is not scoped to any one project's
+ * directory (unlike journal/palace storage), so entries written under ANY
+ * slug are returned without filtering. Corrupt/partial lines (e.g. a torn
+ * write from a crash mid-append) are skipped individually rather than
+ * aborting the whole read. Returns `[]` when the index does not exist yet,
+ * when `n <= 0`, or on any read failure — never throws.
+ */
+export function readRecentSessions(n: number): RecentSessionEntry[] {
+  if (n <= 0) return [];
+  try {
+    const filePath = recencyIndexPath();
+    if (!fs.existsSync(filePath)) return [];
+    const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+    const out: RecentSessionEntry[] = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
+      try {
+        const parsed = JSON.parse(lines[i]) as Partial<RecentSessionEntry>;
+        if (parsed && typeof parsed.slug === "string" && typeof parsed.title === "string" && typeof parsed.ts === "string") {
+          out.push(parsed as RecentSessionEntry);
+        }
+      } catch {
+        // Skip a corrupt/partial line rather than aborting the whole read.
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
+
+/**
+ * Render an ISO timestamp as a short relative "ago" string for the
+ * continuity card (e.g. "just now", "12m ago", "3h ago", "2d ago").
+ *
+ * Worker Done-Definition #4 (date logic vs TODAY): a future-dated or
+ * clock-skewed timestamp (client clock drift, a bad manual entry, or a
+ * process crossing a DST boundary) must never render as a nonsensical
+ * negative duration — clamped to "just now" instead. Beyond a week, falls
+ * back to a plain ISO date: a relative "23d ago" stops being useful and an
+ * absolute anchor reads better at that distance.
+ */
+export function formatAgo(ts: string, now: number = Date.now()): string {
+  const then = new Date(ts).getTime();
+  if (Number.isNaN(then)) return "unknown time";
+
+  const diffMs = now - then;
+  if (diffMs < MINUTE_MS) return "just now"; // covers <60s AND any future/skewed timestamp
+  if (diffMs < HOUR_MS) return `${Math.floor(diffMs / MINUTE_MS)}m ago`;
+  if (diffMs < DAY_MS) return `${Math.floor(diffMs / HOUR_MS)}h ago`;
+  if (diffMs < WEEK_MS) return `${Math.floor(diffMs / DAY_MS)}d ago`;
+  return new Date(then).toISOString().slice(0, 10);
+}
