@@ -649,3 +649,7 @@ export type { ReflectInput, ReflectResult, ReflectInputBundle } from "./tools-lo
 // Helpers — activity feed
 export { buildRecentActivity } from "./helpers/activity-feed.js";
 export type { ActivityEvent } from "./helpers/activity-feed.js";
+
+// Continuity wave (2026-07-31) — F3: mechanical session-card distillation
+export { buildSessionCard, writeSessionCard } from "./storage/session-card.js";
+export type { SessionCardMeta, SessionCardInput, SessionCardResult } from "./storage/session-card.js";
