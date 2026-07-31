@@ -657,3 +657,11 @@ export type { SessionCardMeta, SessionCardInput, SessionCardResult } from "./sto
 // F2 — cross-project recency index (continuity wave, 2026-07-31)
 export { appendRecentSession, readRecentSessions, formatAgo } from "./storage/recency-index.js";
 export type { RecentSessionEntry } from "./storage/recency-index.js";
+
+// Continuity wave F5 — fail-loud hook health (2026-07-31)
+export { recordHookFailure, readHookHealth } from "./storage/hook-health.js";
+export type { HookFailureRow, HookHealthState } from "./storage/hook-health.js";
+
+// Continuity wave F6 — `ar resurrect` core: read-only cross-slug dead-session finder (2026-07-31)
+export { resurrect, renderResurrectMarkdown } from "./tools-logic/resurrect.js";
+export type { ContinuityBrief, ResurrectInput } from "./tools-logic/resurrect.js";
