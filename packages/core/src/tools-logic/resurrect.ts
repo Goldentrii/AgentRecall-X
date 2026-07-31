@@ -25,17 +25,33 @@
  * transcript text are exactly what misled the incident's own forensics —
  * hook-injected boilerplate (folder-lint warnings, orchestrator briefs) can
  * contain plausible-looking file paths and ticket IDs unrelated to the
- * session's real content. `extractArtifacts` therefore only trusts a
- * `tool_use.input.file_path` JSON field or a markdown list item as a real
- * artifact path; `extractLinearRefs` prefers refs adjacent to a
- * `mcp__linear__*` tool call before falling back to a plain global scan
- * (kept, at lower trust, purely because this is a recall AID, not a citation
- * of record).
+ * session's real content.
  *
- * This module is NOT the session-card renderer (F3, W1's file) and does not
- * import it — cards are parsed generically here via the documented on-disk
- * shape (frontmatter keys `sid`/`date`/`slug`/`slug_confidence`/`source` per
- * design §F3) so this stays buildable independent of W1's parallel work.
+ * fix2 (2026-07-31 — root-cause consolidation): artifact/Linear-ref/
+ * next-step extraction used to be a SEPARATE, lower-rigor reimplementation
+ * of the logic already fixed (M9's tool_result exclusion) in
+ * storage/session-card.ts — so that fix, and a markdown-heading exclusion,
+ * never reached this module's copies (verifier-report V3 + "additional
+ * findings" #3/#5). Extraction now lives in ONE place,
+ * `../storage/extraction.js`, consumed by BOTH this module and
+ * session-card.ts:
+ *  - Source 2 (raw archive bodies) embeds near-verbatim JSONL transcript
+ *    lines after a frontmatter block — exactly session-card.ts's rawHead/
+ *    rawTail shape — so it is parsed via `parseJsonlLenient` and scanned
+ *    with the SAME record-based, M9-protected extractors session-card.ts
+ *    uses (`extractArtifactPathsFromRecords` / `extractLinearRefsFromRecords`).
+ *    A tool_result-embedded ref genuinely cannot leak here anymore.
+ *  - Source 3 (session-card markdown bodies) has no record structure to
+ *    recover — it is the ALREADY-RENDERED OUTPUT of session-card.ts's own
+ *    M9-protected extractors, so a raw tool_result JSON blob never appears
+ *    in it to begin with; the text-level `extractArtifactPathsFromText` /
+ *    `extractLinearRefsFromText` helpers are the right (and only sensible)
+ *    tool there. This module still does NOT import session-card.ts's
+ *    renderer itself (`buildSessionCard`/`writeSessionCard`) — cards are
+ *    parsed generically via the documented on-disk shape (frontmatter keys
+ *    `sid`/`date`/`slug`/`slug_confidence`/`source` per design §F3) so this
+ *    stays buildable independent of W1's parallel work; only the shared
+ *    extraction PRIMITIVES are imported, not the card build/write path.
  */
 
 import * as fs from "node:fs";
@@ -43,6 +59,16 @@ import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { archiveRawDir, journalDir, projectsRootDir } from "../storage/paths.js";
 import { parseMemoryFile } from "../supabase/sync.js";
+import {
+  NEXT_STEP_LINE_RE,
+  parseJsonlLenient,
+  extractArtifactPathsFromRecords,
+  extractLinearRefsFromRecords,
+  extractArtifactPathsFromText,
+  extractLinearRefsFromText,
+  extractLinesMatching,
+  unescapeJsonString,
+} from "../storage/extraction.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -210,14 +236,8 @@ function readRecentSessions(): RecentSessionEntry[] {
 // ---------------------------------------------------------------------------
 // Text extraction (shared by raw archive bodies and session-card bodies)
 // ---------------------------------------------------------------------------
-
-function unescapeJsonString(s: string): string {
-  try {
-    return JSON.parse(`"${s}"`) as string;
-  } catch {
-    return s;
-  }
-}
+// unescapeJsonString is also used below, imported from ../storage/extraction.js
+// (fix2, 2026-07-31) — single source, not a second local copy.
 
 function looksLikeBoilerplate(text: string): boolean {
   if (text.length > MAX_PROSE_LEN) return true;
@@ -275,83 +295,11 @@ function extractTitleAndGoal(body: string): { title: string; goalExcerpt: string
   return { title: fallback || "(untitled session)", goalExcerpt: fallback };
 }
 
-/**
- * Artifact paths, precision-first (fixture §2's own recommended fix): only
- * trust a path that appears as a `tool_use.input.file_path` JSON value, or as
- * a markdown list item that looks like a path — never a bare path floating
- * in prose/hook-boilerplate text, which is exactly how the incident's own
- * forensics got misled by folder-lint warnings quoting unrelated files.
- */
-function extractArtifacts(body: string): string[] {
-  const found = new Set<string>();
-
-  const filePathRe = /"file_path"\s*:\s*"((?:\\.|[^"\\])*)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = filePathRe.exec(body)) !== null) {
-    if (found.size >= MAX_ARTIFACTS) break;
-    found.add(unescapeJsonString(m[1]));
-  }
-
-  for (const line of body.split("\n")) {
-    if (found.size >= MAX_ARTIFACTS) break;
-    const li = line.match(/^\s*[-*]\s+(~\/[^\s`]+|\/[^\s`]+)/);
-    if (li) found.add(li[1]);
-  }
-
-  return [...found].slice(0, MAX_ARTIFACTS);
-}
-
-/**
- * Linear refs, precision-first: refs adjacent to a `mcp__linear__*` tool call
- * are inserted first (highest trust — the fixture confirms these are 100%
- * mechanical when present), then a plain global scan fills in the rest at
- * lower trust. Both tiers are still useful for a recall AID even though the
- * fixture warns a bare global scan alone is noisy (hook boilerplate quoting
- * unrelated tickets) — this is not a citation of record, just a lead.
- */
-function extractLinearRefs(body: string): string[] {
-  const found = new Set<string>();
-  // Team keys can embed a digit (e.g. "TOW2-357", this wave's own epic) — the
-  // prefix must start with a letter but MAY contain digits after that, not
-  // letters-only. An earlier letters-only draft of this pattern silently
-  // failed to match the design doc's own worked example.
-  const refPattern = /\b[A-Z][A-Z0-9]{1,5}-\d{1,6}\b/;
-
-  const toolCallRe = new RegExp(`"name"\\s*:\\s*"mcp__linear__[a-zA-Z_]+"[\\s\\S]{0,400}?(${refPattern.source})`, "g");
-  let m: RegExpExecArray | null;
-  while ((m = toolCallRe.exec(body)) !== null) {
-    if (found.size >= MAX_LINEAR_REFS) break;
-    found.add(m[1]);
-  }
-
-  const globalRe = new RegExp(refPattern.source, "g");
-  while ((m = globalRe.exec(body)) !== null) {
-    if (found.size >= MAX_LINEAR_REFS) break;
-    found.add(m[0]);
-  }
-
-  return [...found].slice(0, MAX_LINEAR_REFS);
-}
-
-/**
- * "Next step" lines: best-effort line-grep for /next|下一步|待办|todo/i,
- * mirroring the F3 session-card heuristic (reimplemented locally — see file
- * header on why this module doesn't import W1's card module). Raw archive
- * bodies can have a logical record spanning multiple physical lines
- * (fixture §1) so this is intentionally a coarse, lossy signal — the same
- * "line-grep" rigor level design §F4 itself uses for the archive fallback.
- */
-function extractNextSteps(body: string): string[] {
-  const steps: string[] = [];
-  for (const rawLine of body.split("\n")) {
-    if (steps.length >= MAX_NEXT_STEPS) break;
-    const line = rawLine.trim();
-    if (!line || !/next|下一步|待办|todo/i.test(line)) continue;
-    const cleaned = line.replace(/^[-*\d.\s]+/, "").replace(/\s+/g, " ").slice(0, 200);
-    if (cleaned.length > 3) steps.push(cleaned);
-  }
-  return steps;
-}
+// Artifact-path / Linear-ref / next-step-line extraction (record-based for
+// Source 2's embedded JSONL, text-based for Source 3's card markdown) now
+// live in ../storage/extraction.ts — imported above. Single source shared
+// with storage/session-card.ts (fix2, 2026-07-31); see the file header for
+// which variant each source uses and why.
 
 // ---------------------------------------------------------------------------
 // Ranking
@@ -470,9 +418,36 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       const { title, goalExcerpt } = extractTitleAndGoal(content);
       if (!entry.title) entry.title = title;
       if (!entry.goalExcerpt) entry.goalExcerpt = goalExcerpt;
-      for (const a of extractArtifacts(content)) entry.artifacts.add(a);
-      for (const r of extractLinearRefs(content)) entry.linearRefs.add(r);
-      entry.nextSteps = dedupPushAll(entry.nextSteps, extractNextSteps(content), MAX_NEXT_STEPS);
+
+      // Raw archive bodies embed near-verbatim JSONL transcript lines after
+      // a frontmatter block — the SAME shape session-card.ts's rawHead/
+      // rawTail parses — so artifacts/linearRefs use the shared RECORD-based
+      // extractors (M9-protected: a tool_result-embedded ref cannot leak
+      // here). next-step lines stay text-based (no "final assistant text"
+      // reduction step exists for a raw dump; a per-line grep over the whole
+      // body is the same coarse, lossy signal this source always used).
+      //
+      // Known, PRE-EXISTING recall-cost tradeoff (not introduced by this
+      // fix, only extended to this call site): archive-write.ts writes the
+      // verbatim rawTranscript as-is, but that transcript is itself a
+      // byte-offset head/tail SAMPLE (transcript-reader.ts's readHeadTail),
+      // not a line-boundary-safe one — the last head line / first tail line
+      // can be truncated mid-JSON-object. `parseJsonlLenient` requires a
+      // whole line to `JSON.parse` and silently drops one that doesn't, so
+      // a `file_path`/Linear-ref sitting in exactly that truncated boundary
+      // line is missed here, whereas the OLD flat-regex scan (which pattern-
+      // matched substrings, not whole records) could sometimes still catch
+      // it. session-card.ts's own rawHead/rawTail parsing already accepted
+      // this exact tradeoff; this fix makes resurrect.ts consistent with it
+      // rather than introducing a new one.
+      const records = parseJsonlLenient(content);
+      for (const a of extractArtifactPathsFromRecords(records, MAX_ARTIFACTS)) entry.artifacts.add(a);
+      for (const r of extractLinearRefsFromRecords(records, MAX_LINEAR_REFS)) entry.linearRefs.add(r);
+      entry.nextSteps = dedupPushAll(
+        entry.nextSteps,
+        extractLinesMatching(content, NEXT_STEP_LINE_RE, MAX_NEXT_STEPS),
+        MAX_NEXT_STEPS,
+      );
       entry.provenance.add(filePath);
       entry.rawBodies.push(content);
     }
@@ -532,9 +507,14 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       entry.title = parsed.title || entry.title || "(untitled session)";
       entry.goalExcerpt = bodyGoal || entry.goalExcerpt || "";
 
-      for (const a of extractArtifacts(parsed.body)) entry.artifacts.add(a);
-      for (const r of extractLinearRefs(parsed.body)) entry.linearRefs.add(r);
-      const cardNextSteps = extractNextSteps(parsed.body);
+      // Card bodies are already-rendered markdown (session-card.ts's OWN
+      // output, itself built from the M9-protected record extractors) — no
+      // record structure survives to recover, and no raw tool_result JSON
+      // blob is ever present to exclude, so the TEXT-based shared
+      // extractors are the right (and only sensible) tool here.
+      for (const a of extractArtifactPathsFromText(parsed.body, MAX_ARTIFACTS)) entry.artifacts.add(a);
+      for (const r of extractLinearRefsFromText(parsed.body, MAX_LINEAR_REFS)) entry.linearRefs.add(r);
+      const cardNextSteps = extractLinesMatching(parsed.body, NEXT_STEP_LINE_RE, MAX_NEXT_STEPS);
       if (cardNextSteps.length > 0) entry.nextSteps = cardNextSteps.slice(0, MAX_NEXT_STEPS);
 
       entry.provenance.add(filePath);

@@ -25,6 +25,16 @@ import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
 import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
+import {
+  DECISION_LINE_RE,
+  NEXT_STEP_LINE_RE,
+  parseJsonlLenient,
+  isBoilerplateRecord,
+  textFromContent,
+  extractArtifactPathsFromRecords,
+  extractLinearRefsFromRecords,
+  extractLinesMatching,
+} from "./extraction.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,7 +81,6 @@ export interface SessionCardResult {
 
 const CARD_BYTE_CAP = 2000;
 const TITLE_CHAR_CAP = 120;
-const LINE_CHAR_CAP = 200; // per decision/next-step line
 const ARTIFACTS_CAP = 10;
 const LINEAR_REFS_CAP = 10;
 const DECISIONS_CAP = 5;
@@ -81,18 +90,10 @@ const LAST_ASSISTANT_CHAR_CAP = 800;
 /** H4 fix: cap on F1's ranked slugCandidates list — see the call site in buildSessionCard. */
 const SLUG_CANDIDATES_CAP = 5;
 
-// NOTE (CHALLENGE — deviates from the design doc's literal regex): the spec
-// says `/[A-Z]{2,6}-\d+/g`, but that pattern cannot match THIS repo's own
-// real Linear ID convention — team "TongWu" issues are "TOW2-357" etc., and
-// `[A-Z]{2,6}` is uppercase-LETTERS-only, so the digit "2" inside "TOW2"
-// breaks the letter run before the hyphen is ever reached (verified: the
-// literal spec regex returns zero matches on "TOW2-357"). Widened to allow
-// trailing digits in the team-key prefix while keeping the same safety
-// properties (must start with a letter, so plain numbers/hex/versions never
-// match; still requires a hyphen + digits, so bare words like "HEAD" don't).
-const LINEAR_REF_RE = /\b[A-Z][A-Z0-9]{1,5}-\d+\b/g;
-const DECISION_LINE_RE = /决定|decided|locked|confirmed/i;
-const NEXT_STEP_LINE_RE = /next|下一步|待办|TODO/i;
+// DECISION_LINE_RE / NEXT_STEP_LINE_RE / the Linear-ref pattern now live in
+// ./extraction.ts (fix2, 2026-07-31) — single source shared with
+// tools-logic/resurrect.ts. See that module for the "TOW2-357" digit-prefix
+// rationale previously documented inline here.
 
 const SYSTEM_PREFIXES = [
   /^dangerously-skip/i,
@@ -105,58 +106,14 @@ const SYSTEM_PREFIXES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Lenient JSONL parsing (local copy — core must not depend on the cli
-// package's transcript-reader; this is the same tolerant per-line parse).
+// Lenient JSONL parsing, boilerplate/content-block helpers: imported from
+// ./extraction.ts (fix2, 2026-07-31) — single source shared with
+// tools-logic/resurrect.ts.
 // ---------------------------------------------------------------------------
-
-function parseJsonlLenient(text: string): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object") out.push(parsed as Record<string, unknown>);
-    } catch {
-      /* skip malformed/truncated lines — expected at head/tail boundaries */
-    }
-  }
-  return out;
-}
 
 function isSystemText(text: string): boolean {
   const t = text.trimStart();
   return SYSTEM_PREFIXES.some((re) => re.test(t));
-}
-
-/** First `type: "text"` block of a message's content (string or content-block array). */
-function textFromContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    for (const c of content) {
-      if (c && typeof c === "object" && (c as Record<string, unknown>).type === "text") {
-        return String((c as Record<string, unknown>).text ?? "");
-      }
-    }
-  }
-  return "";
-}
-
-/** Hook stdout/boilerplate records are never real conversation content (fixture report §0/§2). */
-function isBoilerplateRecord(rec: Record<string, unknown>): boolean {
-  return rec.type === "attachment";
-}
-
-function dedupCapped(items: string[], cap: number): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const item of items) {
-    if (seen.has(item)) continue;
-    seen.add(item);
-    out.push(item);
-    if (out.length >= cap) break;
-  }
-  return out;
 }
 
 /**
@@ -213,94 +170,10 @@ function extractFinal(lines: Record<string, unknown>[], type: "user" | "assistan
   return null;
 }
 
-/** Write/Edit tool_use `input.file_path` values, in first-seen order. */
-function extractArtifacts(lines: Record<string, unknown>[]): string[] {
-  const paths: string[] = [];
-  for (const rec of lines) {
-    if (isBoilerplateRecord(rec)) continue;
-    if (rec.type !== "assistant") continue;
-    const msg = rec.message as Record<string, unknown> | undefined;
-    const content = msg?.content;
-    if (!Array.isArray(content)) continue;
-    for (const c of content) {
-      const cr = c as Record<string, unknown>;
-      if (cr.type !== "tool_use") continue;
-      if (cr.name !== "Write" && cr.name !== "Edit") continue;
-      const input = cr.input as Record<string, unknown> | undefined;
-      const filePath = input?.file_path;
-      if (typeof filePath === "string" && filePath) paths.push(filePath);
-    }
-  }
-  return dedupCapped(paths, ARTIFACTS_CAP);
-}
-
-/**
- * Linear IDs. M9 fix (review, 2026-07-31): scoped to content the
- * USER/ASSISTANT actually AUTHORED this turn — a plain string message body,
- * a `type: "text"` content block, or a `type: "tool_use"` block's OWN
- * `input` (the assistant's intentional tool-call arguments, e.g.
- * `mcp__linear__save_issue` called with `{identifier: "TOW2-360"}` — this is
- * real, intentional content, not necessarily inside a "text" block, so it is
- * still scanned). Explicitly EXCLUDES `type: "tool_result"` content blocks —
- * those carry a tool's RETURNED data (e.g. the output of
- * `mcp__agent-recall__recall` or `mcp__linear__list_issues`), which can
- * legitimately contain OTHER, unrelated projects' ticket IDs the assistant
- * never decided or acted on this session. The PREVIOUS implementation
- * `JSON.stringify(rec.message)`'d the WHOLE message including tool_result
- * payloads — that was the exact cross-project leak vector this fix closes
- * (same failure CLASS as the incident's hook-boilerplate contamination,
- * different channel).
- */
-function extractLinearRefs(lines: Record<string, unknown>[]): string[] {
-  const refs: string[] = [];
-
-  const scan = (blob: string): void => {
-    LINEAR_REF_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = LINEAR_REF_RE.exec(blob)) !== null) refs.push(m[0]);
-  };
-
-  for (const rec of lines) {
-    if (isBoilerplateRecord(rec)) continue;
-    if (rec.type !== "user" && rec.type !== "assistant") continue;
-    const msg = rec.message as Record<string, unknown> | undefined;
-    const content = msg?.content;
-
-    if (typeof content === "string") {
-      scan(content);
-      continue;
-    }
-    if (!Array.isArray(content)) continue;
-    for (const block of content) {
-      if (!block || typeof block !== "object") continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === "text" && typeof b.text === "string") {
-        scan(b.text);
-      } else if (b.type === "tool_use") {
-        // The assistant's OWN tool-call arguments — real, intentional
-        // content, unlike a tool_result's returned data (never scanned).
-        try {
-          scan(JSON.stringify(b.input ?? {}));
-        } catch {
-          /* unstringifiable input — skip */
-        }
-      }
-      // `tool_result` blocks are deliberately NOT scanned (M9).
-    }
-  }
-  return dedupCapped(refs, LINEAR_REFS_CAP);
-}
-
-function extractLinesMatching(text: string, re: RegExp, cap: number): string[] {
-  const out: string[] = [];
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || !re.test(line)) continue;
-    out.push(line.length > LINE_CHAR_CAP ? line.slice(0, LINE_CHAR_CAP) + "…" : line);
-    if (out.length >= cap) break;
-  }
-  return out;
-}
+// extractArtifacts / extractLinearRefs (M9-fixed) / extractLinesMatching now
+// live in ./extraction.ts as extractArtifactPathsFromRecords /
+// extractLinearRefsFromRecords / extractLinesMatching — imported above.
+// Single source shared with tools-logic/resurrect.ts (fix2, 2026-07-31).
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -327,8 +200,8 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
       "(untitled session)"
     ).slice(0, TITLE_CHAR_CAP);
 
-    const artifacts = extractArtifacts(allLines);
-    const linearRefs = extractLinearRefs(allLines);
+    const artifacts = extractArtifactPathsFromRecords(allLines, ARTIFACTS_CAP);
+    const linearRefs = extractLinearRefsFromRecords(allLines, LINEAR_REFS_CAP);
 
     const finalAssistantText = extractFinal(allLines, "assistant") ?? "";
     const finalUserText = extractFinal(allLines, "user") ?? "";

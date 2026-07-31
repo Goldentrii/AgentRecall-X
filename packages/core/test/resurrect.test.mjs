@@ -83,7 +83,10 @@ describe("resurrect (F6)", () => {
         "items; assistant organized them into epic TOW2-357 with 9 child issues.",
         "",
         "## Artifacts",
-        "- /Users/tongwu/交付物2_MCP原型_V14.html",
+        // Backtick-wrapped, exactly as session-card.ts's own renderer writes
+        // it (`sections.push("## Artifacts", ...artifacts.map((p) => `- \`${p}\``))`)
+        // — a plain, unwrapped list item is NOT what a real card looks like.
+        "- `/Users/tongwu/交付物2_MCP原型_V14.html`",
         "",
         "## Next",
         "- Next: read novada-web's app/mcp/page.tsx and implement P1 (TOW2-358/359) + P2 (TOW2-360).",
@@ -262,6 +265,138 @@ describe("resurrect (F6)", () => {
     // Provenance must cite BOTH the raw file and the card file.
     assert.ok(brief.provenance.some((p) => p.includes(path.join("archive", "raw"))), JSON.stringify(brief.provenance));
     assert.ok(brief.provenance.some((p) => p.includes("--card--")), JSON.stringify(brief.provenance));
+  });
+
+  // --- fix2 (2026-07-31): artifact-extraction regex bug + M9-via-resurrect class fix ---
+  // (verifier-report V3 + "additional findings" #3/#5; ~/Projects/AgentRecall/reports/2026-07-31-verifier-report.md)
+
+  it("fix2: a card's backtick-wrapped list item ('- `~/path`', the real session-card.ts convention) is extracted as an artifact", async () => {
+    const { resurrect } = await import("agent-recall-core");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-resurrect-fix2-backtick-"));
+    setRoot(tmp);
+    try {
+      const sid = "fix2-backtick-1";
+      writeFile(
+        tmp,
+        `projects/fix2-project/journal/${dateA}--card--${sid}.md`,
+        [
+          "---",
+          `sid: ${sid}`,
+          `date: ${dateA}`,
+          "slug: fix2-project",
+          "slug_confidence: 0.42",
+          "source: hook-end",
+          "---",
+          "",
+          "# Fix2 backtick artifact regression",
+          "",
+          "## Artifacts",
+          "- `~/交付物2_MCP原型_V14.html`",
+        ].join("\n"),
+      );
+
+      const briefs = resurrect({ days: 30 });
+      const brief = briefs.find((b) => b.sid === sid);
+      assert.ok(brief, "the fix2-project card session must appear");
+      assert.ok(
+        brief.artifacts.some((a) => a.includes("交付物2_MCP原型_V14.html")),
+        `backtick-wrapped list-item artifact must be extracted (pre-fix this regex never matched a leading backtick); got ${JSON.stringify(brief.artifacts)}`,
+      );
+    } finally {
+      resetRoot();
+      setRoot(tmpDir);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fix2 (class): a raw-archive tool_result-embedded ref never leaks into resurrect's linearRefs via the shared, M9-protected record extractor", async () => {
+    const { resurrect } = await import("agent-recall-core");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-resurrect-fix2-m9-"));
+    setRoot(tmp);
+    try {
+      const sid = "fix2-m9-via-resurrect-1";
+      writeFile(
+        tmp,
+        `projects/fix2-m9-project/journal/archive/raw/${dateA}--${sid}.md`,
+        [
+          "---",
+          "project: fix2-m9-project",
+          `sessionId: ${sid}`,
+          `savedAt: ${dateA}T10:00:00.000Z`,
+          "source: hook-archive",
+          "---",
+          "",
+          // A tool_result block carries a TOOL'S RETURNED data (e.g. an
+          // agent-recall recall() or Linear list output) — it can
+          // legitimately reference an unrelated project's ticket ID that
+          // the assistant never decided or acted on this session.
+          '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"abc","content":[{"type":"text","text":"Found unrelated issue ZZZ9-000 in another project"}]}]}}',
+          // A real tool_use call's OWN input IS intentional, authored
+          // content and must still be captured.
+          '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__linear__save_issue","input":{"team":"TongWu","identifier":"TOW2-999"}}]}}',
+          '{"type":"user","message":{"content":[{"type":"text","text":"Let\'s work on the fix2 M9-via-resurrect fixture."}]}}',
+        ].join("\n"),
+      );
+
+      const briefs = resurrect({ days: 30 });
+      const brief = briefs.find((b) => b.sid === sid);
+      assert.ok(brief, "the fix2-m9-project raw-only session must appear");
+      assert.ok(
+        !brief.linearRefs.includes("ZZZ9-000"),
+        `tool_result content must never leak into resurrect's linearRefs via the shared record-based extractor; got ${JSON.stringify(brief.linearRefs)}`,
+      );
+      assert.ok(
+        brief.linearRefs.includes("TOW2-999"),
+        `a real tool_use call's own input must still be captured; got ${JSON.stringify(brief.linearRefs)}`,
+      );
+    } finally {
+      resetRoot();
+      setRoot(tmpDir);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fix2: a card's own '## Next' heading line is never mistaken for a next-step bullet (markdown-heading exclusion, shared helper)", async () => {
+    const { resurrect } = await import("agent-recall-core");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-resurrect-fix2-heading-"));
+    setRoot(tmp);
+    try {
+      const sid = "fix2-heading-1";
+      writeFile(
+        tmp,
+        `projects/fix2-heading-project/journal/${dateA}--card--${sid}.md`,
+        [
+          "---",
+          `sid: ${sid}`,
+          `date: ${dateA}`,
+          "slug: fix2-heading-project",
+          "slug_confidence: 0.42",
+          "source: hook-end",
+          "---",
+          "",
+          "# Fix2 heading-exclusion regression",
+          "",
+          "## Next",
+          "- Next: read novada-web's app/mcp/page.tsx and implement P1.",
+        ].join("\n"),
+      );
+
+      const briefs = resurrect({ days: 30 });
+      const brief = briefs.find((b) => b.sid === sid);
+      assert.ok(brief, "the fix2-heading-project card session must appear");
+      assert.ok(
+        !brief.nextSteps.includes("## Next"),
+        `a card's own section heading must never appear as a next-step entry; got ${JSON.stringify(brief.nextSteps)}`,
+      );
+      assert.ok(
+        brief.nextSteps.some((s) => s.includes("read novada-web's app/mcp/page.tsx")),
+        `the real bullet content must still be captured; got ${JSON.stringify(brief.nextSteps)}`,
+      );
+    } finally {
+      resetRoot();
+      setRoot(tmpDir);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("raw-only session (no card) still excludes hook boilerplate from its title", async () => {
