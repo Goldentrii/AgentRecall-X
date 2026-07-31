@@ -351,6 +351,17 @@ function extractRecentExchanges(lines: unknown[], maxExchanges = 20): string {
 export interface TranscriptByPath extends SessionInfo {
   /** head + "\n…\n" + tail of the transcript, capped at ~80KB. */
   rawTail: string;
+  /**
+   * Wave-2 wiring (continuity wave 2026-07-31): the raw head sample (default
+   * readHeadTail() sizing, same as the one already used internally for
+   * cwdGuess/firstUserMessage/projectGuess above) — exposed so callers can
+   * feed F1's `resolveSessionProject(headText, tailText)` at the hook-end
+   * call site without a second file read. Additive field; existing
+   * consumers are unaffected.
+   */
+  headText: string;
+  /** Companion tail sample to `headText` (default readHeadTail() sizing). */
+  tailText: string;
 }
 
 const RAW_TAIL_CAP = 80_000;
@@ -424,6 +435,8 @@ export function readTranscriptByPath(filePath: string): TranscriptByPath | null 
       firstUserMessage: extractFirstUserMessage(headLines),
       recentExchanges: extractRecentExchanges(tailLines),
       rawTail,
+      headText: head,
+      tailText: tail,
     };
   } catch {
     return null;

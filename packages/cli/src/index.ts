@@ -135,6 +135,12 @@ DIAGNOSTICS:
       Every later bare run reports only NEW findings since that baseline; exit 1 only on a NEW red finding.
   ar rooms             Show palace rooms with entry counts and topic keywords
   ar sync-memory       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
+  ar health [--json]   Fail-loud hook health (continuity wave): recent hook failures (24h count + last
+      failure), written by recordHookFailure() from every hook catch block. Empty state exits 0.
+  ar resurrect [query] [--days N] [--json]
+      Read-only cross-slug dead-session finder — recency + keyword ranked across recent-sessions.jsonl,
+      raw archive dumps, and session cards. No query = pure recency. --days (default 14): scan window.
+      --json: raw ContinuityBrief[] instead of the markdown brief. Empty result → helpful message, exit 0.
 
 BOOTSTRAP:
   ar bootstrap               Scan machine for projects and show summary card
@@ -794,6 +800,42 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "health": {
+      // F5 — fail-loud hook health (continuity wave 2026-07-31). Human-readable
+      // by default; --json for the raw HookHealthState. Always exit 0 — this
+      // is a diagnostic read, not a gate (never exitCode=1, even when failures
+      // exist: `ar doctor`/`ar hygiene` are the commands that gate CI on red).
+      const health = core.readHookHealth();
+      if (hasFlag("--json", rest)) {
+        output(health);
+      } else if (!health.last_failure && health.failures_24h === 0) {
+        output("✓ hook health: no failures recorded.");
+      } else {
+        const lines: string[] = [`Hook health — ${health.failures_24h} failure(s) in the last 24h`];
+        if (health.last_failure) {
+          lines.push(`  last: [${health.last_failure.hook}] ${health.last_failure.ts} — ${health.last_failure.message}`);
+        }
+        output(lines.join("\n"));
+      }
+      break;
+    }
+    case "resurrect": {
+      // F6 — read-only cross-slug dead-session finder (continuity wave
+      // 2026-07-31). No query = pure recency. `renderResurrectMarkdown`
+      // already renders a helpful "nothing found" message for an empty
+      // result set, so the non-JSON branch never needs its own empty-check.
+      const query = rest.filter((a) => !a.startsWith("--")).join(" ") || undefined;
+      const daysFlag = getFlag("--days", rest);
+      const parsedDays = daysFlag ? parseInt(daysFlag, 10) : NaN;
+      const days = Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : undefined;
+      const briefs = core.resurrect({ query, days });
+      if (hasFlag("--json", rest)) {
+        output(briefs);
+      } else {
+        output(core.renderResurrectMarkdown(briefs));
+      }
+      break;
+    }
     case "knowledge": {
       const sub = rest[0];
       const knRest = rest.slice(1);
@@ -844,10 +886,37 @@ async function main(): Promise<void> {
 
       try {
         const result = await core.sessionStart({ project });
-        const lines: string[] = ["[AgentRecall] Session context loaded"];
+        const lines: string[] = [];
+
+        // ---- F5 fail-loud hook health (continuity wave 2026-07-31) ----
+        // FIRST line, above everything else: a hook that has been silently
+        // failing leaves zero trace otherwise (design doc fact 7) — surface
+        // it before the agent reads anything else so memory-not-persisted
+        // isn't discovered days later. Silent (no line at all) when healthy.
+        try {
+          const health = core.readHookHealth();
+          if (health.failures_24h > 0) {
+            lines.push(`⚠️ AgentRecall: ${health.failures_24h} hook failure${health.failures_24h === 1 ? "" : "s"} (24h) — memory may not be persisted → run 'ar health'`);
+          }
+        } catch { /* non-blocking — health line is best-effort */ }
+
+        lines.push("[AgentRecall] Session context loaded");
 
         // Project + identity — always show so agent knows the project
         lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
+
+        // ---- F2 continuity card (continuity wave 2026-07-31) ----
+        // Top-3 most-recent sessions ACROSS projects, ranked by pure recency
+        // (readRecentSessions already returns newest-first) — right after the
+        // header line, per design. Absent entirely when the recency index has
+        // nothing yet (no noise on a fresh/solo-project store).
+        if (result.continuity && result.continuity.length > 0) {
+          lines.push("⏪ Continuity (recent work, other projects included):");
+          for (const c of result.continuity.slice(0, 3)) {
+            const next = c.next_step ? ` → next: ${c.next_step.slice(0, 80)}` : "";
+            lines.push(`   - ${c.ago} [${c.slug}] ${c.title.slice(0, 100)}${next}`);
+          }
+        }
 
         // P0 corrections — always show, high priority (loaded before watch_for)
         if (result.corrections && result.corrections.length > 0) {
@@ -931,6 +1000,7 @@ async function main(): Promise<void> {
         process.stdout.write(lines.join("\n") + "\n\n");
       } catch (e) {
         // Never block the session — fail silently
+        core.recordHookFailure("hook-start", e);
         process.stderr.write(`[AgentRecall hook-start] ${String(e)}\n`);
       }
       break;
@@ -980,6 +1050,15 @@ async function main(): Promise<void> {
       const endLockKey = `${sid}-end`;
       const endLockFile = path.join(os.homedir(), ".agent-recall", ".hook-end-lock");
 
+      // Continuity wave (2026-07-31) — F1 unified naming: ONE resolution shared
+      // by BOTH the raw-archive path (below) and the journal-summary path
+      // further down. Set inside the archive try-block once resolveSessionProject
+      // runs; the journal-summary path falls back to `project ?? "auto"` when
+      // this is still undefined (e.g. the archive block bailed out early —
+      // ambiguous multi-session skip, unreadable transcript, etc.) so that
+      // path never silently uses a DIFFERENT guess than the archive did.
+      let unifiedProjectSlug: string | undefined;
+
       try {
         if (fs.existsSync(endLockFile) && fs.readFileSync(endLockFile, "utf-8").trim() === endLockKey) {
           process.exit(0);
@@ -989,7 +1068,7 @@ async function main(): Promise<void> {
 
       // ---- MECHANICAL ARCHIVE — unconditional, zero dependence on captures ----
       try {
-        const { readTranscriptByPath, readTodaySessions } = await import("./utils/transcript-reader.js");
+        const { readTranscriptByPath, readTodaySessions, resolveSessionProject } = await import("./utils/transcript-reader.js");
         // Resolve the transcript for THIS session. Prefer the explicit path.
         // Without it, identify the session by id — NEVER blindly take the newest:
         // with multiple windows open that would archive another session's bytes
@@ -1066,7 +1145,25 @@ async function main(): Promise<void> {
         if (src && resolvedPath && typeof src.rawTail === "string") {
           // resolvedPath is narrowed to string here; its basename IS the session UUID.
           const archiveSid = path.basename(resolvedPath, ".jsonl");
-          const proj = project ?? src.projectGuess ?? "auto";
+
+          // ---- Continuity wave (2026-07-31): ONE unified project resolution ----
+          // F1's resolveSessionProject() replaces the old split-brain guess
+          // (raw-archive path used src.projectGuess; the journal-summary path
+          // below used to re-derive its own value from `project ?? "auto"`
+          // independently — the exact split-brain bug this wave fixes). Computed
+          // ONCE here and reused by archiveSession, enqueueConsolidation, the
+          // session card, the recency-index append, AND the journal-summary
+          // path further down (`resolvedProj`) — a single source of truth for
+          // "what project does this session belong to". An explicit `--project`
+          // override always wins over the guess (never overridden by it).
+          const resolved = resolveSessionProject(src.headText ?? "", src.tailText ?? "");
+          const proj = project ?? resolved.slug;
+          // Confidence is only meaningful for a GUESS — an explicit --project
+          // override is maximal certainty (human-specified), not a guess.
+          const projConfidence = project ? 1 : resolved.confidence;
+          // Shared with the journal-summary path below — the single-namer fix.
+          unifiedProjectSlug = proj;
+
           core.archiveSession({
             project: proj,
             sessionId: archiveSid,
@@ -1075,9 +1172,49 @@ async function main(): Promise<void> {
             summary: src.firstUserMessage ?? undefined,
           });
           core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+
+          // ---- F3 unconditional session card + F2 recency append ----
+          // The raw archive above has ALREADY succeeded by this point — it is
+          // the last-resort, must-never-be-lost layer. Everything below is an
+          // additive, best-effort distillation on top of it: any failure here
+          // must never look like the archive itself failed, and must never
+          // throw into the outer catch/Stop turn (own try/catch + fail-loud
+          // recording via recordHookFailure, F5).
+          try {
+            const card = core.buildSessionCard({
+              rawHead: src.headText ?? "",
+              // Use the F1b-fixed, tail-biased dump (not the narrower default
+              // tail sample) — this is exactly the sample engineered to
+              // preserve the session's true ending, where decisions/next-steps
+              // live, so the card's "last exchange"/decisions/nextStep
+              // extraction gets the highest-fidelity tail available.
+              rawTail: src.rawTail,
+              meta: {
+                sid: archiveSid,
+                slug: proj,
+                slugConfidence: projConfidence,
+                slugCandidates: resolved.candidates,
+                date: endToday,
+              },
+            });
+            core.writeSessionCard(card);
+            core.appendRecentSession({
+              ts: new Date().toISOString(),
+              sid: archiveSid,
+              slug: proj,
+              slug_confidence: projConfidence,
+              title: card.title,
+              next_step: card.nextStep[0],
+              artifact_count: card.artifacts.length,
+            });
+          } catch (e) {
+            core.recordHookFailure("hook-end-card", e);
+            process.stderr.write(`[AgentRecall hook-end card] ${String(e)}\n`);
+          }
         }
       } catch (e) {
         // Archive must never break the Stop turn.
+        core.recordHookFailure("hook-end-archive", e);
         process.stderr.write(`[AgentRecall hook-end archive] ${String(e)}\n`);
       }
 
@@ -1088,7 +1225,23 @@ async function main(): Promise<void> {
         // Only write a journal summary if there's actual capture data from this
         // session. The 60-char "Auto-saved:" stub is DROPPED (Wave 2) — the
         // verbatim archive above is the floor; the summary is additive.
-        const resolvedJournalDir = path.join(os.homedir(), ".agent-recall", "projects", project ?? "auto", "journal");
+        //
+        // Continuity wave (2026-07-31) — F1 unified naming: this used to
+        // independently fall back to bare `project ?? "auto"`, ignoring
+        // whatever the raw-archive path above resolved via
+        // resolveSessionProject() — the exact split-brain bug where one
+        // session's data landed in two different project directories.
+        // `unifiedProjectSlug` (set above, if the archive block ran and
+        // resolved a slug) is now the SAME resolution the archive used;
+        // `project ?? "auto"` remains the fallback only when the archive
+        // block never ran/resolved (e.g. ambiguous-session skip).
+        const resolvedJournalDir = path.join(
+          os.homedir(),
+          ".agent-recall",
+          "projects",
+          project ?? unifiedProjectSlug ?? "auto",
+          "journal",
+        );
         const logFile = path.join(resolvedJournalDir, `${today}-log.md`);
 
         let summary = "";
@@ -1161,6 +1314,7 @@ async function main(): Promise<void> {
           } catch { /* non-blocking — prefetch is best-effort */ }
         }
       } catch (e) {
+        core.recordHookFailure("hook-end-summary", e);
         process.stderr.write(`[AgentRecall hook-end] ${String(e)}\n`);
       }
       break;
@@ -1182,6 +1336,7 @@ async function main(): Promise<void> {
         });
         output(`consolidate-async: ${report.processed} processed, ${report.failed} failed`);
       } catch (e) {
+        core.recordHookFailure("consolidate-async", e);
         process.stderr.write(`[AgentRecall consolidate-async] ${String(e)}\n`);
       }
       break;
