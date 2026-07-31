@@ -110,7 +110,7 @@ import { getRoot } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { getConnectedRooms } from "../palace/graph.js";
-import { palaceDir } from "../storage/paths.js";
+import { palaceDir, archiveRawDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 
@@ -142,12 +142,17 @@ export interface SmartRecallResultItem {
   id: string;
   /** Primary/display source — whichever source's RRF pass inserted this
    *  canonical entry first (palace, then journal, then insight). Kept
-   *  singular for backward compatibility with existing consumers. */
-  source: "palace" | "journal" | "insight";
+   *  singular for backward compatibility with existing consumers.
+   *  "archive" (F4, 2026-07-31) is DIFFERENT from the other three: it never
+   *  competes inside localRecallSearch's RRF fusion — it is appended
+   *  separately by smartRecall() only when the fused top confidence from
+   *  palace/journal/insight is below medium (see archiveSearch below). */
+  source: "palace" | "journal" | "insight" | "archive";
   /** Other sources that ALSO matched this same canonical memory (same
    *  normalized excerpt) during RRF fusion. Present only when the item was
-   *  found in more than one source — see Fix 5 in the file header. */
-  alsoFoundIn?: Array<"palace" | "journal" | "insight">;
+   *  found in more than one source — see Fix 5 in the file header.
+   *  Never set for "archive" items — they are appended post-fusion. */
+  alsoFoundIn?: Array<"palace" | "journal" | "insight" | "archive">;
   title: string;
   excerpt: string;
   /** Cross-source fusion identity override (Fix 5b). When present, fusion
@@ -244,6 +249,13 @@ const EBBINGHAUS_S = {
   knowledge: 180,  // ~99.4% after 1 day, ~84.6% after 1 month
   palace: 9999,    // effectively no decay
 } as const;
+
+/**
+ * Max items the explicit archive-fallback source (F4, see archiveSearch
+ * below) may append to a single smartRecall() call. Kept small — this is a
+ * confidence-gated last resort, not a competing ranked source.
+ */
+const ARCHIVE_SOURCE_CAP = 3;
 
 // ---------------------------------------------------------------------------
 // Math helpers
@@ -757,6 +769,94 @@ export async function localRecallSearch(
 }
 
 /**
+ * Explicit 4th source (F4, continuity wave 2026-07-31): journal/archive/raw/
+ * mechanical transcript dumps, line-grepped for the query. NEVER part of the
+ * palace/journal/insight RRF fusion above — this only runs from smartRecall()
+ * itself, gated on the fused top result being below medium confidence (see
+ * the call site). Every returned item's score is hard-capped just under
+ * CONFIDENCE_FLOOR.medium on the "cosine" scale, so it can NEVER be labeled
+ * "medium"/"high" — the label + provenance path are the load-bearing
+ * contract here, not the raw keyword-overlap number. This is the gated,
+ * labeled replacement for the old accidental `journalDirs(..., true)`
+ * descent into archive/raw (see journalDirs' doc comment in storage/paths.ts
+ * for the incident this fixes).
+ *
+ * Deliberately unranked beyond "newest file first, top-to-bottom within a
+ * file" (same line-grep flavor as journalSearch) — this is a last-resort
+ * fallback, not a competing ranked source, so it stops as soon as `limit`
+ * items are collected rather than scanning every archive file to find the
+ * globally-best matches.
+ */
+function archiveSearch(project: string, query: string, limit: number): SmartRecallResultItem[] {
+  const dir = archiveRawDir(project);
+  if (!fs.existsSync(dir)) return [];
+
+  const keywords = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  if (keywords.length === 0 || limit <= 0) return [];
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+  } catch {
+    return [];
+  }
+  // Newest raw dump first — a low-confidence fallback should prefer recent work.
+  files.sort((a, b) => b.localeCompare(a));
+
+  const items: SmartRecallResultItem[] = [];
+  for (const file of files) {
+    if (items.length >= limit) break;
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(dir, file), "utf-8");
+    } catch {
+      continue;
+    }
+    const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})/);
+    const date = dateMatch ? dateMatch[1] : undefined;
+    const lines = content.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      if (items.length >= limit) break;
+      const line = lines[i];
+      const lineLower = line.toLowerCase();
+      if (!keywords.some((kw) => lineLower.includes(kw))) continue;
+
+      let matchIdx = line.length;
+      for (const kw of keywords) {
+        const idx = lineLower.indexOf(kw);
+        if (idx !== -1 && idx < matchIdx) matchIdx = idx;
+      }
+      const start = Math.max(0, matchIdx - 100);
+      const end = Math.min(line.length, matchIdx + 150);
+      let snippet = line.slice(start, end).trim();
+      if (start > 0) snippet = "..." + snippet;
+      if (end < line.length) snippet = snippet + "...";
+      if (!snippet) continue; // an all-whitespace "match" line is not a useful excerpt
+
+      const provenance = path.join("journal", "archive", "raw", file);
+      // Keyword overlap reflects match quality among archive hits, but is
+      // hard-capped below CONFIDENCE_FLOOR.medium so this source structurally
+      // can never present itself as anything but low/weak confidence.
+      const rawScore = Math.min(keywordExactness(query, line), CONFIDENCE_FLOOR.medium - 0.01);
+
+      items.push({
+        id: stableId("archive", `${file}:${i}`),
+        source: "archive",
+        title: `archive/${file}`,
+        excerpt: `[raw-archive · low-confidence · ${provenance}] ${snippet}`,
+        score: rawScore,
+        // internalScore is 0..1 → cosine scale, same convention as the other 3 sources.
+        ...label(rawScore, "cosine"),
+        verbatimKey: { kind: "archive", date, file },
+        date,
+      });
+    }
+  }
+  return items;
+}
+
+/**
  * Budget for the semantic (remote) backend in ms.
  * Overridable via AGENT_RECALL_RECALL_BUDGET_MS for tuning / tests.
  */
@@ -875,23 +975,51 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     if (collected.length > 0) bridged = collected;
   }
 
+  // ── EXPLICIT 4TH SOURCE: archive fallback (F4, continuity wave 2026-07-31) ──
+  // Gated on the SAME CONFIDENCE_FLOOR.medium constant as the Bridge gate
+  // above, but on the fused TOP result only (not every low item) — "the
+  // fused top-confidence of palace/journal/insight". This adds brand-new
+  // result items sourced from journal/archive/raw/, so it must never compete
+  // for rank inside localRecallSearch's palace/journal/insight RRF fusion —
+  // it only steps in once those 3 sources have already failed to produce a
+  // confident #1 answer. Placed AFTER the Bridge above so the Bridge's own
+  // `low` filter (which also matches any verbatimKey-bearing item) only ever
+  // considers genuine palace/journal/insight items — an archive item is
+  // already a raw excerpt and would gain nothing from being drilled into
+  // itself.
+  let archiveSourceRan = false;
+  const topConfidence = finalResults.length > 0 ? finalResults[0].calibrated : 0;
+  if (topConfidence < CONFIDENCE_FLOOR.medium) {
+    archiveSourceRan = true;
+    const archiveItems = archiveSearch(input.project ?? "auto", input.query, ARCHIVE_SOURCE_CAP);
+    finalResults.push(...archiveItems);
+  }
+
   // Fix 4/5: total_searched should be the true distinct-candidate count from
   // BEFORE fusion, not results.length (which is the POST-fusion, post-dedup
   // survivor count and can legitimately be smaller). The raw counts side
   // channel is only present when `results` came straight from
   // localRecallSearch's local multi-source pipeline; remote/vector-backend
   // results have no "before fusion across 3 sources" notion, so fall back to
-  // results.length for those (unchanged prior behavior).
+  // results.length for those (unchanged prior behavior). The archive source
+  // is intentionally excluded from this count — it is not part of the
+  // 3-source fan-out this diagnostic describes.
   const rawCandidateCounts = (results as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS];
   const totalSearched = rawCandidateCounts
     ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight
     : results.length;
 
+  const sourcesQueried = [...new Set(results.map((r) => r.source))];
+  // "archive" is reported whenever the gate ran, regardless of hit count —
+  // matches the existing convention in localRecallSearch (a source is
+  // "queried" once it ran, not only once it returned something).
+  if (archiveSourceRan) sourcesQueried.push("archive");
+
   return {
     query: input.query,
     results: finalResults,
     total_searched: totalSearched,
-    sources_queried: [...new Set(results.map((r) => r.source))],
+    sources_queried: sourcesQueried,
     ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
     ...(bridged ? { bridged } : {}),

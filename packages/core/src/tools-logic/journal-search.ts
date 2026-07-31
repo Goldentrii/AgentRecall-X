@@ -61,7 +61,13 @@ function firstMatchIndex(line: string, keywords: string[]): number {
 
 export async function journalSearch(input: JournalSearchInput): Promise<JournalSearchResult> {
   const slug = await resolveProject(input.project);
-  // Include archive so recall reaches rollup-archived entries (P0-2)
+  // Include archive so recall reaches rollup-archived entries (P0-2).
+  // F4 (2026-07-31): journalDirs(slug, true) no longer descends into
+  // journal/archive/raw/ (the unstructured hook-archive verbatim tier) — see
+  // journalDirs' doc comment in storage/paths.ts. That noisy, collision-prone
+  // path is replaced by smartRecall's explicit, confidence-gated "archive"
+  // source (tools-logic/smart-recall.ts). journalSearch here only ever sees
+  // curated journal entries + rollup summaries.
   const dirs = journalDirs(slug, true);
   const keywords = queryKeywords(input.query);
   const limit = input.limit ?? 25;

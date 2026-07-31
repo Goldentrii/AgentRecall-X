@@ -1,5 +1,18 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import {
+  setRoot,
+  resetRoot,
+  smartRecall,
+  createRoom,
+  journalDir,
+  palaceDir,
+  archiveSession,
+  CONFIDENCE_FLOOR,
+} from "agent-recall-core";
 
 describe("Smart recall — recency boost logic", () => {
   // The hot-window multiplier logic is inline in smartRecall, so we test
@@ -127,5 +140,109 @@ describe("RecallBackend selection", () => {
     (await import("node:fs")).rmSync(tmpDir, { recursive: true, force: true });
     resetRoot();
     resetRecallBackend();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F4 (continuity wave, 2026-07-31) — explicit archive-fallback source
+// ---------------------------------------------------------------------------
+// Real integration tests against smartRecall() itself (not logic replication
+// like the describe blocks above) — the gate being tested (fused top
+// confidence vs CONFIDENCE_FLOOR.medium) only exists inside the real
+// function, so it must be exercised end-to-end against a temp store.
+describe("smartRecall — explicit archive fallback source (F4)", () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-archive-src-"));
+    setRoot(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    resetRoot();
+  });
+
+  it("(a) high-confidence query: archive source does NOT run", async () => {
+    const project = "archive-src-hi";
+    // Distinctive, non-boilerplate terms (avoid words that appear in the
+    // auto-generated default palace room READMEs, e.g. "decisions",
+    // "architecture", "goals").
+    const query = "zerothorn gateway redesign";
+    const today = new Date().toISOString().slice(0, 10);
+    // Short line so BOTH palace's ±40/+80 window and journal's ±100/+150
+    // window fully contain it without truncation — their excerpts come out
+    // byte-identical, which is what lets fuseCanonical() (smart-recall.ts)
+    // merge the two sources' RRF contributions into one high-confidence
+    // canonical entry. Embedding today's date lets BOTH items pick up the
+    // hot-window recency boost regardless of which source "wins" as primary
+    // after fusion.
+    const sharedLine = `${today} zerothorn gateway redesign decision locked`;
+
+    createRoom(project, "decisions", "Decisions", "decision trail room");
+    const roomDir = path.join(palaceDir(project), "rooms", "decisions");
+    fs.mkdirSync(roomDir, { recursive: true });
+    fs.writeFileSync(path.join(roomDir, "note.md"), sharedLine + "\n", "utf-8");
+
+    const jdir = journalDir(project);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.writeFileSync(path.join(jdir, `${today}.md`), sharedLine + "\n", "utf-8");
+
+    // A raw archive dump containing the SAME query terms — proves the gate
+    // correctly SKIPPED the archive source (not that there was simply nothing
+    // to find had it run).
+    archiveSession({
+      project,
+      sessionId: "d0000000-1111-2222-3333-444444444444",
+      rawTranscript: "raw transcript also mentions zerothorn gateway redesign in passing",
+    });
+
+    const result = await smartRecall({ query, project, drilldown: false });
+
+    assert.ok(result.results.length > 0, "expected at least one result");
+    assert.ok(
+      result.results[0].calibrated >= CONFIDENCE_FLOOR.medium,
+      `expected top result calibrated >= ${CONFIDENCE_FLOOR.medium}, got ${result.results[0].calibrated}`
+    );
+    assert.ok(
+      !result.results.some((r) => r.source === "archive"),
+      `archive source must not run on a high-confidence query; got ${JSON.stringify(result.results)}`
+    );
+    assert.ok(
+      !result.sources_queried.includes("archive"),
+      "sources_queried must not list archive when the gate never fired"
+    );
+  });
+
+  it("(b) sparse store, query only matches raw: archive source surfaces with label", async () => {
+    const project = "archive-src-lo";
+    const query = "brinjal orchard telemetry rollout";
+
+    // No palace content, no journal content — only a raw hook-archive dump
+    // matching the query. palace/journal/insight all come back empty, so the
+    // fused top confidence is 0 (no results at all) — well below medium.
+    archiveSession({
+      project,
+      sessionId: "e0000000-1111-2222-3333-444444444444",
+      rawTranscript: "meeting notes: brinjal orchard telemetry rollout decision pending review",
+    });
+
+    const result = await smartRecall({ query, project });
+
+    const archiveItem = result.results.find((r) => r.source === "archive");
+    assert.ok(archiveItem, `expected an archive-source item; got ${JSON.stringify(result.results)}`);
+    assert.match(archiveItem.excerpt, /\[raw-archive · low-confidence/, "excerpt must carry the raw-archive label");
+    assert.match(
+      archiveItem.excerpt,
+      /journal[/\\]archive[/\\]raw[/\\]/,
+      "excerpt must carry a provenance path under journal/archive/raw/"
+    );
+    assert.ok(
+      archiveItem.confidence === "low" || archiveItem.confidence === "weak",
+      `archive item confidence must never be medium/high; got ${archiveItem.confidence}`
+    );
+    assert.ok(archiveItem.calibrated < CONFIDENCE_FLOOR.medium, "archive item calibrated must stay below medium");
+    assert.ok(archiveItem.verbatimKey && archiveItem.verbatimKey.kind === "archive", "must carry an archive verbatimKey");
+    assert.ok(result.sources_queried.includes("archive"), "sources_queried must include archive when the gate fired");
   });
 });

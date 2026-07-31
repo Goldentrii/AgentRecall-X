@@ -10,21 +10,28 @@
  * slug into `title`, so remote drill-down is unsound until the remote query is
  * extended (see plan §Wave 4 verified facts). Journal + palace local reads only.
  *
+ * F4 (continuity wave, 2026-07-31) added a third kind, "archive": resolves a
+ * smartRecall archive-source item's `verbatimKey` back to its raw file under
+ * journal/archive/raw/, deliberately on a SEPARATE resolution path from
+ * "journal" so the two can never collide (see the "archive" branch below).
+ *
  * NEVER throws into recall — returns null on any error or path-escape attempt.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readJournalFile } from "../helpers/journal-files.js";
-import { palaceDir, sanitizeSlug } from "../storage/paths.js";
+import { archiveRawDir, palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { getRoot } from "../types.js";
 
 /** Locator stamped onto a recall result so the bridge can fetch its raw source. */
 export interface VerbatimKey {
-  kind: "journal" | "palace";
+  kind: "journal" | "palace" | "archive";
   /** journal: YYYY-MM-DD (validated before any path use). */
   date?: string;
-  /** palace: room slug + file slug (sanitized before path.join). */
+  /** palace: room slug + file slug (sanitized before path.join).
+   *  archive: exact on-disk filename under journal/archive/raw/ — see the
+   *  "archive" branch of fetchVerbatim below for the naming allowlist. */
   room?: string;
   file?: string;
 }
@@ -56,6 +63,33 @@ export function fetchVerbatim(project: string, key: VerbatimKey | undefined): Ve
       const text = readJournalFile(project, key.date);
       if (!text) return null;
       return { found: true, source: `journal/${key.date}`, text: cap(text) };
+    }
+
+    if (key.kind === "archive") {
+      // F4 (continuity wave, 2026-07-31): archive/raw/*.md dumps are named
+      // `${date}--${sessionId}.md` (see archiveSession, storage/archive-write.ts)
+      // — the SAME `${date}--` prefix convention smart-named journal files use.
+      // This is exactly why journalDirs() no longer descends into this
+      // directory implicitly (storage/paths.ts) — the "journal" branch above
+      // and this "archive" branch must stay on two separate, non-colliding
+      // resolution paths. `key.file` is UNTRUSTED input reaching path.join, so
+      // it is allowlisted against the exact archiveSession naming convention
+      // (date/hyphens/underscores + a single trailing ".md") instead of being
+      // routed through sanitizeSlug, which strips dots and would corrupt the
+      // ".md" extension.
+      if (!key.file || !/^[A-Za-z0-9_-]+\.md$/.test(key.file)) return null;
+      const p = path.join(archiveRawDir(project), key.file);
+
+      // Defense-in-depth path-escape assertion (mirror the palace branch below).
+      const root = getRoot();
+      const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
+      if (!p.startsWith(rootWithSep) && p !== root) {
+        throw new Error(`Path escape blocked: archive file=${key.file}`);
+      }
+
+      if (!fs.existsSync(p)) return null;
+      const text = fs.readFileSync(p, "utf-8");
+      return { found: true, source: `archive/${key.file}`, text: cap(text) };
     }
 
     // palace

@@ -236,25 +236,43 @@ export function journalDir(project: string): string {
  * Defaults to false so counting paths (session_start, dashboard_export)
  * don't inflate session counts with archived entries (v3.4.26 fix).
  *
- * Wave 2: when includeArchive=true we ALSO push journal/archive/raw (the
- * lossless verbatim tier) if it exists, so recall can reach mechanical dumps.
- * The default counting path stays unchanged → raw dumps don't inflate session
- * counts but become recall-reachable on demand.
+ * F4 (continuity wave, 2026-07-31): journal/archive/raw/ (the lossless
+ * hook-archive verbatim tier written by archiveSession()) is DELIBERATELY
+ * NEVER included here, even when includeArchive=true — this used to be
+ * pushed unconditionally (Wave 2), which made it an ACCIDENTAL, unlabeled
+ * 4th journal source for every includeArchive=true caller (journalSearch,
+ * readJournalFile's backlink resolution). Two concrete problems that caused:
+ *   1. Filename collision: raw dumps are named `${date}--${sessionId}.md`
+ *      (archive-write.ts), the SAME `${date}--` prefix convention
+ *      smart-named journal files use (`YYYY-MM-DD--{saveType}--{lines}L--
+ *      {slug}.md`). readJournalFile's date-prefix matcher can't tell them
+ *      apart, so a raw dump for a date could be silently concatenated into
+ *      (or returned AS) that date's "journal" content.
+ *   2. Noise: raw dumps are unstructured transcript slices (hook stdin
+ *      records, tool_use/tool_result blocks, hook-boilerplate) — treating
+ *      them as curated journal prose by default surfaced low-value noise
+ *      on every recall (empirically confirmed: `ar search --include-palace`
+ *      hit raw text this way; see reports/2026-07-31-continuity-fixture.md
+ *      §4 Test 1).
+ * The gated, labeled replacement is smartRecall's explicit low-confidence
+ * "archive" source (tools-logic/smart-recall.ts) plus drill-down.ts's
+ * `VerbatimKey kind:"archive"` branch. Any caller that intentionally wants
+ * raw/ content should use `archiveRawDir(project)` directly instead of
+ * `journalDirs(project, true)`.
  */
 export function journalDirs(project: string, includeArchive = false): string[] {
   const dirs: string[] = [];
   const primary = journalDir(project);
   if (fs.existsSync(primary)) dirs.push(primary);
 
-  // Archive: journal/archive/ holds entries moved by journalRollup.
+  // Archive: journal/archive/ holds ROLLUP entries moved by journalRollup
+  // (weekly summaries + individual entries that aged out) — unchanged.
   // Only included when caller explicitly requests it (recall, readJournalFile,
   // journalSearch). Excluded by default so session counting doesn't inflate.
+  // journal/archive/raw/ is intentionally NOT pushed here — see doc comment above.
   if (includeArchive) {
     const archiveDir = path.join(primary, "archive");
     if (fs.existsSync(archiveDir)) dirs.push(archiveDir);
-    // Wave 2: lossless verbatim tier (journal/archive/raw).
-    const rawDir = path.join(primary, "archive", "raw");
-    if (fs.existsSync(rawDir)) dirs.push(rawDir);
   }
 
   // Legacy: ~/.claude/projects/*/memory/journal/
