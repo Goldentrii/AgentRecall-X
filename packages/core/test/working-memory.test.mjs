@@ -171,4 +171,24 @@ describe("working-memory (v3.4.42)", () => {
     assert.equal(guessSlugFromWmLines([{ ts: "t0", prompt: "a" }]), null);
     assert.equal(guessSlugFromWmLines([]), null);
   });
+
+  it("guessSlugFromWmLines rejects a deny-listed/invalid candidate — same safety gate F1 applies", async () => {
+    const { guessSlugFromWmLines } = await import("agent-recall-core");
+    // "build" is on SLUG_DENY_LIST (storage/project.ts) — must never be minted
+    // as a project slug just because a WM line happened to run under it.
+    assert.equal(guessSlugFromWmLines([{ ts: "t0", prompt: "a", cwd: "/Users/tongwu/Projects/build" }]), null);
+    // A UUID-shaped path segment must also be rejected.
+    assert.equal(
+      guessSlugFromWmLines([{ ts: "t0", prompt: "a", cwd: "/Users/tongwu/Projects/8a02c8b2-d37b-4681-8bf2-bcf0b6b9d37d" }]),
+      null,
+    );
+    // A valid candidate mixed in with an invalid one still wins on its own count.
+    assert.equal(
+      guessSlugFromWmLines([
+        { ts: "t0", prompt: "a", cwd: "/Users/tongwu/Projects/build" },
+        { ts: "t1", prompt: "b", cwd: "/Users/tongwu/Projects/real-project" },
+      ]),
+      "real-project",
+    );
+  });
 });

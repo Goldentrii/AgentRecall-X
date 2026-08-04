@@ -34,6 +34,7 @@ import { ensureDir, truncateUtf8Bytes } from "./fs-utils.js";
 import { isSystemText, parseJsonlLenient } from "./extraction.js";
 import { recordHookFailure } from "./hook-health.js";
 import { sanitizeSlug } from "./paths.js";
+import { isValidProjectSlug } from "./project.js";
 
 const WM_DIRNAME = "working-memory";
 const JSONL_EXT = ".jsonl";
@@ -244,13 +245,25 @@ export function wmDelete(sid: string): void {
  * paths under `~/Projects/<name>`), deliberately WITHOUT its full three-signal
  * claim-not-generate policy (no existing-slug preference, no content signal —
  * working-memory lines carry only prompts + cwd, not the transcript's
- * user/assistant message records that signal 2 scans). The CLI-side orphan
- * rescue (hook-start) calls the real `resolveSessionProject` directly, since
- * it already lives in the same package and gets the full, stronger
- * resolution; this lighter duplicate exists ONLY for the two core-side call
- * sites that structurally cannot reach it. Returns `null` when no line's
- * `cwd` matches the pattern (caller falls back to a literal `"auto"`, the
- * existing convention for an unresolved slug elsewhere in this codebase).
+ * user/assistant message records that signal 2 scans).
+ *
+ * DELIBERATE choice, used by ALL THREE working-memory consumers (this core
+ * module's two call sites AND the CLI's orphan rescue, even though the
+ * latter COULD reach the real `resolveSessionProject`): F1's own
+ * claim-not-generate gate can only mint a BRAND-NEW slug when its content
+ * signal (from user/assistant transcript records) sees the name mentioned
+ * >=3 times — a signal that structurally never fires from cwd-only
+ * working-memory data. Routing orphan rescue through the real F1 function
+ * would therefore make it unable to attribute a crashed session's FIRST-EVER
+ * interaction with AR to its real project (exactly the case a crash-rescue
+ * mechanism most needs to handle) unless that project already has an
+ * AR_ROOT/projects/<slug> directory — so all three consumers share this
+ * lighter, uniform heuristic instead. Every candidate is still checked
+ * against `isValidProjectSlug` (the SAME gate F1 itself applies) so a
+ * deny-listed/UUID-shaped/otherwise-invalid cwd segment is never selected.
+ * Returns `null` when no line's `cwd` matches the pattern, or when every
+ * match was invalid (caller falls back to a literal `"auto"`, the existing
+ * convention for an unresolved slug elsewhere in this codebase).
  */
 export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null {
   const CWD_SLUG_RE = /^\/Users\/[^/]+\/(?:[Pp]rojects?)\/([^/]+)/;
@@ -260,6 +273,7 @@ export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null 
     const m = CWD_SLUG_RE.exec(l.cwd);
     if (!m) continue;
     const slug = m[1].replace(/[`'".,;)>]+$/, "");
+    if (!isValidProjectSlug(slug)) continue; // same safety gate F1 itself applies
     counts.set(slug, (counts.get(slug) ?? 0) + 1);
   }
   let best: string | null = null;
