@@ -668,3 +668,17 @@ export type { ContinuityBrief, ResurrectInput } from "./tools-logic/resurrect.js
 
 // M8 (review fix, 2026-07-31) — shared UTF-8-safe byte-boundary truncation helpers
 export { truncateUtf8Bytes, utf8SafeEndBoundary, utf8SafeStartBoundary } from "./storage/fs-utils.js";
+
+// v3.4.42 working-memory wave (2026-08-04) — minutes-level, crash-proof capture tier
+export {
+  wmAppend,
+  wmList,
+  wmRead,
+  wmDelete,
+  guessSlugFromWmLines,
+  WM_LINE_CAP,
+  WM_PROMPT_BYTE_CAP,
+  WM_LIVE_WINDOW_MS,
+  WM_ORPHAN_WINDOW_MS,
+} from "./storage/working-memory.js";
+export type { WorkingMemoryLine, WorkingMemoryFileInfo } from "./storage/working-memory.js";

@@ -62,6 +62,29 @@ function output(data: unknown): void {
   else process.stdout.write(JSON.stringify(data, null, 2) + "\n");
 }
 
+/**
+ * v3.4.42 working-memory wave — orphan-rescue idempotency guard 1/2: does ANY
+ * project already have a session card for this sid? Scans every project's
+ * journal/ directory for a `*--card--<sid>.md` file (the exact naming
+ * convention `writeSessionCard` uses). Never throws — a missing/unreadable
+ * projects dir simply means "no card found".
+ */
+function cardExistsForSid(root: string, sid: string): boolean {
+  try {
+    const projectsDir = path.join(root, "projects");
+    if (!fs.existsSync(projectsDir)) return false;
+    for (const slug of fs.readdirSync(projectsDir)) {
+      const journalPath = path.join(projectsDir, slug, "journal");
+      if (!fs.existsSync(journalPath)) continue;
+      const hit = fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
+      if (hit) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function printHelp(): void {
   output(`ar v${VERSION} — AgentRecall CLI
 
@@ -899,7 +922,17 @@ async function main(): Promise<void> {
       } catch { /* non-blocking */ }
 
       try {
-        const result = await core.sessionStart({ project });
+        // v3.4.42 working-memory wave: `sessionId` (env-var derived, above)
+        // is the closest available stand-in for "this session's own Claude
+        // Code session id" at this call site — hook-start does not parse
+        // stdin at all today (verified — this case reads no stdin), so there
+        // is no `session_id` field to pull from a payload here. This is the
+        // SAME lookup hook-end/hook-ambient already use as their own sid
+        // fallback, reused here purely so session-start.ts's WM "live" line
+        // can exclude THIS session's own working-memory file from the
+        // cross-window signal (see SessionStartInput.sid's doc comment for
+        // the graceful-degradation contract when it's empty).
+        const result = await core.sessionStart({ project, sid: sessionId || undefined });
         const lines: string[] = [];
 
         // ---- F5 fail-loud hook health (continuity wave 2026-07-31) ----
@@ -1023,6 +1056,102 @@ async function main(): Promise<void> {
         core.recordHookFailure("hook-start", e);
         process.stderr.write(`[AgentRecall hook-start] ${String(e)}\n`);
       }
+
+      // ---- Working-memory orphan rescue (v3.4.42 working-memory wave) ----
+      // AFTER the render above, own try/catch, best-effort: a session that
+      // crashed/was `kill -9`'d with no hook-end ever firing leaves a WM
+      // file behind forever otherwise. Run on EVERY hook-start (not just
+      // this session's own) so a crashed OTHER window's data gets rescued
+      // into a searchable card the next time ANY session starts.
+      try {
+        const root = core.getRoot();
+        const now = Date.now();
+        for (const wmFile of core.wmList() as Array<{ sid: string; mtimeMs: number; lines: number }>) {
+          if (now - wmFile.mtimeMs <= core.WM_ORPHAN_WINDOW_MS) continue; // still fresh — not orphaned yet
+
+          // Idempotency guard: a card or recency entry already recorded for
+          // this sid means it was already rescued (or ended normally via
+          // hook-end without WM having been cleaned up yet by some other
+          // race) — never rescue twice. If the WM file is somehow still here
+          // despite that, clean it up now rather than re-scanning it forever.
+          const alreadyRecorded =
+            cardExistsForSid(root, wmFile.sid) ||
+            (core.readRecentSessions(1000) as Array<{ sid: string }>).some((e) => e.sid === wmFile.sid);
+          if (alreadyRecorded) {
+            core.wmDelete(wmFile.sid);
+            continue;
+          }
+
+          const wmLines = core.wmRead(wmFile.sid) as Array<{ ts: string; prompt: string; cwd?: string }>;
+          if (wmLines.length === 0) {
+            core.wmDelete(wmFile.sid); // empty/corrupt — nothing to rescue, stop retrying
+            continue;
+          }
+
+          const first = wmLines[0];
+          const last = wmLines[wmLines.length - 1];
+          const slug = (core.guessSlugFromWmLines(wmLines) as string | null) ?? "auto";
+          const title = core.truncateUtf8Bytes(first.prompt, 120);
+          const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+
+          const frontmatter = core.generateFrontmatter({
+            sid: wmFile.sid,
+            date,
+            slug,
+            slug_confidence: 0,
+            slug_candidates: [],
+            source: "working-memory-rescue",
+          });
+          const body = [
+            `# ${title}`,
+            "",
+            `- rescued from working memory after ${wmLines.length} recorded prompt${wmLines.length === 1 ? "" : "s"} (no hook-end ever fired for this session)`,
+            `- ts range: ${first.ts} → ${last.ts}`,
+            "",
+            "## First prompt",
+            first.prompt,
+            "",
+            "## Last prompt",
+            last.prompt,
+            "",
+          ].join("\n");
+
+          const written = core.writeSessionCard({
+            markdown: frontmatter + body,
+            title,
+            artifacts: [],
+            linearRefs: [],
+            decisions: [],
+            nextStep: [],
+            sid: wmFile.sid,
+            slug,
+            date,
+          }) as { path: string; bytes: number };
+
+          if (written.path) {
+            // bytes > 0 means WE wrote it just now (not an existing card a
+            // concurrent rescue already created) — only then add a recency
+            // entry, avoiding a duplicate ledger line for the same sid.
+            if (written.bytes > 0) {
+              core.appendRecentSession({
+                ts: new Date(wmFile.mtimeMs).toISOString(),
+                sid: wmFile.sid,
+                slug,
+                title,
+                artifact_count: 0,
+              });
+            }
+            core.wmDelete(wmFile.sid);
+          }
+          // else: the card write itself failed — leave the WM file in place
+          // so a future hook-start can retry the rescue instead of losing
+          // the only remaining record of this session.
+        }
+      } catch (e) {
+        core.recordHookFailure("hook-start-wm-rescue", e);
+        process.stderr.write(`[AgentRecall hook-start wm-rescue] ${String(e)}\n`);
+      }
+
       break;
     }
 
@@ -1227,6 +1356,15 @@ async function main(): Promise<void> {
               next_step: card.nextStep[0],
               artifact_count: card.artifacts.length,
             });
+            // v3.4.42 working-memory wave — "sleep consolidation": the session
+            // reached a normal, successful hook-end (card + recency both
+            // written above), so its minutes-level working-memory file is no
+            // longer needed — natural forgetting by design, not an archive.
+            // Deliberately INSIDE this try block: if the card/recency write
+            // above threw, we must NOT delete the only remaining record of
+            // this session — leaving WM intact lets orphan rescue recover it
+            // later instead.
+            core.wmDelete(archiveSid);
           } catch (e) {
             core.recordHookFailure("hook-end-card", e);
             process.stderr.write(`[AgentRecall hook-end card] ${String(e)}\n`);
@@ -1519,10 +1657,18 @@ async function main(): Promise<void> {
 
         let prompt = "";
         let sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "default";
+        // v3.4.42 working-memory wave: cwd for the WM line below. Claude Code's
+        // hook JSON is documented to carry a `cwd` field, but no existing hook
+        // in this file reads it (verified — grep found zero prior `.cwd`
+        // access) — defend against it being absent by falling back to this
+        // process's own cwd, which for a hook spawned by Claude Code is the
+        // session's working directory anyway.
+        let cwd = process.cwd();
         try {
           const parsed = JSON.parse(raw);
           prompt = parsed.prompt ?? parsed.message ?? parsed.user_message ?? "";
           if (parsed.session_id) sessionId = String(parsed.session_id);
+          if (typeof parsed.cwd === "string" && parsed.cwd) cwd = parsed.cwd;
         } catch {
           prompt = raw;
         }
@@ -1531,6 +1677,20 @@ async function main(): Promise<void> {
         // agent-message wrappers, system-reminders, etc. carry no human intent.
         // Exit before ANY recall/injection work — no output, no store writes.
         if (isHarnessArtifact(prompt)) process.exit(0);
+
+        // ---- Working-memory capture (v3.4.42 working-memory wave) ----
+        // AFTER stdin parse and the harness-artifact exit above (so a
+        // task-notification/agent-message wrapper never lands in working
+        // memory), BEFORE any other early-exit (short prompt, slash command,
+        // short ack) below — minutes-level capture should see genuine short
+        // prompts and acks too, not just the ones that go on to trigger a
+        // recall. Best-effort: must never delay/deny the ambient injection
+        // output that follows. wmAppend's own contract already never throws
+        // (self-contained try/catch + recordHookFailure) — this wrapper is
+        // defensive insurance only, matching this file's existing style.
+        try {
+          core.wmAppend(sessionId, { ts: new Date().toISOString(), prompt, cwd });
+        } catch { /* defensive — wmAppend's own contract already never throws */ }
 
         // --- READ PREVIOUS SURFACED DATA (used by feedback + topic drift + dedup) ---
         let prevSurfaced: { items?: { id: string; title: string }[]; query?: string; timestamp?: string; history?: string[] } | null = null;

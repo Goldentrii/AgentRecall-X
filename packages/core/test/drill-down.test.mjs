@@ -85,7 +85,16 @@ describe("Wave 4 — fetchVerbatim (drill-down)", () => {
 
   describe("archive key (F4, continuity wave 2026-07-31)", () => {
     it("resolves to the raw file under journal/archive/raw/, not journal (no collision)", () => {
-      const date = "2026-07-31";
+      // Pre-existing bug fixed in passing (v3.4.42 working-memory wave): this
+      // was hardcoded to the literal "2026-07-31" (the day this test was
+      // authored), but `archiveSession()` below stamps its own frontmatter/
+      // filename with the REAL wall-clock today via `todayISO()` — no `date`
+      // param exists on `ArchiveSessionInput` to override it. The hardcoded
+      // literal silently rotted the moment the system date advanced past
+      // 2026-07-31, exactly the "date logic vs TODAY" class of bug this
+      // wave's own Worker Done-Definition guards against. Computed dynamically
+      // now so the test stays correct on any day it runs.
+      const date = new Date().toISOString().slice(0, 10);
       // A raw archive dump AND a real journal file share the same date prefix —
       // this is exactly the `${date}--` collision F4 fixes. Each key kind must
       // resolve to its OWN file, never the other's.

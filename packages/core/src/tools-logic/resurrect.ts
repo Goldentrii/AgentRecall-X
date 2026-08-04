@@ -16,10 +16,17 @@
  *  - <root>/recent-sessions.jsonl (F2, optional — may not exist yet)
  *  - <root>/projects/<slug>/journal/archive/raw/*.md (lossless verbatim tier)
  *  - <root>/projects/<slug>/journal/*--card--*.md (F3 mechanical session card)
- * All three are merged by (slug, sid) — the SAME session recorded via
+ *  - <root>/working-memory/*.jsonl (v3.4.42 working-memory wave — LIVE,
+ *    not-yet-ended sessions; the FRESHEST possible source, since a file
+ *    here means the session is still running, or crashed with no hook-end
+ *    at all yet, RIGHT NOW)
+ * All four are merged by (slug, sid) — the SAME session recorded via
  * multiple tiers becomes ONE ContinuityBrief with fields backfilled from
  * whichever source has them, cards preferred over raw for title/goal since
- * they are the higher-fidelity, already-distilled tier.
+ * they are the higher-fidelity, already-distilled tier. A live WM entry's
+ * `provenance` carries the literal marker `[working-memory · live]` instead
+ * of a file path, so a caller can tell at a glance that a brief is backed by
+ * an in-progress session rather than a completed one.
  *
  * Precision note (fixture report §2): naive path/Linear-ID regexes over raw
  * transcript text are exactly what misled the incident's own forensics —
@@ -74,6 +81,7 @@ import { getRoot } from "../types.js";
 import { archiveRawDir, journalDir, projectsRootDir } from "../storage/paths.js";
 import { parseMemoryFile } from "../supabase/sync.js";
 import { truncateUtf8Bytes } from "../storage/fs-utils.js";
+import { wmList, wmRead, guessSlugFromWmLines } from "../storage/working-memory.js";
 import {
   NEXT_STEP_LINE_RE,
   parseJsonlLenient,
@@ -585,6 +593,38 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
 
       entry.provenance.add(filePath);
     }
+  }
+
+  // ---- Source 4: working-memory/*.jsonl (LIVE, not-yet-ended sessions) ----
+  // v3.4.42 working-memory wave — WM is the FRESHEST possible source: a file
+  // here means the session is still running (or crashed with no hook-end at
+  // all yet) RIGHT NOW, so its natural recency score (via `ts` = file mtime)
+  // already outranks every other tier through the EXISTING scoring formula
+  // below — no special-case scoring needed. Slug is guessed via
+  // `guessSlugFromWmLines`'s cwd-majority heuristic (see that function's doc
+  // comment in working-memory.ts for why this module cannot call the CLI
+  // package's stronger `resolveSessionProject` directly — a core→cli import
+  // would invert the package dependency direction). Falls back to "auto"
+  // (session-card.ts's existing convention for an unresolved slug) when no
+  // cwd signal is available at all. Respects the SAME `cutoff` window as
+  // every other source, so a WM file that somehow never got rescued (orphan
+  // rescue never ran) does not surface as "live" forever.
+  for (const wmFile of wmList()) {
+    if (wmFile.mtimeMs < cutoff) continue;
+    const wmLines = wmRead(wmFile.sid);
+    if (wmLines.length === 0) continue;
+
+    const slug = guessSlugFromWmLines(wmLines) ?? "auto";
+    const entry = getOrCreate(merged, slug, wmFile.sid);
+    entry.ts = Math.max(entry.ts, wmFile.mtimeMs);
+    if (!entry.date) entry.date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+
+    const first = wmLines[0].prompt.replace(/\s+/g, " ").trim();
+    if (!entry.title) entry.title = truncateUtf8Bytes(first, RAW_TITLE_BYTE_CAP);
+    if (!entry.goalExcerpt) entry.goalExcerpt = truncateUtf8Bytes(first, RAW_GOAL_BYTE_CAP);
+
+    entry.rawBodies.push(wmLines.map((l) => l.prompt).join(" "));
+    entry.provenance.add("[working-memory · live]");
   }
 
   // ---- Score + build briefs ----

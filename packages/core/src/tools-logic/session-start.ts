@@ -23,6 +23,7 @@ import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
+import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS } from "../storage/working-memory.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSupabaseConfig } from "../supabase/config.js";
@@ -180,6 +181,18 @@ function stripMarkdownHeaders(text: string): string {
 export interface SessionStartInput {
   project?: string;
   context?: string;
+  /**
+   * v3.4.42 working-memory wave — the CALLER's own Claude Code session id
+   * (e.g. `CLAUDE_SESSION_ID` / stdin's `session_id`), used ONLY to exclude
+   * this session's own working-memory file from the cross-window "live"
+   * continuity line (design doc §Consume 1) — a session must never report
+   * itself as "another session, live elsewhere". Optional and best-effort:
+   * the MCP `session_start` path has no Claude Code session id available at
+   * all and omits this; in that case the live line simply shows the newest
+   * non-stale working-memory file regardless of whose it is (the documented
+   * graceful degradation from the design doc).
+   */
+  sid?: string;
 }
 
 /**
@@ -495,6 +508,42 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     }
   } catch {
     continuity = undefined;
+  }
+
+  // 4c. Working-memory "live" line (v3.4.42 working-memory wave, design doc
+  // §Consume 1) — a cross-window signal that ANOTHER Claude Code session is
+  // (or was, within WM_LIVE_WINDOW_MS) actively running elsewhere RIGHT NOW,
+  // as opposed to `continuity` above (F2) which is pure history of ENDED
+  // sessions. Prepended to the SAME `continuity` array (not a separate
+  // field) so both existing renderers — the CLI's hook-start line-by-line
+  // render and the MCP server's formatTerse — surface it automatically
+  // through the render path they already have, with no second code path to
+  // keep in sync. Max one entry, newest non-self WM file only; omitted
+  // entirely when none qualify. Best-effort: any WM read failure must never
+  // break orientation.
+  try {
+    const now = Date.now();
+    const candidates = wmList().filter(
+      (f) => now - f.mtimeMs < WM_LIVE_WINDOW_MS && (!input.sid || f.sid !== input.sid),
+    );
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      const newest = candidates[0];
+      const wmLines = wmRead(newest.sid);
+      if (wmLines.length > 0) {
+        const lastLine = wmLines[wmLines.length - 1];
+        const cwdBase = lastLine.cwd ? path.basename(lastLine.cwd) : null;
+        const liveSlug = guessSlugFromWmLines(wmLines) ?? cwdBase ?? "auto";
+        const liveEntry = {
+          ago: formatAgo(new Date(newest.mtimeMs).toISOString()),
+          slug: liveSlug,
+          title: truncateUtf8Bytes(`🔴 live — ${lastLine.prompt}`, SECTION_CHAR_LIMITS.continuity_title),
+        };
+        continuity = continuity ? [liveEntry, ...continuity] : [liveEntry];
+      }
+    }
+  } catch {
+    // never break orientation over a best-effort live signal
   }
 
   // 5. Recent journal briefs — today + yesterday only
