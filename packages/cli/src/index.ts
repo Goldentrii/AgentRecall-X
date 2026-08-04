@@ -1066,73 +1066,120 @@ async function main(): Promise<void> {
       try {
         const root = core.getRoot();
         const now = Date.now();
-        for (const wmFile of core.wmList() as Array<{ sid: string; mtimeMs: number; lines: number }>) {
-          if (now - wmFile.mtimeMs <= core.WM_ORPHAN_WINDOW_MS) continue; // still fresh — not orphaned yet
+        const wmFiles = core.wmList() as Array<{ sid: string; mtimeMs: number; lines: number }>;
 
-          // Idempotency guard: a card or recency entry already recorded for
-          // this sid means it was already rescued (or ended normally via
-          // hook-end without WM having been cleaned up yet by some other
-          // race) — never rescue twice. If the WM file is somehow still here
-          // despite that, clean it up now rather than re-scanning it forever.
-          const alreadyRecorded =
-            cardExistsForSid(root, wmFile.sid) ||
-            (core.readRecentSessions(1000) as Array<{ sid: string }>).some((e) => e.sid === wmFile.sid);
-          if (alreadyRecorded) {
-            core.wmDelete(wmFile.sid);
-            continue;
-          }
+        // L1 fix (review, post-build): hoist the recency-index read OUT of the
+        // per-orphan loop. `readRecentSessions(1000)` reads and JSON-parses up
+        // to 1000 ledger lines from disk; the old code called it once PER
+        // orphan file (as part of the idempotency check below), so the
+        // sweep's total cost scaled with orphans × ledger-size instead of
+        // once + an O(1) Set lookup per orphan.
+        const recentSids = new Set(
+          (core.readRecentSessions(1000) as Array<{ sid: string }>).map((e) => e.sid),
+        );
 
-          const wmLines = core.wmRead(wmFile.sid) as Array<{ ts: string; prompt: string; cwd?: string }>;
-          if (wmLines.length === 0) {
-            core.wmDelete(wmFile.sid); // empty/corrupt — nothing to rescue, stop retrying
-            continue;
-          }
+        for (const wmFile of wmFiles) {
+          // M1 fix (review, post-build): per-file try/catch. The old code
+          // wrapped the ENTIRE for-loop in one try/catch declared OUTSIDE the
+          // loop — a thrown error while rescuing ONE orphan aborted the whole
+          // sweep, silently skipping every OTHER orphan file that hadn't been
+          // reached yet. Catching per-iteration means one bad file can never
+          // block its siblings.
+          try {
+            if (now - wmFile.mtimeMs <= core.WM_ORPHAN_WINDOW_MS) continue; // still fresh — not orphaned yet
 
-          const first = wmLines[0];
-          const last = wmLines[wmLines.length - 1];
-          const slug = (core.guessSlugFromWmLines(wmLines) as string | null) ?? "auto";
-          const title = core.truncateUtf8Bytes(first.prompt, 120);
-          const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+            // Idempotency guard: a card and/or recency entry already recorded
+            // for this sid means some or all of the rescue already happened
+            // (or the session ended normally via hook-end without WM having
+            // been cleaned up yet by some other race). Tracked as two
+            // SEPARATE booleans (not one OR'd "alreadyRecorded" flag) because
+            // M1's fix below needs to know precisely which tier is still
+            // missing — a card that exists with no matching recency entry
+            // must NOT be treated as fully rescued.
+            const hasCard = cardExistsForSid(root, wmFile.sid);
+            const hasRecency = recentSids.has(wmFile.sid);
 
-          const frontmatter = core.generateFrontmatter({
-            sid: wmFile.sid,
-            date,
-            slug,
-            slug_confidence: 0,
-            slug_candidates: [],
-            source: "working-memory-rescue",
-          });
-          const body = [
-            `# ${title}`,
-            "",
-            `- rescued from working memory after ${wmLines.length} recorded prompt${wmLines.length === 1 ? "" : "s"} (no hook-end ever fired for this session)`,
-            `- ts range: ${first.ts} → ${last.ts}`,
-            "",
-            "## First prompt",
-            first.prompt,
-            "",
-            "## Last prompt",
-            last.prompt,
-            "",
-          ].join("\n");
+            if (hasCard && hasRecency) {
+              // Both tiers confirmed — nothing left to do but sweep the leftover WM file.
+              core.wmDelete(wmFile.sid);
+              continue;
+            }
 
-          const written = core.writeSessionCard({
-            markdown: frontmatter + body,
-            title,
-            artifacts: [],
-            linearRefs: [],
-            decisions: [],
-            nextStep: [],
-            sid: wmFile.sid,
-            slug,
-            date,
-          }) as { path: string; bytes: number };
+            const wmLines = core.wmRead(wmFile.sid) as Array<{ ts: string; prompt: string; cwd?: string }>;
+            if (wmLines.length === 0) {
+              core.wmDelete(wmFile.sid); // empty/corrupt — nothing to rescue, stop retrying
+              continue;
+            }
 
-          if (written.path) {
-            // bytes > 0 means WE wrote it just now (not an existing card a
-            // concurrent rescue already created) — only then add a recency
-            // entry, avoiding a duplicate ledger line for the same sid.
-            if (written.bytes > 0) {
+            const first = wmLines[0];
+            const last = wmLines[wmLines.length - 1];
+            const slug = (core.guessSlugFromWmLines(wmLines) as string | null) ?? "auto";
+            const title = core.truncateUtf8Bytes(first.prompt, 120);
+            const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+
+            // M1 fix: card-write is now attempted ONLY when a card doesn't
+            // already exist (hasCard tracks that precisely, instead of
+            // re-deriving it from writeSessionCard's own idempotent
+            // path-exists early-return). When hasCard is already true, the
+            // ONLY remaining gap this sweep needs to close is the recency
+            // entry below.
+            let cardOk = hasCard;
+            if (!hasCard) {
+              const frontmatter = core.generateFrontmatter({
+                sid: wmFile.sid,
+                date,
+                slug,
+                slug_confidence: 0,
+                slug_candidates: [],
+                source: "working-memory-rescue",
+              });
+              const body = [
+                `# ${title}`,
+                "",
+                `- rescued from working memory after ${wmLines.length} recorded prompt${wmLines.length === 1 ? "" : "s"} (no hook-end ever fired for this session)`,
+                `- ts range: ${first.ts} → ${last.ts}`,
+                "",
+                "## First prompt",
+                first.prompt,
+                "",
+                "## Last prompt",
+                last.prompt,
+                "",
+              ].join("\n");
+
+              const written = core.writeSessionCard({
+                markdown: frontmatter + body,
+                title,
+                artifacts: [],
+                linearRefs: [],
+                decisions: [],
+                nextStep: [],
+                sid: wmFile.sid,
+                slug,
+                date,
+              }) as { path: string; bytes: number };
+              cardOk = !!written.path;
+            }
+
+            if (!cardOk) {
+              // The card write itself failed — leave the WM file in place so
+              // a future hook-start can retry the rescue instead of losing
+              // the only remaining record of this session.
+              continue;
+            }
+
+            // M1 fix: verify the recency append actually landed instead of
+            // trusting that it didn't throw. `appendRecentSession`
+            // (recency-index.ts) is a DELIBERATELY best-effort, never-throws
+            // telemetry ledger — an unwritable root, a full disk, or a
+            // permissions error fails SILENTLY inside it. The old code used
+            // "the card write just succeeded" as sufficient proof to delete
+            // WM and never checked whether the recency line actually reached
+            // disk, so a card-written-but-recency-failed session became
+            // PERMANENTLY invisible to continuity (no WM left to retry from,
+            // no recency entry either). Re-read the ledger after the append
+            // and only delete WM once BOTH tiers are confirmed present.
+            if (!hasRecency) {
               core.appendRecentSession({
                 ts: new Date(wmFile.mtimeMs).toISOString(),
                 sid: wmFile.sid,
@@ -1140,12 +1187,24 @@ async function main(): Promise<void> {
                 title,
                 artifact_count: 0,
               });
+              const confirmedRecency = (core.readRecentSessions(1000) as Array<{ sid: string }>).some(
+                (e) => e.sid === wmFile.sid,
+              );
+              if (!confirmedRecency) {
+                core.recordHookFailure(
+                  "hook-start-wm-rescue-recency",
+                  new Error(`appendRecentSession did not persist for sid=${wmFile.sid}`),
+                );
+                continue; // do NOT delete WM — retry the recency append on the next sweep
+              }
             }
+
             core.wmDelete(wmFile.sid);
+          } catch (e) {
+            core.recordHookFailure("hook-start-wm-rescue", e);
+            process.stderr.write(`[AgentRecall hook-start wm-rescue sid=${wmFile.sid}] ${String(e)}\n`);
+            // per-file catch — fall through to the next orphan, sweep continues
           }
-          // else: the card write itself failed — leave the WM file in place
-          // so a future hook-start can retry the rescue instead of losing
-          // the only remaining record of this session.
         }
       } catch (e) {
         core.recordHookFailure("hook-start-wm-rescue", e);
@@ -1657,6 +1716,31 @@ async function main(): Promise<void> {
 
         let prompt = "";
         let sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "default";
+        // H2 fix (review, post-build): `sessionId` above falls back to the
+        // LITERAL string "default" when no env var is set — that sentinel is
+        // used elsewhere in this case (topic-profile key, rate-limit counter
+        // file) and is safe there because those call sites already special-
+        // case it. It is NOT safe for working-memory: `wmAppend("default", …)`
+        // would write into a SHARED `default.jsonl` fed by every caller on this
+        // machine that lacks a resolvable session id, defeating the per-sid
+        // isolation the whole module is built on (design doc §Mechanism: "Per-
+        // sid file ⇒ NO shared-file write race between windows"). Worse, hook-
+        // end's own sid resolution (below, in the `hook-end` case) can NEVER
+        // produce that same "default" literal — its unresolvable-fallback is a
+        // date string — so a `default.jsonl` written here is a file hook-end's
+        // normal cleanup path structurally can never reach; it only gets swept
+        // up later by orphan-rescue as ONE mixed-session card blending prompts
+        // from every unresolvable caller. `hasRealSessionId` tracks whether a
+        // GENUINE id was ever seen (stdin `session_id`, or an env var) — WM
+        // capture is gated on it below; every OTHER use of `sessionId` in this
+        // case is untouched (same "default" fallback, same downstream
+        // behavior) since this fix is scoped to the WM tier only. Guards
+        // against BOTH "the env var is unset" (sessionId === "default", the
+        // `??` chain's own fallback) AND "the env var is explicitly set to an
+        // empty string" (`??` does not substitute for "" — only null/
+        // undefined — so an empty CLAUDE_SESSION_ID would otherwise slip
+        // through as sessionId="" and be treated as "real").
+        let hasRealSessionId = sessionId !== "default" && sessionId.length > 0;
         // v3.4.42 working-memory wave: cwd for the WM line below. Claude Code's
         // hook JSON is documented to carry a `cwd` field, but no existing hook
         // in this file reads it (verified — grep found zero prior `.cwd`
@@ -1667,7 +1751,10 @@ async function main(): Promise<void> {
         try {
           const parsed = JSON.parse(raw);
           prompt = parsed.prompt ?? parsed.message ?? parsed.user_message ?? "";
-          if (parsed.session_id) sessionId = String(parsed.session_id);
+          if (parsed.session_id) {
+            sessionId = String(parsed.session_id);
+            hasRealSessionId = true;
+          }
           if (typeof parsed.cwd === "string" && parsed.cwd) cwd = parsed.cwd;
         } catch {
           prompt = raw;
@@ -1688,9 +1775,18 @@ async function main(): Promise<void> {
         // output that follows. wmAppend's own contract already never throws
         // (self-contained try/catch + recordHookFailure) — this wrapper is
         // defensive insurance only, matching this file's existing style.
-        try {
-          core.wmAppend(sessionId, { ts: new Date().toISOString(), prompt, cwd });
-        } catch { /* defensive — wmAppend's own contract already never throws */ }
+        //
+        // H2 fix: when no session id is resolvable at all (no stdin
+        // `session_id`, no `CLAUDE_SESSION_ID`/`SESSION_ID` env var), SKIP the
+        // WM append entirely — graceful degrade to pre-WM behavior — instead
+        // of writing into the shared "default" bucket described above. The
+        // rest of hook-ambient (recall/injection) is completely unaffected;
+        // this only gates the one line below.
+        if (hasRealSessionId) {
+          try {
+            core.wmAppend(sessionId, { ts: new Date().toISOString(), prompt, cwd });
+          } catch { /* defensive — wmAppend's own contract already never throws */ }
+        }
 
         // --- READ PREVIOUS SURFACED DATA (used by feedback + topic drift + dedup) ---
         let prevSurfaced: { items?: { id: string; title: string }[]; query?: string; timestamp?: string; history?: string[] } | null = null;

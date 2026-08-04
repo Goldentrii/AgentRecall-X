@@ -5,7 +5,7 @@
  * Target: <400 tokens output. No awareness duplication.
  */
 
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, isValidProjectSlug } from "../storage/project.js";
 import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
@@ -532,8 +532,17 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       const wmLines = wmRead(newest.sid);
       if (wmLines.length > 0) {
         const lastLine = wmLines[wmLines.length - 1];
+        // M2 fix (review, post-build): the raw `path.basename(cwd)` fallback
+        // bypassed `isValidProjectSlug` entirely — unlike `guessSlugFromWmLines`
+        // itself (which gates every candidate through that same check) and
+        // unlike F1's own claim-not-generate policy. A cwd basename can be a
+        // deny-listed word ("build", "test", …), a UUID-shaped segment, or a
+        // dotfile-style name, any of which would otherwise surface directly
+        // as a "project" in the live continuity line. Validate before using
+        // it; fall back to the documented "auto" sentinel otherwise.
         const cwdBase = lastLine.cwd ? path.basename(lastLine.cwd) : null;
-        const liveSlug = guessSlugFromWmLines(wmLines) ?? cwdBase ?? "auto";
+        const validCwdBase = cwdBase && isValidProjectSlug(cwdBase) ? cwdBase : null;
+        const liveSlug = guessSlugFromWmLines(wmLines) ?? validCwdBase ?? "auto";
         const liveEntry = {
           ago: formatAgo(new Date(newest.mtimeMs).toISOString()),
           slug: liveSlug,

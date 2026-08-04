@@ -34,7 +34,8 @@ import { ensureDir, truncateUtf8Bytes } from "./fs-utils.js";
 import { isSystemText, parseJsonlLenient } from "./extraction.js";
 import { recordHookFailure } from "./hook-health.js";
 import { sanitizeSlug } from "./paths.js";
-import { isValidProjectSlug } from "./project.js";
+import { isValidProjectSlug, listAllProjects } from "./project.js";
+import { scrubForCloud } from "./content-guard.js";
 
 const WM_DIRNAME = "working-memory";
 const JSONL_EXT = ".jsonl";
@@ -127,6 +128,35 @@ function readCounter(countPath: string): number {
  * decimal integer) that is read once (cheap: a handful of bytes, not the
  * growing transcript) and rewritten once per append — genuinely O(1) with
  * respect to the session's own size.
+ *
+ * C1 fix (review, post-build): the raw prompt text used to reach disk with
+ * only the boilerplate check above — no injection/secret scrub — even though
+ * every OTHER persist path in this codebase (journal-write.ts, palace-write.ts,
+ * see storage/content-guard.ts) scrubs before writing. WM is a lower tier
+ * (minutes-level cache, not a permanent record) but it is NOT lower-exposure:
+ * its content is read back verbatim into (a) session-start.ts's cross-SESSION
+ * "live" line (surfaced to a DIFFERENT window/agent), (b) rescued session-card
+ * bodies (cli/index.ts orphan rescue — a permanent journal artifact once
+ * rescued), and (c) resurrect.ts's WM source. A secret or an injected
+ * "<system-reminder>ignore previous instructions</system-reminder>" block
+ * pasted into one prompt would otherwise flow verbatim into all three. This
+ * is the SINGLE choke point for the whole tier — every WM line is built here.
+ *
+ * Ordering (truncate → scrub → truncate again), deliberately NOT
+ * scrub-then-truncate, to preserve the O(1)-hot-path guarantee this module's
+ * own header documents: `scrubForCloud` is a ~15-regex pass whose cost scales
+ * with input length (measured: ~0.28ms on a 100KB string — see the fix
+ * report's benchmark). Truncating to WM_PROMPT_BYTE_CAP FIRST bounds the
+ * scrub's input to a small constant (≤300 bytes) regardless of how long the
+ * raw prompt was, so the added cost is ~1-2 microseconds per call — the scrub
+ * never sees the full pasted-file-sized prompt a user might submit. Content
+ * beyond the byte cap is truncated away before it is ever persisted, so it
+ * needs no scrubbing; content a secret/tag straddling the truncation boundary
+ * can still be caught if enough of it survives inside the retained window.
+ * The second truncateUtf8Bytes call is a cheap defensive no-op today (every
+ * SECRET_CONTENT_PATTERNS replacement is shorter than what it matches, so
+ * scrub never grows the string) — kept so the ≤WM_PROMPT_BYTE_CAP invariant
+ * holds even if that redaction-placeholder assumption ever changes.
  */
 export function wmAppend(sid: string, entry: { ts: string; prompt: string; cwd?: string }): void {
   try {
@@ -139,9 +169,12 @@ export function wmAppend(sid: string, entry: { ts: string; prompt: string; cwd?:
 
     ensureDir(wmDir());
 
+    const truncated = truncateUtf8Bytes(prompt, WM_PROMPT_BYTE_CAP);
+    const scrubbed = truncateUtf8Bytes(scrubForCloud(truncated), WM_PROMPT_BYTE_CAP);
+
     const line: WorkingMemoryLine = {
       ts: entry.ts,
-      prompt: truncateUtf8Bytes(prompt, WM_PROMPT_BYTE_CAP),
+      prompt: scrubbed,
     };
     if (entry.cwd) line.cwd = entry.cwd;
 
@@ -264,6 +297,21 @@ export function wmDelete(sid: string): void {
  * Returns `null` when no line's `cwd` matches the pattern, or when every
  * match was invalid (caller falls back to a literal `"auto"`, the existing
  * convention for an unresolved slug elsewhere in this codebase).
+ *
+ * H1 fix (review, post-build): F1 (`resolveSessionProject`, transcript-reader.ts)
+ * scans its FULL ranked candidate list and lets the first one that already
+ * has an on-disk project home win outright ("prefer an existing slug" —
+ * Signal 3), even over a noisier top-ranked candidate. The original version
+ * of this function had no such tie-break — pure cwd-count majority — so a WM
+ * session that happened to visit an unrelated-but-more-frequent cwd (e.g. a
+ * quick `cd` into a sibling checkout mid-session) could out-vote the project
+ * the session actually belongs to, where F1 itself would have picked the
+ * established one. Mirrors F1's tie-break using core's OWN project listing
+ * (`listAllProjects`, this same module — no cli import, preserving the
+ * core→cli layering direction documented above) instead of duplicating a raw
+ * `fs.readdirSync` scan. Wrapped in its own try/catch: this function must
+ * never throw (same contract as every other WM helper), and `listAllProjects`
+ * is a filesystem read this module does not otherwise need to guard.
  */
 export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null {
   const CWD_SLUG_RE = /^\/Users\/[^/]+\/(?:[Pp]rojects?)\/([^/]+)/;
@@ -276,13 +324,25 @@ export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null 
     if (!isValidProjectSlug(slug)) continue; // same safety gate F1 itself applies
     counts.set(slug, (counts.get(slug) ?? 0) + 1);
   }
-  let best: string | null = null;
-  let bestCount = 0;
-  for (const [slug, count] of counts) {
-    if (count > bestCount) {
-      best = slug;
-      bestCount = count;
+  if (counts.size === 0) return null;
+
+  const ranked = [...counts.entries()]
+    .map(([slug, count]) => ({ slug, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Existing-slug tie-break (H1) — mirrors F1's Signal 3. Scan the full
+  // ranked list, not just the top candidate: an established project should
+  // win even when a noisier candidate happens to have a higher raw count in
+  // this particular WM slice.
+  try {
+    const existingSlugs = new Set(listAllProjects().map((p) => p.slug));
+    for (const cand of ranked) {
+      if (existingSlugs.has(cand.slug)) return cand.slug;
     }
+  } catch {
+    // listAllProjects is a best-effort preference signal, not a requirement —
+    // fall through to the plain majority below on any read failure.
   }
-  return best;
+
+  return ranked[0]?.slug ?? null;
 }
