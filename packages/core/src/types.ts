@@ -9,7 +9,7 @@ import * as os from "node:os";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.4.41";
+export const VERSION = "3.4.42";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)

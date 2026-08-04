@@ -6,6 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.42] — 2026-08-04
+
+Patch release: the working-memory tier — minutes-level, crash-proof memory. Like a brain: long-term can decay, but "what happened 5 minutes ago" must survive anything.
+
+### Added
+
+- **Working memory (`working-memory/<sid>.jsonl`)**: every user prompt appends one scrubbed, byte-capped line (piggybacked on the existing per-prompt hook — no new process, ~µs hot path, per-session files so concurrent windows can never race each other). Prompts are injection- and secret-scrubbed at the single capture choke point before touching disk.
+- **Crash rescue**: at session start, working-memory files older than an hour whose session never produced a card are distilled into a rescue card + continuity entry, then consolidated away — a killed/crashed session now becomes searchable memory at the next session start instead of vanishing.
+- **Cross-window live line**: session start surfaces what another live session was just doing (`🔴 live · … `), newest only, omitted when none.
+- **Sleep consolidation**: a normal hook-end absorbs the session into its card and deletes the working-memory file — the verbatim minutes-level tier is never archived, by design.
+- **`resurrect` freshest tier**: live working-memory joins raw archives and cards as a resurrect source.
+
+### Fixed
+
+- Session-id fallback unified between capture and cleanup: when no session id is resolvable, working memory is skipped entirely rather than written to a shared file.
+- Working-memory slug guessing prefers an existing on-disk project (parity with the v3.4.41 namer, pinned by a cross-package drift-guard test).
+
 ## [3.4.41] — 2026-07-31
 
 Patch release: the continuity wave — born from a same-day incident where a fully-captured session was unretrievable the next session. Capture was never the problem; surfacing was.
