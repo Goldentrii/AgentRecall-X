@@ -224,6 +224,14 @@ flowchart LR
 
 ---
 
+## The Automaticity Principle · 自动化原则
+
+Memory only compounds if it fires automatically, not on demand. Every pull-channel tool (`recall`, `memory_query`) saw zero organic calls across 44 projects over weeks of real use — including from the agent that built them. That is why only 5 tools ship by default; the two-verb model (`session_start` / `session_end`) carries all the compounding value, and everything else is opt-in via `--full`.
+
+记忆只有在自动触发时才会复合，而不是按需调用。在数周的真实使用中，每一个拉取型工具（`recall`、`memory_query`）在 44 个项目里都是零次自然调用——包括构建它们的 agent 本身也不例外。这就是为什么默认只发布 5 个工具：双动词模型（`session_start` / `session_end`）承载了全部的复合价值，其余功能都是通过 `--full` 按需开启的可选项。
+
+---
+
 ## Already Using Another Memory System? · 已经用过别的？
 
 **`/arstart bootstrap`** scans your machine and imports everything: git repos, Claude AutoMemory (`~/.claude/projects/`), CLAUDE.md files. Read-only scan, secrets never touched.
@@ -494,6 +502,103 @@ Run `ar --help` for the full surface · 完整命令运行 `ar --help`.
 
 ---
 
+## Dreaming — Nightly Consolidation (optional) · Dreaming —— 夜间自动整合（可选）
+
+An autonomous overnight agent that runs while you sleep and compounds everything your sessions wrote during the day.
+
+一个自主的隔夜 agent，趁你睡觉时把当天所有会话写入的内容复合在一起。
+
+<table>
+<tr>
+<th>EN — What it does</th>
+<th>中文 — 做什么</th>
+<th>EN — Result</th>
+<th>中文 — 结果</th>
+</tr>
+<tr><td>Mine patterns across all projects</td><td>跨项目挖掘模式</td><td>Repeated corrections promote to <code>palace/awareness</code></td><td>重复纠正晋升至 <code>palace/awareness</code></td></tr>
+<tr><td>Ebbinghaus salience decay</td><td>Ebbinghaus 显著性衰减</td><td>Low-signal rooms fade; your palace stays sharp</td><td>低价值房间自然消退；palace 保持精炼</td></tr>
+<tr><td>Journal rollups</td><td>Journal 汇总</td><td>Entries &gt;30 days compress into summary rooms</td><td>30 天以上的条目压缩为摘要房间</td></tr>
+<tr><td>Awareness graduation</td><td>Awareness 毕业</td><td>Corrections confirmed N× times go cross-project</td><td>被确认 N 次的纠正跨项目晋升</td></tr>
+<tr><td>Telegram report</td><td>Telegram 报告</td><td>Nightly summary: learned · decayed · crystallized</td><td>夜间摘要：学到了什么 · 衰减了什么 · 结晶了什么</td></tr>
+</table>
+
+**Requires a live Claude Code login.** If the session expires, dream skips with a Telegram alert.
+
+**需要有效的 Claude Code 登录。** 如果会话过期，dream 会跳过并通过 Telegram 发送提醒。
+
+```bash
+# Fix expired login (run this when dreaming stops)
+claude login
+```
+
+Dream reports are saved locally to `~/.agent-recall/dreams/YYYY-MM-DD.md`.
+
+Dream 报告保存在本地 `~/.agent-recall/dreams/YYYY-MM-DD.md`。
+
+---
+
+## Experimental: Recurrence & Reflection Harness Kit · 实验性：复发与反思 Harness 工具包
+
+**The question this answers: does a correction actually change behavior, or does the same mistake come back?** A logged correction whose error class recurs after the rule was encoded is a *phantom gradient step* — the write cost was paid, the behavior never changed.
+
+**这一节回答的问题是：一条纠正是否真的改变了行为，还是同样的错误又回来了？** 一条已记录的纠正，如果它所属的错误类别在规则写入之后又复发了，就是一次*幻影梯度步（phantom gradient step）*——写入成本已经付出，行为却从未改变。
+
+The kit in [`experimental/harness-kit/`](experimental/harness-kit/) is a Claude Code harness layer that closes this loop on top of AgentRecall:
+
+[`experimental/harness-kit/`](experimental/harness-kit/) 里的这套工具是一层构建在 AgentRecall 之上的 Claude Code harness，用来闭合这个循环：
+
+<table>
+<tr>
+<th>EN — Piece</th>
+<th>中文 — 组件</th>
+<th>EN — What it does</th>
+<th>中文 — 做什么</th>
+</tr>
+<tr><td><code>ar-scoreboard.py</code> (SessionStart hook)</td><td><code>ar-scoreboard.py</code>（SessionStart hook）</td><td>Health digest every session: correction flow, insight promotion rate, loop health, phantom counts, reflection cadence</td><td>每次会话的健康摘要：纠正流转、insight 晋升率、闭环健康度、幻影计数、反思周期</td></tr>
+<tr><td><code>ar-recurrence-check.py</code> (+ your <code>~/.agent-recall/taxonomy.json</code>, schema in <code>TAXONOMY-SCHEMA.md</code>)</td><td><code>ar-recurrence-check.py</code>（+ 你的 <code>~/.agent-recall/taxonomy.json</code>，schema 见 <code>TAXONOMY-SCHEMA.md</code>）</td><td>Error-class taxonomy over your corrections; mechanical phantom detection (violation dated after its rule)</td><td>对你的纠正做错误类别分类；机械式幻影检测（违规日期晚于其规则日期）</td></tr>
+<tr><td><code>/arstart</code> · <code>/arsave</code> · <code>/arrecall</code> · <code>/arreflect</code></td><td><code>/arstart</code> · <code>/arsave</code> · <code>/arrecall</code> · <code>/arreflect</code></td><td>The four memory verbs (open · save · search · consolidate) as slash commands</td><td>四个记忆动词（打开 · 保存 · 搜索 · 整合）对应的 slash command</td></tr>
+<tr><td><code>/arreflect</code> (every K sessions)</td><td><code>/arreflect</code>（每 K 次会话）</td><td>Periodic triage: confirm provisional matches, cluster new error classes, propose rule re-abstractions — <b>rule edits stay owner-gated</b></td><td>周期性 triage：确认待定匹配，聚类新的错误类别，提出规则再抽象建议——<b>规则修改仍由 owner 把关</b></td></tr>
+<tr><td><code>ar-nudge.py</code> (UserPromptSubmit hook)</td><td><code>ar-nudge.py</code>（UserPromptSubmit hook）</td><td>Surfaces overdue reflection mid-session — memory pushed to the moment of action, not left to be remembered</td><td>在会话中途提醒逾期未做的反思——把记忆推到行动发生的那一刻，而不是等着被想起来</td></tr>
+<tr><td><code>dispatch-model-guard.py</code> (PreToolUse hook, optional)</td><td><code>dispatch-model-guard.py</code>（PreToolUse hook，可选）</td><td>Warn-only guard for an explicit-model dispatch policy — an example of mechanizing a rule that text alone failed to enforce</td><td>针对显式 model 派发策略的仅警告型守卫——把一条文字说明无法强制执行的规则机制化的一个例子</td></tr>
+</table>
+
+North-star metric: **post-re-abstraction phantom rate → 0** for treated classes. First validation run (2026-07-14, one power-user harness): 8 error classes and 18 confirmed phantom gradient steps found in 109 corrections; 6 rules re-abstracted the same day.
+
+North-star 指标：被处理的错误类别的**再抽象后幻影率 → 0**。首次验证跑（2026-07-14，一个重度用户的 harness）：在 109 条纠正中发现 8 个错误类别、18 个被确认的幻影梯度步；当天再抽象了 6 条规则。
+
+**Status: experimental.** Validated on one harness; Python 3 stdlib only; install steps and caveats in the kit's [README](experimental/harness-kit/README.md). Since v3.4.37 the same phenomenon is also measured natively: `failure_class` + the cross-project recurrence join.
+
+**状态：实验性。** 目前只在一个 harness 上验证过；仅依赖 Python 3 标准库；安装步骤和注意事项见工具包的 [README](experimental/harness-kit/README.md)。自 v3.4.37 起，同样的现象也已被原生测量：`failure_class` + 跨项目复发关联。
+
+---
+
+## War Room Dashboard — Download & Deploy · War Room 仪表盘 —— 下载与部署
+
+A local-first visual dashboard for your memory: an activity calendar, per-project status, corrections, and insights — all rendered from your local `~/.agent-recall/` data. Fully offline (vendored assets), no Node and no build step.
+
+一个**本地优先的可视化仪表盘**，展示你的记忆：活动日历、各项目状态、纠正记录、insight——全部从你本地的 `~/.agent-recall/` 数据渲染。完全离线（资源已内置），无需 Node、无需构建步骤。
+
+<p align="center">
+  <img src="warroom/static/preview.png" alt="AgentRecall War Room — Overview · 总览" width="900">
+</p>
+
+1. Download **`ar-warroom-v3.4.38.zip`** from the [latest GitHub Release](https://github.com/Goldentrii/AgentRecall-X/releases/latest).
+   从 [最新 GitHub Release](https://github.com/Goldentrii/AgentRecall-X/releases/latest) 下载 **`ar-warroom-v3.4.38.zip`**。
+2. Unzip it, then serve it locally · 解压后本地启动：
+
+```bash
+cd warroom
+python3 -m http.server 8080
+```
+
+3. Open **http://localhost:8080/AgentRecall.html** · 打开 **http://localhost:8080/AgentRecall.html**
+
+This is the recommended onboarding for Hermes / OpenClaw / OpenCode users too — one offline page to see everything your agent has learned.
+
+对于 **Hermes / OpenClaw / OpenCode** 用户，这也是推荐的上手方式——一个离线页面就能看到 agent 学到的一切。
+
+---
+
 ## Architecture · 架构
 
 TypeScript monorepo, 4 published packages · TypeScript monorepo，4 个发布包：
@@ -526,6 +631,10 @@ packages/
 
 **Optional Supabase mirror · 可选 Supabase 镜像** — pgvector for semantic recall, RRF fusion when configured. All-local stays the default.
 
+**Retrieval today:** keyword + RRF (Cormack 2009), FSRS-lite decay (Ebbinghaus → SuperMemo → FSRS-6). A Modern Hopfield re-rank primitive (Ramsauer 2020) is in the codebase but not wired into the default path — what actually runs is local keyword/substring matching (stemming + synonym expansion + lightweight IDF, per-source ranking) merged via RRF, plus optional vector search when `OPENAI_API_KEY` is set. No inverted index or BM25 k1/b tuning — a real BM25 index is a possible future upgrade, not what's running now.
+
+**当前检索：** 关键词 + RRF 融合（Cormack 2009），FSRS-lite 衰减（Ebbinghaus → SuperMemo → FSRS-6）。代码库中包含一个 Modern Hopfield 重排序原语（Ramsauer 2020），但未接入默认路径——目前实际运行的是本地关键词/子串匹配（词干还原 + 同义词扩展 + 轻量 IDF、按来源排序）并通过 RRF 融合，再加上设置了 `OPENAI_API_KEY` 时可选启用的向量检索。没有倒排索引，也没有 BM25 的 k1/b 调参——真正的 BM25 索引是可能的未来升级方向，而非当前运行的算法。
+
 ---
 
 ## Platform Compatibility · 平台兼容
@@ -548,6 +657,8 @@ packages/
 - [`REPORT-2026-05-30.html`](./REPORT-2026-05-30.html) — Phase 6 visual report
 - [`docs/`](./docs) — command reference, architecture deep-dives
 - [`SKILL.md`](./SKILL.md) — Claude Code skill definition
+- [`docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md`](./docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) — the correction-transfer benchmark spec behind the measured-metrics table
+- [`docs/research/agent-memory-landscape-2026-07.md`](./docs/research/agent-memory-landscape-2026-07.md) — the field survey identifying the gap AgentRecall's benchmark fills
 
 ---
 
