@@ -22,6 +22,7 @@ import { readAwarenessState } from "../palace/awareness.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { getRoot } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
+import { isJournalFile } from "../helpers/journal-filter.js";
 import type { SaveType } from "../storage/session.js";
 import { getSessionId, getCachedSessionEnd, setCachedSessionEnd } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
@@ -282,7 +283,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     let sectionHeading = "## Brief";
     if (fs.existsSync(jDir)) {
       const existingFiles = fs.readdirSync(jDir)
-        .filter(f => f.startsWith(date) && f.endsWith(".md") && f !== "index.md");
+        .filter(f => f.startsWith(date) && isJournalFile(f));
       for (const f of existingFiles) {
         const content = fs.readFileSync(path.join(jDir, f), "utf-8");
         if (content.includes("## Brief")) {
@@ -678,7 +679,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       if (fs.existsSync(jDirPath)) {
         const today = todayISO();
         const files = fs.readdirSync(jDirPath)
-          .filter(f => f.endsWith(".md") && f !== "index.md")
+          .filter(isJournalFile)
           .sort()
           .reverse();
 
@@ -722,7 +723,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   const date = todayISO();
   const jDir = journalDir(slug);
   const journalCount = fs.existsSync(jDir)
-    ? fs.readdirSync(jDir).filter(f => f.endsWith(".md") && f !== "index.md").length
+    ? fs.readdirSync(jDir).filter(isJournalFile).length
     : 0;
 
   // Get total awareness insights
