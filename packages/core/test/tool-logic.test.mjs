@@ -90,6 +90,28 @@ describe("Tool-logic functions — integration tests", () => {
     assert.ok(result.journal_root);
   });
 
+  it("journalProjects ignores auxiliary journal files", async () => {
+    const project = "aux-filter-proj";
+    const journalDir = path.join(TEST_ROOT, "projects", project, "journal");
+    fs.mkdirSync(journalDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(journalDir, "2026-01-01--arsave--none--none--real-entry.md"),
+      "# Real entry\n\n## Brief\nProject work that should count.\n",
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(journalDir, "index.md"), "# Index\n", "utf-8");
+    fs.writeFileSync(path.join(journalDir, "2026-01-02.merged.md"), "# Merged helper\n", "utf-8");
+    fs.writeFileSync(path.join(journalDir, "2026-01-03--capture--none--none--note.md"), "# Capture\n", "utf-8");
+    fs.writeFileSync(path.join(journalDir, "2026-W01.md"), "# Weekly rollup\n", "utf-8");
+    fs.writeFileSync(path.join(journalDir, "notes.md"), "# Freeform notes\n", "utf-8");
+
+    const result = await core.journalProjects();
+    const found = result.projects.find((p) => p.slug === project);
+    assert.ok(found);
+    assert.equal(found.last_entry, "2026-01-01");
+    assert.equal(found.entry_count, 1);
+  });
+
   // ── Journal State ─────────────────────────────────────
 
   it("journalState write + read roundtrip", async () => {
