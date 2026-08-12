@@ -23,7 +23,7 @@ import { extractKeywords } from "../helpers/auto-name.js";
 import { isJournalFile } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
-import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS } from "../storage/working-memory.js";
+import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS, rescueOrphanedWorkingMemory } from "../storage/working-memory.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSupabaseConfig } from "../supabase/config.js";
@@ -1040,6 +1040,29 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // dup=true means this call's write-phase was idempotent-suppressed (a
   // repeat session_start for this process's session + project).
   recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
+
+  // Train C (C-2, 2026-08-12 wave) — best-effort orphan rescue, run AFTER
+  // result assembly so a slow/failed sweep can never affect what this call
+  // returns. Reuses the SAME sweep the CLI's `hook-start` case calls
+  // (rescueOrphanedWorkingMemory, storage/working-memory.ts) — single
+  // source, so ANY host that calls the MCP `session_start` tool (Codex/
+  // Cursor/raw MCP, doctrine 2026-07-26: the customer's only action is
+  // describing intent, no hooks required) self-heals prior crashed sessions
+  // the exact same way the CLI hook already does. Synchronous (like the CLI
+  // call site) rather than deferred via setImmediate (contrast `autoBackfill`
+  // below): its own module doc already establishes wmList()'s full-directory
+  // scan as acceptable at this call frequency (session_start/hook-start, NOT
+  // the per-tool-call hot path C-1 guards), and running it inline — not
+  // deferred — is what lets a fresh session_start's OWN continuity reflect a
+  // rescue that just happened, matching the design doc's acceptance flow.
+  // Never throws by its own contract; try/catch kept for defense-in-depth
+  // only, matching this function's established best-effort convention.
+  try {
+    rescueOrphanedWorkingMemory();
+  } catch {
+    // rescueOrphanedWorkingMemory never throws — guard kept so a future
+    // change to that contract can never break session_start.
+  }
 
   return result;
 }

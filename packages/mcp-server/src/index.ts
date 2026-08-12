@@ -3,6 +3,8 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { VERSION, getRoot, getLegacyRoot } from "agent-recall-core";
 import { server } from "./server.js";
+import { installAmbientCapture } from "./lib/ambient-capture.js";
+import { installLifecycleExitHandlers } from "./lib/lifecycle-exit.js";
 
 // ── v3.4 primary tools (5-tool surface) ──────────────────────────────────
 import { register as registerSessionStart } from "./tools/session-start.js";
@@ -158,6 +160,14 @@ if (args.includes("--list-tools")) {
   process.exit(0);
 }
 
+// ── C-1 (Train C, 2026-08-12 wave) — passive ambient capture ────────────────
+// Must run BEFORE any register*(server) call below: wraps server.registerTool
+// once so EVERY tool registration (present AND future, default surface AND
+// --full/AR_EXTRAS) gets one scrubbed working-memory line per call, keyed by
+// this process's SESSION_ID. See lib/ambient-capture.ts's doc comment for
+// the full design rationale.
+installAmbientCapture(server);
+
 // ── Default surface: 5 tools (two verbs + three essentials) ─────────────────
 // Automaticity Law: only memory that arrives unasked gets used.
 // Push channels (session_start/end, hooks) drive behavior; pull channels don't.
@@ -204,6 +214,11 @@ registerSessionPrompts(server);
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // C-3 (Train C, 2026-08-12 wave) — best-effort freshness on graceful exit.
+  // Installed once the transport is connected (nothing to distill before
+  // then — no tool calls could have happened yet). See lib/lifecycle-exit.ts.
+  installLifecycleExitHandlers();
 }
 
 main().catch((err) => {

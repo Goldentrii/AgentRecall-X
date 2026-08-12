@@ -62,29 +62,6 @@ function output(data: unknown): void {
   else process.stdout.write(JSON.stringify(data, null, 2) + "\n");
 }
 
-/**
- * v3.4.42 working-memory wave — orphan-rescue idempotency guard 1/2: does ANY
- * project already have a session card for this sid? Scans every project's
- * journal/ directory for a `*--card--<sid>.md` file (the exact naming
- * convention `writeSessionCard` uses). Never throws — a missing/unreadable
- * projects dir simply means "no card found".
- */
-function cardExistsForSid(root: string, sid: string): boolean {
-  try {
-    const projectsDir = path.join(root, "projects");
-    if (!fs.existsSync(projectsDir)) return false;
-    for (const slug of fs.readdirSync(projectsDir)) {
-      const journalPath = path.join(projectsDir, slug, "journal");
-      if (!fs.existsSync(journalPath)) continue;
-      const hit = fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
-      if (hit) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 function printHelp(): void {
   output(`ar v${VERSION} — AgentRecall CLI
 
@@ -1065,156 +1042,24 @@ async function main(): Promise<void> {
       }
 
       // ---- Working-memory orphan rescue (v3.4.42 working-memory wave) ----
-      // AFTER the render above, own try/catch, best-effort: a session that
-      // crashed/was `kill -9`'d with no hook-end ever firing leaves a WM
-      // file behind forever otherwise. Run on EVERY hook-start (not just
-      // this session's own) so a crashed OTHER window's data gets rescued
-      // into a searchable card the next time ANY session starts.
+      // AFTER the render above, best-effort: a session that crashed/was
+      // `kill -9`'d with no hook-end ever firing leaves a WM file behind
+      // forever otherwise. Run on EVERY hook-start (not just this session's
+      // own) so a crashed OTHER window's data gets rescued into a searchable
+      // card the next time ANY session starts.
+      //
+      // Train C (C-2, 2026-08-12 wave): the sweep itself now lives in core
+      // (`rescueOrphanedWorkingMemory`, storage/working-memory.ts) so BOTH
+      // this CLI hook AND core's own `sessionStart()` (called by the MCP
+      // `session_start` tool, reached by hook-less hosts too) invoke the
+      // SAME implementation — single source, no duplicate sweep logic.
+      // Defensive try/catch kept here even though the callee's own contract
+      // is never-throw, matching this file's established convention for
+      // best-effort core calls (see the hook-ambient `wmAppend` call site).
       try {
-        const root = core.getRoot();
-        const now = Date.now();
-        const wmFiles = core.wmList() as Array<{ sid: string; mtimeMs: number; lines: number }>;
-
-        // L1 fix (review, post-build): hoist the recency-index read OUT of the
-        // per-orphan loop. `readRecentSessions(1000)` reads and JSON-parses up
-        // to 1000 ledger lines from disk; the old code called it once PER
-        // orphan file (as part of the idempotency check below), so the
-        // sweep's total cost scaled with orphans × ledger-size instead of
-        // once + an O(1) Set lookup per orphan.
-        const recentSids = new Set(
-          (core.readRecentSessions(1000) as Array<{ sid: string }>).map((e) => e.sid),
-        );
-
-        for (const wmFile of wmFiles) {
-          // M1 fix (review, post-build): per-file try/catch. The old code
-          // wrapped the ENTIRE for-loop in one try/catch declared OUTSIDE the
-          // loop — a thrown error while rescuing ONE orphan aborted the whole
-          // sweep, silently skipping every OTHER orphan file that hadn't been
-          // reached yet. Catching per-iteration means one bad file can never
-          // block its siblings.
-          try {
-            if (now - wmFile.mtimeMs <= core.WM_ORPHAN_WINDOW_MS) continue; // still fresh — not orphaned yet
-
-            // Idempotency guard: a card and/or recency entry already recorded
-            // for this sid means some or all of the rescue already happened
-            // (or the session ended normally via hook-end without WM having
-            // been cleaned up yet by some other race). Tracked as two
-            // SEPARATE booleans (not one OR'd "alreadyRecorded" flag) because
-            // M1's fix below needs to know precisely which tier is still
-            // missing — a card that exists with no matching recency entry
-            // must NOT be treated as fully rescued.
-            const hasCard = cardExistsForSid(root, wmFile.sid);
-            const hasRecency = recentSids.has(wmFile.sid);
-
-            if (hasCard && hasRecency) {
-              // Both tiers confirmed — nothing left to do but sweep the leftover WM file.
-              core.wmDelete(wmFile.sid);
-              continue;
-            }
-
-            const wmLines = core.wmRead(wmFile.sid) as Array<{ ts: string; prompt: string; cwd?: string }>;
-            if (wmLines.length === 0) {
-              core.wmDelete(wmFile.sid); // empty/corrupt — nothing to rescue, stop retrying
-              continue;
-            }
-
-            const first = wmLines[0];
-            const last = wmLines[wmLines.length - 1];
-            const slug = (core.guessSlugFromWmLines(wmLines) as string | null) ?? "auto";
-            const title = core.truncateUtf8Bytes(first.prompt, 120);
-            const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
-
-            // M1 fix: card-write is now attempted ONLY when a card doesn't
-            // already exist (hasCard tracks that precisely, instead of
-            // re-deriving it from writeSessionCard's own idempotent
-            // path-exists early-return). When hasCard is already true, the
-            // ONLY remaining gap this sweep needs to close is the recency
-            // entry below.
-            let cardOk = hasCard;
-            if (!hasCard) {
-              const frontmatter = core.generateFrontmatter({
-                sid: wmFile.sid,
-                date,
-                slug,
-                slug_confidence: 0,
-                slug_candidates: [],
-                source: "working-memory-rescue",
-              });
-              const body = [
-                `# ${title}`,
-                "",
-                `- rescued from working memory after ${wmLines.length} recorded prompt${wmLines.length === 1 ? "" : "s"} (no hook-end ever fired for this session)`,
-                `- ts range: ${first.ts} → ${last.ts}`,
-                "",
-                "## First prompt",
-                first.prompt,
-                "",
-                "## Last prompt",
-                last.prompt,
-                "",
-              ].join("\n");
-
-              const written = core.writeSessionCard({
-                markdown: frontmatter + body,
-                title,
-                artifacts: [],
-                linearRefs: [],
-                decisions: [],
-                nextStep: [],
-                sid: wmFile.sid,
-                slug,
-                date,
-              }) as { path: string; bytes: number };
-              cardOk = !!written.path;
-            }
-
-            if (!cardOk) {
-              // The card write itself failed — leave the WM file in place so
-              // a future hook-start can retry the rescue instead of losing
-              // the only remaining record of this session.
-              continue;
-            }
-
-            // M1 fix: verify the recency append actually landed instead of
-            // trusting that it didn't throw. `appendRecentSession`
-            // (recency-index.ts) is a DELIBERATELY best-effort, never-throws
-            // telemetry ledger — an unwritable root, a full disk, or a
-            // permissions error fails SILENTLY inside it. The old code used
-            // "the card write just succeeded" as sufficient proof to delete
-            // WM and never checked whether the recency line actually reached
-            // disk, so a card-written-but-recency-failed session became
-            // PERMANENTLY invisible to continuity (no WM left to retry from,
-            // no recency entry either). Re-read the ledger after the append
-            // and only delete WM once BOTH tiers are confirmed present.
-            if (!hasRecency) {
-              core.appendRecentSession({
-                ts: new Date(wmFile.mtimeMs).toISOString(),
-                sid: wmFile.sid,
-                slug,
-                title,
-                artifact_count: 0,
-              });
-              const confirmedRecency = (core.readRecentSessions(1000) as Array<{ sid: string }>).some(
-                (e) => e.sid === wmFile.sid,
-              );
-              if (!confirmedRecency) {
-                core.recordHookFailure(
-                  "hook-start-wm-rescue-recency",
-                  new Error(`appendRecentSession did not persist for sid=${wmFile.sid}`),
-                );
-                continue; // do NOT delete WM — retry the recency append on the next sweep
-              }
-            }
-
-            core.wmDelete(wmFile.sid);
-          } catch (e) {
-            core.recordHookFailure("hook-start-wm-rescue", e);
-            process.stderr.write(`[AgentRecall hook-start wm-rescue sid=${wmFile.sid}] ${String(e)}\n`);
-            // per-file catch — fall through to the next orphan, sweep continues
-          }
-        }
+        core.rescueOrphanedWorkingMemory();
       } catch (e) {
-        core.recordHookFailure("hook-start-wm-rescue", e);
+        core.recordHookFailure("wm-orphan-rescue", e);
         process.stderr.write(`[AgentRecall hook-start wm-rescue] ${String(e)}\n`);
       }
 

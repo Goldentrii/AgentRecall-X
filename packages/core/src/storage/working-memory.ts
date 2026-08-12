@@ -33,9 +33,12 @@ import { getRoot } from "../types.js";
 import { ensureDir, truncateUtf8Bytes } from "./fs-utils.js";
 import { isSystemText, parseJsonlLenient } from "./extraction.js";
 import { recordHookFailure } from "./hook-health.js";
-import { sanitizeSlug } from "./paths.js";
+import { sanitizeSlug, projectsRootDir } from "./paths.js";
 import { isValidProjectSlug, listAllProjects } from "./project.js";
 import { scrubForCloud } from "./content-guard.js";
+import { generateFrontmatter } from "../palace/obsidian.js";
+import { writeSessionCard } from "./session-card.js";
+import { appendRecentSession, readRecentSessions } from "./recency-index.js";
 
 const WM_DIRNAME = "working-memory";
 const JSONL_EXT = ".jsonl";
@@ -345,4 +348,259 @@ export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null 
   }
 
   return ranked[0]?.slug ?? null;
+}
+
+/**
+ * v3.4.42 working-memory wave — orphan-rescue idempotency guard 1/2: does ANY
+ * project already have a session card for this sid? Scans every project's
+ * journal/ directory for a `*--card--<sid>.md` file (the exact naming
+ * convention `writeSessionCard` uses). Never throws — a missing/unreadable
+ * projects dir simply means "no card found".
+ *
+ * Moved here verbatim from packages/cli/src/index.ts (Train C, C-2, 2026-08-12
+ * wave) as part of single-sourcing the orphan-rescue sweep — see
+ * `rescueOrphanedWorkingMemory`'s doc comment below for why. NOT quite
+ * verbatim, though: the original CLI version built the enumeration root via
+ * a raw `path.join(root, "projects")`. This package's own F2 architectural
+ * guard (test/projects-literal-bypass-guard.test.mjs) forbids any
+ * `packages/core/src/**` file other than storage/paths.ts from inlining the
+ * `"projects"` literal — moving this function into core surfaced that guard
+ * for the first time. Fixed to use `projectsRootDir()`, the sanctioned
+ * enumeration-only helper paths.ts itself documents for exactly this case
+ * (joining directly against a slug that came FROM a readdir, not a
+ * caller-supplied name that needs the case-fold reuse rule).
+ */
+function cardExistsForSid(sid: string): boolean {
+  try {
+    const projectsDir = projectsRootDir();
+    if (!fs.existsSync(projectsDir)) return false;
+    for (const slug of fs.readdirSync(projectsDir)) {
+      const journalPath = path.join(projectsDir, slug, "journal");
+      if (!fs.existsSync(journalPath)) continue;
+      const hit = fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
+      if (hit) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * C-2 (Train C, 2026-08-12 wave, design doc reports/2026-08-12-trainc-design.md)
+ * — the working-memory orphan-rescue sweep, single-sourced.
+ *
+ * WHY: through the v3.4.42 working-memory wave this sweep lived ONLY inside
+ * the CLI's `hook-start` case (packages/cli/src/index.ts) — a session that
+ * crashed on a host with no Claude Code hooks (Codex/Cursor/raw MCP) had no
+ * path back to a card at all, because nothing but that one CLI command ever
+ * ran the sweep. Doctrine (owner, 2026-07-26): the customer's only action is
+ * describing intent — the MCP server process itself must carry the memory
+ * lifecycle on hook-less hosts. Moved here, byte-for-byte behavior preserved,
+ * so BOTH callers — the CLI's `hook-start` case AND core's own `sessionStart()`
+ * (tools-logic/session-start.ts, called by the MCP `session_start` tool on
+ * every host) — invoke this ONE function. Neither re-implements any part of
+ * the sweep; there is exactly one place this logic can drift.
+ *
+ * Mechanism (unchanged from the original CLI-only version): a working-memory
+ * file older than `WM_ORPHAN_WINDOW_MS` with no session card and no
+ * recency-index entry yet is presumed to belong to a session that crashed or
+ * was `kill -9`'d without ever reaching hook-end (or, on a non-hook host,
+ * without the agent ever calling `session_end`). Rescues it into a
+ * searchable session card + recency entry, then deletes the WM file.
+ * Idempotent (card-exists / recency-exists guards — safe to call on every
+ * hook-start AND every session_start, from every open window/process),
+ * per-file fault-isolated (one bad orphan can never abort the sweep for its
+ * siblings — M1 fix, see the recency-append verification below), and NEVER
+ * throws: every failure is reported via `recordHookFailure` instead of
+ * propagating, matching every other WM helper's contract in this module.
+ *
+ * Renamed failure-record hook keys from the CLI original ("hook-start-wm-rescue"
+ * -> "wm-orphan-rescue", "hook-start-wm-rescue-recency" -> "wm-orphan-rescue-
+ * recency") — cosmetic only, no test or renderer asserts the literal string —
+ * because the sweep is no longer CLI-hook-specific; the old names would be
+ * actively misleading once an MCP `session_start` call is what triggered a
+ * given failure row.
+ *
+ * The per-file WM→card mechanism itself lives in `distillOneSession` below —
+ * factored out so C-3's graceful-exit handler (mcp-server/src/lib/
+ * lifecycle-exit.ts, via `distillSessionToCard`) can distill its OWN,
+ * still-fresh session immediately (no age gate) through the exact same
+ * mechanism this sweep uses for aged orphans, instead of a third
+ * reimplementation of "WM lines -> card + recency entry -> delete WM".
+ */
+export function rescueOrphanedWorkingMemory(): void {
+  try {
+    const now = Date.now();
+    const wmFiles = wmList();
+
+    // L1 fix (review, post-build, preserved from the CLI original): hoist the
+    // recency-index read OUT of the per-orphan loop. `readRecentSessions(1000)`
+    // reads and JSON-parses up to 1000 ledger lines from disk; calling it once
+    // PER orphan file made the sweep's total cost scale with orphans ×
+    // ledger-size instead of once + an O(1) Set lookup per orphan.
+    const recentSids = new Set(readRecentSessions(1000).map((e) => e.sid));
+
+    for (const wmFile of wmFiles) {
+      // M1 fix (review, post-build, preserved from the CLI original): per-file
+      // try/catch — a thrown error while rescuing ONE orphan must never abort
+      // the whole sweep, silently skipping every OTHER orphan file that
+      // hadn't been reached yet.
+      try {
+        if (now - wmFile.mtimeMs <= WM_ORPHAN_WINDOW_MS) continue; // still fresh — not orphaned yet
+        distillOneSession(wmFile, recentSids);
+      } catch (e) {
+        recordHookFailure("wm-orphan-rescue", e);
+        // per-file catch — fall through to the next orphan, sweep continues
+      }
+    }
+  } catch (e) {
+    recordHookFailure("wm-orphan-rescue", e);
+  }
+}
+
+/**
+ * Distill ONE session's working-memory lines into a session card + recency
+ * entry, then delete the WM file. No age check here BY DESIGN — that policy
+ * decision belongs entirely to the caller: `rescueOrphanedWorkingMemory`
+ * only reaches this for files already confirmed older than
+ * `WM_ORPHAN_WINDOW_MS`, while `distillSessionToCard` (below, C-3's
+ * graceful-exit entry point) calls it immediately for a still-live session.
+ * Lets exceptions propagate — both current callers wrap their own call in a
+ * try/catch (matching the original inline code's per-item fault isolation),
+ * so this extraction changes no failure-handling behavior.
+ */
+function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string>): void {
+  // Idempotency guard: a card and/or recency entry already recorded for this
+  // sid means some or all of the rescue already happened (or the session
+  // ended normally via hook-end/session_end without WM having been cleaned
+  // up yet by some other race). Tracked as two SEPARATE booleans (not one
+  // OR'd flag) — a card that exists with no matching recency entry must NOT
+  // be treated as fully rescued.
+  const hasCard = cardExistsForSid(wmFile.sid);
+  const hasRecency = recentSids.has(wmFile.sid);
+
+  if (hasCard && hasRecency) {
+    // Both tiers confirmed — nothing left to do but sweep the leftover WM file.
+    wmDelete(wmFile.sid);
+    return;
+  }
+
+  const wmLines = wmRead(wmFile.sid);
+  if (wmLines.length === 0) {
+    wmDelete(wmFile.sid); // empty/corrupt — nothing to rescue, stop retrying
+    return;
+  }
+
+  const first = wmLines[0];
+  const last = wmLines[wmLines.length - 1];
+  const slug = guessSlugFromWmLines(wmLines) ?? "auto";
+  const title = truncateUtf8Bytes(first.prompt, 120);
+  const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+
+  // Card-write is attempted ONLY when a card doesn't already exist (hasCard
+  // tracks that precisely). When hasCard is already true, the ONLY
+  // remaining gap this sweep needs to close is the recency entry.
+  let cardOk = hasCard;
+  if (!hasCard) {
+    const frontmatter = generateFrontmatter({
+      sid: wmFile.sid,
+      date,
+      slug,
+      slug_confidence: 0,
+      slug_candidates: [],
+      source: "working-memory-rescue",
+    });
+    const body = [
+      `# ${title}`,
+      "",
+      `- rescued from working memory after ${wmLines.length} recorded prompt${wmLines.length === 1 ? "" : "s"} (no hook-end ever fired for this session)`,
+      `- ts range: ${first.ts} → ${last.ts}`,
+      "",
+      "## First prompt",
+      first.prompt,
+      "",
+      "## Last prompt",
+      last.prompt,
+      "",
+    ].join("\n");
+
+    const written = writeSessionCard({
+      markdown: frontmatter + body,
+      title,
+      artifacts: [],
+      linearRefs: [],
+      decisions: [],
+      nextStep: [],
+      sid: wmFile.sid,
+      slug,
+      date,
+    });
+    cardOk = !!written.path;
+  }
+
+  if (!cardOk) {
+    // The card write itself failed — leave the WM file in place so a future
+    // sweep (or the next graceful exit) can retry instead of losing the only
+    // remaining record of this session.
+    return;
+  }
+
+  // M1 fix (preserved from the CLI original): verify the recency append
+  // actually landed instead of trusting that it didn't throw.
+  // `appendRecentSession` is a DELIBERATELY best-effort, never-throws
+  // telemetry ledger — an unwritable root, a full disk, or a permissions
+  // error fails SILENTLY inside it. Re-read the ledger after the append and
+  // only delete WM once BOTH tiers are confirmed present, so a
+  // card-written-but-recency-failed session never becomes permanently
+  // invisible to continuity.
+  if (!hasRecency) {
+    appendRecentSession({
+      ts: new Date(wmFile.mtimeMs).toISOString(),
+      sid: wmFile.sid,
+      slug,
+      title,
+      artifact_count: 0,
+    });
+    const confirmedRecency = readRecentSessions(1000).some((e) => e.sid === wmFile.sid);
+    if (!confirmedRecency) {
+      recordHookFailure(
+        "wm-orphan-rescue-recency",
+        new Error(`appendRecentSession did not persist for sid=${wmFile.sid}`),
+      );
+      return; // do NOT delete WM — retry the recency append on the next sweep/exit
+    }
+  }
+
+  wmDelete(wmFile.sid);
+}
+
+/**
+ * C-3 (Train C, 2026-08-12 wave) — best-effort freshness for a graceful
+ * client close. `mcp-server/src/lib/lifecycle-exit.ts` calls this for the
+ * CURRENT process's own `sid` (core's `getSessionId()`) on `stdin` "end"/
+ * "close" and on SIGTERM/SIGINT, so a graceful disconnect gets a card
+ * immediately instead of waiting up to `WM_ORPHAN_WINDOW_MS` for the NEXT
+ * session's orphan sweep to find it. Reuses `distillOneSession` — the SAME
+ * WM→card mechanism `rescueOrphanedWorkingMemory` uses for aged orphans —
+ * with no age gate, since this is called precisely because the session is
+ * ending RIGHT NOW, not because it went stale. A `kill -9` bypasses this
+ * entirely by construction (no signal, no stdin event ever fires) and falls
+ * through to `rescueOrphanedWorkingMemory` on a LATER session_start/hook-start,
+ * exactly as the design doc specifies.
+ *
+ * No-op (silent) when this session has no working-memory file at all — a
+ * session that never had a tool call captured (or whose WM was already
+ * cleaned up by a normal `session_end`) has nothing to distill. Never
+ * throws: reported via `recordHookFailure` like every other WM helper.
+ */
+export function distillSessionToCard(sid: string): void {
+  try {
+    const wmFile = wmList().find((f) => f.sid === sid);
+    if (!wmFile) return; // nothing captured for this session — silent no-op
+    const recentSids = new Set(readRecentSessions(1000).map((e) => e.sid));
+    distillOneSession(wmFile, recentSids);
+  } catch (e) {
+    recordHookFailure("wm-session-distill", e);
+  }
 }

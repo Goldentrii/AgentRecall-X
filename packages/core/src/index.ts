@@ -676,6 +676,8 @@ export {
   wmRead,
   wmDelete,
   guessSlugFromWmLines,
+  rescueOrphanedWorkingMemory,
+  distillSessionToCard,
   WM_LINE_CAP,
   WM_PROMPT_BYTE_CAP,
   WM_LIVE_WINDOW_MS,
