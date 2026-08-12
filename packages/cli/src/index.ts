@@ -908,7 +908,12 @@ async function main(): Promise<void> {
       // Fires once per session via SessionStart hook.
       // Loads context and surfaces watch_for warnings for the agent.
       // Uses a per-session lock file to avoid double-firing.
-      const lockDir = path.join(os.homedir(), ".agent-recall");
+      // Root-fix (2026-08-12, followups wave): was os.homedir()+".agent-recall"
+      // literal — same bypass class as supabase/sync.ts's logSyncError fix
+      // (2026-07-31). core.getRoot() honors AGENT_RECALL_ROOT/setRoot()/--root
+      // and falls back to the identical os.homedir()/.agent-recall default, so
+      // this is a pure superset fix.
+      const lockDir = core.getRoot();
       const lockFile = path.join(lockDir, ".hook-start-lock");
       const sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "";
       const lockKey = sessionId || new Date().toISOString().slice(0, 13); // hour-granularity fallback
@@ -1031,8 +1036,10 @@ async function main(): Promise<void> {
 
         // Semantic prefetch from last session
         try {
+          // Root-fix (2026-08-12, followups wave): same bypass class as
+          // logSyncError — this is AR's own project data, must honor getRoot().
           const prefetchFile = path.join(
-            os.homedir(), ".agent-recall", "projects", project ?? "auto", "semantic-prefetch.json"
+            core.getRoot(), "projects", project ?? "auto", "semantic-prefetch.json"
           );
           if (fs.existsSync(prefetchFile)) {
             const prefetchData = JSON.parse(fs.readFileSync(prefetchFile, "utf-8")) as {
@@ -1256,7 +1263,10 @@ async function main(): Promise<void> {
         endToday;
 
       const endLockKey = `${sid}-end`;
-      const endLockFile = path.join(os.homedir(), ".agent-recall", ".hook-end-lock");
+      // Root-fix (2026-08-12, followups wave): flagged by review as the same
+      // bypass class as logSyncError (2026-07-31) — see hook-start's lockDir
+      // above for the full rationale.
+      const endLockFile = path.join(core.getRoot(), ".hook-end-lock");
 
       // Continuity wave (2026-07-31) — F1 unified naming: ONE resolution shared
       // by BOTH the raw-archive path (below) and the journal-summary path
@@ -1452,13 +1462,12 @@ async function main(): Promise<void> {
         // resolved a slug) is now the SAME resolution the archive used;
         // `project ?? "auto"` remains the fallback only when the archive
         // block never ran/resolved (e.g. ambiguous-session skip).
-        const resolvedJournalDir = path.join(
-          os.homedir(),
-          ".agent-recall",
-          "projects",
-          project ?? unifiedProjectSlug ?? "auto",
-          "journal",
-        );
+        // Root-fix (2026-08-12, followups wave): was a hand-rolled os.homedir()
+        // join — bypassed BOTH getRoot() (AGENT_RECALL_ROOT/--root) AND the
+        // case-fold-safe EXISTING-DIR resolution that core.journalDir() applies
+        // (resolveProjectDirName + assertInsideRoot). Using the canonical
+        // helper fixes both at once.
+        const resolvedJournalDir = core.journalDir(project ?? unifiedProjectSlug ?? "auto");
         const logFile = path.join(resolvedJournalDir, `${today}-log.md`);
 
         let summary = "";
@@ -1495,7 +1504,8 @@ async function main(): Promise<void> {
         if (summary) {
           // Write summary for arstatus cache script (async, non-blocking)
           try {
-            const summaryFile = path.join(os.homedir(), ".agent-recall", ".last-session-summary.txt");
+            // Root-fix (2026-08-12, followups wave): same bypass class as logSyncError.
+            const summaryFile = path.join(core.getRoot(), ".last-session-summary.txt");
             fs.writeFileSync(summaryFile, summary, "utf-8");
             // Spawn cache generation in background — never await
             const { spawn } = await import("node:child_process");
@@ -1513,8 +1523,11 @@ async function main(): Promise<void> {
             if (backend.available()) {
               const prefetchResults = await backend.search(summary.slice(0, 200), prefetchProject, 5);
               if (prefetchResults.length > 0) {
+                // Root-fix (2026-08-12, followups wave): same bypass class as
+                // logSyncError — mirrors hook-start's read of this same file
+                // above (both now resolve via getRoot()).
                 const prefetchFile = path.join(
-                  os.homedir(), ".agent-recall", "projects", prefetchProject, "semantic-prefetch.json"
+                  core.getRoot(), "projects", prefetchProject, "semantic-prefetch.json"
                 );
                 fs.writeFileSync(prefetchFile, JSON.stringify({
                   generated: new Date().toISOString(),
@@ -1564,7 +1577,8 @@ async function main(): Promise<void> {
       // Detects correction language (English + Chinese) and silently captures to alignment-log.
       // Per-message hash dedup prevents duplicate entries from hook re-fires.
       // Always exits 0 — never blocks the conversation.
-      const corrLockFile = path.join(os.homedir(), ".agent-recall", ".hook-correction-seen");
+      // Root-fix (2026-08-12, followups wave): same bypass class as logSyncError.
+      const corrLockFile = path.join(core.getRoot(), ".hook-correction-seen");
 
       // Read existing seen entries (array of {hash, keywords} for semantic dedup)
       let seenEntries: Array<{ hash: string; keywords: string[] }> = [];
@@ -1706,7 +1720,11 @@ async function main(): Promise<void> {
       }
 
       // Communication file for feedback loop (defined at top of case for both steps)
-      const surfacedFile = path.join(os.homedir(), ".agent-recall", ".ambient-last-surfaced.json");
+      // Root-fix (2026-08-12, followups wave): same bypass class as logSyncError.
+      // Note this case block ALREADY uses core.getRoot() for storeRoot (topic
+      // profile, below) — this file was the odd one out, inconsistent within
+      // its own function.
+      const surfacedFile = path.join(core.getRoot(), ".ambient-last-surfaced.json");
 
       try {
         const chunks: Buffer[] = [];
@@ -1907,7 +1925,8 @@ async function main(): Promise<void> {
         // --- END ROLLING TOPIC PROFILE ---
 
         // Rate limiting: counter file per session
-        const counterFile = path.join(os.homedir(), ".agent-recall", `.ambient-counter-${sessionId.replace(/[^a-z0-9_-]/gi, "_")}`);
+        // Root-fix (2026-08-12, followups wave): same bypass class as logSyncError.
+        const counterFile = path.join(core.getRoot(), `.ambient-counter-${sessionId.replace(/[^a-z0-9_-]/gi, "_")}`);
         let counter = 0;
         try {
           const raw2 = fs.existsSync(counterFile) ? fs.readFileSync(counterFile, "utf-8").trim() : "0";
@@ -2313,7 +2332,12 @@ async function main(): Promise<void> {
       const { readTodaySessions } = await import("./utils/transcript-reader.js");
       const dryRun = hasFlag("--dry-run", rest);
       const today = new Date().toISOString().slice(0, 10);
-      const arRoot = path.join(os.homedir(), ".agent-recall", "projects");
+      // Dead-code removal (2026-08-12, followups wave): `arRoot` was declared
+      // here but never read anywhere in this case block (grep-confirmed) —
+      // the actual writes go through core.sessionEnd() below, which already
+      // resolves its own root via getRoot(). Not a root-resolution bypass
+      // (nothing ever executed that used this value); removed as dead code
+      // flagged during the os.homedir() bypass-class enumeration.
 
       const sessions = readTodaySessions();
       if (sessions.length === 0) {
@@ -2419,7 +2443,10 @@ async function main(): Promise<void> {
 
     case "stats": {
       // Diagnostic: show memory system health numbers
-      const statsRoot = path.join(os.homedir(), ".agent-recall");
+      // Root-fix (2026-08-12, followups wave): same bypass class as
+      // logSyncError — `ar stats --root X` previously ignored --root entirely
+      // and always read the REAL user's ~/.agent-recall, giving wrong counts.
+      const statsRoot = core.getRoot();
       const statsProject = project ?? "auto";
 
       // Resolve project
@@ -2592,7 +2619,12 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
 
       // Write to Claude's memory directory
       const memDir = path.join(os.homedir(), ".claude", "projects", `-Users-${os.userInfo().username}`, "memory");
-      const arRoot = path.join(os.homedir(), ".agent-recall");
+      // Root-fix (2026-08-12, followups wave): fallback path (below, when
+      // memDir doesn't exist) is AR's OWN project data — same bypass class as
+      // logSyncError. `memDir` above is intentionally left as os.homedir()
+      // (Claude Code's own memory directory, a different tool's storage that
+      // always lives in the real machine home regardless of AGENT_RECALL_ROOT).
+      const arRoot = core.getRoot();
       if (fs.existsSync(memDir)) {
         const syncPath = path.join(memDir, `ar_sync_${resolvedSync.toLowerCase()}.md`);
         fs.writeFileSync(syncPath, syncContent, "utf-8");
@@ -2808,15 +2840,21 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
       if (rest[0] === "supabase") {
         if (rest.includes("--backfill")) {
           const { backfill } = await import("agent-recall-core");
-          const homeDir = os.homedir();
-          const projectsDir = path.join(homeDir, ".agent-recall", "projects");
+          // Root-fix (2026-08-12, followups wave): was os.homedir() literal —
+          // same bypass class as logSyncError, and a real user-facing bug:
+          // `ar setup supabase --backfill --root X` silently backfilled the
+          // REAL user's store instead of X. Also duplicated (with a stale
+          // literal) what core.readSupabaseConfig() already resolves via
+          // getRoot() — see packages/core/src/supabase/config.ts.
+          const arStoreRoot = core.getRoot();
+          const projectsDir = path.join(arStoreRoot, "projects");
 
           if (!fs.existsSync(projectsDir)) {
             output("No projects found at ~/.agent-recall/projects/");
             break;
           }
 
-          const configPath = path.join(homeDir, ".agent-recall", "config.json");
+          const configPath = path.join(arStoreRoot, "config.json");
           if (!fs.existsSync(configPath)) {
             output("Supabase not configured — run 'ar setup supabase' first.");
             break;
@@ -2878,7 +2916,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
           }
 
           // Global awareness file — synced once after all slugs, keyed as "global"
-          const awarenessPath = path.join(homeDir, ".agent-recall", "awareness.md");
+          const awarenessPath = path.join(arStoreRoot, "awareness.md");
           if (fs.existsSync(awarenessPath)) {
             try {
               const awarenessFiles: Array<{ path: string; content: string; store: "journal" | "palace" | "awareness" | "digest"; room?: string }> = [];

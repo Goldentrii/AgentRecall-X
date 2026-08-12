@@ -32,6 +32,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
+import { recordHookFailure } from "./hook-health.js";
 
 const RECENCY_FILENAME = "recent-sessions.jsonl";
 const MAX_LINES = 500;
@@ -109,12 +110,21 @@ function rollIfNeeded(filePath: string): void {
   } catch {
     // Lock already held. If it's stale (a crashed writer, >ROLL_LOCK_STALE_MS
     // old), force-break it and take it; otherwise skip this roll entirely.
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // lock contention is EXPECTED/normal concurrent-access behavior, not a
+    // failure; reporting every contended roll would spam hook-health on
+    // ordinary concurrent hook-end runs. See report.
     try {
       const stat = fs.statSync(lockPath);
       if (Date.now() - stat.mtimeMs <= ROLL_LOCK_STALE_MS) return; // held by an active writer
       fs.unlinkSync(lockPath);
       fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
     } catch {
+      // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+      // rollIfNeeded is pure maintenance (trims an already-successfully-
+      // appended file); worst case the file grows a bit larger until the
+      // next append retries. No data loss, same "expected contention" class
+      // as the outer catch above.
       return; // lost the race to break the stale lock, or another fs error — skip, never throw
     }
   }
@@ -124,6 +134,9 @@ function rollIfNeeded(filePath: string): void {
     fs.writeFileSync(tmpPath, trimmed, "utf-8");
     fs.renameSync(tmpPath, filePath);
   } finally {
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // idempotent cleanup no-ops ("already closed"/"already removed" are
+    // literally not error conditions).
     try { fs.closeSync(fd); } catch { /* already closed */ }
     try { fs.unlinkSync(lockPath); } catch { /* already removed */ }
   }
@@ -143,8 +156,17 @@ export function appendRecentSession(entry: RecentSessionEntry): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.appendFileSync(filePath, JSON.stringify(entry) + "\n", "utf-8");
     rollIfNeeded(filePath);
-  } catch {
+  } catch (err) {
     // Best-effort — never throw from an append-only telemetry ledger.
+    // F5 depth (2026-08-12, followups wave): was invisible on failure — the
+    // continuity card would just silently be missing this session forever.
+    // Read side (readRecentSessions): the OUTER read-failure catch is now
+    // wired too (see below) — a total read failure there would otherwise
+    // masquerade as "append never persisted" to the CLI's hook-start
+    // wm-rescue verification (index.ts ~line 1197), misattributing a read
+    // bug as a write bug. The per-line corrupt-entry skip inside the read is
+    // left unwired — see report.
+    recordHookFailure("recency-append", err);
   }
 }
 
@@ -173,10 +195,22 @@ export function readRecentSessions(n: number): RecentSessionEntry[] {
         }
       } catch {
         // Skip a corrupt/partial line rather than aborting the whole read.
+        // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+        // one torn line among potentially hundreds is routine (documented
+        // above as an expected crash-mid-append artifact); the outer catch
+        // below covers "the whole read is broken," the meaningful signal.
       }
     }
     return out;
-  } catch {
+  } catch (err) {
+    // F5 depth (2026-08-12, followups wave): a total read failure here
+    // (corrupt file, permission) silently returns [] — indistinguishable
+    // from "no continuity history yet" to the session_start renderer AND to
+    // the hook-start wm-rescue verification (index.ts ~line 1197) that reads
+    // this list to confirm appendRecentSession's write actually landed. That
+    // verification would misreport a read-side failure as a write-side one
+    // without this wire.
+    recordHookFailure("recency-read", err);
     return [];
   }
 }

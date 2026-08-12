@@ -171,6 +171,43 @@ describe("recency-index — appendRecentSession / readRecentSessions", () => {
     const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
     assert.ok(fs.existsSync(ledgerPath), "ledger must be written under the configured AR root");
   });
+
+  // -----------------------------------------------------------------
+  // F5 depth (2026-08-12, followups wave): both appendRecentSession's and
+  // readRecentSessions' outer catches must record to hook-health.jsonl.
+  // Forces a REAL EISDIR throw (the ledger path exists as a directory
+  // instead of a file) rather than mocking.
+  // -----------------------------------------------------------------
+  it("F5: records 'recency-append' when the ledger path is a directory (EISDIR), and never throws", () => {
+    const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
+    fs.mkdirSync(ledgerPath); // block the append target with a directory
+    try {
+      assert.doesNotThrow(() => {
+        core.appendRecentSession({ ts: new Date().toISOString(), sid: "s1", slug: "proj", title: "x" });
+      });
+      const jsonlPath = path.join(TEST_ROOT, "hook-health.jsonl");
+      assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+      const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+      assert.ok(rows.some((r) => r.hook === "recency-append"), "expected a recency-append row");
+    } finally {
+      fs.rmSync(ledgerPath, { recursive: true, force: true }); // restore for the next test's beforeEach
+    }
+  });
+
+  it("F5: records 'recency-read' when the ledger path is a directory (EISDIR), and returns [] rather than throwing", () => {
+    const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
+    fs.mkdirSync(ledgerPath); // block the read target with a directory
+    try {
+      const result = core.readRecentSessions(5);
+      assert.deepEqual(result, [], "must degrade to [] rather than throw");
+      const jsonlPath = path.join(TEST_ROOT, "hook-health.jsonl");
+      assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+      const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+      assert.ok(rows.some((r) => r.hook === "recency-read"), "expected a recency-read row");
+    } finally {
+      fs.rmSync(ledgerPath, { recursive: true, force: true }); // restore for the next test's beforeEach
+    }
+  });
 });
 
 describe("recency-index — formatAgo (date-vs-TODAY sanity)", () => {

@@ -351,4 +351,48 @@ describe("writeSessionCard (F3)", () => {
     }
     assert.ok(!fs.existsSync(path.join(tmpDir, "etc", "passwd")));
   });
+
+  // -------------------------------------------------------------------
+  // F5 depth (2026-08-12, followups wave): both buildSessionCard's and
+  // writeSessionCard's catches must record to hook-health.jsonl. These
+  // force REAL throws (a malformed field, a directory blocking a file
+  // write) rather than mocking.
+  // -------------------------------------------------------------------
+  it("F5: records 'session-card-build' when a meta field is malformed (slugConfidence not a number) and still returns a valid stub card", () => {
+    const card = core.buildSessionCard({
+      rawHead: "",
+      rawTail: "",
+      // slugConfidence.toFixed(3) throws TypeError since it's a string, not a number.
+      meta: { sid: "build-fail-1", slug: "demo-app", slugConfidence: "boom", slugCandidates: [], date: "2026-07-31" },
+    });
+    assert.equal(card.title, "(session card build failed)");
+    assert.ok(card.markdown.includes("session card build failed"));
+
+    const jsonlPath = path.join(tmpDir, "hook-health.jsonl");
+    assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+    const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.ok(rows.some((r) => r.hook === "session-card-build"), "expected a session-card-build row");
+  });
+
+  it("F5: records 'session-card-write' when the journal dir cannot be created (blocked by a file)", () => {
+    const card = core.buildSessionCard({
+      rawHead: "",
+      rawTail: "",
+      meta: { sid: "write-fail-1", slug: "demo-blocked", slugConfidence: 0, slugCandidates: [], date: "2026-07-31" },
+    });
+
+    // Block projects/demo-blocked with a plain FILE so ensureDir(journalDir)
+    // throws ENOTDIR when it tries to mkdir underneath it.
+    fs.mkdirSync(path.join(tmpDir, "projects"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "projects", "demo-blocked"), "blocker");
+
+    const res = core.writeSessionCard(card);
+    assert.equal(res.path, "", "writeSessionCard must degrade to {path:'',bytes:0}, never throw");
+    assert.equal(res.bytes, 0);
+
+    const jsonlPath = path.join(tmpDir, "hook-health.jsonl");
+    assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+    const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.ok(rows.some((r) => r.hook === "session-card-write"), "expected a session-card-write row");
+  });
 });

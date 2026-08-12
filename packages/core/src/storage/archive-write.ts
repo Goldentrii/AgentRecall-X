@@ -21,6 +21,7 @@ import { ensureDir, todayISO, writeJsonAtomic } from "./fs-utils.js";
 import { writeMemoryProtocol } from "./memory-protocol.js";
 import { ensureStoreManifest } from "./store-manifest.js";
 import { getRoot } from "../types.js";
+import { recordHookFailure } from "./hook-health.js";
 
 export interface ArchiveSessionInput {
   project: string;
@@ -72,8 +73,12 @@ function appendIndexLine(slug: string, line: string): void {
     const indexPath = path.join(path.dirname(archiveRawDir(slug)), "index.md");
     ensureDir(path.dirname(indexPath));
     fs.appendFileSync(indexPath, line + "\n", "utf-8");
-  } catch {
+  } catch (err) {
     // index is a convenience; failure must not abort the archive write.
+    // F5 depth (2026-08-12, followups wave): this catch used to swallow with
+    // zero trace — recordHookFailure is never-throws, so reporting it changes
+    // nothing about the swallow itself, only its visibility.
+    recordHookFailure("archive-session-index", err);
   }
 }
 
@@ -132,8 +137,14 @@ export function archiveSession(input: ArchiveSessionInput): ArchiveSessionResult
     ensureStoreManifest(getRoot());
 
     return { path: dest, bytes: input.rawTranscript.length };
-  } catch {
+  } catch (err) {
     // NEVER throw into the Stop turn.
+    // F5 depth (2026-08-12, followups wave): this was a complete silent
+    // swallow — the lossless archive tier could fail on every session with
+    // zero trace anywhere. recordHookFailure never throws, so this changes
+    // nothing about the return-value contract (still {path:"",bytes:0}),
+    // only whether the failure is now visible in hook-health.
+    recordHookFailure("archive-session", err);
     return { path: "", bytes: 0 };
   }
 }

@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { ensureDir, todayISO } from "./fs-utils.js";
+import { recordHookFailure } from "./hook-health.js";
 
 export interface ConsolidationJob {
   project: string;
@@ -55,8 +56,13 @@ export function enqueueConsolidation(job: ConsolidationJob): void {
       done: false,
     };
     fs.appendFileSync(queueFileForToday(), JSON.stringify(record) + "\n", "utf-8");
-  } catch {
+  } catch (err) {
     // Enqueue is fire-and-forget — never break the caller (the Stop hook).
+    // F5 depth (2026-08-12, followups wave): this is the SOP-named
+    // "consolidation enqueue" swallow — a failure here means the whole async
+    // dreaming/compression pipeline silently never runs for that session,
+    // with zero trace anywhere until this fix.
+    recordHookFailure("consolidation-enqueue", err);
   }
 }
 
@@ -76,13 +82,22 @@ export function drainConsolidationQueue(
     dir = queueDir();
     if (!fs.existsSync(dir)) return report;
   } catch {
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // this only guards queueDir()'s path.join (getRoot() always returns a
+    // string; fs.existsSync never throws by contract) — unreachable in
+    // practice, and "no queue found" is the correct degrade even if it did.
     return report;
   }
 
   let files: string[];
   try {
     files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-  } catch {
+  } catch (err) {
+    // F5 depth (2026-08-12, followups wave): a real failure here (permission,
+    // disk error) silently degrades to {processed:0,failed:0} — indistinguishable
+    // from "genuinely empty queue" to any caller. That's exactly the
+    // invisible-swallow-looks-like-empty-state class F5 targets.
+    recordHookFailure("consolidation-drain-listdir", err);
     return report;
   }
 
@@ -91,7 +106,12 @@ export function drainConsolidationQueue(
     let lines: string[];
     try {
       lines = fs.readFileSync(full, "utf-8").split("\n");
-    } catch {
+    } catch (err) {
+      // F5 depth (2026-08-12, followups wave): an unreadable file means every
+      // job inside it is silently skipped THIS drain AND every future drain
+      // (nothing here retries at the file level) — worth a trace, unlike the
+      // routine per-line/per-job skips below.
+      recordHookFailure("consolidation-drain-fileread", err);
       continue; // unreadable file → skip, don't block the rest
     }
 
@@ -104,7 +124,15 @@ export function drainConsolidationQueue(
       let job: ConsolidationJob;
       try {
         job = JSON.parse(trimmed) as ConsolidationJob;
-      } catch {
+      } catch (err) {
+        // F5 depth (2026-08-12, followups wave): unlike the outcome-verdict
+        // loops in session-end.ts (high-cardinality, routine skips), this
+        // queue is OUR OWN system's data (small volume, written only by
+        // enqueueConsolidation) — a malformed line here can never be
+        // reparsed or marked done, so it is stuck retrying (being preserved
+        // verbatim) forever. Consistent with the sibling "consolidation-drain-job"
+        // wire below at the same per-line granularity.
+        recordHookFailure("consolidation-drain-parse", err);
         rewritten.push(line); // malformed line — preserve verbatim, don't drop
         continue;
       }
@@ -119,10 +147,20 @@ export function drainConsolidationQueue(
         report.processed++;
         rewritten.push(JSON.stringify({ ...job, done: true }));
         mutated = true;
-      } catch {
+      } catch (err) {
         // One bad job never blocks the rest — leave it pending for a retry.
+        // F5 depth (2026-08-12, followups wave): the CLI's own outer catch
+        // around drainConsolidationQueue() (packages/cli/src/index.ts,
+        // "consolidate-async" case) only fires if THIS FUNCTION throws as a
+        // whole — a single job's rethrown error is caught right here and
+        // never propagates that far, so per-job failures were invisible to
+        // hook-health even though the handler explicitly rethrows so the
+        // job survives for retry. report.failed (returned to the CLI, which
+        // prints it to stdout) is not the same as a persisted, queryable
+        // trace `ar health` can surface.
         report.failed++;
         rewritten.push(trimmed);
+        recordHookFailure("consolidation-drain-job", err);
       }
     }
 
@@ -131,9 +169,13 @@ export function drainConsolidationQueue(
         const tmp = full + ".tmp." + process.pid;
         fs.writeFileSync(tmp, rewritten.join("\n") + "\n", "utf-8");
         fs.renameSync(tmp, full); // atomic on POSIX
-      } catch {
+      } catch (err) {
         // If we can't persist the done-marks, the worst case is a re-run of
         // already-processed jobs next drain — acceptable, never fatal.
+        // F5 depth (2026-08-12, followups wave): same disk-write-failure
+        // class as archiveSession/session-card writes — genuinely worth a
+        // trace even though the degrade (re-run next time) is safe.
+        recordHookFailure("consolidation-drain-persist", err);
       }
     }
   }

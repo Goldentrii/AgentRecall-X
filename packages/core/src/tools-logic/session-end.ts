@@ -32,6 +32,7 @@ import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js"
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
 import { writeHandoff } from "../helpers/handoff.js";
+import { recordHookFailure } from "../storage/hook-health.js";
 
 export interface SessionEndInput {
   summary: string;
@@ -309,6 +310,16 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     journalWritten = true;
   } catch (err) {
     journalWriteError = err instanceof Error ? err.message : String(err);
+    // F5 depth (2026-08-12, followups wave): this error is captured into the
+    // RETURN VALUE (journal_write_error, below) but sessionEnd() never
+    // throws — so a caller that doesn't inspect the result (e.g. the CLI's
+    // hook-end case, which fires "Session auto-saved" unconditionally after
+    // this call) never sees it, and the OUTER hook catch never fires either.
+    // This was the exact "memory not persisted, zero trace" scenario F5
+    // exists to catch. recordHookFailure never throws — journalWriteError's
+    // existing contract (returned to caller, rendered in the card) is
+    // unchanged.
+    recordHookFailure("session-end-journal-write", err);
   }
 
   // 1b. C3 (2026-07-03): evidence-grounded verdict classification.
@@ -428,11 +439,21 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
             });
           }
         } catch {
-          // Per-correction errors are swallowed — don't abort the loop
+          // Per-correction errors are swallowed — don't abort the loop.
+          // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED
+          // — `todays` can be dozens of corrections; an occasional malformed
+          // one is routine, not a hook failure. The outer catch below already
+          // reports "the whole outcome-verdict subsystem broke" at the right
+          // granularity — see report.
         }
       }
-    } catch {
+    } catch (err) {
       // Outcome tracking must NEVER break session_end — swallow all errors
+      // F5 depth (2026-08-12, followups wave): this is the ONE catch in the
+      // 1b block worth reporting — a systemic failure (e.g. readOutcomesForToday
+      // itself broken) silently meant every correction's heeded/recurred
+      // verdict for this session went unrecorded, with zero trace anywhere.
+      recordHookFailure("session-end-outcome-verdict", err);
     }
   }
 
@@ -492,6 +513,10 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
                 try {
                   return fs.statSync(path.join(projectsDir, s)).isDirectory();
                 } catch {
+                  // F5 depth (2026-08-12, followups wave): intentionally left
+                  // UNWIRED — a single unreadable dir entry (race, permission)
+                  // degrading to "not a project dir" is benign and expected;
+                  // see report.
                   return false;
                 }
               })
@@ -554,16 +579,30 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
                   projTodayOut.set(cand.id, set);
                 } catch {
                   // Malformed candidate record → skipped; the join continues.
+                  // F5 depth (2026-08-12, followups wave): intentionally left
+                  // UNWIRED — `candidates` spans every active correction in
+                  // one other project; an occasional malformed record is
+                  // routine, not a hook failure. See report.
                 }
               }
-            } catch {
+            } catch (err) {
               // Per-project errors are swallowed — don't abort the join
+              // F5 depth (2026-08-12, followups wave): a WHOLE project's
+              // cross-project join silently failing (e.g. readActiveCorrections
+              // itself broken for that slug) is a more specific, actionable
+              // signal than the per-candidate skip above — worth its own trace.
+              recordHookFailure("session-end-crossproject-join-project", err);
             }
           }
         }
       }
-    } catch {
+    } catch (err) {
       // Cross-project join must NEVER break session_end — swallow all errors
+      // F5 depth (2026-08-12, followups wave): the whole RD-1 subsystem
+      // (seed collection, the outer allSlugs scaffolding) breaking silently
+      // meant zero cross-project recurrence detection ran for this session,
+      // with zero trace anywhere until this fix.
+      recordHookFailure("session-end-crossproject-join", err);
     }
   }
 
@@ -606,6 +645,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       // Reset tallies on error so they don't misreport
       insightsAdded = 0;
       insightsConfirmed = 0;
+      // F5 depth (2026-08-12, followups wave): same invisible-unless-the-
+      // caller-checks-the-result-object class as journalWriteError above.
+      recordHookFailure("session-end-awareness", err);
     }
   }
 
@@ -621,8 +663,15 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         sessionId: getSessionId(),
         reason: "session_end deferred (hook-end)",
       });
-    } catch {
+    } catch (err) {
       // enqueue is fire-and-forget — never affect the result
+      // F5 depth (2026-08-12, followups wave): enqueueConsolidation() itself
+      // now reports its OWN internal failures (consolidation-enqueue, in
+      // storage/consolidation-queue.ts) and never throws by contract — so in
+      // practice the only thing this catch can still see is
+      // ensurePalaceInitialized(slug) throwing. Reported under a distinct
+      // label so the two failure sources stay distinguishable in hook-health.
+      recordHookFailure("session-end-consolidation-enqueue", err);
     }
     palaceConsolidated = false; // compression happens later, off this turn
 
@@ -633,8 +682,12 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     // drained. Best-effort — must NEVER throw into the Stop turn.
     try {
       await runSafetyConsolidation(slug, { dryRun: false });
-    } catch {
+    } catch (err) {
       // safety consolidation is best-effort — never affect the result
+      // F5 depth (2026-08-12, followups wave): decay/prune/graduate silently
+      // failing across many sessions causes store bloat/staleness with zero
+      // diagnostic trail — exactly the invisible-swallow class F5 targets.
+      recordHookFailure("session-end-safety-consolidation", err);
     }
   } else {
     try {
@@ -643,6 +696,10 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
       palaceConsolidated = true;
     } catch (err) {
       palaceError = err instanceof Error ? err.message : String(err);
+      // F5 depth (2026-08-12, followups wave): same invisible-unless-the-
+      // caller-checks-the-result-object class as journalWriteError/
+      // awarenessError above.
+      recordHookFailure("session-end-palace-consolidate", err);
     }
 
     // L2: the inline consolidate above covers (a) decay+keystones. Add the other
@@ -652,8 +709,11 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     // best-effort: must NEVER throw into the caller.
     try {
       await runSafetyConsolidation(slug, { dryRun: false });
-    } catch {
+    } catch (err) {
       // safety consolidation is best-effort — never affect the result
+      // F5 depth (2026-08-12, followups wave): same rationale as the deferred
+      // branch's identically-labeled call above.
+      recordHookFailure("session-end-safety-consolidation", err);
     }
   }
 
@@ -664,8 +724,10 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   if (!input.deferConsolidation) {
     try {
       recomputeBlindSpots(slug);
-    } catch {
+    } catch (err) {
       // blind-spots derivation is best-effort — swallow all errors
+      // F5 depth (2026-08-12, followups wave): was invisible on failure.
+      recordHookFailure("session-end-blind-spots", err);
     }
   }
 
@@ -715,7 +777,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         }
       }
     }
-  } catch { /* merge detection is best-effort */ }
+  } catch {
+    /* merge detection is best-effort */
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // purely a cosmetic "consider merging" hint on the printed save card, no
+    // data-loss/persistence implication; runs every session so a transient
+    // hiccup here would be pure noise in hook-health. See report.
+  }
 
   // 5. Render save card — server-side, always correct
   const root = getRoot();
@@ -730,14 +798,26 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   try {
     const awareness = readAwarenessState();
     totalInsights = awareness?.topInsights?.length ?? 0;
-  } catch { /* non-blocking */ }
+  } catch {
+    /* non-blocking */
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // read-only display counter for the printed card ("N total"); the actual
+    // awareness WRITE path is already covered above (session-end-awareness).
+    // See report.
+  }
 
   // Get updated rooms
   let roomNames: string[] = [];
   try {
     const rooms = listRooms(slug);
     roomNames = rooms.slice(0, 3).map(r => r.name);
-  } catch { /* non-blocking */ }
+  } catch {
+    /* non-blocking */
+    // F5 depth (2026-08-12, followups wave): intentionally left UNWIRED —
+    // read-only display list for the printed card; the actual palace
+    // consolidation WRITE path is already covered above
+    // (session-end-palace-consolidate). See report.
+  }
 
   // Count corrections for this project
   let correctionCount = 0;
@@ -745,9 +825,25 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   // (bypassed resolveProjectDirName entirely, not just path.join call sites) —
   // routes through paths.ts now, so the count matches what correctionsDir()
   // actually reads/writes for this project.
-  const corrDir = projectSubPath(slug, "corrections");
-  if (fs.existsSync(corrDir)) {
-    correctionCount = fs.readdirSync(corrDir).filter(f => f.endsWith(".json")).length;
+  //
+  // F5 depth (2026-08-12, followups wave): this block had NO try/catch at
+  // all — unlike every other display-value read in this section
+  // (totalInsights, roomNames above), a corrections/ path that is not a
+  // directory (corruption, or the exact ENOTDIR this wave's own tests force
+  // to exercise the 1b/1c wires above, which share this same directory)
+  // threw UNCAUGHT here, escaping sessionEnd() ENTIRELY — discarding the
+  // already-successful journal/awareness/palace work above and defeating
+  // every other best-effort guard in this function. Found empirically: the
+  // session-end-outcome-verdict / session-end-crossproject-join tests
+  // (session-end-hook-health.test.mjs) could not pass without this fix,
+  // since they force exactly this condition on the same directory.
+  try {
+    const corrDir = projectSubPath(slug, "corrections");
+    if (fs.existsSync(corrDir)) {
+      correctionCount = fs.readdirSync(corrDir).filter(f => f.endsWith(".json")).length;
+    }
+  } catch (err) {
+    recordHookFailure("session-end-correction-count", err);
   }
 
   const line = "──────────────────────────────────────────────────────────────";
@@ -839,7 +935,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     try {
       const h = writeHandoff(slug);
       handoffPath = h.path;
-    } catch { /* swallow — handoff is best-effort */ }
+    } catch (err) {
+      // swallow — handoff is best-effort
+      // F5 depth (2026-08-12, followups wave): a real disk-write failure on
+      // the hook-end-adjacent path, previously invisible (no result field,
+      // unlike journal/awareness/palace above).
+      recordHookFailure("session-end-handoff", err);
+    }
   }
 
   const result: SessionEndResult = {

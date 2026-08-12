@@ -192,4 +192,58 @@ describe("archiveSession (Wave 2)", () => {
     const marker = JSON.parse(fs.readFileSync(consumed, "utf-8"));
     assert.equal(marker.lastConsumedOffset, 0);
   });
+
+  // ---------------------------------------------------------------------
+  // F5 depth (2026-08-12, followups wave): both of archiveSession's catches
+  // must record to hook-health.jsonl. These force REAL fs failures (a
+  // directory where a file is expected, or vice versa) rather than mocking,
+  // so the assertion proves the wire fires on an actual throw.
+  // ---------------------------------------------------------------------
+  it("F5: records 'archive-session-index' when the index write is blocked, but the main archive write still succeeds", async () => {
+    const { archiveSession, archiveRawDir } = await import("agent-recall-core");
+    const slug = "demo-index-blocked";
+
+    // index.md lives one level up from journal/archive/raw/.
+    const indexPath = path.join(path.dirname(archiveRawDir(slug)), "index.md");
+    fs.mkdirSync(indexPath, { recursive: true }); // pre-create as a DIRECTORY, not a file
+
+    const res = archiveSession({
+      project: slug,
+      sessionId: "aaaaaaaa-1111-2222-3333-444444444444",
+      rawTranscript: "USER: hi",
+      summary: "hi",
+    });
+    // The main write is unaffected — only the convenience index line failed.
+    assert.ok(res.path, "main archive write must still succeed");
+    assert.equal(res.bytes, "USER: hi".length);
+
+    const jsonlPath = path.join(tmpDir, "hook-health.jsonl");
+    assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+    const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.ok(rows.some((r) => r.hook === "archive-session-index"), "expected an archive-session-index row");
+  });
+
+  it("F5: records 'archive-session' when the project's archive dir cannot be created (blocked by a file)", async () => {
+    const { archiveSession } = await import("agent-recall-core");
+    const slug = "demo-dir-blocked";
+
+    // Block the project directory itself with a plain FILE so mkdirSync
+    // recursive throws ENOTDIR when trying to create journal/archive/raw
+    // underneath it.
+    fs.mkdirSync(path.join(tmpDir, "projects"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "projects", slug), "blocker");
+
+    const res = archiveSession({
+      project: slug,
+      sessionId: "bbbbbbbb-1111-2222-3333-444444444444",
+      rawTranscript: "USER: hi",
+    });
+    assert.equal(res.path, "", "archiveSession must degrade to {path:'',bytes:0}, never throw");
+    assert.equal(res.bytes, 0);
+
+    const jsonlPath = path.join(tmpDir, "hook-health.jsonl");
+    assert.ok(fs.existsSync(jsonlPath), "hook-health.jsonl should exist");
+    const rows = fs.readFileSync(jsonlPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.ok(rows.some((r) => r.hook === "archive-session"), "expected an archive-session row");
+  });
 });

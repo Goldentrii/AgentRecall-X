@@ -25,6 +25,7 @@ import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
 import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
+import { recordHookFailure } from "./hook-health.js";
 import {
   DECISION_LINE_RE,
   NEXT_STEP_LINE_RE,
@@ -236,8 +237,13 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
     const markdown = frontmatter + truncateBytes(body, bodyBudget);
 
     return { markdown, title, artifacts, linearRefs, decisions, nextStep, sid, slug, date };
-  } catch {
+  } catch (err) {
     // Never throw into the hook-end path — degrade to a minimal, valid card.
+    // F5 depth (2026-08-12, followups wave): degrading silently means the
+    // hook-end path reports success (a card WAS written) while the card is
+    // actually a content-free stub — recordHookFailure makes that visible
+    // without changing the degrade-to-stub behavior itself.
+    recordHookFailure("session-card-build", err);
     const frontmatter = generateFrontmatter({
       sid,
       date,
@@ -287,7 +293,10 @@ export function writeSessionCard(card: SessionCardResult): { path: string; bytes
     fs.renameSync(tmp, dest);
 
     return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8") };
-  } catch {
+  } catch (err) {
+    // F5 depth (2026-08-12, followups wave): silent disk-write failure —
+    // same visibility fix as archiveSession/buildSessionCard above.
+    recordHookFailure("session-card-write", err);
     return { path: "", bytes: 0 };
   }
 }
