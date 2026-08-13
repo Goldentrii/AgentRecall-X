@@ -369,20 +369,29 @@ export function guessSlugFromWmLines(lines: WorkingMemoryLine[]): string | null 
  * enumeration-only helper paths.ts itself documents for exactly this case
  * (joining directly against a slug that came FROM a readdir, not a
  * caller-supplied name that needs the case-fold reuse rule).
+ *
+ * Rescue-slug-parity fix (Train C, 2026-08-13): returns the FOUND slug (the
+ * on-disk directory name the readdir actually matched under) instead of a
+ * bare boolean. `distillOneSession` below needs this because, when a card
+ * for this sid already exists, THIS slug (not a fresh `guessSlugFromWmLines`
+ * re-guess, which could itself have drifted since the card was written) is
+ * the only correct value for a not-yet-existing recency-ledger entry — see
+ * that function's own comment for the full ledger-vs-disk mismatch this
+ * closes. `null` means "no card found for this sid in any project."
  */
-function cardExistsForSid(sid: string): boolean {
+function findCardSlugForSid(sid: string): string | null {
   try {
     const projectsDir = projectsRootDir();
-    if (!fs.existsSync(projectsDir)) return false;
+    if (!fs.existsSync(projectsDir)) return null;
     for (const slug of fs.readdirSync(projectsDir)) {
       const journalPath = path.join(projectsDir, slug, "journal");
       if (!fs.existsSync(journalPath)) continue;
       const hit = fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
-      if (hit) return true;
+      if (hit) return slug;
     }
-    return false;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -469,15 +478,35 @@ export function rescueOrphanedWorkingMemory(): void {
  * Lets exceptions propagate — both current callers wrap their own call in a
  * try/catch (matching the original inline code's per-item fault isolation),
  * so this extraction changes no failure-handling behavior.
+ *
+ * Rescue-slug-parity fix (Train C, 2026-08-13): `guessSlugFromWmLines`
+ * returns a RAW cwd-captured candidate (e.g. "AgentRecall") that is never
+ * itself lowercased/case-folded. `writeSessionCard` → `journalDir` →
+ * `resolveProjectDirName` DOES normalize it (lowercases via `sanitizeName`,
+ * or reuses whatever casing an existing project dir already has) before the
+ * card ever touches disk — so the card can land under `projects/agentrecall/`
+ * while the raw guessed value stays "AgentRecall". The recency ledger used
+ * to be appended with that same raw, never-normalized value, so a lookup
+ * keyed on the ledger's slug (e.g. this file's own
+ * `packages/mcp-server/test/kill9-orphan-rescue.test.mjs`, which asserts
+ * `recencyLines.some((e) => e.slug === rescuedCard.slug)` against the ACTUAL
+ * on-disk directory name) could never find the card it was supposedly
+ * pointing at. Fixed by tracking a SEPARATE `ledgerSlug` that is always
+ * populated from where the card ACTUALLY is — `writeSessionCard`'s own
+ * returned `slug` when this call just wrote it, or `findCardSlugForSid`'s
+ * already-resolved slug when the card already existed — never from the raw
+ * `guessSlugFromWmLines` guess directly.
  */
 function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string>): void {
   // Idempotency guard: a card and/or recency entry already recorded for this
   // sid means some or all of the rescue already happened (or the session
   // ended normally via hook-end/session_end without WM having been cleaned
-  // up yet by some other race). Tracked as two SEPARATE booleans (not one
+  // up yet by some other race). Tracked as two SEPARATE signals (not one
   // OR'd flag) — a card that exists with no matching recency entry must NOT
-  // be treated as fully rescued.
-  const hasCard = cardExistsForSid(wmFile.sid);
+  // be treated as fully rescued. `existingCardSlug` (not just a boolean) is
+  // the ACTUAL on-disk slug of that pre-existing card, needed below.
+  const existingCardSlug = findCardSlugForSid(wmFile.sid);
+  const hasCard = existingCardSlug !== null;
   const hasRecency = recentSids.has(wmFile.sid);
 
   if (hasCard && hasRecency) {
@@ -494,9 +523,16 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
 
   const first = wmLines[0];
   const last = wmLines[wmLines.length - 1];
-  const slug = guessSlugFromWmLines(wmLines) ?? "auto";
+  const guessedSlug = guessSlugFromWmLines(wmLines) ?? "auto";
   const title = truncateUtf8Bytes(first.prompt, 120);
   const date = new Date(wmFile.mtimeMs).toISOString().slice(0, 10);
+
+  // The slug the RECENCY LEDGER must record — always the card's real on-disk
+  // slug, never the raw guess. Defaults to the already-resolved
+  // `existingCardSlug` (the hasCard branch below never overwrites it); the
+  // !hasCard branch overwrites it with `written.slug` once the card write
+  // confirms where it actually landed.
+  let ledgerSlug = existingCardSlug ?? guessedSlug;
 
   // Card-write is attempted ONLY when a card doesn't already exist (hasCard
   // tracks that precisely). When hasCard is already true, the ONLY
@@ -506,7 +542,7 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
     const frontmatter = generateFrontmatter({
       sid: wmFile.sid,
       date,
-      slug,
+      slug: guessedSlug,
       slug_confidence: 0,
       slug_candidates: [],
       source: "working-memory-rescue",
@@ -533,10 +569,11 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       decisions: [],
       nextStep: [],
       sid: wmFile.sid,
-      slug,
+      slug: guessedSlug,
       date,
     });
     cardOk = !!written.path;
+    if (cardOk) ledgerSlug = written.slug || guessedSlug; // the ACTUAL on-disk slug, per WriteSessionCardResult.slug's contract
   }
 
   if (!cardOk) {
@@ -558,7 +595,7 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
     appendRecentSession({
       ts: new Date(wmFile.mtimeMs).toISOString(),
       sid: wmFile.sid,
-      slug,
+      slug: ledgerSlug,
       title,
       artifact_count: 0,
     });

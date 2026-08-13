@@ -262,4 +262,84 @@ describe("working-memory (v3.4.42)", () => {
       assert.ok(!lines[0].prompt.includes("AKIA"), "no raw AWS key prefix should survive");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Rescue-slug-parity fix (Train C, 2026-08-13) — the recency ledger's slug
+  // for a WM-rescued session must equal the card's ACTUAL on-disk project
+  // directory, not the raw `guessSlugFromWmLines` candidate. `guessSlugFromWmLines`
+  // never lowercases a cwd-captured candidate (e.g. "MixedCase"), but
+  // `writeSessionCard` → `journalDir` → `resolveProjectDirName` DOES
+  // (lowercases via `sanitizeName`) before the card ever touches disk — a
+  // mixed-case cwd is exactly the fixture that exposes the divergence a
+  // same-cased fixture (or a /tmp worktree, where both sides already degrade
+  // to "auto") would mask. Pinned directly against `distillSessionToCard`
+  // (no age-gate, no backdating needed) rather than the full kill9 e2e, so
+  // this fails fast and in isolation.
+  // ---------------------------------------------------------------------------
+  describe("distillOneSession (rescue slug parity)", () => {
+    it("a mixed-case cwd fixture: the recency ledger's slug must equal the card's actual on-disk project directory", async () => {
+      const { wmAppend, distillSessionToCard, readRecentSessions } = await import("agent-recall-core");
+      const sid = "sid-mixedcase-parity";
+
+      wmAppend(sid, {
+        ts: "2026-08-13T10:00:00.000Z",
+        prompt: "first prompt for the rescue-slug-parity fixture",
+        cwd: "/Users/x/Projects/MixedCase",
+      });
+      wmAppend(sid, {
+        ts: "2026-08-13T10:05:00.000Z",
+        prompt: "second prompt, same mixed-case cwd, no hook-end ever fires",
+        cwd: "/Users/x/Projects/MixedCase",
+      });
+
+      distillSessionToCard(sid);
+
+      // Find the actual on-disk project directory the card landed under —
+      // mirrors kill9-orphan-rescue.test.mjs's own lookup (mcp-server package).
+      const projectsDir = path.join(tmpDir, "projects");
+      assert.ok(fs.existsSync(projectsDir), "a project directory should exist after distillation");
+      const onDiskSlugs = fs.readdirSync(projectsDir).filter((d) => {
+        const journalPath = path.join(projectsDir, d, "journal");
+        return fs.existsSync(journalPath) && fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
+      });
+      assert.equal(onDiskSlugs.length, 1, `expected exactly one project dir carrying this sid's card, got: ${JSON.stringify(onDiskSlugs)}`);
+      const onDiskSlug = onDiskSlugs[0];
+
+      const recencyEntry = readRecentSessions(50).find((e) => e.sid === sid);
+      assert.ok(recencyEntry, "a recency entry must exist for the rescued session");
+      assert.equal(
+        recencyEntry.slug,
+        onDiskSlug,
+        `recency ledger slug ("${recencyEntry.slug}") must equal the card's actual on-disk project directory ("${onDiskSlug}") — a mismatch means continuity lookups keyed on the ledger slug can never find the card`,
+      );
+    });
+
+    it("when a card ALREADY exists for this sid (hasCard branch), the recency entry still uses the card's real on-disk slug, not a fresh re-guess", async () => {
+      const { wmAppend, distillSessionToCard, readRecentSessions } = await import("agent-recall-core");
+      const sid = "sid-mixedcase-existing-card";
+
+      // Pre-seed a card directly under the LOWERCASED on-disk slug, as if a
+      // previous rescue (or a normal hook-end) already wrote it — but with NO
+      // recency entry yet, exercising the hasCard=true / hasRecency=false path.
+      const journalDir = path.join(tmpDir, "projects", "mixedcase", "journal");
+      fs.mkdirSync(journalDir, { recursive: true });
+      fs.writeFileSync(path.join(journalDir, `2026-08-13--card--${sid}.md`), "# pre-existing card\n", "utf-8");
+
+      wmAppend(sid, {
+        ts: "2026-08-13T10:00:00.000Z",
+        prompt: "a prompt whose cwd would re-guess a DIFFERENT raw case than the existing card's slug",
+        cwd: "/Users/x/Projects/MixedCase",
+      });
+
+      distillSessionToCard(sid);
+
+      const recencyEntry = readRecentSessions(50).find((e) => e.sid === sid);
+      assert.ok(recencyEntry, "a recency entry must be backfilled for the pre-existing card");
+      assert.equal(
+        recencyEntry.slug,
+        "mixedcase",
+        "the recency entry must use the EXISTING card's real on-disk slug, not a re-guessed raw value",
+      );
+    });
+  });
 });

@@ -74,6 +74,26 @@ export interface SessionCardResult {
   date: string;
 }
 
+export interface WriteSessionCardResult {
+  path: string;
+  bytes: number;
+  /**
+   * The ACTUAL on-disk project slug this card was filed under, after
+   * `journalDir`'s case-fold EXISTING-DIR-reuse resolution (paths.ts's
+   * `resolveProjectDirName`, itself lowercasing via `sanitizeName`). This can
+   * — and, for a raw cwd-captured candidate like "AgentRecall", WILL —
+   * differ from the caller-supplied `card.slug`. Any caller that persists a
+   * SEPARATE record of "where this session lives" (e.g. the recency ledger's
+   * `slug` field) must key that record off THIS value, never off `card.slug`
+   * directly — using the un-normalized input there is exactly the ledger-vs-
+   * disk mismatch fixed in `distillOneSession` (working-memory.ts, Train C,
+   * 2026-08-13: "rescue ledger slug must match card's normalized on-disk
+   * slug"). Empty string only in the failure branch, where the write never
+   * got far enough to resolve a slug at all.
+   */
+  slug: string;
+}
+
 // ---------------------------------------------------------------------------
 // Field size budget (Card <= ~2KB, enforced in BYTES — this repo's content is
 // routinely bilingual/CJK-heavy, where a char-length cap would silently blow
@@ -276,27 +296,32 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
  * archive-write.ts's convention) and never throws — a failed write must not
  * break the hook-end / Stop turn.
  */
-export function writeSessionCard(card: SessionCardResult): { path: string; bytes: number } {
+export function writeSessionCard(card: SessionCardResult): WriteSessionCardResult {
   try {
     const slug = sanitizeSlug(card.slug); // slug is caller-controlled; harden before path.join
     const sid = sanitizeSlug(card.sid); // sid is UNTRUSTED (from hook stdin) — sanitize first
     const dir = journalDir(slug);
+    // The ACTUAL on-disk slug directory name, AFTER journalDir's case-fold
+    // EXISTING-DIR-reuse resolution — see WriteSessionCardResult.slug's doc
+    // comment above for why this (not `slug`/`card.slug`) is the value
+    // callers must record wherever "where this card lives" needs persisting.
+    const resolvedSlug = path.basename(path.dirname(dir));
     ensureDir(dir);
 
     const dest = path.join(dir, `${card.date}--card--${sid}.md`);
     if (fs.existsSync(dest)) {
-      return { path: dest, bytes: 0 };
+      return { path: dest, bytes: 0, slug: resolvedSlug };
     }
 
     const tmp = dest + ".tmp." + process.pid;
     fs.writeFileSync(tmp, card.markdown, "utf-8");
     fs.renameSync(tmp, dest);
 
-    return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8") };
+    return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8"), slug: resolvedSlug };
   } catch (err) {
     // F5 depth (2026-08-12, followups wave): silent disk-write failure —
     // same visibility fix as archiveSession/buildSessionCard above.
     recordHookFailure("session-card-write", err);
-    return { path: "", bytes: 0 };
+    return { path: "", bytes: 0, slug: "" };
   }
 }

@@ -652,7 +652,7 @@ export type { ActivityEvent } from "./helpers/activity-feed.js";
 
 // Continuity wave (2026-07-31) — F3: mechanical session-card distillation
 export { buildSessionCard, writeSessionCard } from "./storage/session-card.js";
-export type { SessionCardMeta, SessionCardInput, SessionCardResult } from "./storage/session-card.js";
+export type { SessionCardMeta, SessionCardInput, SessionCardResult, WriteSessionCardResult } from "./storage/session-card.js";
 
 // F2 — cross-project recency index (continuity wave, 2026-07-31)
 export { appendRecentSession, readRecentSessions, formatAgo } from "./storage/recency-index.js";
