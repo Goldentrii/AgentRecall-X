@@ -92,6 +92,28 @@ describe("C-1 ambient capture — every MCP tool call appends one working-memory
     });
   });
 
+  it("H2: the appended WM line carries this server process's cwd (rescue needs it to guess the real project slug)", async () => {
+    const root = isolatedRoot();
+    // StdioClientTransport spawns the server WITHOUT overriding `cwd`, so it
+    // inherits THIS test process's process.cwd() — the same value the
+    // server's own `process.cwd()` will report at capture time. Before the
+    // H2 fix, ambient-capture.ts's wmAppend call carried no `cwd` field at
+    // all: `guessSlugFromWmLines` (storage/working-memory.ts) can only
+    // attribute a rescued session to its real project via each line's `cwd`
+    // — without it, EVERY MCP-only-host session (Codex/Cursor/raw MCP, the
+    // exact hosts this module exists for) fell back to the literal "auto"
+    // slug on rescue, even when the server's cwd unambiguously pointed at a
+    // real project directory.
+    await callToolAndInspect(root, "recall", { query: "H2_CWD_CAPTURE_TERM" }, (result) => {
+      assert.ok(!result.isError);
+      const { lines } = readSoleWmFile(root);
+      assert.equal(lines.length, 1);
+      assert.equal(typeof lines[0].cwd, "string", `expected a cwd string on the captured WM line, got: ${JSON.stringify(lines[0])}`);
+      assert.ok(lines[0].cwd.length > 0, "cwd must not be an empty string");
+      assert.equal(lines[0].cwd, process.cwd(), "the captured cwd must be THIS server process's own cwd (inherited from the spawning process)");
+    });
+  });
+
   it("defaults-only: calling session_start with NO optional args still appends a non-empty gist", async () => {
     const root = isolatedRoot();
     // session_start's inputSchema is entirely optional/defaulted (project

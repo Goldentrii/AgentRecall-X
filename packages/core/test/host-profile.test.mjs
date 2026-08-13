@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { resolveHostProfile, lifecycleInstructions } from "../dist/host-profile.js";
+import { resolveHostProfile, lifecycleInstructions, isHookOwnedHost } from "../dist/host-profile.js";
 
 // Env keys this suite touches — snapshot + restore around every test so we
 // never leak state into other test files sharing this `node --test` process
@@ -91,6 +91,33 @@ describe("resolveHostProfile — best-effort inference (no AR_HOST)", () => {
     const profile = resolveHostProfile();
     assert.equal(profile.tier, "B");
     assert.equal(profile.lifecycle, "agent-driven");
+  });
+});
+
+describe("isHookOwnedHost — H1 single exported gate predicate", () => {
+  it("true when CLAUDECODE=1 is present (Tier A)", () => {
+    process.env["CLAUDECODE"] = "1";
+    assert.equal(isHookOwnedHost(), true);
+  });
+
+  it("true when any CLAUDE_CODE_* var is present, even without CLAUDECODE itself", () => {
+    process.env["CLAUDE_CODE_SESSION_ID"] = "abc123";
+    assert.equal(isHookOwnedHost(), true);
+  });
+
+  it("false with no signal at all (conservative MCP default)", () => {
+    assert.equal(isHookOwnedHost(), false);
+  });
+
+  it("false when AR_HOST explicitly overrides to a non-hook host, even with CLAUDECODE also set", () => {
+    process.env["AR_HOST"] = "codex";
+    process.env["CLAUDECODE"] = "1";
+    assert.equal(isHookOwnedHost(), false, "explicit AR_HOST override must win — a raw CLAUDECODE inline check would get this wrong");
+  });
+
+  it("true when AR_HOST explicitly says claude-code", () => {
+    process.env["AR_HOST"] = "claude-code";
+    assert.equal(isHookOwnedHost(), true);
   });
 });
 

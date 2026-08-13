@@ -30,6 +30,32 @@ function isolatedRoot() {
   return dir;
 }
 
+/**
+ * H1 fix (Train C review, 2026-08-12 wave) — this suite exists to exercise
+ * C-3's graceful-exit handlers, which the new `isHookOwnedHost()` gate
+ * (host-profile.ts) skips installing entirely on a hook-owned host. Naively
+ * spreading `...process.env` into the spawned child leaks THIS test
+ * process's OWN Claude Code signals (CLAUDECODE / CLAUDE_CODE_*) whenever
+ * the suite happens to be run from inside a Claude Code session (e.g.
+ * `npm test` invoked by a Claude Code agent, not just CI) — the gate would
+ * then correctly, but wrongly for this test's intent, treat the spawned
+ * child as hook-owned and skip installing the very handlers this suite
+ * exercises, all four tests below then fail or hang on a distillation that
+ * never happens. Strip those keys (and any `AR_HOST` override) so the child
+ * deterministically resolves to Tier B — the MCP-only, no-hooks host this
+ * suite is actually testing — regardless of what environment the suite
+ * itself runs under.
+ */
+function stripHookSignals(env) {
+  const out = { ...env };
+  delete out.AR_HOST;
+  delete out.CLAUDECODE;
+  for (const key of Object.keys(out)) {
+    if (key.startsWith("CLAUDE_CODE_")) delete out[key];
+  }
+  return out;
+}
+
 after(() => {
   for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -58,7 +84,7 @@ function findCardFor(root, uniqueTerm) {
  */
 async function spawnServerAndCallOneTool(root, toolName, args) {
   const child = spawn("node", [ENTRY], {
-    env: { ...process.env, AGENT_RECALL_ROOT: root },
+    env: { ...stripHookSignals(process.env), AGENT_RECALL_ROOT: root },
     stdio: ["pipe", "pipe", "inherit"],
   });
 
@@ -179,7 +205,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
     const root = isolatedRoot();
     // No tool call at all — just connect and close via SIGTERM directly.
     const child = spawn("node", [ENTRY], {
-      env: { ...process.env, AGENT_RECALL_ROOT: root },
+      env: { ...stripHookSignals(process.env), AGENT_RECALL_ROOT: root },
       stdio: ["pipe", "pipe", "inherit"],
     });
     // Give the process a brief moment to finish booting/connecting its

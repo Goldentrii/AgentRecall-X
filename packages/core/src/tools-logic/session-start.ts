@@ -487,6 +487,40 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     relevance: Math.round((i.relevance ?? 0) * 100) / 100,
   }));
 
+  // Train C (C-2, 2026-08-12 wave) — best-effort orphan rescue, run BEFORE
+  // continuity assembly below. Reuses the SAME sweep the CLI's `hook-start`
+  // case calls (rescueOrphanedWorkingMemory, storage/working-memory.ts) —
+  // single source, so ANY host that calls the MCP `session_start` tool
+  // (Codex/Cursor/raw MCP, doctrine 2026-07-26: the customer's only action
+  // is describing intent, no hooks required) self-heals prior crashed
+  // sessions the exact same way the CLI hook already does. Synchronous
+  // (like the CLI call site) rather than deferred via setImmediate (contrast
+  // `autoBackfill` below): its own module doc already establishes
+  // wmList()'s full-directory scan as acceptable at this call frequency
+  // (session_start/hook-start, NOT the per-tool-call hot path C-1 guards).
+  //
+  // M2 fix (review, post-build): this used to run AFTER `result` was
+  // assembled, on the theory that a slow/failed sweep should never affect
+  // what the call returns — but that ordering directly contradicted this
+  // module's OWN acceptance criterion (a rescue must be visible from the
+  // SAME session_start call that performed it): `readRecentSessions(3)`
+  // right below reads whatever `rescueOrphanedWorkingMemory` just appended,
+  // so the rescue must run BEFORE that read, not after the whole payload
+  // (including continuity) was already built from a stale ledger. Moving it
+  // earlier does not reintroduce the "slow sweep affects the response"
+  // concern that motivated the original placement: the sweep is still
+  // wrapped in its own try/catch, is already documented as best-effort and
+  // never-throwing by its own contract, and this call site was already
+  // accepted as an acceptable synchronous cost at session_start/hook-start
+  // frequency (not the ambient-capture hot path) — only its POSITION within
+  // sessionStart() changed, not its cost or its failure semantics.
+  try {
+    rescueOrphanedWorkingMemory();
+  } catch {
+    // rescueOrphanedWorkingMemory never throws — guard kept so a future
+    // change to that contract can never break session_start.
+  }
+
   // 4b. Continuity — cross-project recency card (F2, continuity wave 2026-07-31).
   // Pure recency, no relevance scoring (see `cross_project` above for that) —
   // reads a project-agnostic ledger so recent work filed under ANOTHER slug
@@ -1040,29 +1074,6 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // dup=true means this call's write-phase was idempotent-suppressed (a
   // repeat session_start for this process's session + project).
   recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
-
-  // Train C (C-2, 2026-08-12 wave) — best-effort orphan rescue, run AFTER
-  // result assembly so a slow/failed sweep can never affect what this call
-  // returns. Reuses the SAME sweep the CLI's `hook-start` case calls
-  // (rescueOrphanedWorkingMemory, storage/working-memory.ts) — single
-  // source, so ANY host that calls the MCP `session_start` tool (Codex/
-  // Cursor/raw MCP, doctrine 2026-07-26: the customer's only action is
-  // describing intent, no hooks required) self-heals prior crashed sessions
-  // the exact same way the CLI hook already does. Synchronous (like the CLI
-  // call site) rather than deferred via setImmediate (contrast `autoBackfill`
-  // below): its own module doc already establishes wmList()'s full-directory
-  // scan as acceptable at this call frequency (session_start/hook-start, NOT
-  // the per-tool-call hot path C-1 guards), and running it inline — not
-  // deferred — is what lets a fresh session_start's OWN continuity reflect a
-  // rescue that just happened, matching the design doc's acceptance flow.
-  // Never throws by its own contract; try/catch kept for defense-in-depth
-  // only, matching this function's established best-effort convention.
-  try {
-    rescueOrphanedWorkingMemory();
-  } catch {
-    // rescueOrphanedWorkingMemory never throws — guard kept so a future
-    // change to that contract can never break session_start.
-  }
 
   return result;
 }

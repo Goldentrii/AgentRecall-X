@@ -41,7 +41,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getSessionId, wmAppend, truncateUtf8Bytes } from "agent-recall-core";
+import { getSessionId, wmAppend, truncateUtf8Bytes, isHookOwnedHost } from "agent-recall-core";
 
 /**
  * Byte cap for the raw gist text handed to `wmAppend`. `wmAppend` re-caps to
@@ -113,7 +113,21 @@ function withAmbientCapture<H extends (...handlerArgs: any[]) => unknown>(toolNa
   const wrapped = (...handlerArgs: unknown[]): unknown => {
     try {
       const args = handlerArgs.length > 1 ? handlerArgs[0] : undefined;
-      wmAppend(getSessionId(), { ts: new Date().toISOString(), prompt: gistOf(toolName, args) });
+      // H2 fix (review, post-build): hook-ambient's own wmAppend call site
+      // (packages/cli/src/index.ts) always passes `cwd` (falling back to
+      // this PROCESS's `process.cwd()` when the hook JSON carries none) —
+      // this call site omitted it entirely. `guessSlugFromWmLines`
+      // (storage/working-memory.ts) can ONLY attribute a rescued session to
+      // its real project via each line's `cwd` field; without it, every
+      // session captured through THIS module (MCP-only hosts — Codex,
+      // Cursor, raw MCP) fell back to the literal "auto" slug on rescue,
+      // even when the MCP server's own cwd unambiguously pointed at a real
+      // project directory. `process.cwd()` is the right signal here for the
+      // same reason it's hook-ambient's fallback: a Claude-Code-spawned hook
+      // process's cwd is that session's working directory, and an MCP
+      // server process's cwd is likewise the directory its host launched it
+      // from/in.
+      wmAppend(getSessionId(), { ts: new Date().toISOString(), prompt: gistOf(toolName, args), cwd: process.cwd() });
     } catch {
       // Never let ambient capture affect the real tool call.
     }
@@ -132,8 +146,31 @@ function withAmbientCapture<H extends (...handlerArgs: any[]) => unknown>(toolNa
  * re-wraps the CURRENT `registerTool`, so double-installation would only
  * double-append — this module's own index.ts call site invokes it exactly
  * once, and there is no other call site).
+ *
+ * H1 fix (review, post-build) — no-op on a hook-owned host (see
+ * `isHookOwnedHost`'s doc comment, agent-recall-core/host-profile.ts, for the
+ * full root-cause writeup). On Claude Code with hooks active, hook-ambient
+ * already captures every prompt into working memory under the REAL session
+ * id; this module's own `getSessionId()` is a random id generated once per
+ * MCP-server PROCESS, uncorrelated with that real id. Installing anyway
+ * would make every tool call append a SECOND, independently-orphaned
+ * working-memory file that C-2/C-3 would each turn into a duplicate
+ * card + recency entry for the same logical session (reproduced — see the
+ * fix report's live-process env probe). Skipping installation entirely
+ * means `server.registerTool` is left completely untouched on a hook-owned
+ * host — zero added overhead, not just zero writes.
+ *
+ * Accepted v1 tradeoff: a Claude Code user who has somehow disabled hooks
+ * but still runs this MCP server gets no ambient capture from the MCP side
+ * either (there is no reliable env signal to distinguish "Claude Code with
+ * hooks disabled" from "Claude Code with hooks active" — both set
+ * CLAUDECODE/CLAUDE_CODE_*). Acceptable: that host already had zero ambient
+ * capture before Train C shipped, so this is a no-regression case, not a new
+ * gap.
  */
 export function installAmbientCapture(server: McpServer): void {
+  if (isHookOwnedHost()) return;
+
   const originalRegisterTool = server.registerTool.bind(server);
 
   server.registerTool = ((name: string, config: unknown, handler: (...cbArgs: unknown[]) => unknown) => {

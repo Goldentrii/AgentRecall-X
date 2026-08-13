@@ -105,6 +105,34 @@ describe("recency-index — appendRecentSession / readRecentSessions", () => {
     assert.equal(result.length, 2, "corrupt/incomplete lines must be skipped, not counted");
   });
 
+  it("M1: a ledger with duplicate-sid lines returns exactly one entry for that sid (the newest)", () => {
+    // Simulates the cross-process TOCTOU: two independent sweep callers (CLI
+    // hook-start + core sessionStart) both observe "no recency entry yet for
+    // this sid" and both append — the SAME sid ends up on the ledger twice,
+    // with different titles/timestamps (the second append usually carries
+    // more/updated info, e.g. a slug re-guess). readRecentSessions must
+    // collapse this to ONE entry, keeping the newest occurrence.
+    core.appendRecentSession({ ts: new Date(Date.now() - 5000).toISOString(), sid: "dup-sid", slug: "proj", title: "first (stale) rescue" });
+    core.appendRecentSession({ ts: new Date().toISOString(), sid: "dup-sid", slug: "proj", title: "second (fresh) rescue" });
+    core.appendRecentSession({ ts: new Date(Date.now() - 1000).toISOString(), sid: "other-sid", slug: "proj", title: "unrelated entry" });
+
+    const result = core.readRecentSessions(10);
+    const dupEntries = result.filter((r) => r.sid === "dup-sid");
+    assert.equal(dupEntries.length, 1, `expected exactly one entry for the duplicated sid, got ${dupEntries.length}`);
+    assert.equal(dupEntries[0].title, "second (fresh) rescue", "the NEWEST occurrence of a duplicated sid must win");
+    assert.equal(result.length, 2, "one deduped entry for dup-sid + one for other-sid");
+  });
+
+  it("M1: entries with no sid at all are never deduped against each other", () => {
+    // Pre-existing/legacy data (or a caller that never set sid) has no
+    // reliable identity to collapse on — must be kept, not merged away.
+    core.appendRecentSession({ ts: new Date(Date.now() - 2000).toISOString(), slug: "proj", title: "no-sid entry A" });
+    core.appendRecentSession({ ts: new Date(Date.now() - 1000).toISOString(), slug: "proj", title: "no-sid entry B" });
+
+    const result = core.readRecentSessions(10);
+    assert.equal(result.length, 2, "entries without a sid must never be collapsed into each other");
+  });
+
   it("H2: throttles the roll — appending at 506 lines (within SLACK of MAX_LINES=500) does NOT rewrite the file", () => {
     const ledgerPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
     const seedLines = [];

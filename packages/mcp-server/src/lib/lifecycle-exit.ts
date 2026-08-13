@@ -21,7 +21,7 @@
  * of that durability guarantee, never a replacement for it.
  */
 
-import { getSessionId, distillSessionToCard } from "agent-recall-core";
+import { getSessionId, distillSessionToCard, isHookOwnedHost } from "agent-recall-core";
 
 /** Hard ceiling on how long this handler may delay process exit (design doc C-3 guard). */
 const EXIT_TIMEOUT_MS = 2000;
@@ -64,8 +64,24 @@ function runOnce(): void {
  * only once per process — `runOnce`'s `fired` guard makes any additional
  * registered listener a no-op, but this function itself is not meant to be
  * (and is not) called more than once.
+ *
+ * H1 fix (review, post-build) — no-op on a hook-owned host (see
+ * `isHookOwnedHost`'s doc comment, agent-recall-core/host-profile.ts, for
+ * the full root-cause writeup, and ambient-capture.ts's matching gate on
+ * `installAmbientCapture`, which this mirrors). On Claude Code with hooks
+ * active, hook-end already owns end-of-session distillation for the REAL
+ * session id; this module's `distillSessionToCard(getSessionId())` targets
+ * a different, MCP-process-local random id. Post the ambient-capture gate,
+ * that id has no working-memory file to distill anyway, so this handler
+ * would already be a no-op in practice — but registering the SIGTERM/SIGINT
+ * listeners themselves is still skipped, so this MCP server process never
+ * intercepts a signal that the host's own hook/process-supervision stack
+ * expects to observe unhandled (e.g. Node's default terminate-on-SIGTERM),
+ * and never calls `process.exit(0)` on a host that did not ask for that.
  */
 export function installLifecycleExitHandlers(): void {
+  if (isHookOwnedHost()) return;
+
   process.stdin.on("end", runOnce);
   process.stdin.on("close", runOnce);
   process.on("SIGTERM", runOnce);

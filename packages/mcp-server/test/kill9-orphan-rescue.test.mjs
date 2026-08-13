@@ -36,6 +36,32 @@ function isolatedRoot() {
   return dir;
 }
 
+/**
+ * H1 fix (Train C review, 2026-08-12 wave) — server #1 below ("the victim")
+ * must actually run C-1 ambient capture so its `recall` tool calls populate
+ * working memory for the rescue to find. The new `isHookOwnedHost()` gate
+ * (host-profile.ts) skips installing C-1 on a hook-owned host; naively
+ * spreading `...process.env` leaks THIS test process's OWN Claude Code
+ * signals (CLAUDECODE / CLAUDE_CODE_*) into the spawned child whenever the
+ * suite happens to be run from inside a Claude Code session (e.g. `npm test`
+ * invoked by a Claude Code agent, not just CI), which would make the gate
+ * correctly, but wrongly for this test's intent, skip C-1 for the victim —
+ * the precondition assertion (exactly one WM file before the kill) then
+ * fails, defeating the entire point of this e2e. Strip those keys (and any
+ * `AR_HOST` override) so the child deterministically resolves to Tier B —
+ * the MCP-only, no-hooks host this suite's own header comment says it is
+ * testing — regardless of what environment the suite itself runs under.
+ */
+function stripHookSignals(env) {
+  const out = { ...env };
+  delete out.AR_HOST;
+  delete out.CLAUDECODE;
+  for (const key of Object.keys(out)) {
+    if (key.startsWith("CLAUDE_CODE_")) delete out[key];
+  }
+  return out;
+}
+
 after(() => {
   for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -89,7 +115,7 @@ describe("kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only ses
 
     // 1. Spawn server #1, make real tool calls over stdio (populates WM).
     const child1 = spawn("node", [ENTRY], {
-      env: { ...process.env, AGENT_RECALL_ROOT: root },
+      env: { ...stripHookSignals(process.env), AGENT_RECALL_ROOT: root },
       stdio: ["pipe", "pipe", "inherit"],
     });
     const rpc1 = rawJsonRpcClient(child1);

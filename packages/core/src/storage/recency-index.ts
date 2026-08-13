@@ -179,6 +179,26 @@ export function appendRecentSession(entry: RecentSessionEntry): void {
  * write from a crash mid-append) are skipped individually rather than
  * aborting the whole read. Returns `[]` when the index does not exist yet,
  * when `n <= 0`, or on any read failure — never throws.
+ *
+ * M1 fix (Train C review, 2026-08-12 wave) — dedupe by `sid` at READ time,
+ * keeping the newest occurrence (we're already iterating the file
+ * newest-first, so the FIRST time a given sid is seen IS its newest entry).
+ * Root cause: two independent sweep callers can both append a recency entry
+ * for the SAME sid across a narrow cross-process TOCTOU window — the CLI's
+ * `hook-start` sweep and core's own `sessionStart()` can each observe "no
+ * recency entry yet for this sid" and both append, landing two lines for one
+ * logical session. Rather than chase every present-and-future write-side
+ * race that could produce a duplicate append (a per-caller fix only ever
+ * covers the callers audited today), this is the CLASS fix: collapsing
+ * duplicates at the single read path every consumer (the continuity card,
+ * `rescueOrphanedWorkingMemory`'s/`distillSessionToCard`'s own
+ * already-rescued check) shares makes ANY duplicate-append path — known or
+ * not-yet-written — structurally harmless. The write side
+ * (`appendRecentSession`) is intentionally left as a plain best-effort
+ * append, unchanged — see this module's own header for why duplicate
+ * detection belongs here, not there (a write-side lock would turn a
+ * per-session append into a cross-process contention point for a
+ * consistency property the read side can already guarantee for free).
  */
 export function readRecentSessions(n: number): RecentSessionEntry[] {
   if (n <= 0) return [];
@@ -187,10 +207,19 @@ export function readRecentSessions(n: number): RecentSessionEntry[] {
     if (!fs.existsSync(filePath)) return [];
     const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
     const out: RecentSessionEntry[] = [];
+    const seenSids = new Set<string>();
     for (let i = lines.length - 1; i >= 0 && out.length < n; i--) {
       try {
         const parsed = JSON.parse(lines[i]) as Partial<RecentSessionEntry>;
         if (parsed && typeof parsed.slug === "string" && typeof parsed.title === "string" && typeof parsed.ts === "string") {
+          // Dedupe only when `sid` is a genuine, non-empty string — an entry
+          // with a missing/malformed sid (pre-existing data, or a caller
+          // that never set one) has no reliable identity to collapse on, so
+          // it is kept as-is rather than risking an over-aggressive merge.
+          if (typeof parsed.sid === "string" && parsed.sid.length > 0) {
+            if (seenSids.has(parsed.sid)) continue; // older duplicate of an sid already kept — drop it
+            seenSids.add(parsed.sid);
+          }
           out.push(parsed as RecentSessionEntry);
         }
       } catch {

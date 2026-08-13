@@ -112,6 +112,44 @@ const TIER_C_INSTRUCTIONS =
   "AgentRecall has no MCP session and no hooks here — this is a direct SDK/CLI integration. Nothing saves itself: call session_start (or `ar cold-start`) yourself when a run begins, session_end (or `ar saveall`) yourself before it ends, and remember/recall on demand. Saying it is not saving it.";
 
 /**
+ * H1 (Train C review, 2026-08-12 wave) — single exported predicate for "does
+ * this host already own the memory lifecycle via hooks, independent of
+ * anything the MCP server process does on its own." Tier A (hook-driven) is
+ * EXACTLY that case: Claude Code's SessionStart/Stop hooks fire
+ * session_start/session_end keyed on the REAL `CLAUDE_CODE_SESSION_ID`.
+ *
+ * WHY this exists as its OWN predicate rather than callers inlining
+ * `resolveHostProfile().tier === "A"` (or, worse, re-deriving the
+ * CLAUDECODE/CLAUDE_CODE_* check directly): a class-not-instance guard — any
+ * future host-lifecycle mechanism that needs "is hooks already covering
+ * this?" must ask THIS question, not reimplement env-var sniffing per call
+ * site. Reimplementing it would (a) silently diverge the moment
+ * `resolveHostProfile`'s detection logic changes, and (b) ignore the
+ * explicit `AR_HOST` override entirely (an inline `CLAUDECODE` check would
+ * wrongly say "hook-owned" even when `AR_HOST=codex` explicitly overrides
+ * an actual Claude Code process — `resolveHostProfile` already handles that
+ * precedence correctly).
+ *
+ * Root cause this closes: `packages/mcp-server/src/lib/ambient-capture.ts`
+ * (C-1) and `lib/lifecycle-exit.ts` (C-3) both key their working-memory
+ * writes on `getSessionId()` — a RANDOM id generated once per MCP-server
+ * process (`storage/session.ts`), uncorrelated with the hook stack's real
+ * `CLAUDE_CODE_SESSION_ID`. On a host running Claude Code with hooks AND
+ * this MCP server simultaneously (the common case), hook-ambient already
+ * captures every prompt under the real session id; C-1 capturing AGAIN under
+ * the MCP process's own fake id produces a SECOND, independently-orphaned
+ * working-memory file for the same logical session, which C-2's sweep and
+ * C-3's graceful-exit handler each turn into a SECOND card + recency entry.
+ * Both call sites gate their installation on this predicate being false —
+ * see their own doc comments for the accepted v1 tradeoff (a Claude Code
+ * user who has somehow disabled hooks but still runs this MCP server gets
+ * no ambient capture from the MCP side either).
+ */
+export function isHookOwnedHost(): boolean {
+  return resolveHostProfile().tier === "A";
+}
+
+/**
  * The single canonical source for AgentRecall's lifecycle instructions, one
  * variant per host tier. `packages/mcp-server/src/server.ts` and any
  * documentation describing the lifecycle (e.g. root AGENTS.md) must derive

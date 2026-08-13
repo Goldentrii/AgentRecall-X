@@ -225,7 +225,7 @@ export { acquireLock, withLock, STALE_LOCK_MS } from "./storage/filelock.js";
 // mcp-instructions / Tier C manual) + the single canonical lifecycle-
 // instructions source consumed by packages/mcp-server/src/server.ts and by
 // AGENTS.md's authored content.
-export { resolveHostProfile, lifecycleInstructions } from "./host-profile.js";
+export { resolveHostProfile, lifecycleInstructions, isHookOwnedHost } from "./host-profile.js";
 export type { HostTier, Lifecycle, HostProfile } from "./host-profile.js";
 
 // Storage — corrections
