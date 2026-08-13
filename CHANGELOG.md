@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.43] — 2026-08-13
+
+Patch release: zero-action memory on non-hook hosts (Train C), plus two enumeration-driven hardening classes.
+
+### Added
+
+- **Zero-action lifecycle on non-hook MCP hosts (Train C)**: the MCP server now carries the memory loop itself where no hooks exist (Codex, Cursor, raw MCP clients) — every tool call appends a scrubbed working-memory gist (single `registerTool` wrap; future tools inherit capture by construction), orphaned sessions are rescued into cards by ANY host's `session_start`, and graceful exit (stdin close / SIGTERM) distills the session immediately. kill -9 falls through to rescue by design.
+- **Dual-stack ownership gate**: on hosts where lifecycle hooks are active (detected via the observed `CLAUDECODE`/`CLAUDE_CODE_*` environment of spawned servers), server-side capture and exit-distill stand down — hooks own the lifecycle; no duplicate cards or recency entries.
+
+### Fixed
+
+- **Root-resolution bypass class in the CLI** (full enumeration, 12 sites): `--root` was silently ignored by `ar stats` and `ar setup supabase --backfill` (both hit the real store), plus 10 further internal sites — all now resolve through the canonical store root.
+- **Deep hook-failure visibility**: 19 previously-silent catch sites across the hook-end/hook-start call graph now record to hook health (error-path semantics unchanged); 10 remaining silent catches are individually justified. Also fixed an unguarded directory read that could crash `sessionEnd()` entirely.
+- **MCP ambient capture records `cwd`** so sessions on hookless hosts file under the real project instead of `auto`; recency index deduplicates by session at read time (closes a cross-process double-append race); orphan rescue now runs before continuity assembly so the same `session_start` that rescues a session also shows it.
+
 ## [3.4.42] — 2026-08-04
 
 Patch release: the working-memory tier — minutes-level, crash-proof memory. Like a brain: long-term can decay, but "what happened 5 minutes ago" must survive anything.
