@@ -15,6 +15,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { withLock } from "../storage/filelock.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 // ── Stopwords for title normalization ────────────────────────────────────────
 const STOPWORDS = new Set([
@@ -231,14 +232,22 @@ export function recallInsights(
   const index = readInsightsIndex();
   if (index.insights.length === 0) return [];
 
-  const contextWords = context.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  // CJK-aware (P0-b, 2026-08-18): shared tokenizer — an unspaced Chinese/
+  // Japanese context used to collapse into one giant token (2026-08-18 L1
+  // eval: CJK hit@5 = 0/6). Default minLength=3 preserves the original
+  // `length > 2` floor for ASCII.
+  const contextWords = tokenizeWords(context);
   const severityWeight: Record<string, number> = { critical: 3, important: 2, minor: 1 };
 
   const scored = index.insights.map((insight) => {
     // Layer 1: applies_when keyword matching
     let keywordMatches = 0;
     for (const keyword of insight.applies_when) {
-      const kwWords = keyword.toLowerCase().split(/\s+/);
+      // CJK-aware (P0-b): same tokenizer as contextWords above. minLength:0
+      // reproduces the original no-length-filter behavior exactly for ASCII
+      // (this site never filtered short words) while still segmenting Han
+      // runs into real words instead of one giant token.
+      const kwWords = tokenizeWords(keyword, { minLength: 0 });
       for (const kw of kwWords) {
         if (contextWords.some((cw) => cw.includes(kw) || kw.includes(cw))) {
           keywordMatches++;

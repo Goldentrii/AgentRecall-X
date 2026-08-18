@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { resolveProject } from "../storage/project.js";
 import { journalDirs, palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 export interface JournalSearchInput {
   query: string;
@@ -36,9 +37,16 @@ export interface JournalSearchResult {
   _note?: string;
 }
 
-/** Split query into keywords (length > 2) for keyword-based matching. */
+/**
+ * Split query into keywords (length > 2) for keyword-based matching.
+ * CJK-aware (P0-b, 2026-08-18): delegates to the shared tokenizer so an
+ * unspaced Chinese/Japanese query segments into real words instead of
+ * collapsing into one giant token — see ../helpers/tokenize.ts's header.
+ * `tokenizeWords` default minLength=3 reproduces the original `length > 2`
+ * floor exactly for ASCII input.
+ */
 function queryKeywords(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  return tokenizeWords(query);
 }
 
 /** Return true if line contains enough query keywords (threshold: ≥1 keyword match). */

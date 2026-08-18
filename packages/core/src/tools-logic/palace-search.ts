@@ -4,6 +4,7 @@ import { resolveProject } from "../storage/project.js";
 import { palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms, recordAccess } from "../palace/rooms.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 export interface PalaceSearchInput {
   query: string;
@@ -61,7 +62,11 @@ export async function palaceSearch(input: PalaceSearchInput): Promise<PalaceSear
   // query to appear as one continuous substring — too strict, missed relevant entries.
   // New approach: count matched keywords, compute overlap ratio for scoring.
   // v3.3.21: use stemming + synonym expansion for query words
-  const rawQueryWords = input.query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  // P0-b (2026-08-18): CJK-aware via the shared tokenizer — an unspaced
+  // Chinese/Japanese query used to collapse into one giant token that had to
+  // match byte-for-byte (2026-08-18 L1 eval: CJK hit@5 = 0/6). Default
+  // minLength=3 reproduces the original `length > 2` floor for ASCII.
+  const rawQueryWords = tokenizeWords(input.query);
 
   // Fix RC1: project-scope keyword inflation.
   // When searching within a project, every file contains the project name —
@@ -116,8 +121,11 @@ export async function palaceSearch(input: PalaceSearchInput): Promise<PalaceSear
         // Skip pure markdown headings (## Memories, # Room, etc.) — structural, not content
         if (/^#{1,6}\s/.test(lines[i])) continue;
 
-        // Stem each line word for matching
-        const lineWords = lineLower.split(/\s+/).filter(w => w.length > 2).map(w => stem(w));
+        // Stem each line word for matching. CJK-aware (P0-b): tokenizeWords
+        // segments Han-script runs into real words instead of treating a
+        // whole unspaced Chinese line as one token; stem() is a no-op on
+        // CJK tokens (ASCII suffix rules never match Han characters).
+        const lineWords = tokenizeWords(lineLower).map(w => stem(w));
         const lineWordSet = new Set(lineWords);
 
         // Count how many query keywords match (stemmed OR substring)

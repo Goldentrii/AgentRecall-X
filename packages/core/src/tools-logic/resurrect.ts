@@ -94,6 +94,7 @@ import {
   extractFinalRecordText,
   unescapeJsonString,
 } from "../storage/extraction.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -343,10 +344,13 @@ function extractTitleAndGoal(body: string): { title: string; goalExcerpt: string
 function queryTermsOf(query: string | undefined): string[] {
   const trimmed = (query ?? "").trim();
   if (!trimmed) return [];
-  return trimmed
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length >= 2);
+  // CJK-aware (P0-b, 2026-08-18): shared tokenizer — computeScore below
+  // matches each term via `highText.includes(term)` / `lowText.includes(
+  // term)`; an unspaced Chinese/Japanese query term used to be the ENTIRE
+  // query string, which almost never appears verbatim in a paraphrased
+  // session brief. minLength:2 preserves this function's original
+  // `t.length >= 2` floor exactly for ASCII.
+  return tokenizeWords(trimmed, { minLength: 2 });
 }
 
 /**

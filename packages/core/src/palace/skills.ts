@@ -24,6 +24,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { sanitizeName } from "../storage/sanitize.js";
 import { generateFrontmatter } from "./obsidian.js";
 import { initFsrs, reinforce, score, type FsrsState, type FsrsScore } from "./fsrs.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 export interface SkillMeta {
   /** Stable kebab-case slug, unique within project. */
@@ -379,18 +380,21 @@ export function recallSkillsByIntent(
 ): Array<{ skill: Skill; score: number; matched_triggers: string[]; retrievability: number; status: FsrsScore["status"] }> {
   const skills = listSkills(project);
   if (skills.length === 0) return [];
+  // CJK-aware (P0-b, 2026-08-18): the original `[^a-z0-9 ]+` strip destroyed
+  // every CJK character before splitting (Layer-1 bug, same class as
+  // check-action.ts's original bug) — a Chinese intent/skill-name tokenized
+  // to empty. Shared tokenizer extracts + segments Han runs first, so they
+  // survive; asciiStripRegex reproduces each original punctuation-strip
+  // pattern byte-for-byte on the (now Han-free) ASCII remainder.
   const intentWords = new Set(
-    intent
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9 ]+/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 3),
+    tokenizeWords(intent, { minLength: 3, asciiStripRegex: /[^a-z0-9 ]+/g }),
   );
   const ranked = skills
     .map((s) => {
       const haystack = [s.meta.name, s.meta.topic, ...s.meta.triggers].join(" ").toLowerCase();
-      const haystackWords = new Set(haystack.split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
+      const haystackWords = new Set(
+        tokenizeWords(haystack, { minLength: 3, asciiStripRegex: /[^a-z0-9]+/g }),
+      );
       const matched: string[] = [];
       let score = 0;
       for (const w of intentWords) {

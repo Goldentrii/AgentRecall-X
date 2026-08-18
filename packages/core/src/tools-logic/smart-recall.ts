@@ -109,6 +109,7 @@ import { recallInsight } from "./recall-insight.js";
 import { getRoot } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 import { getConnectedRooms } from "../palace/graph.js";
 import { palaceDir, archiveRawDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
@@ -324,18 +325,23 @@ function ebbinghaus(days: number, S: number): number {
   return Math.exp(-days / S);
 }
 
-/** Keyword overlap ratio between query and text, with stemming + synonym expansion. */
+/**
+ * Keyword overlap ratio between query and text, with stemming + synonym expansion.
+ * CJK-aware (P0-b, 2026-08-18): both sides go through the shared tokenizer
+ * so an unspaced Chinese/Japanese query/text segments into real words
+ * instead of one giant token that must match byte-for-byte (2026-08-18 L1
+ * eval: CJK hit@5 = 0/6). Default minLength=3 preserves the original
+ * `length > 2` floor for ASCII.
+ */
 function keywordExactness(query: string, text: string): number {
-  const rawWords = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  const rawWords = tokenizeWords(query);
   if (rawWords.length === 0) return 0;
 
   // Expand query with stems + synonyms
   const expandedQuery = expandQuery(rawWords);
 
   // Stem the text words for matching
-  const textWords = text.toLowerCase().split(/\s+/)
-    .filter(w => w.length > 2)
-    .map(w => stem(w));
+  const textWords = tokenizeWords(text).map(w => stem(w));
   const textSet = new Set(textWords);
 
   // Also check raw text for direct substring matches (preserves old behavior)
@@ -409,7 +415,10 @@ function getFeedbackCounts(
 ): { positives: number; negatives: number } {
   const relevant = log.filter((f) => {
     if (!f.query) return true;
-    const fWords = f.query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    // CJK-aware (P0-b): same shared tokenizer as the query side, so a past
+    // Chinese/Japanese feedback query can still be matched against the
+    // current query's tokens instead of comparing two giant unsegmented blobs.
+    const fWords = tokenizeWords(f.query);
     return queryWords.some((w) => fWords.includes(w));
   });
 
@@ -792,7 +801,9 @@ function archiveSearch(project: string, query: string, limit: number): SmartReca
   const dir = archiveRawDir(project);
   if (!fs.existsSync(dir)) return [];
 
-  const keywords = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+  // CJK-aware (P0-b): shared tokenizer — see keywordExactness above for the
+  // same fix applied to this fallback source's query-side matching.
+  const keywords = tokenizeWords(query);
   if (keywords.length === 0 || limit <= 0) return [];
 
   let files: string[];
@@ -903,7 +914,10 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     : readFeedbackLog();
 
   const limit = input.limit ?? 10;
-  const queryWords = expandQuery(input.query.toLowerCase().split(/\s+/).filter((w) => w.length > 2));
+  // CJK-aware (P0-b): shared tokenizer — feeds getFeedbackCounts' relevance
+  // weighting below with real word-segmented tokens instead of one giant
+  // unspaced-CJK blob.
+  const queryWords = expandQuery(tokenizeWords(input.query));
 
   let results: SmartRecallResultItem[];
   let degraded: SmartRecallDegraded | undefined;
