@@ -230,8 +230,12 @@ describe("working-memory (v3.4.42)", () => {
       const filePath = path.join(tmpDir, "working-memory", "sid-c1-hostile.jsonl");
       const onDisk = fs.readFileSync(filePath, "utf-8");
       assert.ok(!onDisk.includes(SECRET), `raw secret must never reach disk verbatim; on-disk content: ${onDisk}`);
-      assert.ok(!onDisk.includes("ignore all previous instructions"), `raw injection text must never reach disk verbatim; on-disk content: ${onDisk}`);
       assert.ok(!onDisk.includes("<system-reminder>"), `raw system-reminder tag must never reach disk verbatim; on-disk content: ${onDisk}`);
+      // Narrowed 2026-08-18 (P0-a rework, owner-decided architecture): the
+      // structural tag above is still stripped; the bare "ignore all
+      // previous instructions" phrasing left over once the tag is
+      // neutralized is no longer separately mangled (over-redaction fix —
+      // see content-guard.ts's header for the false-positive rationale).
     });
 
     it("wmRead returns the already-scrubbed content (scrub happens at capture, not at read time)", async () => {

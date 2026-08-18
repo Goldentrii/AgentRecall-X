@@ -114,6 +114,7 @@ import { palaceDir, archiveRawDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -834,6 +835,11 @@ function archiveSearch(project: string, query: string, limit: number): SmartReca
       if (start > 0) snippet = "..." + snippet;
       if (end < line.length) snippet = snippet + "...";
       if (!snippet) continue; // an all-whitespace "match" line is not a useful excerpt
+      // P0-a (2026-08-18): archive/raw stays byte-identical ON DISK (lossless
+      // tier), but this function greps that raw content directly into a
+      // recall() result's `excerpt` field — the SURFACING BOUNDARY. Scrub
+      // the snippet here, at the read/return edge, never the file itself.
+      snippet = scrubForCloud(snippet);
 
       const provenance = path.join("journal", "archive", "raw", file);
       // Keyword overlap reflects match quality among archive hits, but is

@@ -304,7 +304,10 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     const cardBody = fs.readFileSync(cardPath, "utf-8");
     assert.ok(!cardBody.includes(secret), `raw secret must never appear verbatim in a rescued card; card body: ${cardBody}`);
     assert.ok(!cardBody.includes("<system-reminder>"), `raw injection tag must never appear verbatim in a rescued card; card body: ${cardBody}`);
-    assert.ok(!cardBody.includes("ignore all previous instructions"), `injection phrasing must be stripped; card body: ${cardBody}`);
+    // Narrowed 2026-08-18 (P0-a rework, owner-decided architecture): the
+    // structural tag above is still stripped (at wmAppend capture time); the
+    // bare phrasing left over once the tag is neutralized is no longer
+    // separately mangled — see content-guard.ts's header for rationale.
   });
 
   it("idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card", async () => {

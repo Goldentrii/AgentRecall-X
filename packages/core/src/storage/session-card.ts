@@ -26,6 +26,7 @@ import { journalDir, sanitizeSlug } from "./paths.js";
 import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { recordHookFailure } from "./hook-health.js";
+import { scrubForCloud } from "./content-guard.js";
 import {
   DECISION_LINE_RE,
   NEXT_STEP_LINE_RE,
@@ -179,18 +180,33 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
     const tailLines = parseJsonlLenient(raw.rawTail ?? "");
     const allLines = [...headLines, ...tailLines];
 
-    const title = (
+    // P0-a (2026-08-18): buildSessionCard runs directly on the RAW hook-end
+    // transcript sample (rawHead/rawTail) — no upstream scrub has ever
+    // touched this content (unlike working-memory.ts's wmAppend, which
+    // scrubs at capture). This is the SURFACING BOUNDARY: the card is a
+    // DERIVED artifact written to journal/ (not the lossless archive/raw
+    // tier), and it feeds resurrect()/recall() unconditionally on every
+    // session end. Scrub each extracted free-text field HERE, immediately
+    // after extraction and BEFORE it is used for further regex extraction
+    // (decisions/nextStep) or section-building, so every downstream
+    // consumer of this card only ever sees already-clean text.
+    const rawTitle =
       extractAiTitle(allLines) ??
       extractFirstUserTextFromRecords(allLines) ??
-      "(untitled session)"
-    ).slice(0, TITLE_CHAR_CAP);
+      "(untitled session)";
+    const title = scrubForCloud(rawTitle).slice(0, TITLE_CHAR_CAP);
 
     const artifacts = extractArtifactPathsFromRecords(allLines, ARTIFACTS_CAP);
     const linearRefs = extractLinearRefsFromRecords(allLines, LINEAR_REFS_CAP);
 
-    const finalAssistantText = extractFinalRecordText(allLines, "assistant") ?? "";
-    const finalUserText = extractFinalRecordText(allLines, "user") ?? "";
+    const finalAssistantText = scrubForCloud(extractFinalRecordText(allLines, "assistant") ?? "");
+    const finalUserText = scrubForCloud(extractFinalRecordText(allLines, "user") ?? "");
 
+    // Extracted from the ALREADY-SCRUBBED finalAssistantText above — decisions
+    // and next-step lines inherit its cleanliness for free, with no separate
+    // scrub pass needed. DECISION_LINE_RE/NEXT_STEP_LINE_RE match keyword
+    // vocabulary ("decided"/"locked"/"next"/"待办"/...), which the scrub never
+    // touches, so extraction fidelity is unaffected.
     const decisions = extractLinesMatching(finalAssistantText, DECISION_LINE_RE, DECISIONS_CAP);
     const nextStep = extractLinesMatching(finalAssistantText, NEXT_STEP_LINE_RE, NEXT_STEP_CAP);
 

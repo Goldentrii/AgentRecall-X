@@ -20,7 +20,7 @@ import { palaceWrite } from "./palace-write.js";
 import { journalWrite } from "./journal-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
 import { palaceDir, sanitizeProject, projectsRootDir } from "../storage/paths.js";
-import { scrubSecretContent } from "../storage/content-guard.js";
+import { scrubSecretContent, scrubPromptInjection } from "../storage/content-guard.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -98,20 +98,17 @@ function isSystemDir(name: string): boolean {
   return SYSTEM_DIR_DENYLIST.has(name);
 }
 
-/**
- * Strip prompt-injection patterns from imported user content before writing it
- * to palace. CLAUDE.md and AutoMemory files frequently contain
- * `<system-reminder>` markers etc. that, once in palace, would surface to future
- * agents as if they were system instructions.
- */
-function scrubPromptInjection(s: string): string {
-  return s
-    .replace(/<\/?\s*(system[-_]?(reminder|prompt|message|instruction)|important|critical)\b[^>]*>/gi, "[stripped tag]")
-    .replace(/<\|im_(start|end)\|>/gi, "[stripped]")
-    .replace(/\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|messages?)/gi, "[stripped injection attempt]")
-    .replace(/[‪-‮⁦-⁩]/g, "")  // bidi override
-    .replace(/\0/g, "");
-}
+// Prompt-injection scrub for imported user content (CLAUDE.md / AutoMemory
+// files frequently contain `<system-reminder>` markers etc. that, once in
+// palace, would surface to future agents as if they were system
+// instructions). P0-a rework (2026-08-18): this used to be a LOCAL, literal
+// duplicate of storage/content-guard.ts's scrubPromptInjection — the two
+// copies drifted apart the moment content-guard.ts's was narrowed to strip
+// only structural control tokens (dropping the free-standing phrase
+// matcher), since this file's copy was never updated to match. Now imports
+// the single canonical implementation instead of maintaining a second one —
+// `scrubSecretContent` below was already imported from the same module; this
+// makes both layers consistent with ONE source of truth.
 
 // ---------------------------------------------------------------------------
 // Types

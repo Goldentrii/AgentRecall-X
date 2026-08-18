@@ -26,6 +26,7 @@ import { listMilestones } from "../palace/pipeline.js";
 import { findCrystallizationCandidates, type CrystallizationCandidate } from "../palace/awareness.js";
 import { archiveRawDir } from "../storage/paths.js";
 import { readJsonSafe } from "../storage/fs-utils.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 import { buildConsolidationPrompt } from "../prompts/consolidation-prompt.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -190,7 +191,15 @@ function collectRawUnconsumed(
       }
       let excerpt = "";
       try {
-        excerpt = fs.readFileSync(full, "utf-8").slice(0, EXCERPT_CHARS);
+        // P0-a rework (2026-08-18, reviewer finding): archive/raw stays
+        // byte-identical ON DISK (the lossless tier's own contract — never
+        // touched here), but this excerpt is returned verbatim in
+        // sessionEndReflect()'s bundle, which IS agent-visible tool output —
+        // its whole purpose is to hand raw material straight to the calling
+        // LLM. That is the exact SURFACING BOUNDARY the rest of this fix
+        // wave scrubs at; deferring it here would leave the most direct
+        // injection vector in the codebase unscrubbed.
+        excerpt = scrubForCloud(fs.readFileSync(full, "utf-8").slice(0, EXCERPT_CHARS));
       } catch {
         continue;
       }

@@ -5,15 +5,31 @@
  * prompt-injection attempts do not reach Supabase or the embedding API.
  *
  * Two-layer scrub:
- *   1. scrubPromptInjection — strip XML system-marker tags, bidi overrides,
- *      null bytes, and explicit injection phrases. Extracted from bootstrap.ts
- *      and re-exported here so journal-write/palace-write can import from a
- *      single source of truth.
+ *   1. scrubPromptInjection — strip STRUCTURAL control tokens only: XML
+ *      system-marker tags, `<|im_start|>`/`<|im_end|>`-style delimiters, bidi
+ *      override chars, null bytes. Extracted from bootstrap.ts and re-exported
+ *      here so journal-write/palace-write can import from a single source of
+ *      truth.
  *   2. scrubSecretContent — redact known secret token prefixes (AKIA…, ghp_…,
  *      gho_…, ghs_…, sk-…, xoxb-…, PEM markers). Operates on content, not
  *      filenames (bootstrap.ts isSecretFile() handles filename-level rejection).
  *
  * scrubForCloud(content) = scrubSecretContent(scrubPromptInjection(content))
+ *
+ * NARROWING (P0-a rework, 2026-08-18, owner-decided architecture): a prior
+ * revision of scrubPromptInjection also stripped free-standing natural-
+ * language phrases ("ignore/disregard/forget previous/prior instructions").
+ * That phrase matcher was DROPPED. Rationale: (a) it produced false positives
+ * on legitimate prose — this product's users journal ABOUT prompt-injection
+ * incidents (in English and CJK), and every such entry got mangled into
+ * "[stripped injection attempt]"; (b) it silently destroyed the matchable
+ * vocabulary of any correction/rule whose text happened to describe an
+ * injection pattern, breaking check()/checkAction()'s token-overlap matching
+ * for that rule forever. Only STRUCTURAL control tokens — sequences that are
+ * never legitimate even as quoted text, because they are how a model's own
+ * prompt format demarcates role/instruction boundaries — are stripped now.
+ * A bare phrase with no structural wrapper is inert prose to any reader and
+ * is left untouched.
  *
  * Design guarantees:
  *   - Never throws — any failure returns the original content unchanged.
@@ -29,9 +45,19 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Strip prompt-injection patterns from content before it leaves the machine.
- * Same logic as bootstrap.ts:scrubPromptInjection but exported here for
- * journal-write and palace-write to use at sync time.
+ * Strip STRUCTURAL prompt-injection control tokens from content before it
+ * leaves the machine. Same logic as bootstrap.ts:scrubPromptInjection but
+ * exported here for journal-write and palace-write to use at sync time.
+ *
+ * Narrowed 2026-08-18 (P0-a rework, owner-decided architecture): only
+ * structural control tokens are stripped — XML system-marker tags,
+ * `<|im_start|>`/`<|im_end|>`-style delimiters, bidi override chars, null
+ * bytes. The free-standing natural-language phrase matcher ("ignore all
+ * previous instructions" etc. as bare prose) was REMOVED — see this file's
+ * header comment for the false-positive + correction-matching-pollution
+ * rationale. A phrase inside a still-stripped structural tag is neutralized
+ * along with the tag; a bare phrase with no structural wrapper is left as
+ * ordinary text.
  */
 export function scrubPromptInjection(s: string): string {
   try {
@@ -41,10 +67,6 @@ export function scrubPromptInjection(s: string): string {
         "[stripped tag]",
       )
       .replace(/<\|im_(start|end)\|>/gi, "[stripped]")
-      .replace(
-        /\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|messages?)/gi,
-        "[stripped injection attempt]",
-      )
       .replace(/[‪-‮⁦-⁩]/g, "") // bidi override chars
       .replace(/\0/g, ""); // null bytes
   } catch {
