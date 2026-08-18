@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { resolveProject } from "../storage/project.js";
 import { journalDir } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface NudgeInput {
   past_statement: string;
@@ -32,6 +33,9 @@ export async function nudge(input: NudgeInput): Promise<NudgeResult> {
   entry += `**Now**: ${input.current_statement}\n`;
   entry += `**Question**: ${input.question}\n`;
   entry += `**Category**: ${category}\n\n`;
+  // Scrub BEFORE the local write — same alignment-log.md file check()/
+  // alignment_check write to and contextSynthesize scans; no scrub previously.
+  entry = scrubForCloud(entry);
 
   const logPath = path.join(dir, `${date}-alignment.md`);
   if (!fs.existsSync(logPath)) {

@@ -82,9 +82,13 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
 
   const fileExistedBefore = fs.existsSync(targetFile);
 
+  // Scrub BEFORE the local write (content-guard.ts: this used to run only on the
+  // cloud-sync copy via the re-read further below, leaving the on-disk palace file
+  // — read verbatim by recall/session_start/handoff — carrying raw secrets/
+  // injection payloads even for opted-out-of-cloud users).
   if (targetTopic === "README") {
     let existing = fileExistedBefore ? fs.readFileSync(targetFile, "utf-8") : "";
-    const entry = `\n### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`;
+    const entry = scrubForCloud(`\n### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`);
 
     if (existing.includes("## Memories")) {
       const idx = existing.indexOf("## Memories");
@@ -98,7 +102,7 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   } else {
     if (fileExistedBefore) {
       const existing = fs.readFileSync(targetFile, "utf-8");
-      const entry = `\n### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`;
+      const entry = scrubForCloud(`\n### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`);
       fs.writeFileSync(targetFile, existing + entry, "utf-8");
     } else {
       const fm = generateFrontmatter({ room: input.room, topic: targetTopic, created: timestamp, importance, tags: input.tags ?? [] });
@@ -106,7 +110,7 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
       // append path + README path). Without this, countRoomEntries() — which counts
       // `### ` headers — would report 0 for a brand-new topic file, sorting a room
       // with real content as "empty" and zeroing its salience.
-      const entry = `### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`;
+      const entry = scrubForCloud(`### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`);
       fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${entry}`, "utf-8");
     }
   }
@@ -120,9 +124,11 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   // --importance high measurably raises the room's salience (not always medium).
   recordAccess(slug, safeRoom, importance);
 
-  // Async sync to Supabase (non-blocking) — scrub injection and secrets before egress.
+  // Async sync to Supabase (non-blocking). The file on disk is already scrubbed
+  // (above), so re-reading it back gives the sync call the SAME scrubbed bytes —
+  // no second scrub pass needed, and local/cloud copies stay byte-identical.
   const writtenContent = fs.readFileSync(targetFile, "utf-8");
-  syncToSupabase(targetFile, scrubForCloud(writtenContent), slug, "palace", safeRoom);
+  syncToSupabase(targetFile, writtenContent, slug, "palace", safeRoom);
 
   const fanOutResult = fanOut(slug, safeRoom, targetTopic, content, input.connections ?? [], importance);
   updatePalaceIndex(slug);

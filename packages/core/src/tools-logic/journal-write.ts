@@ -117,8 +117,13 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
 
     const sectionArg = input.section ?? null;
     const upd = appendToSection(existingContent, input.content, sectionArg);
-    fs.writeFileSync(fp, upd, "utf-8");
-    return { filePath: fp, updated: upd };
+    // Scrub BEFORE the local write, not just before syncToSupabase (content-guard.ts:
+    // scrubForCloud was historically applied only on the cloud-sync copy, leaving the
+    // on-disk journal file — which session_start/recall/handoff all read verbatim —
+    // carrying raw secrets/injection payloads even for opted-OUT-of-cloud users).
+    const scrubbed = scrubForCloud(upd);
+    fs.writeFileSync(fp, scrubbed, "utf-8");
+    return { filePath: fp, updated: scrubbed };
   });
 
   // Index regeneration runs AFTER the lock is released — both index.md
@@ -146,7 +151,7 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     ensureDir(path.dirname(targetPath));
 
     const timestamp = new Date().toISOString();
-    const entry = `\n### ${date} (from journal)\n\n${input.content}\n`;
+    const entry = scrubForCloud(`\n### ${date} (from journal)\n\n${input.content}\n`);
 
     if (fs.existsSync(targetPath)) {
       fs.appendFileSync(targetPath, entry, "utf-8");
@@ -161,8 +166,10 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     palaceResult = { room: input.palace_room, topic: topicFile, fan_out: fanOutResult.updatedRooms };
   }
 
-  // Async sync to Supabase (non-blocking) — scrub injection and secrets before egress.
-  syncToSupabase(filePath, scrubForCloud(updated), slug, "journal");
+  // Async sync to Supabase (non-blocking). `updated` is already scrubbed above
+  // (the on-disk write and the cloud copy must be byte-identical — scrubbing
+  // twice would risk drift if the scrub is ever made stateful).
+  syncToSupabase(filePath, updated, slug, "journal");
 
   // Advisory routing hint — only when no palace_room was already specified
   let routingHint: JournalWriteResult["routing_hint"] = null;

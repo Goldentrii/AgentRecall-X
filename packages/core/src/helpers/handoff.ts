@@ -18,6 +18,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { listJournalFiles } from "./journal-files.js";
 import { extractSection } from "./sections.js";
 import { journalDir, projectSubPath } from "../storage/paths.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 const HARD_BUDGET = 2200;
 
@@ -224,7 +225,16 @@ export function writeHandoff(slug: string): HandoffResult {
   ensureDir(projectDir);
 
   const handoffPath = path.join(projectDir, "handoff.md");
-  const content = generateHandoff(slug);
+  // handoff.md is never synced to Supabase (this module has no syncToSupabase
+  // call at all) and is the explicit "paste into any agent" artifact — the
+  // highest-exposure local write in the codebase before this fix, since it
+  // shipped with NO scrub of any kind, cloud or local. Its sections quote
+  // corrections/behavior-policies/journal-blockers/insights text; scrub the
+  // FINAL assembled string as defense-in-depth even though those sources are
+  // now scrubbed at their own write sites, so a source that predates this fix
+  // (or a future section this function grows) still can't leak raw secrets or
+  // an injection payload into whatever agent the human pastes this into.
+  const content = scrubForCloud(generateHandoff(slug));
 
   // Atomic write: tmp + rename (POSIX-atomic).
   const tmp = `${handoffPath}.tmp.${process.pid}.${Date.now()}`;

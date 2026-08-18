@@ -7,6 +7,7 @@ import { ensurePalaceInitialized, roomExists, createRoom } from "../palace/rooms
 import { fanOut } from "../palace/fan-out.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { generateSlug } from "../helpers/auto-name.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface KnowledgeWriteInput {
   project?: string;
@@ -46,6 +47,11 @@ export async function knowledgeWrite(input: KnowledgeWriteInput): Promise<Knowle
   entry += `- **Root cause:** ${input.root_cause}\n`;
   entry += `- **Fix:** ${input.fix}\n`;
   entry += `- **Severity:** ${severity}\n\n`;
+  // Scrub BEFORE the local write — remember()'s knowledge path feeds recall();
+  // this store had no scrub of any kind previously. The dedup checks below
+  // compare against `### ${input.title} (${slug}, ${date})`, which is unaffected
+  // by scrubbing the body — the title itself is not a scrub target in practice.
+  entry = scrubForCloud(entry);
 
   // F2 fix (independent review, 2026-07-20): was a naive local sanitizer (no
   // lowercase, no existing-dir reuse) — routes through paths.ts now, so

@@ -12,6 +12,7 @@ import { fanOut } from "../palace/fan-out.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { captureLogFileName } from "../storage/session.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface JournalCaptureInput {
   question: string;
@@ -78,6 +79,9 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
     let entry = `### Q${num} (${timestamp})${tagStr}\n\n`;
     entry += `**Q:** ${question}\n\n`;
     entry += `**A:** ${answer}\n\n`;
+    // Scrub BEFORE the local write — remember()'s capture path feeds recall();
+    // this log had no scrub of any kind previously.
+    entry = scrubForCloud(entry);
 
     if (!fs.existsSync(lp)) {
       // Obsidian-compatible frontmatter for new capture logs
@@ -115,7 +119,7 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
       const targetPath = path.join(pd, "rooms", safeRoom, "captures.md");
       ensureDir(path.dirname(targetPath));
 
-      const captureEntry = `\n### Q${entryNum} (${date})\n**Q:** ${input.question}\n**A:** ${input.answer}\n`;
+      const captureEntry = scrubForCloud(`\n### Q${entryNum} (${date})\n**Q:** ${input.question}\n**A:** ${input.answer}\n`);
       if (fs.existsSync(targetPath)) {
         fs.appendFileSync(targetPath, captureEntry, "utf-8");
       } else {

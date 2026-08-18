@@ -66,8 +66,15 @@ export function writeAwareness(content: string): void {
     const p = awarenessPath();
     ensureDir(path.dirname(p));
 
+    // Scrub BEFORE the local write — this is the GLOBAL, cross-project, always
+    // surfaced-at-session_start document (highest exposure of any store in the
+    // codebase). scrubForCloud was historically applied only on the re-read used
+    // for the Supabase sync call below, leaving the on-disk awareness.md itself
+    // carrying raw secrets/injection payloads regardless of cloud opt-in.
+    const scrubbedContent = scrubForCloud(content);
+
     // Enforce 200-line max — truncate at section boundary, not mid-line
-    const lines = content.split("\n");
+    const lines = scrubbedContent.split("\n");
     if (lines.length > MAX_LINES) {
       // Walk backwards from MAX_LINES to find the last clean section boundary
       let cutAt = MAX_LINES;
@@ -79,14 +86,14 @@ export function writeAwareness(content: string): void {
           break;
         }
       }
-      const truncated = lines.slice(0, cutAt).join("\n");
-      fs.writeFileSync(p, truncated + "\n", "utf-8");
-      // Async sync to Supabase (non-blocking)
-      syncToSupabase(p, scrubForCloud(fs.readFileSync(p, "utf-8")), "global", "awareness");
+      const truncated = lines.slice(0, cutAt).join("\n") + "\n";
+      fs.writeFileSync(p, truncated, "utf-8");
+      // Async sync to Supabase (non-blocking) — already scrubbed, no re-scrub needed.
+      syncToSupabase(p, truncated, "global", "awareness");
     } else {
-      fs.writeFileSync(p, content, "utf-8");
-      // Async sync to Supabase (non-blocking)
-      syncToSupabase(p, scrubForCloud(fs.readFileSync(p, "utf-8")), "global", "awareness");
+      fs.writeFileSync(p, scrubbedContent, "utf-8");
+      // Async sync to Supabase (non-blocking) — already scrubbed, no re-scrub needed.
+      syncToSupabase(p, scrubbedContent, "global", "awareness");
     }
   });
 }
@@ -157,7 +164,14 @@ export function writeAwarenessState(state: AwarenessState): void {
     const p = AWARENESS_JSON_PATH();
     ensureDir(path.dirname(p));
     state.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(p, JSON.stringify(state, null, 2), "utf-8");
+    // Scrub the serialized JSON before it touches disk. session-start.ts reads
+    // this file DIRECTLY (readAwarenessState()) to build its briefing — not just
+    // via the rendered awareness.md — so an unscrubbed insight.evidence/title,
+    // compound-insight pattern, trajectory, or blind-spot string here reaches
+    // session_start injection even if the markdown render path is clean.
+    // scrubForCloud's replacement placeholders are plain ASCII with no quote/
+    // brace characters, so scrubbing the full JSON string is JSON-safe.
+    fs.writeFileSync(p, scrubForCloud(JSON.stringify(state, null, 2)), "utf-8");
   });
 }
 
@@ -176,8 +190,11 @@ export function readAwarenessArchive(): Insight[] {
 export function writeAwarenessArchive(archive: Insight[]): void {
   const p = AWARENESS_ARCHIVE_PATH();
   ensureDir(path.dirname(p));
-  // Keep newest first, cap at MAX_ARCHIVE
-  fs.writeFileSync(p, JSON.stringify(archive.slice(0, MAX_ARCHIVE), null, 2), "utf-8");
+  // Keep newest first, cap at MAX_ARCHIVE. Scrubbed for the same reason as
+  // writeAwarenessState — resurrectFromArchive() can bring an archived insight's
+  // evidence/title back into the live topInsights list (and therefore back into
+  // session_start injection) without ever passing through writeAwareness's render.
+  fs.writeFileSync(p, scrubForCloud(JSON.stringify(archive.slice(0, MAX_ARCHIVE), null, 2)), "utf-8");
 }
 
 /** Archive a demoted insight. If a matching insight exists in archive, strengthen it. */
