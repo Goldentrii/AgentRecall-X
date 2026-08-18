@@ -129,10 +129,15 @@ export function writeInsightsIndex(index: InsightsIndex): void {
   const p = indexPath();
   ensureDir(path.dirname(p));
   index.updated = new Date().toISOString();
-  const serialized = JSON.stringify(index, null, 2);
+  // Scrub BEFORE the local write — this file is read directly by handoff.ts
+  // ("Top insights" section, no scrub of its own) and by recallInsights()/
+  // session_start, so an unscrubbed insight.title carried only the cloud-sync
+  // copy was clean while the on-disk (and therefore every downstream reader's)
+  // copy stayed raw.
+  const serialized = scrubForCloud(JSON.stringify(index, null, 2));
   fs.writeFileSync(p, serialized, "utf-8");
   // "global" is the Supabase row key for cross-project data; source_project uses "_global" sentinel — these are intentionally different namespaces
-  syncToSupabase(p, scrubForCloud(serialized), "global", "awareness");
+  syncToSupabase(p, serialized, "global", "awareness");
 }
 
 /**

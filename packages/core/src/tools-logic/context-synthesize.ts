@@ -9,6 +9,7 @@ import { ensurePalaceInitialized, listRooms, roomExists, createRoom } from "../p
 import { fanOut } from "../palace/fan-out.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface ContextSynthesizeInput {
   entries?: number;
@@ -154,7 +155,10 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
         }
         const decPath = path.join(pd, "rooms", "architecture", "decisions.md");
         ensureDir(path.dirname(decPath));
-        const entry = `\n### Consolidated ${date}\n\n${decisionsData}\n`;
+        // Scrub BEFORE the local write — this consolidation re-derives text
+        // straight from journal files via fs.readFileSync (not via palaceWrite),
+        // so it bypasses palace-write.ts's own scrub entirely.
+        const entry = scrubForCloud(`\n### Consolidated ${date}\n\n${decisionsData}\n`);
         if (fs.existsSync(decPath)) {
           fs.appendFileSync(decPath, entry, "utf-8");
         } else {
@@ -169,7 +173,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
       if (goalsData) {
         const evoPath = path.join(pd, "rooms", "goals", "evolution.md");
         ensureDir(path.dirname(evoPath));
-        const entry = `\n### Consolidated ${date}\n\n${goalsData}\n`;
+        const entry = scrubForCloud(`\n### Consolidated ${date}\n\n${goalsData}\n`);
         if (fs.existsSync(evoPath)) {
           fs.appendFileSync(evoPath, entry, "utf-8");
         } else {
@@ -183,7 +187,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
       if (blockersData) {
         const blkPath = path.join(pd, "rooms", "blockers", "history.md");
         ensureDir(path.dirname(blkPath));
-        const entry = `\n### Consolidated ${date}\n\n${blockersData}\n`;
+        const entry = scrubForCloud(`\n### Consolidated ${date}\n\n${blockersData}\n`);
         if (fs.existsSync(blkPath)) {
           fs.appendFileSync(blkPath, entry, "utf-8");
         } else {

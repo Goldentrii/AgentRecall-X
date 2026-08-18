@@ -25,6 +25,7 @@ import { sanitizeName } from "../storage/sanitize.js";
 import { generateFrontmatter } from "./obsidian.js";
 import { initFsrs, reinforce, score, type FsrsState, type FsrsScore } from "./fsrs.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface SkillMeta {
   /** Stable kebab-case slug, unique within project. */
@@ -250,9 +251,33 @@ function findExistingSkillFile(dir: string, order: number): string | undefined {
 export function writeSkill(project: string, meta: SkillMeta, body: SkillBody, order?: number): string {
   const dir = skillsDir(project);
   ensureDir(dir);
-  const finalMeta: SkillMeta = {
+  // P0-a (2026-08-18): scrub every free-text field BEFORE slug/filename
+  // derivation and render — mirrors storage/corrections.ts's writeCorrection
+  // fix. `name` (or `slug`) feeds sanitizeName() below whenever `slug` is
+  // absent, so an unscrubbed secret/injection payload in either would leak
+  // into the on-disk FILENAME (the exact leak class corrections.ts had via
+  // slugify(record.rule)) even if content were scrubbed only at render time.
+  // Every body field is otherwise rendered raw to disk with no scrub call
+  // anywhere else in this module, and skills are surfaced unconditionally
+  // into session_start() via recognition-builder.ts's readCapabilities().
+  const scrubbedMeta: SkillMeta = {
     ...meta,
-    slug: sanitizeName(meta.slug || meta.name, 60),
+    slug: meta.slug ? scrubForCloud(meta.slug) : meta.slug,
+    name: scrubForCloud(meta.name),
+    topic: scrubForCloud(meta.topic),
+    triggers: meta.triggers.map((t) => scrubForCloud(t)),
+  };
+  const scrubbedBody: SkillBody = {
+    when: scrubForCloud(body.when),
+    preconditions: body.preconditions.map((s) => scrubForCloud(s)),
+    steps: body.steps.map((s) => scrubForCloud(s)),
+    postconditions: body.postconditions.map((s) => scrubForCloud(s)),
+    pitfalls: body.pitfalls?.map((s) => scrubForCloud(s)),
+    evidence: body.evidence?.map((s) => scrubForCloud(s)),
+  };
+  const finalMeta: SkillMeta = {
+    ...scrubbedMeta,
+    slug: sanitizeName(scrubbedMeta.slug || scrubbedMeta.name, 60),
     fsrs: meta.fsrs ?? initFsrs(meta.created || new Date().toISOString()),
     archived: meta.archived === true ? true : undefined,
   };
@@ -271,7 +296,7 @@ export function writeSkill(project: string, meta: SkillMeta, body: SkillBody, or
   }
   // Atomic write
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, renderSkill(finalMeta, body), { encoding: "utf-8", mode: 0o600 });
+  fs.writeFileSync(tmp, renderSkill(finalMeta, scrubbedBody), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filePath);
   return filePath;
 }

@@ -17,6 +17,7 @@ import { palaceDir } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { generateFrontmatter } from "./obsidian.js";
 import { sanitizeName } from "../storage/sanitize.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export type PhaseStatus = "active" | "closed" | "abandoned";
 
@@ -324,8 +325,13 @@ export function writeMilestone(
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
+  // Scrub BEFORE the local write — this is the SOLE write path for pipeline
+  // milestones (pipeline_open/pipeline_close both funnel through here), and
+  // goal/what_was_hard/how_solved/synthesis are all free-text session_end
+  // params. Previously only the caller's post-write syncPipelineFile() re-read
+  // + scrubbed a copy for Supabase; the on-disk milestone file itself stayed raw.
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, renderMilestone(meta, sections), { encoding: "utf-8", mode: 0o600 });
+  fs.writeFileSync(tmp, scrubForCloud(renderMilestone(meta, sections)), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filePath); // atomic on same filesystem
   return filePath;
 }

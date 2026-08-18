@@ -81,6 +81,7 @@ import { getRoot } from "../types.js";
 import { archiveRawDir, journalDir, projectsRootDir } from "../storage/paths.js";
 import { parseMemoryFile } from "../supabase/sync.js";
 import { truncateUtf8Bytes } from "../storage/fs-utils.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 import { wmList, wmRead, guessSlugFromWmLines } from "../storage/working-memory.js";
 import {
   NEXT_STEP_LINE_RE,
@@ -510,9 +511,19 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       // with it rather than introducing a new one.
       const records = parseJsonlLenient(content);
 
+      // P0-a (2026-08-18): Source 2 reads journal/archive/raw/*.md DIRECTLY —
+      // the SAME lossless, on-disk-raw tier archive-write.ts writes with zero
+      // scrub, by design. That on-disk byte-for-byte contract must never
+      // change, but `entry.title`/`entry.goalExcerpt`/`entry.nextSteps` below
+      // ARE returned verbatim in the final ContinuityBrief — this is a
+      // SURFACING BOUNDARY exactly like drill-down.ts's fetchVerbatim/
+      // smart-recall.ts's archiveSearch, just a third, independent reader of
+      // the same store. Scrub at extraction, not on disk. `entry.rawBodies`
+      // (below) is INTERNAL-ONLY — used solely by computeScore's keyword
+      // matching, never returned to a caller — so it deliberately stays raw.
       const firstUserText = extractFirstUserTextFromRecords(records);
       if (firstUserText) {
-        const clipped = firstUserText.replace(/\s+/g, " ").trim();
+        const clipped = scrubForCloud(firstUserText.replace(/\s+/g, " ").trim());
         if (!entry.title) entry.title = truncateUtf8Bytes(clipped, RAW_TITLE_BYTE_CAP);
         if (!entry.goalExcerpt) entry.goalExcerpt = truncateUtf8Bytes(clipped, RAW_GOAL_BYTE_CAP);
       }
@@ -520,7 +531,7 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       for (const a of extractArtifactPathsFromRecords(records, MAX_ARTIFACTS)) entry.artifacts.add(a);
       for (const r of extractLinearRefsFromRecords(records, MAX_LINEAR_REFS)) entry.linearRefs.add(r);
 
-      const finalAssistantText = extractFinalRecordText(records, "assistant") ?? "";
+      const finalAssistantText = scrubForCloud(extractFinalRecordText(records, "assistant") ?? "");
       entry.nextSteps = dedupPushAll(
         entry.nextSteps,
         extractLinesMatching(finalAssistantText, NEXT_STEP_LINE_RE, MAX_NEXT_STEPS),

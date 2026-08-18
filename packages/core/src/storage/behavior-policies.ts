@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { palaceDir } from "./paths.js";
 import { ensureDir } from "./fs-utils.js";
+import { scrubForCloud } from "./content-guard.js";
 
 export interface BehaviorRule {
   id: string;
@@ -91,11 +92,15 @@ export function registerBehaviorRule(input: RegisterRuleInput): RegisterRuleResu
     return { success: true, rule_id: existing.id, total_rules: current.rules.length };
   }
 
+  // Scrub the free-text fields before they ever enter the rule object — this
+  // store is read directly at session_start (readBehaviorPolicies, above
+  // regular-insight salience) AND surfaces in handoff.ts's "Behavior policies"
+  // section, and had no scrub of any kind previously.
   const rule: BehaviorRule = {
     id: newRuleId(),
-    name,
-    when,
-    do: doField,
+    name: scrubForCloud(name),
+    when: scrubForCloud(when),
+    do: scrubForCloud(doField),
     created: new Date().toISOString(),
     hits: 0,
   };

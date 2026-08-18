@@ -12,6 +12,7 @@ import { ensureDir } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock } from "./filelock.js";
+import { scrubForCloud } from "./content-guard.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -363,8 +364,16 @@ function todayDate(): string {
  * durable path. Pure side-effect helper; no behavior change vs the originals.
  */
 function writeRecordAtomic(filepath: string, record: unknown): void {
+  // Scrub BEFORE the local write — corrections are AgentRecall's most-injected
+  // artifact (readP0Corrections is loaded into every session_start briefing,
+  // handoff.md's "Binding rules" section, and check()'s/checkAction's
+  // matching_corrections return value on every FUTURE call), yet this was the
+  // ONLY correction write path with no scrub at all: `rule`/`context` are the
+  // human_correction text verbatim from check()/alignment_check. Reused by
+  // writeCorrection, retractCorrection, and recordOutcome — the single choke
+  // point for every persisted correction record.
   const tmp = `${filepath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, JSON.stringify(record, null, 2), { encoding: "utf-8", mode: 0o600 });
+  fs.writeFileSync(tmp, scrubForCloud(JSON.stringify(record, null, 2)), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filepath);
 }
 
@@ -798,9 +807,22 @@ export function writeCorrection(project: string, correction: CorrectionRecord): 
   const dir = correctionsDir(project);
   ensureDir(dir);
 
-  // Auto-detect severity if not already set
+  // Auto-detect severity if not already set (BEFORE scrubbing — detectSeverity's
+  // language heuristics are tuned against real human_correction phrasing, not
+  // against post-scrub placeholder text).
   const severity = correction.severity ?? detectSeverity(`${correction.rule} ${correction.context}`);
   const record = applyCorrectionDefaults({ ...correction, severity }, todayDate());
+
+  // Scrub rule/context on the RECORD OBJECT itself (not just at writeRecordAtomic's
+  // JSON-serialize step) — `record.rule` also drives every on-disk FILENAME below
+  // (`slugify(record.rule || record.id)`), a leak vector content-only scrubbing
+  // can never close: a secret/injection payload embedded in the human_correction
+  // text would otherwise survive verbatim in the *.json FILENAME even though the
+  // file's *contents* were clean. Scrubbing the object here means the filename,
+  // the merge-matching (`normalizeRule`), and the eventual writeRecordAtomic
+  // content write are all derived from the SAME already-clean value.
+  record.rule = scrubForCloud(record.rule);
+  record.context = scrubForCloud(record.context);
 
   // ── LOCKED critical section (P0 data-loss fix, 2026-07-25) ────────────────
   // From here on this is an unlocked read-all→find→mutate→atomic-rewrite→
@@ -1663,7 +1685,11 @@ export function logRejectedCorrection(
     const row: RejectedCorrectionRecord = {
       ts: new Date().toISOString(),
       project,
-      rule,
+      // Scrubbed even though this is a human-facing CLI diagnostic dump today
+      // (readRejectedCorrections has no agent-facing reader currently) — a
+      // rejected candidate is, by definition, raw un-vetted text, and the same
+      // defense-in-depth applies as every other correction write.
+      rule: scrubForCloud(rule),
       reason,
       gate_version: GATE_VERSION,
     };

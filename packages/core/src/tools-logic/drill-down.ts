@@ -22,6 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { readJournalFile } from "../helpers/journal-files.js";
 import { archiveRawDir, palaceDir, sanitizeSlug } from "../storage/paths.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 import { getRoot } from "../types.js";
 
 /** Locator stamped onto a recall result so the bridge can fetch its raw source. */
@@ -89,7 +90,14 @@ export function fetchVerbatim(project: string, key: VerbatimKey | undefined): Ve
 
       if (!fs.existsSync(p)) return null;
       const text = fs.readFileSync(p, "utf-8");
-      return { found: true, source: `archive/${key.file}`, text: cap(text) };
+      // P0-a (2026-08-18): archive/raw is the lossless, byte-for-byte
+      // verbatim tier — its ON-DISK content must stay raw (never scrubbed at
+      // write time; see archive-write.ts's own contract). But this function
+      // is the SURFACING BOUNDARY: its return value is attached directly to
+      // a recall()/resurrect() result as `bridged[].verbatim`, so it must be
+      // scrubbed HERE, at the read/return edge, not on disk. Scrub before
+      // cap() so a redaction placeholder is never truncated mid-marker.
+      return { found: true, source: `archive/${key.file}`, text: cap(scrubForCloud(text)) };
     }
 
     // palace

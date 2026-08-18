@@ -5,6 +5,7 @@ import { journalDir, palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { ensurePalaceInitialized, roomExists } from "../palace/rooms.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface AlignmentCheckInput {
   goal: string;
@@ -49,6 +50,10 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
   if (input.unclear) entry += `**Unclear**: ${input.unclear}\n`;
   if (input.human_correction) entry += `**Human**: ${input.human_correction}\n**Delta**: ${input.delta || "not specified"}\n`;
   entry += "\n";
+  // Scrub BEFORE the local write — this log is scanned by contextSynthesize's
+  // "Today's Alignment" section AND is a free-text sink (goal/human_correction/
+  // delta/unclear/assumptions) with no scrub of any kind previously.
+  entry = scrubForCloud(entry);
 
   const logPath = path.join(dir, `${date}-alignment.md`);
   if (!fs.existsSync(logPath)) {
@@ -65,7 +70,9 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
       ensureDir(path.dirname(alignFile));
 
       if (input.human_correction) {
-        const palaceEntry = `\n### ${date} ${time} — ${input.confidence}\n**Goal**: ${input.goal}\n**Human correction**: ${input.human_correction}\n**Delta**: ${input.delta || "pending"}\n`;
+        const palaceEntry = scrubForCloud(
+          `\n### ${date} ${time} — ${input.confidence}\n**Goal**: ${input.goal}\n**Human correction**: ${input.human_correction}\n**Delta**: ${input.delta || "pending"}\n`
+        );
         if (fs.existsSync(alignFile)) {
           const existing = fs.readFileSync(alignFile, "utf-8");
           // Dedup: skip if the same goal was already recorded today (prevents double-write from MCP retries)

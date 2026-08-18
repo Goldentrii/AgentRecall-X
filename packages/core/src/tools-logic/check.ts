@@ -12,6 +12,7 @@ import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
 import { writeCorrection, splitSentences } from "../storage/corrections.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
@@ -113,7 +114,13 @@ function alignmentLogPath(project: string): string {
 function writeAlignmentLog(project: string, records: AlignmentRecord[]): void {
   const p = alignmentLogPath(project);
   ensureDir(path.dirname(p));
-  fs.writeFileSync(p, JSON.stringify(records, null, 2), "utf-8");
+  // Scrub BEFORE the local write — session-start.ts reads this file directly
+  // (readAlignmentLog) into every session_start briefing, and check() itself
+  // re-reads it into similar_past_deltas on every future call. goal/
+  // human_correction/delta/assumptions are all free-text check() params that
+  // previously reached disk completely unscrubbed (this store has never had
+  // any scrub, cloud or local).
+  fs.writeFileSync(p, scrubForCloud(JSON.stringify(records, null, 2)), "utf-8");
 }
 
 export async function check(input: CheckInput): Promise<CheckResult> {

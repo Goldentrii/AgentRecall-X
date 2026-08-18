@@ -117,7 +117,10 @@ describe("session_start — working-memory live line", () => {
     const entry = result.continuity[0];
     assert.ok(!entry.title.includes(SECRET), `secret must not surface verbatim in the cross-session live line; got ${JSON.stringify(entry)}`);
     assert.ok(!entry.title.includes("<system-reminder>"), `injection tag must not survive verbatim; got ${JSON.stringify(entry)}`);
-    assert.ok(!entry.title.includes("ignore all previous instructions"), `injection phrasing must be stripped; got ${JSON.stringify(entry)}`);
+    // Narrowed 2026-08-18 (P0-a rework, owner-decided architecture): only the
+    // STRUCTURAL tag is stripped now — a bare phrase left over after the tag
+    // is neutralized is inert prose, not re-scrubbed. See content-guard.ts's
+    // header for the false-positive rationale.
   });
 
   it("live line is prepended ahead of F2 recency entries, both in the SAME continuity array", async () => {
