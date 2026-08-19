@@ -326,7 +326,11 @@ async function main(): Promise<void> {
         older_than_days: days ? parseInt(days) : 7,
         project,
       });
-      output(result);
+      // P1 fence (completeness-harness find, 2026-08-19): `summaries[]`
+      // quotes the first line of each archived entry's own stored Brief
+      // section verbatim — genuinely retrieved memory, not administrative
+      // counts alone. Missed by all three prior hand-enumeration passes.
+      outputFenced(result);
       break;
     }
     case "rollup": {
@@ -338,7 +342,12 @@ async function main(): Promise<void> {
         dry_run: hasFlag("--dry-run", rest),
         project,
       });
-      output(result);
+      // P1 fence (completeness-harness find, 2026-08-19): `summariesCreated[]`
+      // is synthesizeWeek()'s output — quotes journal decisions/blockers/
+      // completed/next-step text verbatim. Missed by all three prior
+      // hand-enumeration passes (this command has no direct MCP tool
+      // equivalent to have caught it "for parity").
+      outputFenced(result);
       break;
     }
     case "projects": {
@@ -349,12 +358,19 @@ async function main(): Promise<void> {
     case "status": {
       const board = await core.projectBoard();
       if (hasFlag("--json", rest)) {
+        // Not fenced: established `--json` precedent (raw machine-parseable
+        // contract), same as `ar awareness read --json` / `ar mirror --json`.
         output(board);
       } else {
         const boardWidth = process.stdout.columns
           ? Math.min(110, Math.max(80, process.stdout.columns))
           : 100;
-        output(core.renderBoard(board, { boardWidth }));
+        // P1 fence (completeness-harness find, 2026-08-19): each project
+        // row's detail column is extractNext()'s output — the journal's
+        // `## Next` section (or `## Brief` first line) quoted verbatim
+        // across EVERY project on the board. Missed by all three prior
+        // hand-enumeration passes.
+        output(core.fenceMemory(core.renderBoard(board, { boardWidth })));
       }
       break;
     }
@@ -2606,7 +2622,20 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         syncLines.push(``);
       }
 
-      const syncContent = syncFrontmatter + core.fenceMemory(syncLines.join("\n").trimEnd()) + "\n";
+      // Regression fix (P1 completeness pass, 2026-08-19): syncFrontmatter's
+      // array ends in a single trailing "" element, which Array.join("\n")
+      // resolves to exactly ONE trailing "\n" after the closing `---` (the
+      // empty string contributes no newline of its OWN — join only inserts
+      // separators BETWEEN elements). Before the fencing rework this was
+      // invisible: `syncLines` used to start right after that "" element in
+      // the SAME array, so the join naturally produced a blank line before
+      // `# AgentRecall Context`. Splitting frontmatter into its own
+      // `syncFrontmatter` string lost that second newline — the fenced body
+      // now started immediately after `---` with no blank-line separator
+      // (`---\n⟦agentrecall:memory⟧...` instead of `---\n\n⟦agentrecall:memory⟧...`).
+      // Restore the blank line explicitly at the join point rather than
+      // relying on array-trailing-empty-string arithmetic again.
+      const syncContent = syncFrontmatter + "\n" + core.fenceMemory(syncLines.join("\n").trimEnd()) + "\n";
 
       // Write to Claude's memory directory
       const memDir = path.join(os.homedir(), ".claude", "projects", `-Users-${os.userInfo().username}`, "memory");
@@ -2640,7 +2669,15 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
       const roomList = core.listRooms(resolvedRoom);
       const pd = core.palaceDir(resolvedRoom);
 
-      output(`Palace rooms — ${resolvedRoom}\n`);
+      // P1 fence (completeness-pass MEDIUM re-triage, 2026-08-19): each
+      // room's `description` is free text set at room-creation time
+      // (possibly by an earlier session) — the same risk class as any
+      // other retrieved prose field, previously deferred as "lower
+      // priority than prose-block surfaces". Build the whole room list as
+      // ONE block and fence it once (O(1) per block, matching every other
+      // multi-item renderer in this file) rather than per-line; the
+      // header (project slug only, not retrieved content) stays outside.
+      const roomLines: string[] = [];
       for (const r of roomList) {
         const roomPath = path.join(pd, "rooms", r.slug);
         let entryCount = 0;
@@ -2655,9 +2692,11 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
             entryCount += entryMatches ? entryMatches.length : 0;
           }
         }
-        output(`  ${r.name} (${entryCount} entries, salience ${r.salience.toFixed(2)})`);
-        if (r.description) output(`    ${r.description}`);
+        roomLines.push(`  ${r.name} (${entryCount} entries, salience ${r.salience.toFixed(2)})`);
+        if (r.description) roomLines.push(`    ${r.description}`);
       }
+      output(`Palace rooms — ${resolvedRoom}\n`);
+      output(roomLines.length > 0 ? core.fenceMemory(roomLines.join("\n")) : "  (no rooms)");
       break;
     }
 

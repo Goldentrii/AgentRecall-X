@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { pipelineOpen } from "agent-recall-core";
+import { pipelineOpen, fenceMemory } from "agent-recall-core";
 
 const PHASE_NAME = z
   .string()
@@ -31,7 +31,16 @@ export function register(server: McpServer): void {
     },
     async ({ phase_name, goal, close_previous_with_synthesis, auto, project }) => {
       const result = await pipelineOpen({ phase_name, goal, close_previous_with_synthesis, auto, project });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      // P1 fence (completeness-pass MEDIUM re-triage, 2026-08-19):
+      // `phase_name`/`goal` echo THIS call's own submission (same-turn
+      // trust — the original reasoning for leaving this tool unfenced),
+      // but `closed_previous.phase` is a PRIOR phase's name read back from
+      // storage (opened by an earlier, possibly different session) — a
+      // ≤80-char field, plenty of room for an injection sentence. Fence the
+      // whole JSON blob for class parity with its already-fenced siblings
+      // (pipeline_list/current/show) rather than leaving one family member
+      // unfenced.
+      return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result, null, 2)) }] };
     },
   );
 }
