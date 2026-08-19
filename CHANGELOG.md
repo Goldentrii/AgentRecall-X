@@ -6,6 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.44] — 2026-08-19
+
+Patch release: content-safety and CJK-retrieval class fixes, from the 2026-08-18 self-evaluation. Both were class-not-instance gaps — one consumer had been fixed in a prior release, the class had not.
+
+### Fixed
+
+- **Secrets/injection scrubbed at every surfacing boundary, not just cloud sync**: `scrubForCloud` was applied only to the Supabase-sync copy; local files read by `recall()`, `resurrect()`, `session_start` injection, `handoff.md`, and global awareness were written raw. Now scrubbed at 14 local write sites plus the archive/raw surfacing readers (`smart_recall` archive source, drill-down verbatim, session-card build, resurrect, session-end-reflect). The lossless raw-archive tier stays byte-identical on disk; scrubbing happens where content is surfaced to an agent. A secret leaking into a correction *filename* (via slugify) is also fixed. Injection scrubbing narrowed to structural control tokens (`<|im_start|>`-style delimiters, control tags, bidi/null bytes), dropping the natural-language phrase matcher that mangled legitimate security discussion — full injection-as-data fencing at the injection boundary is tracked as a follow-up.
+- **CJK-aware retrieval tokenization across all recall/search paths**: `split(/\s+/)` whitespace-only tokenization made unspaced Chinese/Japanese queries one indivisible token — natural-language CJK recall was effectively 0%. The CJK-aware tokenizer already shipped for correction-matching (3.4.39) is now the single shared helper (`helpers/tokenize.ts`) consumed by `smart_recall`, palace/journal search, insights, skills, and resurrect. ASCII retrieval is byte-identical (no regression); check-action's matching path is unregressed.
+
 ## [3.4.43] — 2026-08-13
 
 Patch release: zero-action memory on non-hook hosts (Train C), plus two enumeration-driven hardening classes.
