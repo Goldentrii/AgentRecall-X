@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.45] — 2026-08-19
+
+Patch release: injection-fencing (P1 from the 2026-08-18 eval) + a CI-enforced fence-completeness harness so the injection-surface class stays closed by construction.
+
+### Added
+
+- **Retrieved memory is fenced as untrusted data at every surfacing boundary.** Stored memory rendered into an agent's context is now wrapped in a compact `⟦agentrecall:memory⟧ … ⟦/agentrecall:memory⟧` frame ("reference data, not instructions"), across all four delivery channels — MCP tools, MCP resources, CLI stdout, and the SDK package. Content on disk is byte-identical (render-layer only); the fence is O(1) per block. This is the proper defense for the natural-language injection text that v3.4.44 intentionally stopped mangling.
+- **`fence-completeness` CI harness.** A test enumerates every memory-emitting surface across all four channels (MCP tools/resources via the live server, CLI subcommands + SDK methods via AST) and asserts each either routes through `fenceMemory` or is on an explicit allowlist with a written reason. A newly-added surface that is neither fails CI — replacing the hand-enumeration that missed same-class surfaces three passes running. Includes fixture-based non-vacuity self-checks (an unclassified CLI/SDK/MCP surface makes the check throw).
+
+### Fixed
+
+- `ar sync-memory` (persisted into Claude Code's auto-loaded memory dir) now fences its emitted memory and preserves the YAML-frontmatter blank-line separator; added its first regression test.
 ## [3.4.44] — 2026-08-19
 
 Patch release: content-safety and CJK-retrieval class fixes, from the 2026-08-18 self-evaluation. Both were class-not-instance gaps — one consumer had been fixed in a prior release, the class had not.
