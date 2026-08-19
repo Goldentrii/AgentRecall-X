@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { pipelineList } from "agent-recall-core";
+import { pipelineList, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool(
@@ -16,7 +16,10 @@ export function register(server: McpServer): void {
     },
     async ({ project }) => {
       const result = await pipelineList({ project });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      // P1 fence (class-sweep, AR_EXTRAS quarantine zone): per-phase
+      // `synthesis` (when closed) is stored free text, same class as the
+      // fenced pipeline_show/pipeline_current content.
+      return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result, null, 2)) }] };
     },
   );
 }

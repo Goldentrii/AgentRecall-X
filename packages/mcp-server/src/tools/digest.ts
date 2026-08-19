@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { digestStore, digestRecall, digestRead, markStale, resolveProject } from "agent-recall-core";
+import { digestStore, digestRecall, digestRead, markStale, resolveProject, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool("digest", {
@@ -63,7 +63,12 @@ export function register(server: McpServer): void {
         include_global: params.include_global,
         limit: params.limit,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      // P1 fence (class-sweep, AR_EXTRAS quarantine zone): digest excerpts
+      // were written by a PRIOR (possibly different) agent's `store` call —
+      // arbitrary markdown content, same trust boundary as recall()'s
+      // results. `store`/`invalidate` below stay unfenced: they only echo
+      // back THIS call's own just-submitted fields or a success flag.
+      return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result)) }] };
     }
 
     if (action === "read") {
@@ -74,7 +79,9 @@ export function register(server: McpServer): void {
         digest_id: params.digest_id,
         project: params.project,
       });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      // P1 fence (class-sweep, AR_EXTRAS quarantine zone): full digest body —
+      // arbitrary stored markdown, same rationale as the `recall` action above.
+      return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result)) }] };
     }
 
     if (action === "invalidate") {

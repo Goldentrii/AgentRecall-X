@@ -21,6 +21,28 @@ async function runCli(...args) {
   return { stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
+// P1 fence follow-up (class-sweep, TOW2-388): several CLI commands whose
+// stdout is entirely retrieved/stored memory (read, list, palace read/walk,
+// search, ...) now wrap their JSON payload in fenceMemory()'s
+// "⟦agentrecall:memory⟧ ... ⟦/agentrecall:memory⟧" delimiter lines before
+// printing — the same intentional JSON-parseability tradeoff already
+// accepted for `ar cold-start`/`ar recall`/`ar insight` and the MCP
+// smart-recall.ts precedent. Strip the delimiter lines before JSON.parse so
+// these tests assert on content, not on the exact wire format. Falls back to
+// plain JSON.parse for commands that were never fenced (write/capture/
+// projects/palace lint/palace write), so this helper is safe to use
+// universally in this file.
+function parseFenced(stdout) {
+  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+    const firstNL = stdout.indexOf("\n");
+    const lastNL = stdout.lastIndexOf("\n");
+    if (firstNL !== -1 && lastNL > firstNL) {
+      return JSON.parse(stdout.slice(firstNL + 1, lastNL));
+    }
+  }
+  return JSON.parse(stdout);
+}
+
 describe("AgentRecall CLI", () => {
   after(() => {
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
@@ -44,7 +66,7 @@ describe("AgentRecall CLI", () => {
     assert.equal(parsed.success, true);
 
     const readResult = await runCli("read");
-    const readParsed = JSON.parse(readResult.stdout);
+    const readParsed = parseFenced(readResult.stdout);
     assert.ok(readParsed.content.includes("CLI test"));
   });
 
@@ -61,7 +83,7 @@ describe("AgentRecall CLI", () => {
 
   it("list shows entries", async () => {
     const result = await runCli("list");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = parseFenced(result.stdout);
     assert.ok(parsed.entries.length >= 1);
   });
 
@@ -82,13 +104,13 @@ describe("AgentRecall CLI", () => {
     assert.equal(writeParsed.success, true);
 
     const readResult = await runCli("palace", "read", "test-room");
-    const readParsed = JSON.parse(readResult.stdout);
+    const readParsed = parseFenced(readResult.stdout);
     assert.ok(readParsed.content.includes("CLI palace"));
   });
 
   it("palace walk returns context", async () => {
     const result = await runCli("palace", "walk", "--depth", "identity");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = parseFenced(result.stdout);
     assert.equal(parsed.depth, "identity");
   });
 
@@ -100,7 +122,7 @@ describe("AgentRecall CLI", () => {
 
   it("search finds content", async () => {
     const result = await runCli("search", "CLI test");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = parseFenced(result.stdout);
     assert.ok(parsed.results.length > 0);
   });
 

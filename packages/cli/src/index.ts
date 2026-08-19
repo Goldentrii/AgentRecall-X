@@ -202,6 +202,21 @@ async function main(): Promise<void> {
   const core = await import("agent-recall-core");
   const project = globalProject;
 
+  // P1 fence (TOW2-388, class-sweep follow-up): shared helper for CLI
+  // hookless-host commands whose ONLY output mode surfaces retrieved/stored
+  // memory content (journal/palace/knowledge/corrections/insights text) —
+  // these commands have no separate `--json` machine-consumption contract to
+  // preserve (unlike e.g. `ar awareness read --json` / `ar mirror --json`,
+  // which stay unfenced by established precedent so scripts can still
+  // `JSON.parse` them), so fencing the whole rendered payload here matches
+  // the MCP smart-recall.ts precedent: fenceMemory(JSON.stringify(result)).
+  // Never call this for a command that also serves a documented `--json`
+  // machine-parseable contract — fencing there would corrupt valid JSON.
+  function outputFenced(data: unknown): void {
+    const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    output(core.fenceMemory(text));
+  }
+
   switch (command) {
     case "read": {
       const result = await core.journalRead({
@@ -209,7 +224,10 @@ async function main(): Promise<void> {
         section: getFlag("--section", rest) ?? "all",
         project,
       });
-      output(result);
+      // P1 fence (class-sweep): `content` is raw journal prose, up to 20000
+      // chars — the CLI hookless-host equivalent of the fenced `agent-recall://`
+      // journal resource / recall() excerpts.
+      outputFenced(result);
       break;
     }
     case "write": {
@@ -246,7 +264,9 @@ async function main(): Promise<void> {
         project,
         limit: limit ? parseInt(limit) : 10,
       });
-      output(result);
+      // P1 fence (class-sweep): `entries[].title` is extracted verbatim from
+      // journal file content (first `# heading` line) — real retrieved prose.
+      outputFenced(result);
       break;
     }
     case "search": {
@@ -257,8 +277,11 @@ async function main(): Promise<void> {
         section: getFlag("--section", rest),
         include_palace: hasFlag("--include-palace", rest),
       });
-      output(result);
-      // Print advisory note to stderr (keeps stdout clean for piping)
+      // P1 fence (class-sweep): `results[].excerpt` quotes journal + palace
+      // content verbatim — the CLI hookless-host equivalent of recall()'s
+      // fenced result list. `_note` is AR's own advisory text (not retrieved
+      // memory) and is printed separately to stderr, outside the fence.
+      outputFenced(result);
       if (result._note) {
         process.stderr.write(`\n[ar] ${result._note}\n`);
       }
@@ -274,12 +297,27 @@ async function main(): Promise<void> {
         date: getFlag("--date", rest) ?? "latest",
         project,
       });
-      output(result);
+      // P1 fence (class-sweep): a "read" returns the raw SessionState —
+      // completed/failures/insights/next_actions/state/counts are all
+      // free-text fields a PRIOR (possibly compromised) session wrote via
+      // `ar state write`. A "write" only echoes back THIS call's own counts
+      // (not retrieved memory), so it stays unfenced.
+      if (action === "read") {
+        outputFenced(result);
+      } else {
+        output(result);
+      }
       break;
     }
     case "cold-start": {
       const result = await core.journalColdStart({ project });
-      output(result);
+      // P1 fence (TOW2-388): named fix — `ar cold-start` is AGENTS.md's
+      // documented hookless-host CLI equivalent of the `session_start` MCP
+      // tool (already fenced in session-start.ts). The entire payload
+      // (p0_corrections, trajectory, awareness_summary, top_rooms, cache
+      // entries) is retrieved/stored memory — same rationale as
+      // smart-recall.ts's whole-blob fence.
+      outputFenced(result);
       break;
     }
     case "archive": {
@@ -331,7 +369,10 @@ async function main(): Promise<void> {
             topic: getFlag("--topic", palaceRest),
             project,
           });
-          output(result);
+          // P1 fence (class-sweep): `content` is raw palace room markdown
+          // (up to 20000 chars) — the CLI hookless-host equivalent of the
+          // fenced palace/awareness resources.
+          outputFenced(result);
           break;
         }
         case "write": {
@@ -372,7 +413,9 @@ async function main(): Promise<void> {
             focus: getFlag("--focus", palaceRest),
             project,
           });
-          output(result);
+          // P1 fence (class-sweep): `content` is identity + awareness +
+          // room narrative text assembled from stored palace content.
+          outputFenced(result);
           break;
         }
         case "search": {
@@ -382,7 +425,9 @@ async function main(): Promise<void> {
             room: getFlag("--room", palaceRest),
             project,
           });
-          output(result);
+          // P1 fence (class-sweep): `results[].excerpt` quotes palace room
+          // content verbatim.
+          outputFenced(result);
           break;
         }
         case "lint": {
@@ -441,11 +486,16 @@ async function main(): Promise<void> {
           if (promoted.length === 0) {
             process.stdout.write(`No new insights to promote (threshold: ${threshold}).\n`);
           } else {
-            process.stdout.write(`Promoted ${promoted.length} insight(s) to awareness:\n`);
-            for (const title of promoted) {
-              process.stdout.write(`  \u2022 ${title}\n`);
-            }
-            process.stdout.write(`Skipped ${skipped.length} (already in awareness or below threshold).\n`);
+            // P1 fence (class-sweep): `promoted` titles are stored insight
+            // text crossing the confirmation threshold \u2014 genuine retrieved
+            // memory, fenced as one block (header + footer commingled,
+            // same tradeoff as check-action.ts's warningLines block).
+            const rollupLines = [
+              `Promoted ${promoted.length} insight(s) to awareness:`,
+              ...promoted.map((title) => `  \u2022 ${title}`),
+              `Skipped ${skipped.length} (already in awareness or below threshold).`,
+            ];
+            process.stdout.write(core.fenceMemory(rollupLines.join("\n")) + "\n");
           }
         } catch (e: unknown) {
           const message = e instanceof Error ? e.message : String(e);
@@ -470,13 +520,22 @@ async function main(): Promise<void> {
           project: insightProject,
           limit: limit ? parseInt(limit) : 5,
         });
-        output(result);
+        // P1 fence (TOW2-388): named fix — `ar recall`/`ar insight` (project
+        // branch) is AGENTS.md's documented hookless-host CLI equivalent of
+        // the `recall` MCP tool, which routes through the SAME smartRecall()
+        // and is already fenced (recall.ts). Whole payload is retrieved
+        // memory — same rationale as smart-recall.ts's whole-blob fence.
+        outputFenced(result);
       } else {
         const result = await core.recallInsight({
           context,
           limit: limit ? parseInt(limit) : 5,
         });
-        output(result);
+        // P1 fence (TOW2-388): named fix — the non-project branch routes
+        // through core.recallInsight(), the same function the (unregistered,
+        // parity-fenced) recall_insight MCP tool uses. `awareness` here is
+        // the same up-to-200-line awareness.md dump recall-insight.ts fences.
+        outputFenced(result);
       }
       break;
     }
@@ -491,7 +550,10 @@ async function main(): Promise<void> {
         consolidate: hasFlag("--consolidate", rest),
         project,
       });
-      output(result);
+      // P1 fence (class-sweep): `synthesis` quotes journal decisions/blockers/
+      // goals/observations verbatim — a full memory digest, same class as
+      // context-synthesize's (unregistered) MCP tool would surface.
+      outputFenced(result);
       break;
     }
     case "consolidate": {
@@ -505,7 +567,9 @@ async function main(): Promise<void> {
         const result = await core.runSafetyConsolidation(slug, {
           dryRun: hasFlag("--dry-run", rest),
         });
-        output(result);
+        // P1 fence (class-sweep): `graduated.graduatedTitles` are stored
+        // insight titles crossing the crystallization threshold.
+        outputFenced(result);
         break;
       }
 
@@ -535,7 +599,12 @@ async function main(): Promise<void> {
       } catch {
         drafts = [];
       }
-      output({
+      // P1 fence (class-sweep): `prompt` is an LLM-directed prompt literally
+      // built to be pasted into/read by an agent, quoting journal excerpts +
+      // correction rule text + phase syntheses verbatim; `crystallization_candidates`
+      // carries insight_titles, `skill_drafts` carries how_solved/synthesis-
+      // derived step text. The whole payload is memory-derived — fence it.
+      outputFenced({
         project: slug,
         dry_run: dryRun,
         decay,
@@ -551,10 +620,16 @@ async function main(): Promise<void> {
       const slug = await core.resolveProject(project);
       if (hasFlag("--recompute", rest)) {
         const profile = core.recomputeBlindSpots(slug);
-        output(profile);
+        // P1 fence (class-sweep): `blind_spots[].tendency`/`.example_rule`
+        // are prose derived directly from correction/alignment text.
+        outputFenced(profile);
       } else {
         const profile = core.readBlindSpots(slug);
-        output(profile ?? "none yet — run `ar blind-spots --recompute` after corrections accumulate");
+        if (profile) {
+          outputFenced(profile);
+        } else {
+          output("none yet — run `ar blind-spots --recompute` after corrections accumulate");
+        }
       }
       break;
     }
@@ -590,8 +665,13 @@ async function main(): Promise<void> {
               output(lines.join("\n"));
             }
           } else {
-            // List raw rows.
-            output(core.readRejectedCorrections(slug));
+            // List raw rows. P1 fence (class-sweep): `rule`/`context` are the
+            // original attempted-correction text that the capture gate
+            // REJECTED — still viewable raw here, so still a live injection
+            // vector if replayed into an agent's context. `--stats` above
+            // (reason labels only, gate-generated categorical strings, never
+            // user-authored) is intentionally left unfenced.
+            outputFenced(core.readRejectedCorrections(slug));
           }
           break;
         }
@@ -811,9 +891,16 @@ async function main(): Promise<void> {
       // No --project ⇒ the cross-project ("_global") mirror.
       const reflection = core.buildMirror(project);
       if (hasFlag("--json", rest)) {
+        // Established precedent (awareness --json / resurrect --json): a
+        // documented machine-parseable contract stays unfenced — wrapping it
+        // would corrupt valid JSON for scripts that pipe/jq this output.
         output(reflection);
       } else {
-        output(core.renderMirror(reflection));
+        // P1 fence (class-sweep): rendered mirror text quotes correction/
+        // blind-spot/insight prose verbatim — a self-model an attacker could
+        // poison via a planted correction, then have replayed as "what I've
+        // learned about how you think".
+        output(core.fenceMemory(core.renderMirror(reflection)));
       }
       break;
     }
@@ -875,7 +962,11 @@ async function main(): Promise<void> {
           category: getFlag("--category", knRest),
           query: getFlag("--query", knRest),
         });
-        output(result);
+        // P1 fence (class-sweep): raw Q&A content (title/what_happened/
+        // root_cause/fix) — remember.ts's MCP description asserts
+        // "knowledge/ is write-only, not surfaced by recall or session_start",
+        // but this CLI command IS a direct surfacing path for a hookless host.
+        outputFenced(result);
       } else {
         process.stderr.write(`Unknown knowledge subcommand: ${sub}\n`);
         process.exit(1);
@@ -2131,7 +2222,11 @@ async function main(): Promise<void> {
         delta: corrDelta || `Manual correction recorded: "${corrCorrection.slice(0, 80)}"`,
         project,
       });
-      output(result);
+      // P1 fence (class-sweep): `ar correct` calls the SAME core.check() used
+      // by the check MCP tool (named fix) — watch_for/similar_past_deltas/
+      // action_check carry the identical matching_rules/corrections/insights
+      // payload. Same surface, different entry point; fence identically.
+      outputFenced(result);
       break;
     }
 
@@ -2162,11 +2257,14 @@ async function main(): Promise<void> {
           includeGlobal: !hasFlag("--no-global", digRest),
           limit: limit ? parseInt(limit) : 5,
         });
-        output({ query, digests, result_count: digests.length });
+        // P1 fence (class-sweep, AR_EXTRAS quarantine zone): same rationale
+        // as the digest MCP tool's `recall`/`read` actions — digest content
+        // was written by a PRIOR (possibly different) session's `store` call.
+        outputFenced({ query, digests, result_count: digests.length });
 
       } else if (sub === "list") {
         const entries = core.listDigests(project ?? "auto", { stale: hasFlag("--stale", digRest) ? undefined : false });
-        output(entries);
+        outputFenced(entries);
       } else if (sub === "invalidate") {
         const id = digRest.find((a) => !a.startsWith("--")) ?? "";
         const reason = getFlag("--reason", digRest) ?? "manually invalidated";
@@ -2453,14 +2551,26 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         }
       } catch { /* non-blocking */ }
 
-      // 5. Build the markdown
-      const syncLines: string[] = [
+      // 5. Build the markdown.
+      // P1 fence (class-sweep — highest-severity finding): this command
+      // WRITES retrieved memory content (correction rule text, insight
+      // titles, journal brief excerpt, room keywords) directly into a file
+      // under Claude Code's own auto-loaded `memory/` directory — not a
+      // one-shot stdout print but a PERSISTED surface that every future
+      // session in this host silently ingests into its system prompt. The
+      // YAML frontmatter is a structural file-format header (parsed by the
+      // host, not agent-facing prose) and is kept OUTSIDE the fence so
+      // wrapping it cannot corrupt that parsing; the body (from the H1 title
+      // down) is entirely memory-derived and fenced as one block below.
+      const syncFrontmatter = [
         `---`,
         `name: AgentRecall sync — ${resolvedSync}`,
         `description: Auto-generated from AgentRecall. P0 corrections, top insights, recent context, palace rooms.`,
         `type: reference`,
         `---`,
         ``,
+      ].join("\n");
+      const syncLines: string[] = [
         `# AgentRecall Context — ${resolvedSync}`,
         `> Auto-synced. Do not edit manually. Regenerate with: \`ar sync-memory --project ${resolvedSync}\``,
         ``,
@@ -2496,7 +2606,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         syncLines.push(``);
       }
 
-      const syncContent = syncLines.join("\n");
+      const syncContent = syncFrontmatter + core.fenceMemory(syncLines.join("\n").trimEnd()) + "\n";
 
       // Write to Claude's memory directory
       const memDir = path.join(os.homedir(), ".claude", "projects", `-Users-${os.userInfo().username}`, "memory");
@@ -2974,7 +3084,10 @@ agent_instruction: use "audit-candidates" to list unknown-verdict corrections fo
         try {
           const slug = await core.resolveProject(auditProject);
           const candidates = core.listUnknownVerdicts(slug, auditDate);
-          output(candidates);
+          // P1 fence (class-sweep): each candidate carries the original
+          // correction `rule` text (per this command's own --help: "Fields:
+          // id, rule, severity, tags, retrieved_date, journal_file_paths").
+          outputFenced(candidates);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           process.stderr.write(

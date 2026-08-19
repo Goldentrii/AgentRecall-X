@@ -39,6 +39,23 @@ const CLI = path.join(__dirname, "..", "dist", "index.js");
 const TEST_ROOT = path.join(os.tmpdir(), `ar-outcomes-test-${Date.now()}`);
 const PROJECT = "audit-test";
 
+// P1 fence follow-up (class-sweep, TOW2-388): `ar outcomes audit-candidates`
+// now wraps its JSON payload in fenceMemory()'s delimiter lines (each
+// candidate carries the original correction `rule` text — retrieved memory).
+// Strip the delimiter before JSON.parse; `record`'s output was never fenced
+// (it only echoes back this call's own just-submitted verdict) so those
+// assertions keep using plain JSON.parse unchanged.
+function parseFenced(stdout) {
+  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+    const firstNL = stdout.indexOf("\n");
+    const lastNL = stdout.lastIndexOf("\n");
+    if (firstNL !== -1 && lastNL > firstNL) {
+      return JSON.parse(stdout.slice(firstNL + 1, lastNL));
+    }
+  }
+  return JSON.parse(stdout);
+}
+
 function corrDir() {
   return path.join(TEST_ROOT, "projects", PROJECT, "corrections");
 }
@@ -163,7 +180,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     const { stdout, exitCode } = await runCli("outcomes", "audit-candidates", "--date", yest);
     assert.equal(exitCode, 0, `should exit 0, got stderr: ${(await runCli("outcomes", "audit-candidates", "--date", yest)).stderr}`);
 
-    const candidates = JSON.parse(stdout);
+    const candidates = parseFenced(stdout);
     assert.ok(Array.isArray(candidates), "output should be JSON array");
     const found = candidates.find((c) => c.id === corrId);
     assert.ok(found, `correction ${corrId} should appear as unknown candidate`);
@@ -181,7 +198,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     appendOutcome({ correction_id: corrId, project: PROJECT, kind: "heeded", at: isoFor(yest), evidence: "complied" });
 
     const { stdout } = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const candidates = JSON.parse(stdout);
+    const candidates = parseFenced(stdout);
     const found = candidates.find((c) => c.id === corrId);
     assert.equal(found, undefined, "heeded correction should NOT appear as unknown candidate");
   });
@@ -195,7 +212,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     appendOutcome({ correction_id: corrId, project: PROJECT, kind: "recurred", at: isoFor(yest), evidence: "violation found" });
 
     const { stdout } = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const candidates = JSON.parse(stdout);
+    const candidates = parseFenced(stdout);
     const found = candidates.find((c) => c.id === corrId);
     assert.equal(found, undefined, "recurred correction should NOT appear as unknown candidate");
   });
@@ -209,7 +226,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     appendOutcome({ correction_id: corrId, project: PROJECT, kind: "not_triggered", at: isoFor(yest), evidence: "not relevant" });
 
     const { stdout } = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const candidates = JSON.parse(stdout);
+    const candidates = parseFenced(stdout);
     const found = candidates.find((c) => c.id === corrId);
     assert.equal(found, undefined, "not_triggered correction should NOT appear as unknown candidate");
   });
@@ -225,7 +242,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
 
     // Query for yesterday — this correction was NOT retrieved yesterday
     const { stdout } = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const candidates = JSON.parse(stdout);
+    const candidates = parseFenced(stdout);
     const found = candidates.find((c) => c.id === corrId);
     assert.equal(found, undefined, "correction retrieved only today should NOT appear in yesterday's audit");
   });
@@ -332,7 +349,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
 
     // Step 1: audit-candidates shows the correction as unknown
     const before = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const beforeCandidates = JSON.parse(before.stdout);
+    const beforeCandidates = parseFenced(before.stdout);
     const foundBefore = beforeCandidates.find((c) => c.id === corrId);
     assert.ok(foundBefore, "correction should appear as unknown candidate BEFORE recording verdict");
 
@@ -349,7 +366,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
 
     // Step 3: audit-candidates no longer shows the correction (verdict_coverage increased)
     const after = await runCli("outcomes", "audit-candidates", "--date", yest);
-    const afterCandidates = JSON.parse(after.stdout);
+    const afterCandidates = parseFenced(after.stdout);
     const foundAfter = afterCandidates.find((c) => c.id === corrId);
     assert.equal(
       foundAfter,

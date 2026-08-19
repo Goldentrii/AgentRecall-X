@@ -208,7 +208,13 @@ export function generateHandoff(slug: string): string {
   // lines (+ their separating newlines) for any 1-char payload — a generic
   // way to measure the fence's fixed overhead without hardcoding its format.
   const fenceOverhead = fenceMemory("x").length - 1;
-  const fixedOverhead = header.length + 1 /* \n between header and body */ + footer.length + fenceOverhead;
+  // Fix (review LOW, class-sweep follow-up): assembly below joins header and
+  // fencedBody with "\n\n" (TWO newlines), not one — this accounted for only
+  // one, undercounting fixedOverhead by 1 char. A body sized to exactly fill
+  // budgetForSectionBody could therefore push the final assembly 1 char past
+  // HARD_BUDGET before the line-223 last-resort slice caught it (cosmetic:
+  // the slice still enforces the hard ceiling, but the pre-slice math was off).
+  const fixedOverhead = header.length + 2 /* \n\n between header and body */ + footer.length + fenceOverhead;
   const budgetForSectionBody = HARD_BUDGET - fixedOverhead;
   if (sectionBody.length > budgetForSectionBody) {
     sectionBody = truncateAt(sectionBody, Math.max(0, budgetForSectionBody));

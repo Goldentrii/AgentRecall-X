@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { pipelineShow } from "agent-recall-core";
+import { pipelineShow, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool(
@@ -22,9 +22,13 @@ export function register(server: McpServer): void {
     },
     async ({ project, detail_last_n }) => {
       const result = await pipelineShow({ project, detail_last_n });
-      // Return ONLY the rendered view as primary content. Caller can call
-      // pipeline_list / pipeline_current if they need structured JSON.
-      return { content: [{ type: "text" as const, text: result.view }] };
+      // P1 fence (class-sweep, AR_EXTRAS quarantine zone): `result.view` is a
+      // rendered narrative — goal/what_was_hard/how_solved/synthesis quoted
+      // verbatim from stored phase records — the same shape as the fenced
+      // awareness/palace content. Return ONLY the rendered view as primary
+      // content. Caller can call pipeline_list / pipeline_current if they
+      // need structured JSON.
+      return { content: [{ type: "text" as const, text: fenceMemory(result.view) }] };
     },
   );
 }

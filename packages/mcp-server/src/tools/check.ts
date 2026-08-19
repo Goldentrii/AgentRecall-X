@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { check } from "agent-recall-core";
+import { check, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool("check", {
@@ -32,7 +32,14 @@ export function register(server: McpServer): void {
     }
     try {
       const result = await check({ goal: effectiveGoal!, confidence, assumptions, human_correction, delta, project, prior, evidence, posterior, outcome, decision_id, action_description });
-      return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      // P1 fence (TOW2-388): named fix — `check` is one of the 5 always-on
+      // default MCP tools. Its result (watch_for, similar_past_deltas,
+      // prediction, and — when action_description is passed —
+      // action_check.matching_rules/corrections/insights) is retrieved
+      // memory content, same shape check_action already fences. No separate
+      // AR-authored hint text exists in this tool's output, so the whole
+      // JSON blob is fenced as one block (same rationale as smart-recall.ts).
+      return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result)) }] };
     } catch (err) {
       return {
         content: [{ type: "text" as const, text: `Check failed: ${err instanceof Error ? err.message : String(err)}` }],
