@@ -111,10 +111,16 @@ describe("mcp-server session_start lite render — Continuity line", () => {
     assert.ok(!text.includes("⏪"));
   });
 
-  it("renders the ⏪ line as the second line (right after the header)", () => {
+  it("renders the ⏪ line right after the header, inside the P1 memory fence", () => {
+    // P1 fence (TOW2-388): formatLite now wraps its memory-bearing body
+    // (continuity/identity/active-phase) in a fenceMemory() block. The
+    // header (structural, non-memory) stays at line[0]; line[1] is the
+    // fence-open marker; the continuity content is the first line INSIDE
+    // the fence, one line later than before this change.
     const text = formatLite(baseLiteResult({ continuity: "5m ago [novada-mcp] MCP page redesign spec locked" }));
     const lines = text.split("\n");
     assert.equal(lines[0].startsWith("AgentRecall (lite)"), true);
-    assert.equal(lines[1], "⏪ 5m ago [novada-mcp] MCP page redesign spec locked");
+    assert.ok(lines[1].includes("retrieved memory"), "line[1] must be the fence-open marker");
+    assert.equal(lines[2], "⏪ 5m ago [novada-mcp] MCP page redesign spec locked");
   });
 });

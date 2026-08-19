@@ -81,7 +81,7 @@ import { getRoot } from "../types.js";
 import { archiveRawDir, journalDir, projectsRootDir } from "../storage/paths.js";
 import { parseMemoryFile } from "../supabase/sync.js";
 import { truncateUtf8Bytes } from "../storage/fs-utils.js";
-import { scrubForCloud } from "../storage/content-guard.js";
+import { scrubForCloud, fenceMemory } from "../storage/content-guard.js";
 import { wmList, wmRead, guessSlugFromWmLines } from "../storage/working-memory.js";
 import {
   NEXT_STEP_LINE_RE,
@@ -694,5 +694,10 @@ export function renderResurrectMarkdown(briefs: ContinuityBrief[]): string {
     for (const source of brief.provenance) lines.push(`  - ${source}`);
     lines.push("");
   }
-  return lines.join("\n").trimEnd() + "\n";
+  // P1 fence (TOW2-388): every brief here is reconstructed from raw archive/
+  // journal/working-memory text (the red-team report's CRITICAL-2 chain
+  // showed a spoofed WM file can plant a fabricated title here) — fence the
+  // whole rendered list as one block. The "nothing found" empty-state
+  // message above is not memory content and is returned unfenced.
+  return fenceMemory(lines.join("\n").trimEnd()) + "\n";
 }

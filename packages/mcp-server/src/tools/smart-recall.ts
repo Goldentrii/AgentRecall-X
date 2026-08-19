@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { smartRecall } from "agent-recall-core";
+import { smartRecall, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool("smart_recall", {
@@ -16,6 +16,10 @@ export function register(server: McpServer): void {
     },
   }, async ({ query, project, limit }) => {
     const result = await smartRecall({ query, project, limit });
-    return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+    // P1 fence (TOW2-388): the entire payload is retrieved memory (results,
+    // bridged verbatim, source list) — no separate AgentRecall-authored
+    // hint text exists in this tool's output, so the whole JSON blob is
+    // fenced as one block.
+    return { content: [{ type: "text" as const, text: fenceMemory(JSON.stringify(result)) }] };
   });
 }

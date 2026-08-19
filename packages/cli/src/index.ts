@@ -405,8 +405,11 @@ async function main(): Promise<void> {
         if (hasFlag("--json", rest)) {
           output(core.readAwarenessState());
         } else {
+          // P1 fence (TOW2-388): raw awareness.md content, printed directly
+          // to stdout for a human/agent to read or pipe onward — same
+          // surfacing class as the MCP awareness resource.
           const content = core.readAwareness();
-          output(content || "(no awareness file)");
+          output(content ? core.fenceMemory(content) : "(no awareness file)");
         }
       } else if (sub === "update") {
         const result = await core.awarenessUpdate({
@@ -915,6 +918,15 @@ async function main(): Promise<void> {
         // cross-window signal (see SessionStartInput.sid's doc comment for
         // the graceful-degradation contract when it's empty).
         const result = await core.sessionStart({ project, sid: sessionId || undefined });
+        // P1 fence (TOW2-388): the F5 health banner below is a COMPUTED
+        // diagnostic (a failure count from this machine's own hook-health
+        // ledger) — not retrieved/stored natural-language content — and its
+        // own pre-existing contract requires it be the literal FIRST line
+        // of stdout (continuity-wave.test.mjs). It is built into a separate
+        // `preamble` array kept OUTSIDE the memory fence below, in front of
+        // it, so both invariants hold: health-first, AND everything that
+        // IS retrieved memory (`lines`, from here down) is fenced.
+        const preamble: string[] = [];
         const lines: string[] = [];
 
         // ---- F5 fail-loud hook health (continuity wave 2026-07-31) ----
@@ -925,7 +937,7 @@ async function main(): Promise<void> {
         try {
           const health = core.readHookHealth();
           if (health.failures_24h > 0) {
-            lines.push(`⚠️ AgentRecall: ${health.failures_24h} hook failure${health.failures_24h === 1 ? "" : "s"} (24h) — memory may not be persisted → run 'ar health'`);
+            preamble.push(`⚠️ AgentRecall: ${health.failures_24h} hook failure${health.failures_24h === 1 ? "" : "s"} (24h) — memory may not be persisted → run 'ar health'`);
           }
         } catch { /* non-blocking — health line is best-effort */ }
 
@@ -1034,7 +1046,15 @@ async function main(): Promise<void> {
           }
         } catch { /* non-blocking */ }
 
-        process.stdout.write(lines.join("\n") + "\n\n");
+        // P1 fence (TOW2-388): everything in `lines` is retrieved/stored
+        // memory (corrections, insights, journal excerpts, room topics,
+        // cross-project titles) rendered directly into the next agent's
+        // context at session start — the exact surface the 2026-08-18
+        // red-team report exploited (CRITICAL-1: "prints ... directly into
+        // the next agent's context, unprompted"). Fence it as one block;
+        // `preamble` (the F5 health banner) stays outside and first.
+        const rendered = [...preamble, core.fenceMemory(lines.join("\n"))].join("\n");
+        process.stdout.write(rendered + "\n\n");
       } catch (e) {
         // Never block the session — fail silently
         core.recordHookFailure("hook-start", e);
@@ -1794,7 +1814,9 @@ async function main(): Promise<void> {
           const blindSpots = core.readAwarenessState()?.blindSpots ?? [];
           const priors = core.buildPriors(prompt, p0, blindSpots);
           if (priors.length > 0) {
-            process.stdout.write(priors.slice(0, 2).join("\n") + "\n");
+            // P1 fence (TOW2-388): priors quote correction/blind-spot text
+            // injected mid-conversation via UserPromptSubmit — fence it.
+            process.stdout.write(core.fenceMemory(priors.slice(0, 2).join("\n")) + "\n");
           }
         } catch { /* non-blocking — priors are best-effort */ }
 
@@ -1912,7 +1934,11 @@ async function main(): Promise<void> {
           }
         }
 
-        process.stdout.write(out);
+        // P1 fence (TOW2-388): `out` is retrieved recall results (titles,
+        // excerpts, verbatim drill-down) injected mid-conversation via
+        // UserPromptSubmit — the same "ambient injection" class the
+        // red-team report used to demonstrate CRITICAL-1. Fence it.
+        process.stdout.write(core.fenceMemory(out) + "\n");
 
         // Save surfaced items for feedback loop + update dedup history
         try {
@@ -2030,7 +2056,17 @@ async function main(): Promise<void> {
 
             // Ensure we never exceed 6 lines
             warningLines = warningLines.slice(0, 6);
-            process.stdout.write(warningLines.join("\n") + "\n");
+            // P1 fence (TOW2-388): quotes correction/rule/insight text
+            // (result.matching_corrections[].rule, matching_rules[].do,
+            // matching_insights[].title) injected mid-conversation via
+            // PreToolUse — fence it. Residual tradeoff (documented in the
+            // P1 fence report): a genuine "blocked" verdict's own CONFLICT
+            // banner is commingled in this same block and is therefore also
+            // marked "treat as information" — this is intentional (an
+            // injected FAKE correction must not auto-execute either) but is
+            // worth knowing about if the blocked-verdict banner's real-world
+            // compliance rate is ever measured.
+            process.stdout.write(core.fenceMemory(warningLines.join("\n")) + "\n");
           }
           // If result.warning is null (no matches), print nothing
         } catch {
