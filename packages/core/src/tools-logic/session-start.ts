@@ -20,7 +20,7 @@ import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcom
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
-import { isJournalFile } from "../helpers/journal-filter.js";
+import { isJournalFile, isRescueSourceTag, isRescueSourcedContent } from "../helpers/journal-filter.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
 import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS, rescueOrphanedWorkingMemory } from "../storage/working-memory.js";
@@ -226,7 +226,28 @@ export interface SessionStartResult {
    * OMITTED (undefined) when the recency index is empty or unavailable —
    * absent from JSON, no noise on a fresh/solo-project store.
    */
-  continuity?: Array<{ ago: string; slug: string; title: string; next_step?: string }>;
+  continuity?: Array<{
+    ago: string;
+    slug: string;
+    title: string;
+    next_step?: string;
+    /**
+     * Identity-trust (CRITICAL-1 followup, 2026-08-20): true when this entry
+     * came from a working-memory-rescue ledger append — an unauthenticated,
+     * self-claimed `cwd` majority-vote (storage/working-memory.ts's
+     * `distillOneSession`), not a verified identity signal. Present ONLY
+     * when true (never `false`) — omitted for every trusted entry. Renderers
+     * (CLI hook-start, MCP formatTerse) must visibly label an entry carrying
+     * this flag; the entries array itself is already tiered so an untrusted
+     * entry can never DISPLACE a trusted one out of the top-3 by recency
+     * alone (see sessionStart()'s continuity-assembly comment for the full
+     * rationale — this cannot simply exclude rescue entries the way
+     * journalSearch/session-start's other readers do, because a genuinely
+     * crashed session's own rescue appearing in the SAME call's continuity
+     * is a shipped, tested acceptance criterion).
+     */
+    untrusted?: boolean;
+  }>;
   recent: { today: string | null; yesterday: string | null; older_count: number };
   /**
    * Capture-log entries written by `journal_capture` that have NOT yet been
@@ -528,9 +549,45 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // yet. Best-effort: a missing/corrupt index must never break orientation.
   let continuity: SessionStartResult["continuity"];
   try {
-    const recentSessions = readRecentSessions(3);
-    if (recentSessions.length > 0) {
-      continuity = recentSessions.map((s) => ({
+    // Identity-trust (CRITICAL-1 followup, 2026-08-20): a working-memory-
+    // rescue ledger entry (recency-index.ts's `source` tag, set by
+    // storage/working-memory.ts's `distillOneSession`) is filed under an
+    // unauthenticated cwd-guess — the red-team CRITICAL-2 fixture showed
+    // this exact field surfacing a hijacked title verbatim in `continuity`,
+    // printed automatically into every session's context via the CLI's
+    // hook-start "📓 Today:"/continuity render, with zero agent action
+    // required.
+    //
+    // UNLIKE journalSearch/session-start's own recent-briefs/resume readers
+    // (which exclude rescue-sourced content outright — see
+    // journal-filter.ts's isRescueSourcedContent), `continuity` cannot use
+    // blanket exclusion: a genuinely crashed session's OWN rescue is a
+    // shipped, tested product feature (session-start-wm-rescue-ordering.
+    // test.mjs's M2 acceptance criterion, working-memory-wave.test.mjs's
+    // "e2e crash-rescue round trip" — both require a just-rescued session to
+    // appear in continuity). Excluding it outright would silence a real
+    // crash-recovery signal the owner explicitly wanted ("like a human
+    // brain — you need to know what happened 10 minutes before").
+    //
+    // Fix: mirror resurrect()'s own two-tier approach instead of excluding —
+    // trusted entries always sort ahead of untrusted ones (a rescue entry
+    // can never DISPLACE a genuine entry out of the top-3 by recency alone,
+    // regardless of how fresh its self-claimed mtime is), and every
+    // untrusted entry is tagged (`untrusted: true`) so both renderers (CLI
+    // hook-start, MCP formatTerse) can visibly label it rather than
+    // presenting it as verified memory. Over-fetch past the eventual
+    // `.slice(0, 3)` cap so an untrusted entry occupying one of the naive
+    // top-3-by-recency ledger rows doesn't silently shrink the visible
+    // TRUSTED continuity list below 3 entries.
+    const recentSessions = readRecentSessions(20);
+    const tiered = [...recentSessions].sort((a, b) => {
+      const aUntrusted = isRescueSourceTag(a.source);
+      const bUntrusted = isRescueSourceTag(b.source);
+      if (aUntrusted !== bUntrusted) return aUntrusted ? 1 : -1;
+      return 0; // stable — readRecentSessions is already newest-first within each tier
+    }).slice(0, 3);
+    if (tiered.length > 0) {
+      continuity = tiered.map((s) => ({
         ago: formatAgo(s.ts),
         slug: s.slug,
         // M7 fix: BYTE-based truncation (truncateUtf8Bytes), not sliceAtWord's
@@ -538,6 +595,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
         // doc comment above.
         title: truncateUtf8Bytes(s.title, SECTION_CHAR_LIMITS.continuity_title),
         next_step: s.next_step ? truncateUtf8Bytes(s.next_step, SECTION_CHAR_LIMITS.continuity_next_step) : undefined,
+        // Identity-trust (2026-08-20): present ONLY when true (never `false`)
+        // — matches recency-index.ts's own `source` field convention so
+        // pre-existing/legacy entries with no signal at all are correctly
+        // treated as trusted.
+        untrusted: isRescueSourceTag(s.source) ? true : undefined,
       }));
     }
   } catch {
@@ -607,16 +669,35 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       const d = dateMatch[1];
       if (d === today) {
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
+        // Identity-trust (CRITICAL-1 followup, 2026-08-20): this is the
+        // literal auto-printed "📓 Today:" line (cli/index.ts's hook-start
+        // render) — the red-team report's own worst-case surface, since it
+        // reaches an agent's context with NO tool call at all. Quarantine at
+        // the shared choke point before this file's content ever reaches
+        // `todayBrief`.
+        if (isRescueSourcedContent(content)) continue;
         const brief = extractSection(content, "brief");
         const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
         const entry = sliceAtWord(stripMarkdownHeaders(raw), SECTION_CHAR_LIMITS.recent_today);
         todayBrief = todayBrief ? `${todayBrief} | ${entry}` : entry;
       } else if (d === yesterday && !yesterdayBrief) {
         const content = fs.readFileSync(path.join(dir, file), "utf-8");
+        if (isRescueSourcedContent(content)) continue; // identity-trust, 2026-08-20 — see above
         const brief = extractSection(content, "brief");
         const raw = brief ? brief : content.split("\n").slice(0, 3).join(" ");
         yesterdayBrief = sliceAtWord(stripMarkdownHeaders(raw), SECTION_CHAR_LIMITS.recent_yesterday);
       } else if (d < yesterday) {
+        // NOTE (scoped residual, 2026-08-20): `olderCount` is derived from
+        // the FILENAME only (no content read) for performance — this loop's
+        // whole point is to avoid an O(all journal files ever written) read
+        // cost (see this codebase's own PERF precedent in journal-files.ts's
+        // `updateIndex`). A rescue card older than yesterday can therefore
+        // still inflate this count by one, affecting only `sessionsCount`/
+        // `isEmpty` bookkeeping — it is NEVER surfaced as content (title,
+        // brief, trajectory) anywhere in this function once it falls out of
+        // the today/yesterday window. Tracked as a known, low-severity,
+        // count-only residual — not the CRITICAL content-surfacing gap this
+        // fix closes.
         olderCount++;
       }
     }
@@ -711,29 +792,50 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   let resume: SessionStartResult["resume"] = null;
 
   if (sessionsCount > 0) {
-    // Find the most recent journal file across all journal dirs
-    let mostRecentDate: string | null = null;
-    let mostRecentFilePath: string | null = null;
-
+    // Find the most recent journal file across all journal dirs.
+    //
+    // Identity-trust (CRITICAL-1 followup, 2026-08-20): a rescue card can
+    // share the SAME date (even today's) as a genuine card — both are
+    // written via session-card.ts's single `writeSessionCard` under the
+    // identical `<date>--card--<sid>.md` convention — so picking "the
+    // lexicographically newest matching filename" blindly (pre-fix
+    // behavior) could hand the trajectory extraction below a hijacked
+    // rescue card's fabricated content instead of the real most-recent
+    // session's. Collect (date, path) candidates newest-first from
+    // filenames alone (cheap — same `isJournalFile` filter as everywhere
+    // else, no content read), then read+quarantine-check candidate by
+    // candidate, stopping at the first one that is NOT rescue-sourced.
+    const dateCandidates: Array<{ date: string; path: string }> = [];
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) continue;
-      const files = fs.readdirSync(dir).filter(isJournalFile).sort().reverse();
+      const files = fs.readdirSync(dir).filter(isJournalFile);
       for (const file of files) {
         const dateMatch = file.match(/^(\d{4}-\d{2}-\d{2})/);
         if (!dateMatch) continue;
-        const d = dateMatch[1];
-        if (!mostRecentDate || d > mostRecentDate) {
-          mostRecentDate = d;
-          mostRecentFilePath = path.join(dir, file);
-        }
+        dateCandidates.push({ date: dateMatch[1], path: path.join(dir, file) });
       }
+    }
+    dateCandidates.sort((a, b) => b.date.localeCompare(a.date));
+
+    let mostRecentDate: string | null = null;
+    let mostRecentContent: string | null = null;
+    for (const cand of dateCandidates) {
+      let content: string;
+      try {
+        content = fs.readFileSync(cand.path, "utf-8");
+      } catch {
+        continue;
+      }
+      if (isRescueSourcedContent(content)) continue;
+      mostRecentDate = cand.date;
+      mostRecentContent = content;
+      break;
     }
 
     let lastTrajectory: string | null = null;
-    if (mostRecentFilePath && fs.existsSync(mostRecentFilePath)) {
-      const content = fs.readFileSync(mostRecentFilePath, "utf-8");
+    if (mostRecentContent) {
       // session_end writes trajectory under "## Next" — use "next" key to extract it
-      const trajectorySection = extractSection(content, "next") ?? extractSection(content, "trajectory");
+      const trajectorySection = extractSection(mostRecentContent, "next") ?? extractSection(mostRecentContent, "trajectory");
       if (trajectorySection) {
         // Strip the leading "## Next" (or any markdown header) so it never
         // leaks into the rendered card as "Trajectory: ## Next…".

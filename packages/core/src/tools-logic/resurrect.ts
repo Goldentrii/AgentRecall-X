@@ -83,6 +83,7 @@ import { parseMemoryFile } from "../supabase/sync.js";
 import { truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { scrubForCloud, fenceMemory } from "../storage/content-guard.js";
 import { wmList, wmRead, guessSlugFromWmLines } from "../storage/working-memory.js";
+import { isRescueSourceTag } from "../helpers/journal-filter.js";
 import {
   NEXT_STEP_LINE_RE,
   parseJsonlLenient,
@@ -469,7 +470,7 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
     // tag because its `slug` came from an unauthenticated cwd-guess, not a
     // verified identity signal — never cleared once set (see MergedSession's
     // doc comment for why OR-accumulation is safe).
-    if (row.source === "working-memory-rescue") entry.untrusted = true;
+    if (isRescueSourceTag(row.source)) entry.untrusted = true;
   }
 
   const slugs = enumerateProjectSlugs();
@@ -643,7 +644,7 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       // `guessSlugFromWmLines` never verifies the claim against git identity
       // or anything else. Never cleared once set — see MergedSession's doc
       // comment for why OR-accumulation across sources is safe here.
-      if (parsed.metadata.source === "working-memory-rescue") entry.untrusted = true;
+      if (isRescueSourceTag(parsed.metadata.source)) entry.untrusted = true;
 
       // Card fields are the higher-confidence, already-distilled tier —
       // they win outright for title/goal rather than only filling gaps.

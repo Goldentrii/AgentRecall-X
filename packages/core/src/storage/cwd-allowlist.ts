@@ -28,7 +28,7 @@ export interface CwdAllowlist {
  *   - Strip trailing slash
  * Falls back to the input if realpath fails (path doesn't exist yet).
  */
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   let normalized = p;
   try {
     normalized = fs.realpathSync(p);
@@ -91,6 +91,20 @@ export interface CwdMatch {
    * treat as equivalent to an exact registration.
    */
   exact: boolean;
+  /**
+   * The actual, already-normalized (realpath'd, no trailing slash) allowlist
+   * path that won this match — equal to `cwd`'s own normalized form when
+   * `exact` is true, or the registered ANCESTOR path when `exact` is false.
+   *
+   * CRITICAL-2 regression fix (2026-08-20): `detectProject`'s ancestor-match
+   * gate needs this to compare DIRECTORY identity (is the queried `cwd`
+   * merely a deeper path inside the SAME repo/dir this entry was registered
+   * for?) rather than NAME identity (`ownGit === hit.slug`) — the latter
+   * comparison broke every subdirectory-of-an-overridden-root session,
+   * because the override's whole purpose is to disagree with the raw git
+   * remote name. See project.ts's `detectProject` for the consuming logic.
+   */
+  matchedPath: string;
 }
 
 /**
@@ -123,7 +137,7 @@ function matchCwd(cwd: string): CwdMatch | null {
     }
   }
   if (!bestMatch) return null;
-  return { slug: bestMatch.slug, exact: bestMatch.matchedPath === normalized };
+  return { slug: bestMatch.slug, exact: bestMatch.matchedPath === normalized, matchedPath: bestMatch.matchedPath };
 }
 
 /**

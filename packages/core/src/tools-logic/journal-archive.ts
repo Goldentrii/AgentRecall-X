@@ -6,6 +6,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { listJournalFiles, updateIndex } from "../helpers/journal-files.js";
 import { extractSection } from "../helpers/sections.js";
 import { stateFilePath } from "./journal-state.js";
+import { isRescueSourcedContent } from "../helpers/journal-filter.js";
 
 export interface JournalArchiveInput {
   older_than_days?: number;
@@ -36,7 +37,15 @@ export async function journalArchive(input: JournalArchiveInput): Promise<Journa
     if (ageDays > olderThanDays) {
       const srcPath = path.join(entry.dir, entry.file);
       const content = fs.readFileSync(srcPath, "utf-8");
-      const brief = extractSection(content, "brief");
+      // Identity-trust (CRITICAL-1 followup, 2026-08-20): `listJournalFiles`
+      // does not exclude `--card--` files, so a working-memory-rescue card
+      // aged past `olderThanDays` is archived (moved) here like any other
+      // entry — that data-hygiene move is fine — but its fabricated
+      // "brief" section must not be surfaced verbatim into this tool's own
+      // `summaries` output (agent-visible), the same surfacing-boundary rule
+      // applied everywhere else in this fix.
+      const rescueSourced = isRescueSourcedContent(content);
+      const brief = rescueSourced ? null : extractSection(content, "brief");
       const firstLine = brief?.split("\n").find(l => l.trim().length > 0) ?? "(no brief)";
 
       const destPath = path.join(archiveDir, entry.file);
@@ -50,7 +59,7 @@ export async function journalArchive(input: JournalArchiveInput): Promise<Journa
         fs.unlinkSync(stateSrc);
       }
 
-      summaries.push(`${entry.date}: ${firstLine}`);
+      if (!rescueSourced) summaries.push(`${entry.date}: ${firstLine}`);
       archived++;
     }
   }

@@ -51,7 +51,12 @@ export function formatTerse(result: SessionStartResult): string {
     lines.push("⏪ Continuity (recent work, other projects included):");
     for (const c of result.continuity) {
       const next = c.next_step ? ` → next: ${trunc(c.next_step, 80)}` : "";
-      lines.push(`  - ${c.ago} [${c.slug}] ${trunc(c.title, 100)}${next}`);
+      // Identity-trust (2026-08-20): visibly label a rescue-sourced
+      // (unverified cwd-guess) entry rather than presenting it as verified
+      // memory — see SessionStartResult["continuity"]'s `untrusted` field
+      // doc comment (agent-recall-core).
+      const trustFlag = c.untrusted ? " [unverified — rescued from a crashed session]" : "";
+      lines.push(`  - ${c.ago} [${c.slug}] ${trunc(c.title, 100)}${next}${trustFlag}`);
     }
     lines.push("");
   }

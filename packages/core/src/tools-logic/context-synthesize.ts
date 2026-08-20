@@ -5,6 +5,7 @@ import { journalDir, palaceDir } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { extractSection } from "../helpers/sections.js";
+import { isRescueSourcedContent } from "../helpers/journal-filter.js";
 import { ensurePalaceInitialized, listRooms, roomExists, createRoom } from "../palace/rooms.js";
 import { fanOut } from "../palace/fan-out.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
@@ -39,11 +40,27 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
     return { project: slug, entries_analyzed: 0, palace_rooms: 0, consolidated: 0, synthesis: "", error: `No entries for '${slug}'` };
   }
 
-  const toRead = journalEntries.slice(0, count);
   const data: Array<{ date: string; brief: string | null; decisions: string | null; blockers: string | null; next: string | null; observations: string | null }> = [];
-
-  for (const entry of toRead) {
-    const content = fs.readFileSync(path.join(entry.dir, entry.file), "utf-8");
+  // Identity-trust (CRITICAL-1 followup, 2026-08-20): `listJournalFiles`
+  // does not exclude `--card--` files, and this synthesis is returned
+  // verbatim as `synthesis` — agent-visible tool output — so a
+  // working-memory-rescue card's fabricated Decisions/Blockers/Next/
+  // Observations sections would otherwise be woven into the "L3 Synthesis"
+  // text below exactly like genuine journal content. Walk ALL entries
+  // (not a pre-sliced `count`-sized window) so skipping a rescue-sourced
+  // one doesn't silently shrink the synthesis to fewer than `count`
+  // genuine entries.
+  const toRead: typeof journalEntries = [];
+  for (const entry of journalEntries) {
+    if (toRead.length >= count) break;
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(entry.dir, entry.file), "utf-8");
+    } catch {
+      continue;
+    }
+    if (isRescueSourcedContent(content)) continue;
+    toRead.push(entry);
     data.push({
       date: entry.date,
       brief: extractSection(content, "brief"),

@@ -139,6 +139,61 @@ describe("resolveProject/detectProject — a non-root cwd cannot annex a git-ide
     );
   });
 
+  it("CRITICAL-2 regression fix (2026-08-20): a SUBDIRECTORY of an overridden root inherits the override, not raw git identity", async () => {
+    // Reproduces reports/2026-08-20-identity-trust-review.md's CRITICAL-2:
+    // the "legit case preserved" test above only ever calls detectProject()
+    // from the project ROOT itself. A LATER session running from a
+    // subdirectory of that SAME repo (the single most common real-world
+    // calling pattern — an IDE/agent cwd is rarely the literal repo root)
+    // used to fall through to raw git identity ("prismma") instead of
+    // inheriting the override ("prismma-gateway"), silently misfiling into
+    // a different, real, pre-existing project.
+    const projectRoot = path.join(WORK_ROOT, "prismma-web-subdir-precedent");
+    gitInit(projectRoot, "prismma"); // git remote name deliberately differs from the intended slug
+
+    process.chdir(projectRoot);
+    const resolved = await core.resolveProject("prismma-gateway");
+    assert.equal(resolved, "prismma-gateway");
+
+    const subDir = path.join(projectRoot, "src", "components");
+    fs.mkdirSync(subDir, { recursive: true });
+    process.chdir(subDir);
+
+    const detected = await core.detectProject();
+    assert.equal(
+      detected,
+      "prismma-gateway",
+      `DESTINATION PROOF: detectProject() from a SUBDIRECTORY of the overridden root must inherit the override (directory identity), not fall back to the raw git remote name; got "${detected}"`,
+    );
+
+    const autoResolved = await core.resolveProject("auto");
+    assert.equal(autoResolved, "prismma-gateway", "resolveProject(\"auto\") from the subdirectory must also inherit the override");
+  });
+
+  it("a genuinely DIFFERENT nested repo under an overridden root still wins on its own identity (directory-identity fix does not reopen CRITICAL-3)", async () => {
+    // The directory-identity fix must not regress CRITICAL-3's own repro:
+    // a distinctly-identified git repo NESTED under an overridden root is a
+    // different directory (its own git toplevel != the override's
+    // registered path) and must still win on its own identity, not be
+    // annexed by the ancestor override.
+    const projectRoot = path.join(WORK_ROOT, "prismma-web-nested-precedent");
+    gitInit(projectRoot, "prismma");
+
+    process.chdir(projectRoot);
+    await core.resolveProject("prismma-gateway");
+
+    const nestedRepo = path.join(projectRoot, "vendor", "some-other-checkout");
+    gitInit(nestedRepo, "some-other-checkout");
+
+    process.chdir(nestedRepo);
+    const detected = await core.detectProject();
+    assert.equal(
+      detected,
+      "some-other-checkout",
+      `a genuinely nested, distinctly-identified repo must win on its own git identity, not the ancestor override; got "${detected}"`,
+    );
+  });
+
   it("a project root with only package.json (no git) can still be registered", async () => {
     const projectRoot = path.join(WORK_ROOT, "no-git-project");
     fs.mkdirSync(projectRoot, { recursive: true });

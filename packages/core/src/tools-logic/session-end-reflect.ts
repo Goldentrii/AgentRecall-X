@@ -27,6 +27,7 @@ import { findCrystallizationCandidates, type CrystallizationCandidate } from "..
 import { archiveRawDir } from "../storage/paths.js";
 import { readJsonSafe } from "../storage/fs-utils.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { isRescueSourcedContent } from "../helpers/journal-filter.js";
 import { buildConsolidationPrompt } from "../prompts/consolidation-prompt.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -85,6 +86,15 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
     let excerpt = "";
     try {
       const content = fs.readFileSync(path.join(j.dir, j.file), "utf-8");
+      // Identity-trust (CRITICAL-1 followup, 2026-08-20): `listJournalFiles`
+      // does not exclude `--card--` files, and this function's own header
+      // comment already documents that its excerpt IS agent-visible tool
+      // output ("hand raw material straight to the calling LLM") — the same
+      // surfacing-boundary rule this module already applies for secrets
+      // (`scrubForCloud`, below) applies to a rescue card's unverified,
+      // self-claimed content too. Skip the whole entry rather than emit an
+      // empty excerpt — an unlabeled empty row would be confusing filler.
+      if (isRescueSourcedContent(content)) continue;
       excerpt = content.slice(0, EXCERPT_CHARS);
     } catch {
       // skip unreadable

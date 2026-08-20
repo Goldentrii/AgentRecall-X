@@ -105,6 +105,31 @@ async function detectGitIdentity(cwd: string): Promise<string | null> {
 }
 
 /**
+ * The git toplevel DIRECTORY for `cwd` (its own `.git` root, walked
+ * upward), as an absolute path — or null when `cwd` is not inside a git
+ * repo (or git is unavailable).
+ *
+ * CRITICAL-2 regression fix (2026-08-20): distinct from `detectGitIdentity`
+ * above, which returns a NAME derived from the remote or the toplevel
+ * basename. The ancestor-match gate in `detectProject` needs the actual
+ * DIRECTORY the toplevel resolves to, to tell "cwd is merely a
+ * subdirectory of the SAME repo the cwd-allowlist override was registered
+ * for" apart from "cwd is inside a genuinely different, nested repo" — a
+ * NAME comparison alone conflates the two whenever the override's slug
+ * deliberately disagrees with the git remote name (the override's entire
+ * reason for existing — see cwd-allowlist.ts's header comment).
+ */
+async function detectGitToplevel(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 3000 });
+    const root = stdout.trim();
+    return root || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Does `dir` look like a genuine project root, as opposed to a parent/
  * staging directory a caller merely happened to be sitting in? Checked
  * directly at `dir` — never a parent — same discipline `isValidProjectSlug`
@@ -160,10 +185,37 @@ export async function detectProject(): Promise<string> {
   // nested underneath it.
   let gitIdentityFromGate: string | null = null;
   try {
-    const { findProjectByCwdWithExactness } = await import("./cwd-allowlist.js");
+    const { findProjectByCwdWithExactness, normalizePath } = await import("./cwd-allowlist.js");
     const hit = findProjectByCwdWithExactness(cwd);
     if (hit) {
       if (hit.exact) return hit.slug;
+
+      // Directory-identity check (CRITICAL-2 regression fix, 2026-08-20 —
+      // reports/2026-08-20-identity-trust-review.md): the ORIGINAL
+      // ancestor-vs-exact gate compared `ownGit` (a NAME derived from cwd's
+      // git remote/toplevel BASENAME) against `hit.slug` — but `hit.slug`
+      // is precisely the value an override exists to DISAGREE with (e.g.
+      // "prismma-gateway" vs the raw remote name "prismma"). That name
+      // comparison meant ANY session run from a subdirectory of an
+      // overridden root fell through to raw git identity instead of
+      // inheriting the override, reproducing the exact prismma-web/prismma
+      // cross-contamination incident this allowlist exists to prevent — for
+      // the single most common calling pattern (a subdirectory of the repo
+      // root, not the literal root itself).
+      //
+      // Fix: compare DIRECTORY identity, not name identity. If `cwd`'s own
+      // git toplevel resolves to `hit.matchedPath` itself, `cwd` is merely a
+      // deeper directory INSIDE the same repo the override was registered
+      // for — the ancestor match wins outright, exactly like an exact
+      // match, regardless of what the remote name says. Only when `cwd`'s
+      // own git toplevel resolves to a genuinely DIFFERENT directory (a
+      // nested, distinct repo — CRITICAL-3's actual annexation scenario)
+      // does git identity get a chance to override the ancestor claim.
+      const ownToplevel = await detectGitToplevel(cwd);
+      if (ownToplevel && normalizePath(ownToplevel) === hit.matchedPath) {
+        return hit.slug;
+      }
+
       const ownGit = await detectGitIdentity(cwd);
       if (!ownGit || ownGit === hit.slug) return hit.slug;
       gitIdentityFromGate = ownGit; // reuse below — avoid a second `git` shell-out

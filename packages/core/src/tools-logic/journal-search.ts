@@ -4,6 +4,7 @@ import { resolveProject } from "../storage/project.js";
 import { journalDirs, palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
+import { isRescueSourcedContent } from "../helpers/journal-filter.js";
 
 export interface JournalSearchInput {
   query: string;
@@ -98,6 +99,16 @@ export async function journalSearch(input: JournalSearchInput): Promise<JournalS
       }
       const filePath = path.join(dir, file);
       const content = fs.readFileSync(filePath, "utf-8");
+      // Identity-trust (CRITICAL-1 followup, 2026-08-20): quarantine a
+      // working-memory-rescue card at the shared choke point
+      // (journal-filter.ts's isRescueSourcedContent) — this is the surface
+      // an MCP-connected agent actually calls for "recall/search/find
+      // previous context" (directly via `ar search`, and indirectly as
+      // smart_recall's journal source, see smart-recall.ts), and the exact
+      // one the red-team CRITICAL-2 exploit found returning a hijacked
+      // card's content verbatim, unmarked, with no way for the caller to
+      // even represent an "untrusted" signal on this result shape.
+      if (isRescueSourcedContent(content)) continue;
       const lines = content.split("\n");
       let currentSection = "top";
 

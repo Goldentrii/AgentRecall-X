@@ -36,3 +36,96 @@ export function isJournalFile(filename: string): boolean {
     !/^\d{4}-W\d+/.test(filename)
   );
 }
+
+// ---------------------------------------------------------------------------
+// Identity-trust: rescue-sourced content quarantine (CRITICAL-1 followup,
+// 2026-08-20 — see reports/2026-08-20-identity-trust-review.md).
+//
+// `isJournalFile` above filters by FILENAME only — it cannot distinguish a
+// working-memory-rescue card from a genuine hook-end card, because
+// `storage/session-card.ts`'s single `writeSessionCard` writes BOTH under
+// the exact same `<date>--card--<sid>.md` naming convention. The only
+// distinguishing signal is the frontmatter `source: working-memory-rescue`
+// tag set by `storage/working-memory.ts`'s `distillOneSession` — a card
+// filed under an unauthenticated, self-claimed `cwd` majority-vote rather
+// than a verified identity signal.
+//
+// Before this fix, that tag was checked in exactly ONE place
+// (`tools-logic/resurrect.ts`'s Source 1/Source 3 loops) — every OTHER
+// generic consumer of a journal directory's file content (journalSearch,
+// smart_recall's journal source via journalSearch, session-start's
+// "recent journal briefs"/"resume" readers and its continuity ledger read,
+// palace consolidation) read the same on-disk artifact with zero awareness
+// of the tag, so a planted rescue card surfaced unmarked, unranked, at #1 —
+// exactly the class-completeness gap the review's CRITICAL-1 finding
+// describes ("3 prior waves each missed same-class members").
+//
+// THE FIX: a single tag constant + two tiny predicates, exported from here
+// (this module's own header already establishes it as "the single source of
+// truth" for journal file conventions — used everywhere a journal directory
+// is scanned). Every reader — file-content OR ledger-entry — funnels its
+// `source`/frontmatter value through `isRescueSourceTag`, and every GENERIC
+// file-content reader additionally funnels raw content through
+// `isRescueSourcedContent` and skips the file outright. `resurrect()` is the
+// SOLE documented exception: it explicitly wants rescue cards visible
+// (ranked strictly below genuine memory, per its own two-tier sort) rather
+// than excluded, so it calls `isRescueSourceTag` directly on its own
+// already-parsed frontmatter/ledger row instead of the content-level
+// predicate. See packages/core/test/identity-trust-completeness.test.mjs
+// for the enumerated call-site list and non-vacuity proof.
+
+/**
+ * Canonical provenance tag written to a frontmatter/ledger `source` field
+ * for content whose slug/project attribution came from an unauthenticated,
+ * self-claimed `cwd` majority-vote (working-memory orphan-rescue) rather
+ * than a verified identity signal. Every writer AND every reader of this
+ * tag must go through this constant + the predicates below — duplicating
+ * the literal string across N call sites (5 existed before this fix: two
+ * writers in working-memory.ts, two readers in resurrect.ts, one doc
+ * reference in recency-index.ts) is exactly the class-not-instance failure
+ * mode this module closes.
+ */
+export const RESCUE_SOURCE_TAG = "working-memory-rescue";
+
+/**
+ * True when a frontmatter/ledger `source` value is the rescue tag. Accepts
+ * `unknown` so callers can pass a raw, not-yet-narrowed metadata field
+ * (e.g. a parsed frontmatter `Record<string, unknown>.source`, or a ledger
+ * row's optional `string` field) without a cast at every call site.
+ */
+export function isRescueSourceTag(source: unknown): boolean {
+  return source === RESCUE_SOURCE_TAG;
+}
+
+/**
+ * Extract the frontmatter `source:` field's raw value from a journal/card
+ * file's content, without importing `supabase/sync.ts`'s full
+ * `parseMemoryFile` (this predicate is meant to run on every generic
+ * journal-directory scan — journalSearch, session-start's recent-briefs/
+ * resume readers, palace consolidation — a much hotter, more numerous set
+ * of call sites than `parseMemoryFile`'s own callers; pulling a
+ * Supabase-facing module into this leaf helper for one string field would
+ * also risk a needless cross-package dependency edge). Deliberately
+ * minimal — same `---\n...\n---` delimiter convention `parseMemoryFile`
+ * itself parses (`storage/session-card.ts`'s `generateFrontmatter` is the
+ * only writer of this shape).
+ */
+function extractFrontmatterSource(content: string): string | undefined {
+  if (!content.startsWith("---")) return undefined;
+  const endIdx = content.indexOf("---", 3);
+  if (endIdx < 0) return undefined;
+  const match = content.slice(3, endIdx).match(/^source:\s*(.+)$/m);
+  return match ? match[1].trim() : undefined;
+}
+
+/**
+ * THE shared choke point (class-not-instance fix, red-team CRITICAL-1
+ * followup, 2026-08-20): every GENERIC consumer of journal/card file
+ * CONTENT — one that treats "every file in this directory" as trustworthy,
+ * rankable memory — must call this before using a file's content, and skip
+ * the file when it returns true. See this section's header comment above
+ * for the full rationale and the enumerated call sites.
+ */
+export function isRescueSourcedContent(content: string): boolean {
+  return isRescueSourceTag(extractFrontmatterSource(content));
+}

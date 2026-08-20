@@ -16,6 +16,7 @@ import { journalDir, palaceDir } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { extractSection } from "../helpers/sections.js";
+import { isRescueSourcedContent } from "../helpers/journal-filter.js";
 import { ensurePalaceInitialized, roomExists, createRoom, touchRoom } from "./rooms.js";
 import { fanOut } from "./fan-out.js";
 import { generateFrontmatter } from "./obsidian.js";
@@ -85,6 +86,14 @@ export function consolidateJournalToPalace(
 
   for (const entry of toProcess) {
     const content = fs.readFileSync(path.join(entry.dir, entry.file), "utf-8");
+    // Identity-trust (CRITICAL-1 followup MEDIUM finding #2, 2026-08-20):
+    // consolidation runs automatically on session_end and fans journal
+    // section content into palace rooms — a rescue card crafted with a
+    // matching section header (## Decisions, ## Next, ...) would otherwise
+    // propagate unverified, unauthenticated-cwd-guess content into the
+    // more-permanent palace tier. Quarantine at the shared choke point
+    // before any section is extracted from this entry.
+    if (isRescueSourcedContent(content)) continue;
     const sourceRef = `[[journal/${entry.date}]]`;
 
     // Extract and route each section type

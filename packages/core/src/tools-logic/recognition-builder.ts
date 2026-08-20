@@ -32,7 +32,7 @@ import { listSkills } from "../palace/skills.js";
 import { listRooms, isRoomStale } from "../palace/rooms.js";
 import { readActiveCorrections, type CorrectionRecord } from "../storage/corrections.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
-import { isJournalFile } from "../helpers/journal-filter.js";
+import { isJournalFile, isRescueSourcedContent } from "../helpers/journal-filter.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -283,7 +283,16 @@ function readCapabilities(
 function readProjectProgress(project: string, maxRooms: number): RecognitionProject {
   const dirs = journalDirs(project);
   let lastDate: string | null = null;
-  let newestPath: string | null = null;
+  // Identity-trust (CRITICAL-1 followup, 2026-08-20): collect (date, path)
+  // candidates instead of a single running "newest" — a working-memory-
+  // rescue card shares the exact same `<date>--card--<sid>.md` naming
+  // convention as a genuine hook-end card, so picking "the newest-dated
+  // filename" blindly could hand the `## Next` trajectory extraction below
+  // a hijacked card's fabricated content. This feeds `session_start`'s
+  // `recognition.project.trajectory` field — a zero-agent-action surface,
+  // same severity class as session-start.ts's own "recent journal briefs"/
+  // "resume" readers (see that file's comments for the shared pattern).
+  const dateCandidates: Array<{ date: string; path: string }> = [];
 
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
@@ -297,29 +306,32 @@ function readProjectProgress(project: string, maxRooms: number): RecognitionProj
       const m = file.match(/^(\d{4}-\d{2}-\d{2})/);
       if (!m) continue;
       const d = m[1];
-      if (!lastDate || d > lastDate) {
-        lastDate = d;
-        newestPath = path.join(dir, file);
-      }
+      dateCandidates.push({ date: d, path: path.join(dir, file) });
+      if (!lastDate || d > lastDate) lastDate = d; // freshness bucket — filename-only, unaffected by rescue tagging
     }
   }
+  dateCandidates.sort((a, b) => b.date.localeCompare(a.date));
 
-  // Trajectory — first non-empty `## Next` line of the newest journal.
+  // Trajectory — first non-empty `## Next` line of the newest NON-rescue-
+  // sourced journal file.
   let trajectory: string | null = null;
-  if (newestPath && fs.existsSync(newestPath)) {
+  for (const cand of dateCandidates) {
+    let content: string;
     try {
-      const content = fs.readFileSync(newestPath, "utf-8");
-      const nextMatch = content.match(/^## Next\r?\n([\s\S]*?)(?=^##|\s*$)/m);
-      if (nextMatch) {
-        const lines = nextMatch[1]
-          .split("\n")
-          .map((l) => l.trim().replace(/^[-*]\s*/, ""))
-          .filter(Boolean);
-        if (lines.length > 0) trajectory = clean(lines[0], 200);
-      }
+      content = fs.readFileSync(cand.path, "utf-8");
     } catch {
-      // non-blocking
+      continue;
     }
+    if (isRescueSourcedContent(content)) continue;
+    const nextMatch = content.match(/^## Next\r?\n([\s\S]*?)(?=^##|\s*$)/m);
+    if (nextMatch) {
+      const lines = nextMatch[1]
+        .split("\n")
+        .map((l) => l.trim().replace(/^[-*]\s*/, ""))
+        .filter(Boolean);
+      if (lines.length > 0) trajectory = clean(lines[0], 200);
+    }
+    break; // found the newest trustworthy candidate — stop, matching prior single-file behavior
   }
 
   // Status bucket — deterministic from journal freshness + trajectory text.

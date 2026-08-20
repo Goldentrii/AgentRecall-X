@@ -17,6 +17,7 @@ import { listMilestones } from "../palace/pipeline.js";
 import { listSkills } from "../palace/skills.js";
 import { runStoreDoctor, storeDoctorBanner } from "./store-doctor.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
+import { isRescueSourceTag } from "../helpers/journal-filter.js";
 
 export interface SessionStartLiteInput {
   project?: string;
@@ -75,10 +76,20 @@ export async function sessionStartLite(input: SessionStartLiteInput): Promise<Se
   // a missing/corrupt ledger must never break the lite briefing.
   let continuityLine: string | null = null;
   try {
-    const [top] = readRecentSessions(1);
+    // Identity-trust (CRITICAL-1 followup, 2026-08-20): the same
+    // working-memory-rescue signal as the full session_start's `continuity`
+    // field (see session-start.ts's continuity-assembly comment for the
+    // full rationale) — a small over-fetch lets a genuinely trusted,
+    // slightly-older entry win the single lite-mode line instead of an
+    // untrusted top-of-ledger row. If every recent row is untrusted, still
+    // fall back to the top one (lite mode's own genuine-crash-recovery use
+    // case), but VISIBLY labeled rather than silently presented as verified.
+    const candidates = readRecentSessions(5);
+    const top = candidates.find((s) => !isRescueSourceTag(s.source)) ?? candidates[0];
     if (top) {
       const next = top.next_step ? ` → next: ${top.next_step.slice(0, 100)}` : "";
-      continuityLine = `${formatAgo(top.ts)} [${top.slug}] ${top.title.slice(0, 120)}${next}`;
+      const trustFlag = isRescueSourceTag(top.source) ? " [unverified — rescued from a crashed session]" : "";
+      continuityLine = `${formatAgo(top.ts)} [${top.slug}] ${top.title.slice(0, 120)}${next}${trustFlag}`;
     }
   } catch {
     continuityLine = null;

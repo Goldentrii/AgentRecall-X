@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { palaceDir, journalDir as journalDirPath, projectSubPath } from "../storage/paths.js";
+import { isRescueSourcedContent } from "./journal-filter.js";
 
 export interface ActivityEvent {
   ts: string;   // ISO-8601
@@ -107,6 +108,12 @@ function journalEvents(slug: string): ActivityEvent[] {
     const fileDate = dateMatch[1];
 
     const content = safeRead(path.join(jDir, f));
+    // Identity-trust (CRITICAL-1 followup, 2026-08-20): this scan is
+    // filename-filtered the same permissive way journalSearch's pre-fix
+    // code was (no `--card--` exclusion), so a working-memory-rescue card
+    // would otherwise surface its fabricated first-line verbatim as a
+    // "session_end" activity event. Quarantine at the shared choke point.
+    if (content && isRescueSourcedContent(content)) continue;
     const created = content ? extractFrontmatterCreated(content) : null;
     const ts = created ?? dateToTs(fileDate);
 

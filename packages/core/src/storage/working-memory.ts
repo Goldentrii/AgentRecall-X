@@ -35,6 +35,7 @@ import { isSystemText, parseJsonlLenient } from "./extraction.js";
 import { recordHookFailure } from "./hook-health.js";
 import { sanitizeSlug, projectsRootDir } from "./paths.js";
 import { isValidProjectSlug, listAllProjects } from "./project.js";
+import { RESCUE_SOURCE_TAG } from "../helpers/journal-filter.js";
 import { scrubForCloud } from "./content-guard.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { writeSessionCard } from "./session-card.js";
@@ -545,7 +546,7 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       slug: guessedSlug,
       slug_confidence: 0,
       slug_candidates: [],
-      source: "working-memory-rescue",
+      source: RESCUE_SOURCE_TAG,
     });
     const body = [
       `# ${title}`,
@@ -605,7 +606,7 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       // per-branch reasoning needed). `resurrect()`'s Source 1 loop reads it
       // to keep this entry out of the trusted ranking tier even when the
       // card itself already existed (the `hasCard && !hasRecency` branch).
-      source: "working-memory-rescue",
+      source: RESCUE_SOURCE_TAG,
     });
     const confirmedRecency = readRecentSessions(1000).some((e) => e.sid === wmFile.sid);
     if (!confirmedRecency) {
