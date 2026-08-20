@@ -6,6 +6,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.46] — 2026-08-21
+
+Patch release: closes the two remaining red-team CRITICALs from the 2026-08-18 eval — both were the same meta-class (the store trusting an unauthenticated cwd/slug identity claim to route memory into a real project).
+
+### Fixed
+
+- **WM-rescue hijack (CRITICAL-2)**: a spoofable dropped working-memory file could plant a fabricated, injection-laden session card inside a real project and rank #1. Rescue-sourced cards (`source: working-memory-rescue`) are now trust-tiered at a single shared choke (`helpers/journal-filter.ts`): every retrieval surface that ranks or returns journal/card content excludes them, except a visible-but-ranked-below exception in `resurrect()` and a `[unverified — rescued from a crashed session]` label in session-start continuity. A committed completeness test scans core for the risk shape and fails if any reader is neither choked nor allowlisted-with-reason (non-vacuity proven by reproducing the exploit against a reverted choke). Legit crashed-session rescue still works.
+- **cwd-allowlist annexation (CRITICAL-3)**: one explicit `--project` write from a shallow/parent directory permanently annexed nested projects. A cwd now earns allowlist registration only if it is a real project root, and detectProject compares the queried directory's own git toplevel against a registered override's path — same-directory (and subdirectories of an overridden root) keep the override, only a genuinely different nested repo wins via its own identity.
 ## [3.4.45] — 2026-08-19
 
 Patch release: injection-fencing (P1 from the 2026-08-18 eval) + a CI-enforced fence-completeness harness so the injection-surface class stays closed by construction.
