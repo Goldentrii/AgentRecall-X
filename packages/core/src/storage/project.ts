@@ -71,6 +71,67 @@ export function isValidProjectSlug(slug: string): boolean {
 }
 
 /**
+ * This directory's own git identity, or null when it is not (recognizably)
+ * a git repo. Prefers the remote origin's basename (matches a fork/clone's
+ * intended project name even when the local directory is named differently);
+ * falls back to the toplevel directory's own basename for a git repo with no
+ * remote configured yet. Never throws.
+ *
+ * Factored out of `detectProject` (CRITICAL-3 fix, red-team 2026-08-18) so
+ * BOTH call sites that need "does this exact directory have its own git
+ * identity, and what is it" — the cwd-allowlist ancestor-match gate below,
+ * and step 3's own git-detection fallback — share one implementation instead
+ * of two independently-drifting `execFile` calls.
+ */
+async function detectGitIdentity(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], { cwd, timeout: 3000 });
+    const remote = stdout.trim();
+    if (remote) {
+      const name = path.basename(remote, ".git");
+      if (name) return name;
+    }
+  } catch {
+    // fall through to toplevel basename
+  }
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 3000 });
+    const root = stdout.trim();
+    if (root) return path.basename(root);
+  } catch {
+    // not a git repo (or git unavailable) at this cwd
+  }
+  return null;
+}
+
+/**
+ * Does `dir` look like a genuine project root, as opposed to a parent/
+ * staging directory a caller merely happened to be sitting in? Checked
+ * directly at `dir` — never a parent — same discipline `isValidProjectSlug`
+ * already applies to slugs: an identity gate, not a heuristic that widens
+ * with proximity to a real project.
+ *
+ * CRITICAL-3 fix (red-team, 2026-08-18): `resolveProject` used to register
+ * `process.cwd()` into a project's cwd-allowlist for ANY explicit slug, with
+ * no check that the cwd was itself recognizable as a project — so one
+ * ordinary `ar write "..." --project X` run from a shallow/parent directory
+ * (e.g. `~/Projects`, a monorepo root, `~/Desktop`) permanently annexed
+ * every distinctly-identified git repo nested underneath it into `X`
+ * (`findProjectByCwd`'s longest-prefix match then outranked git-remote
+ * detection in `detectProject`, forever, with no expiry). `.git` covers both
+ * a real repo directory and a git WORKTREE (whose `.git` is a plain file
+ * pointing at the real gitdir, not a directory — `fs.existsSync` covers
+ * either shape).
+ */
+function isProjectRoot(dir: string): boolean {
+  try {
+    return fs.existsSync(path.join(dir, ".git")) || fs.existsSync(path.join(dir, "package.json"));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Auto-detect project slug from environment, git, or cwd.
  * No caching — each call re-detects from the current environment.
  * Use AGENT_RECALL_PROJECT env var for a stable override across calls.
@@ -81,37 +142,42 @@ export async function detectProject(): Promise<string> {
     return process.env.AGENT_RECALL_PROJECT;
   }
 
-  // 2. cwd-allowlist match — explicit per-project mapping wins over heuristics.
-  // Solves the wrong-project-routing bug where ~/Projects/prismma-web loaded
-  // `prismma` (video gen) instead of `prismma-gateway`.
+  const cwd = process.cwd();
+
+  // 2. cwd-allowlist match — explicit per-project mapping wins over
+  // heuristics, for an EXACT registration. Solves the wrong-project-routing
+  // bug where ~/Projects/prismma-web loaded `prismma` (video gen) instead of
+  // `prismma-gateway`.
+  //
+  // CRITICAL-3 fix (red-team, 2026-08-18): an EXACT allowlist match (the
+  // registered path IS `cwd`) is still trusted outright — that is the
+  // legitimate override case above. An ANCESTOR match (the registered path
+  // is a strict PARENT of `cwd`) is weaker evidence: it must yield to this
+  // directory's OWN git identity when it has one and it disagrees, so a
+  // broad allowlist entry registered for a shallow/parent directory (whether
+  // freshly blocked by `isProjectRoot` below, or a legacy entry that predates
+  // this fix) can never silently outrank a distinctly-identified git repo
+  // nested underneath it.
+  let gitIdentityFromGate: string | null = null;
   try {
-    const { findProjectByCwd } = await import("./cwd-allowlist.js");
-    const hit = findProjectByCwd(process.cwd());
-    if (hit) return hit;
+    const { findProjectByCwdWithExactness } = await import("./cwd-allowlist.js");
+    const hit = findProjectByCwdWithExactness(cwd);
+    if (hit) {
+      if (hit.exact) return hit.slug;
+      const ownGit = await detectGitIdentity(cwd);
+      if (!ownGit || ownGit === hit.slug) return hit.slug;
+      gitIdentityFromGate = ownGit; // reuse below — avoid a second `git` shell-out
+    }
   } catch {
     // never let allowlist scan break detection
   }
 
-  // 3. Git repo name (async)
-  try {
-    const { stdout } = await execFileAsync("git", ["config", "--get", "remote.origin.url"], { timeout: 3000 });
-    const remote = stdout.trim();
-    if (remote) {
-      const name = path.basename(remote, ".git");
-      if (name) return name;
-    }
-  } catch {
-    try {
-      const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { timeout: 3000 });
-      const root = stdout.trim();
-      if (root) return path.basename(root);
-    } catch {
-      // fall through
-    }
-  }
+  // 3. Git repo name (async) — reuses the identity resolved above when the
+  // ancestor-match gate already computed it.
+  const gitIdentity = gitIdentityFromGate ?? (await detectGitIdentity(cwd));
+  if (gitIdentity) return gitIdentity;
 
-  // 3. package.json name
-  const cwd = process.cwd();
+  // 4. package.json name
   const pkgPath = path.join(cwd, "package.json");
   if (fs.existsSync(pkgPath)) {
     try {
@@ -122,7 +188,7 @@ export async function detectProject(): Promise<string> {
     }
   }
 
-  // 4. Basename of cwd — but check if it looks like the home directory username
+  // 5. Basename of cwd — but check if it looks like the home directory username
   const candidate = path.basename(cwd);
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const homeBasename = homeDir ? path.basename(homeDir) : "";
@@ -137,7 +203,7 @@ export async function detectProject(): Promise<string> {
     return candidate;
   }
 
-  // 5. cwd resolved to home dir username — try package.json in parent dirs
+  // 6. cwd resolved to home dir username — try package.json in parent dirs
   let searchDir = cwd;
   for (let i = 0; i < 3; i++) {
     const pkg = path.join(searchDir, "package.json");
@@ -152,7 +218,7 @@ export async function detectProject(): Promise<string> {
     searchDir = parent;
   }
 
-  // 6. Final fallback: use the directory name even if it matches username
+  // 7. Final fallback: use the directory name even if it matches username
   return candidate || "default";
 }
 
@@ -208,9 +274,20 @@ export async function resolveProject(project: string | undefined): Promise<strin
     return project;
   }
 
+  // CRITICAL-3 fix (red-team, 2026-08-18): only register `cwd` into the
+  // allowlist when this EXACT directory is itself a recognizable project
+  // root (`isProjectRoot`, above). The explicit write still resolves to
+  // `project` unconditionally either way — this gate only controls the SIDE
+  // EFFECT of teaching the allowlist about this cwd for FUTURE "auto" calls.
+  // Without it, a single write from a parent/staging directory permanently
+  // annexed every distinctly-identified git repo nested underneath it (see
+  // `isProjectRoot`'s doc comment for the full repro).
   try {
-    const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
-    addCwdToAllowlist(project, process.cwd());
+    const cwd = process.cwd();
+    if (isProjectRoot(cwd)) {
+      const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
+      addCwdToAllowlist(project, cwd);
+    }
   } catch {
     // never let allowlist write break resolution
   }

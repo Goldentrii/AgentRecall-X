@@ -66,6 +66,20 @@ export interface RecentSessionEntry {
   next_step?: string;
   /** Count of artifacts (files touched) this session, if known. */
   artifact_count?: number;
+  /**
+   * Provenance tag for identity-trust classification (red-team CRITICAL-2,
+   * 2026-08-18). Set to `"working-memory-rescue"` by every append made from
+   * within `distillOneSession` (storage/working-memory.ts) — the ONLY
+   * caller-family that writes an entry whose `slug` came from an
+   * unauthenticated, self-claimed `cwd` majority-vote rather than a verified
+   * git/package.json identity. `resurrect()` (tools-logic/resurrect.ts)
+   * reads this to keep rescue-sourced entries structurally unable to outrank
+   * verified ones, regardless of recency/keyword score. Omitted (undefined)
+   * for every other, higher-trust append — never written as `false`, so
+   * pre-existing on-disk lines with no `source` field at all are correctly
+   * treated as trusted by an `=== "working-memory-rescue"` check.
+   */
+  source?: string;
 }
 
 function recencyIndexPath(): string {

@@ -115,6 +115,17 @@ export interface ContinuityBrief {
   provenance: string[];
   /** Ranking score — exposed for debuggability/testing, not part of the spec shape. */
   score: number;
+  /**
+   * Identity-trust flag (red-team CRITICAL-2, 2026-08-18). True when every
+   * contributing source for this (slug, sid) traces back to an
+   * unauthenticated, self-claimed `cwd` majority-vote (a working-memory
+   * rescue card, a rescue-sourced recency-ledger entry, or a still-live WM
+   * file) rather than a verified identity signal. See `computeScore`'s
+   * doc comment for why this is a STRICT ranking tier, not a score
+   * multiplier: an untrusted entry can never outrank a trusted one,
+   * regardless of raw score.
+   */
+  untrusted: boolean;
 }
 
 export interface ResurrectInput {
@@ -179,6 +190,18 @@ interface MergedSession {
   provenance: Set<string>;
   /** Raw archive bodies contributing to this session — used for low-confidence keyword grep only. */
   rawBodies: string[];
+  /**
+   * Identity-trust flag (red-team CRITICAL-2, 2026-08-18) — see
+   * `ContinuityBrief.untrusted`'s doc comment. Starts false; any contributing
+   * source that traces back to an unauthenticated cwd-guess sets it true.
+   * Sources never CLEAR it once set — a genuine hook-end card and a
+   * rescue-sourced card can never legitimately coexist under the same
+   * (slug, sid) key in normal operation (rescue's own `hasCard` idempotency
+   * guard, working-memory.ts, refuses to write a rescue card when a real one
+   * already exists for that sid), so OR-accumulation across sources is safe:
+   * it never spuriously downgrades a genuinely-verified entry.
+   */
+  untrusted: boolean;
 }
 
 function keyOf(slug: string, sid: string): string {
@@ -199,6 +222,7 @@ function getOrCreate(map: Map<string, MergedSession>, slug: string, sid: string)
       nextSteps: [],
       provenance: new Set(),
       rawBodies: [],
+      untrusted: false,
     };
     map.set(key, entry);
   }
@@ -239,6 +263,15 @@ interface RecentSessionEntry {
   slug: string;
   title?: string;
   next_step?: string;
+  /**
+   * Identity-trust provenance tag (red-team CRITICAL-2, 2026-08-18) — mirrors
+   * storage/recency-index.ts's `RecentSessionEntry.source` field (this module
+   * intentionally parses the ledger's documented JSONL shape directly rather
+   * than importing that module's type, per this interface's own header
+   * comment). `"working-memory-rescue"` marks an entry appended by
+   * `distillOneSession` from an unauthenticated cwd-guess.
+   */
+  source?: string;
 }
 
 /**
@@ -261,7 +294,14 @@ function readRecentSessions(): RecentSessionEntry[] {
     try {
       const row = JSON.parse(trimmed) as Partial<RecentSessionEntry>;
       if (row && typeof row.ts === "string" && typeof row.sid === "string" && typeof row.slug === "string") {
-        out.push({ ts: row.ts, sid: row.sid, slug: row.slug, title: row.title, next_step: row.next_step });
+        out.push({
+          ts: row.ts,
+          sid: row.sid,
+          slug: row.slug,
+          title: row.title,
+          next_step: row.next_step,
+          source: typeof row.source === "string" ? row.source : undefined,
+        });
       }
     } catch {
       // skip malformed line
@@ -424,6 +464,12 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
     if (!entry.title && row.title) entry.title = row.title;
     if (row.next_step) entry.nextSteps = dedupPush(entry.nextSteps, row.next_step, MAX_NEXT_STEPS);
     entry.provenance.add(path.join(getRoot(), "recent-sessions.jsonl"));
+    // Identity-trust (red-team CRITICAL-2, 2026-08-18): a recency-ledger
+    // entry appended by `distillOneSession` (working-memory.ts) carries this
+    // tag because its `slug` came from an unauthenticated cwd-guess, not a
+    // verified identity signal — never cleared once set (see MergedSession's
+    // doc comment for why OR-accumulation is safe).
+    if (row.source === "working-memory-rescue") entry.untrusted = true;
   }
 
   const slugs = enumerateProjectSlugs();
@@ -590,6 +636,15 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       entry.date = cardDate;
       entry.ts = Math.max(entry.ts, cardTs);
 
+      // Identity-trust (red-team CRITICAL-2, 2026-08-18): a card whose
+      // frontmatter carries `source: working-memory-rescue`
+      // (storage/working-memory.ts's `distillOneSession`) was filed under
+      // `cardSlug` on the strength of an unauthenticated cwd majority-vote —
+      // `guessSlugFromWmLines` never verifies the claim against git identity
+      // or anything else. Never cleared once set — see MergedSession's doc
+      // comment for why OR-accumulation across sources is safe here.
+      if (parsed.metadata.source === "working-memory-rescue") entry.untrusted = true;
+
       // Card fields are the higher-confidence, already-distilled tier —
       // they win outright for title/goal rather than only filling gaps.
       const { goalExcerpt: bodyGoal } = extractTitleAndGoal(parsed.body);
@@ -624,6 +679,22 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
   // cwd signal is available at all. Respects the SAME `cutoff` window as
   // every other source, so a WM file that somehow never got rescued (orphan
   // rescue never ran) does not surface as "live" forever.
+  //
+  // Identity-trust scoping note (red-team CRITICAL-2, 2026-08-18): this
+  // source is DELIBERATELY left out of the `untrusted` tiering added below
+  // for Sources 1/3. Unlike a rescue-created card, a live WM entry never
+  // gets written into a real project's on-disk store — it is a purely
+  // ephemeral, per-call read that vanishes the moment the file ages out or
+  // is rescued/deleted, so it cannot ANNEX or IMPERSONATE a project's
+  // genuine memory the way CRITICAL-2's rescued card did. "A live session
+  // right now outranks older completed work on pure recency" is also an
+  // intentional, separately-tested acceptance criterion
+  // (resurrect-wm-source.test.mjs) that predates this fix. A fresh,
+  // directly-dropped (bypassing wmAppend's scrub) WM file could still win a
+  // keyword-crafted query here — noted as a residual, narrower-blast-radius
+  // gap in the identity-trust report rather than folded into this fix, since
+  // closing it by blanket-untrusting Source 4 regresses that legitimate
+  // "live" ranking behavior.
   for (const wmFile of wmList()) {
     if (wmFile.mtimeMs < cutoff) continue;
     const wmLines = wmRead(wmFile.sid);
@@ -656,10 +727,22 @@ export function resurrect(input: ResurrectInput = {}): ContinuityBrief[] {
       nextSteps: entry.nextSteps.slice(0, MAX_NEXT_STEPS),
       provenance: [...entry.provenance],
       score: computeScore(entry, queryTerms, now, days),
+      untrusted: entry.untrusted,
     });
   }
 
-  briefs.sort((a, b) => b.score - a.score);
+  // Identity-trust ranking (red-team CRITICAL-2, 2026-08-18): a STRICT
+  // two-tier sort, not a score penalty. Every trusted brief outranks every
+  // untrusted one regardless of raw score — an untrusted entry can score
+  // arbitrarily high on keyword match (e.g. a query crafted to hit an
+  // injected title verbatim) and it still cannot cross the tier boundary.
+  // Within each tier, ordering is unchanged (recency × keyword score,
+  // descending). This is what makes "cannot outrank genuine memory" a
+  // structural guarantee instead of a probabilistic downweight.
+  briefs.sort((a, b) => {
+    if (a.untrusted !== b.untrusted) return a.untrusted ? 1 : -1;
+    return b.score - a.score;
+  });
   return briefs.slice(0, limit);
 }
 
@@ -680,6 +763,14 @@ export function renderResurrectMarkdown(briefs: ContinuityBrief[]): string {
     lines.push(`- slug: ${brief.slug}`);
     lines.push(`- sid: ${brief.sid}`);
     lines.push(`- date: ${brief.date}`);
+    // Identity-trust (red-team CRITICAL-2, 2026-08-18): make the ranking
+    // tier VISIBLE, not just structural — a caller reading only the rendered
+    // markdown (not the JSON `untrusted` field) must still be able to tell
+    // this brief's slug/title came from an unauthenticated cwd-guess rather
+    // than a verified session, never mind where it sorted.
+    if (brief.untrusted) {
+      lines.push("- trust: unverified (working-memory-rescue — cwd claim was never independently corroborated)");
+    }
     if (brief.goalExcerpt) lines.push(`- goal: ${brief.goalExcerpt}`);
     if (brief.linearRefs.length > 0) lines.push(`- linear: ${brief.linearRefs.join(", ")}`);
     if (brief.artifacts.length > 0) {

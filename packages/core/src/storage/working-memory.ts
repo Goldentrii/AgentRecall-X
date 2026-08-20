@@ -598,6 +598,14 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       slug: ledgerSlug,
       title,
       artifact_count: 0,
+      // Identity-trust fix (red-team CRITICAL-2, 2026-08-18): `distillOneSession`
+      // is ONLY ever reached via `rescueOrphanedWorkingMemory` or
+      // `distillSessionToCard` — every append this function makes is
+      // rescue-sourced by construction, so this tag is unconditional (no
+      // per-branch reasoning needed). `resurrect()`'s Source 1 loop reads it
+      // to keep this entry out of the trusted ranking tier even when the
+      // card itself already existed (the `hasCard && !hasRecency` branch).
+      source: "working-memory-rescue",
     });
     const confirmedRecency = readRecentSessions(1000).some((e) => e.sid === wmFile.sid);
     if (!confirmedRecency) {
