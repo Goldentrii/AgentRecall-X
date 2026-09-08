@@ -47,11 +47,11 @@
  * zero). `extractStatusTokens`/`extractKVTokens` remain exported from
  * `helpers/conflict-scan.ts` and are UNCHANGED there — `conflict-scan.ts`'s
  * own `scanForConflicts` (the separate smart-remember pre-save warning flow)
- * and `tools-logic/supersession.ts`'s `compareForConflicts` (the separate
- * `ar correct` CorrectionRecord flow) both still use all three extractors;
- * this restriction applies ONLY to this module's pairwise same-tier
- * retrieval-time comparison, not to those other two, structurally distinct
- * consumers.
+ * still uses all three extractors; this restriction applies ONLY to this
+ * module's pairwise same-tier retrieval-time comparison (see the v4
+ * PRE-SHIP GATE FIX addendum below for why `tools-logic/supersession.ts`'s
+ * `compareForConflicts` — previously also a three-extractor consumer —
+ * no longer is one).
  *
  * WHY THIS IS ITS OWN MODULE, not a function inside query-memory.ts: mirrors
  * `retrieval/scope.ts`'s own precedent — a small, dependency-light, pure
@@ -134,18 +134,38 @@
  * positive fires AT ALL, so even the harmless annotation is rare and
  * meaningful rather than routinely wrong.
  *
- * `extractHighPrecisionVersionTokens` below is a LOCAL, module-scoped
- * extractor — a modified copy of `extractVersionTokens`'s regex, NOT an
- * edit to the shared `helpers/conflict-scan.ts` export. `extractVersionTokens`
- * itself is UNCHANGED and remains exactly as permissive as before for its
- * OTHER two callers (`conflict-scan.ts`'s own `scanForConflicts` — the
- * smart-remember pre-save warning flow — and `tools-logic/supersession.ts`'s
- * `compareForConflicts` — the `ar correct` CorrectionRecord flow), which are
- * structurally distinct consumers this fix's scope (the retrieval area) does
+ * `extractHighPrecisionVersionTokens` below is a module-scoped extractor — a
+ * modified copy of `extractVersionTokens`'s regex, NOT an edit to the shared
+ * `helpers/conflict-scan.ts` export. `extractVersionTokens` itself is
+ * UNCHANGED and remains exactly as permissive as before for its one
+ * remaining loose-grammar caller (`conflict-scan.ts`'s own `scanForConflicts`
+ * — the smart-remember pre-save warning flow, a soft non-mutating notice
+ * shown at save time, not a supersession/retraction surface), which is a
+ * structurally distinct consumer this fix's scope (the retrieval area) does
  * not touch and whose own false-positive tolerance was never in question
  * here (see this file's original header, "FIX (this file)", for why
  * `contradiction.ts` choosing a narrower grammar than `conflict-scan.ts`
  * offers was already the file's own precedent).
+ *
+ * v4 PRE-SHIP GATE FIX (2026-09-08, reports/2026-09-08-v4-gatefix-report.md)
+ * — `extractHighPrecisionVersionTokens` is now EXPORTED (it previously was
+ * not) and imported directly by `tools-logic/supersession.ts`'s
+ * `compareForConflicts`. That module's OWN plain `extractVersionTokens` use
+ * (the "`ar correct` CorrectionRecord flow" this section originally named as
+ * a second, still-loose caller) was retired by that same gate fix — a
+ * correctness red-team reproduced the identical generic-key false-positive
+ * class described above (e.g. two topically-unrelated corrections that both
+ * say "deployed 1.2.3"/"deployed 5.6.7" with no explicit version marker) on
+ * `listCorrectionConflicts`/`ar corrections conflicts`, the NEW human-facing
+ * surface v4 W5 added on top of `compareForConflicts`. Rather than fork a
+ * THIRD copy of this regex into `supersession.ts` (or re-derive a laxer one
+ * there), that module now imports and calls this exact function — see
+ * `supersession.ts`'s own header for the full status/kv removal rationale
+ * (citing 79fc3e2, the same precedent this file's own W5a-salvage section
+ * above documents) and its test suite for the FP-pair proofs. This module
+ * has zero imports of its own (see this file's header, "WHY THIS IS ITS OWN
+ * MODULE"), so `supersession.ts` (tools-logic/) importing FROM it here
+ * creates no import cycle.
  *
  * THE TIGHTENING: require an explicit version marker (`v`, `@`, `ver`,
  * `version`, or `#`) IMMEDIATELY adjacent to the digits, AND reject a
@@ -272,11 +292,14 @@ function grammarConflict(a: ContradictionItem, b: ContradictionItem): boolean {
 }
 
 /**
- * High-precision version-token extractor — a NARROWER, module-local variant
- * of `helpers/conflict-scan.ts`'s `extractVersionTokens` (see this file's
+ * High-precision version-token extractor — a NARROWER variant of
+ * `helpers/conflict-scan.ts`'s `extractVersionTokens` (see this file's
  * header, "HIGH-PRECISION GRAMMAR", for the full false-positive analysis
  * this exists to close; that shared export is intentionally left UNCHANGED
- * for its other two callers).
+ * for its one remaining loose-grammar caller). EXPORTED (v4 pre-ship gate
+ * fix, 2026-09-08, see this file's header addendum) so
+ * `tools-logic/supersession.ts` can import this exact implementation
+ * instead of forking a third copy — not, itself, a change in behavior.
  *
  * Differences from the plain extractor:
  *   1. The version MARKER (`v`, `@`, `ver`, `version`, or `#`) is now
@@ -299,7 +322,7 @@ function grammarConflict(a: ContradictionItem, b: ContradictionItem): boolean {
  * `[a-z0-9_-]` by the caller (matching `grammarConflict`'s own usage
  * pattern, ported verbatim from the plain extractor's callers).
  */
-function extractHighPrecisionVersionTokens(text: string): Map<string, string> {
+export function extractHighPrecisionVersionTokens(text: string): Map<string, string> {
   const result = new Map<string, string>();
   const pattern = /(\w[\w.-]{0,30}?)\s*(?:v(?=\d)|@\s*|\bver\b\.?\s*|\bversion\b\.?\s*|#\s*)(\d+\.\d+\.\d+)(?!\.\d)/gi;
   let m: RegExpExecArray | null;

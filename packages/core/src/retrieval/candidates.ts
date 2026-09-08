@@ -565,18 +565,51 @@ function readPalaceRoomCandidates(project: string, opts: ReadTierCandidatesOpts)
  * off disk. `isRescueSourcedContent`/`extractFrontmatterSource` (the choke
  * every OTHER MemoryCandidate reader in this file calls) exist to quarantine
  * a rescue-tagged **file** an attacker planted in a directory this package
- * globs — corrections has no such glob-and-trust-whatever-is-there step at
- * all; the only ingestion path is an explicit, single-record tool call. A
- * hijacked working-memory-rescue session could in principle CALL `check()`
- * itself with attacker-controlled `human_correction` text, but that is a
- * fundamentally different threat (an attacker who can invoke MCP tools
- * directly, not a passive file-glob injection) than the CRITICAL-2
- * rescue-quarantine class this file's trust machinery defends against, and
- * is out of this wave's scope. `sourceTag` is `undefined` for the same
- * reason `untrusted` is unconditionally `false`: corrections.ts records are
- * JSON, not frontmatter-tagged markdown, so there is no `source:` field to
- * extract — the same "absent tag" case journal/palace already treat as
- * trusted (see `MemoryCandidate.sourceTag`'s own doc comment).
+ * globs — the WRITE path traced above has no such glob-and-trust-whatever-
+ * is-there step; it is an explicit, single-record tool call, and that half
+ * of the claim is traced-true. A hijacked working-memory-rescue session
+ * could in principle CALL `check()` itself with attacker-controlled
+ * `human_correction` text, but that is a fundamentally different threat (an
+ * attacker who can invoke MCP tools directly, not a passive file-glob
+ * injection) than the CRITICAL-2 rescue-quarantine class this file's trust
+ * machinery defends against, and is out of this wave's scope.
+ *
+ * v4 PRE-SHIP GATE FIX (2026-09-08, reports/2026-09-08-v4-gatefix-report.md,
+ * security must-fix #1 — honesty): the paragraph above previously overclaimed
+ * the READ side too — it said "corrections has no such glob-and-trust-
+ * whatever-is-there step AT ALL," which is false. This reader's
+ * `untrusted: false` is only as trustworthy as the primitive it calls:
+ * `readActiveCorrections()` -> `readCorrections()` (storage/corrections.ts)
+ * does `fs.readdirSync(correctionsDir)` and `JSON.parse`s EVERY `*.json`
+ * file it finds there, with NO signature, authorship, or write-path-
+ * provenance check at read time. A raw `.json` file an attacker (or a buggy
+ * script) plants directly in a project's `corrections/` directory —
+ * bypassing `writeCorrection()` entirely — is indistinguishable at read
+ * time from a genuine tool-written record, and surfaces here as
+ * `untrusted: false` exactly like one. This is a RESIDUAL, not a gap this
+ * reader introduces or widens: the same unauthenticated directory-scan
+ * primitive already backs `session-start.ts`'s P0-corrections surfacing
+ * (`readCorrections(slug)`, called on every session start) TODAY, so it was
+ * already live in production before `readCorrectionCandidates` existed —
+ * this reader inherits it rather than closing it, and this comment
+ * previously implied (wrongly) that it had been closed. Mirrors the
+ * honest-residual style of this wave's `supabase/recall-backend.ts` FIX 2
+ * comment ("VERIFIED, not applied") rather than asserting a guarantee this
+ * reader cannot make. FOLLOW-UP (out of this gate fix's scope, a future
+ * wave's work): closing this needs provenance STAMPING at write time (e.g.
+ * an HMAC/signature field `writeCorrection()` sets, checked here at read
+ * time, with an unsigned/failing record dropped or flagged) — a
+ * `CorrectionRecord` schema change plus a new verification step in this
+ * reader, not a one-line fix. See `retrieval-candidates.test.mjs`'s
+ * planted-file characterization test (v4 gate fix, 2026-09-08) for the
+ * machine-recorded proof of TODAY's behavior — a future provenance wave
+ * should intentionally FLIP that test, not find it silently stale.
+ *
+ * `sourceTag` is `undefined` for the same reason `untrusted` is
+ * unconditionally `false`: corrections.ts records are JSON, not
+ * frontmatter-tagged markdown, so there is no `source:` field to extract —
+ * the same "absent tag" case journal/palace already treat as trusted (see
+ * `MemoryCandidate.sourceTag`'s own doc comment).
  *
  * VISIBILITY — sources from `readActiveCorrections(project)`, NOT
  * `readCorrections(project)`: retracted/superseded records (`active:false`)

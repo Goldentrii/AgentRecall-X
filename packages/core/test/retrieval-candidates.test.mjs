@@ -403,6 +403,61 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       const candidates = core.readTierCandidates("corrections", untouchedProject);
       assert.deepEqual(candidates, []);
     });
+
+    // ── v4 PRE-SHIP GATE FIX (2026-09-08, security must-fix #2) ─────────────
+    // CHARACTERIZATION test, not a correctness guarantee: machine-records
+    // TODAY's documented residual (see readCorrectionCandidates's own doc
+    // comment, "v4 PRE-SHIP GATE FIX ... security must-fix #1") by actually
+    // planting a raw .json file into a project's corrections/ directory,
+    // bypassing writeCorrection() entirely — mirroring the palace-room
+    // tier's own "trust-tags a rescue-sourced room file" test above, which
+    // plants a raw .md file directly rather than going through whatever a
+    // room's normal write path is. Unlike that palace-room case (which HAS a
+    // trust check — isRescueSourcedContent — and correctly flags the planted
+    // file untrusted:true), this asserts the corrections tier's ACTUAL
+    // current behavior: the planted record surfaces exactly like a genuine
+    // one, untrusted:false, because readCorrections() has no equivalent
+    // check to run — it JSON.parses any *.json file it finds, full stop.
+    // This is the machine-recorded proof of a documented gap, NOT an
+    // assertion that this is correct — a future provenance-stamping wave
+    // should intentionally FLIP this test (assert the planted record is
+    // rejected or flagged untrusted) when it closes the gap, rather than
+    // discover it silently green for the wrong reason.
+    it("CHARACTERIZATION (documented residual): a raw .json planted directly into corrections/, bypassing writeCorrection(), surfaces exactly like a genuine record — untrusted:false", () => {
+      const plantedProject = "candidates-corrections-planted-demo";
+      const dir = path.join(TEST_ROOT, "projects", plantedProject, "corrections");
+      fs.mkdirSync(dir, { recursive: true });
+      // Deliberately NOT core.writeCorrection() — a hand-written record, the
+      // same shape a raw file-glob injection (attacker, or a buggy script)
+      // dropping a file straight into this directory would produce.
+      fs.writeFileSync(
+        path.join(dir, "2026-09-08--planted.json"),
+        JSON.stringify(
+          {
+            id: "2026-09-08-planted-cand",
+            date: "2026-09-08",
+            severity: "p0",
+            project: plantedProject,
+            rule: "PLANTED_CANDIDATES_UNIQUE_TERM never went through writeCorrection",
+            context: "PLANTED_CANDIDATES_UNIQUE_TERM never went through writeCorrection.",
+            tags: [],
+            active: true,
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const candidates = core.readTierCandidates("corrections", plantedProject);
+      const planted = candidates.find((c) => c.content.includes("PLANTED_CANDIDATES_UNIQUE_TERM"));
+      assert.ok(planted, "the planted record must be discoverable — readCorrections() has no gate that would exclude it");
+      assert.equal(
+        planted.untrusted,
+        false,
+        "DOCUMENTED RESIDUAL: a planted file bypassing writeCorrection() is indistinguishable from a genuine record and surfaces untrusted:false — see readCorrectionCandidates's own doc comment",
+      );
+    });
   });
 
   // ── W2 independent-review fix (T1, HIGH) — readTierCandidates() is safe by
