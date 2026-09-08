@@ -176,9 +176,41 @@ export function mapFtsRows(rows: Array<Record<string, unknown>>): RecallResultIt
  * that case rather than pass an empty string to `.textSearch(...)`, so an
  * edge-case query can never reach Postgres as a malformed/empty tsquery
  * input.
+ *
+ * v4 PRE-SHIP GATE FIX (2026-09-08, reports/2026-09-08-v4-gatefix-report.md
+ * FIX 2) — "zero tokens" above was not actually true for CJK PUNCTUATION:
+ * `HAN_RUN_RE` (`tokenize.ts`) only matches `\p{Script=Han}` — CJK
+ * punctuation (fullwidth/ideographic marks like "。！？，、" or the Chinese
+ * double-ellipsis "……") carries Unicode script `Common`, not `Han`, so it is
+ * NEVER captured by the Han-run path and falls through to the plain
+ * ASCII/whitespace path unmodified (this call passes no `asciiStripRegex`).
+ * With no internal whitespace, a punctuation run becomes ONE token whose
+ * length can exceed `minLength` (e.g. "。！？，、" is 5 characters) and
+ * survives as a garbage FTS clause; mixed with real Han content (e.g.
+ * "什么？？？" → Han run "什么" plus a leftover "？？？" ASCII-path token,
+ * itself long enough to survive `minLength`), it produces a spurious
+ * `& ???`-shaped AND-clause alongside the real query terms.
+ *
+ * FIX: after tokenizing, drop any token containing NO letter or digit
+ * (Unicode-aware — `\p{L}` covers Han ideographs the same as Latin letters,
+ * so no separate CJK case is needed). A pure-punctuation query now
+ * tokenizes to nothing (this leg's existing `tokens.length === 0` guard
+ * above returns `null`, so search() skips the FTS leg entirely, matching
+ * the ASCII punctuation-only case `recall-backend.test.mjs` already
+ * covered). A mixed query loses ONLY the punctuation-only token(s) — a real
+ * Han run like "什么" is unaffected (Han characters ARE `\p{L}`), so
+ * `"什么？？？"` now segments to just `"什么"`, no spurious `& ???` clause.
+ * Filtering post-tokenize (rather than passing an `asciiStripRegex` into
+ * `tokenizeWords`, the approach `palace/skills.ts` uses) keeps this
+ * call the only one that changes — `tokenizeWords` itself, and every OTHER
+ * call site's behavior, is untouched.
  */
+function hasWordChar(token: string): boolean {
+  return /[\p{L}\p{N}]/u.test(token);
+}
+
 export function buildFtsQuery(query: string): string | null {
-  const tokens = tokenizeWords(query);
+  const tokens = tokenizeWords(query).filter(hasWordChar);
   if (tokens.length === 0) return null;
   return tokens.join(" & ");
 }

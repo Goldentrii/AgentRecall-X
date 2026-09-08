@@ -752,3 +752,8 @@ export { applyScope } from "./retrieval/scope.js";
 // queryMemory() — see retrieval/contradiction.ts's own doc comment.
 export { detectContradictions } from "./retrieval/contradiction.js";
 export type { ContradictionItem, ContradictionResult } from "./retrieval/contradiction.js";
+// v4 pre-ship gate fix (2026-09-08) — the shared high-precision version-token
+// extractor `tools-logic/supersession.ts`'s `compareForConflicts` now imports
+// (see that file's own header). Exported here too, alongside its sibling
+// contradiction-stage exports above, so a test can exercise it directly.
+export { extractHighPrecisionVersionTokens } from "./retrieval/contradiction.js";

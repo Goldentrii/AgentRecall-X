@@ -172,3 +172,48 @@ describe("W4b FIX 1 — buildFtsQuery (CJK-aware Postgres FTS query segmentation
     assert.equal(buildFtsQuery("   "), null);
   });
 });
+
+// ── v4 PRE-SHIP GATE FIX (2026-09-08, reports/2026-09-08-v4-gatefix-report.md
+// FIX 2) — buildFtsQuery: CJK punctuation is Unicode script `Common`, not
+// `Han`, so HAN_RUN_RE (tokenize.ts) never captures it; with no
+// asciiStripRegex passed, a punctuation-only run falls through the plain
+// ASCII/whitespace path and — having no internal whitespace — survives as
+// ONE token that can exceed minLength (a real bug, distinct from the
+// ASCII "!! ?? --" case above, which already returns null for an unrelated
+// reason: each short ASCII token individually falls below minLength). See
+// buildFtsQuery's own doc comment for the full mechanism.
+describe("v4 gate fix FIX 2 — buildFtsQuery CJK punctuation guard", () => {
+  it("pure CJK/fullwidth punctuation ('。！？，、') tokenizes to nothing and returns null, not a 5-character garbage token", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(
+      buildFtsQuery("。！？，、"),
+      null,
+      "RED (pre-fix): this run has no internal whitespace and is 5 chars long, so it survived the old code's minLength filter as one opaque token",
+    );
+  });
+
+  it("Chinese double-ellipsis ('……') tokenizes to nothing and returns null", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery("……"), null);
+  });
+
+  it("mixed Han + trailing punctuation ('什么？？？') loses ONLY the punctuation token — no spurious '& ???' clause", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(
+      buildFtsQuery("什么？？？"),
+      "什么",
+      "RED (pre-fix): produced '什么 & ？？？' — a punctuation-only token surviving alongside the real Han segment as a spurious AND-clause",
+    );
+  });
+
+  it("regression guard: normal unspaced CJK ('分析报告') still segments into multiple &-joined lexemes — the punctuation filter does not touch real Han content", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery("分析报告"), "分析 & 报告");
+  });
+
+  it("regression guard: ASCII queries are byte-identical to pre-fix output — the punctuation filter is a no-op when every token already contains a letter/digit", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery("hello world testing"), "hello & world & testing");
+    assert.equal(buildFtsQuery("a to be"), null, "unaffected — already null via the shared minLength floor, not this fix");
+  });
+});

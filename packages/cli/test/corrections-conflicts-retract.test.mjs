@@ -36,8 +36,15 @@ const CLI = path.join(__dirname, "..", "dist", "index.js");
 const TEST_ROOT = path.join(os.tmpdir(), `ar-corr-conflicts-test-${Date.now()}`);
 const PROJECT = "corr-conflicts-test";
 
-const OLD_RULE = "Always set env = production for deploys";
-const NEW_RULE = "Always set env = staging for deploys";
+// v4 PRE-SHIP GATE FIX (2026-09-08): was a key-value fact
+// ("env = production" -> "env = staging"). tools-logic/supersession.ts's
+// compareForConflicts no longer detects key-value conflicts at all (see that
+// file's own header — status/kv detection removed; version-only, via the
+// shared high-precision extractor), so these fixtures were rewritten to an
+// explicit-marker VERSION fact, the one grammar that still fires. Matches
+// packages/core/test/corrections-supersede.test.mjs's own OLD/NEW rewrite.
+const OLD_RULE = "AgentRecall version 3.4.41 is deployed to prod";
+const NEW_RULE = "AgentRecall version 3.5.0 is deployed to prod";
 
 // Same fence-strip convention as cli.test.mjs / outcomes-audit.test.mjs.
 function parseFenced(stdout) {
@@ -132,8 +139,8 @@ describe("ar corrections conflicts / retract (v4 W5)", () => {
     assert.equal(c.existingRule, OLD_RULE);
     assert.equal(c.newerRule, NEW_RULE);
     assert.ok(
-      c.conflictingValues.some((v) => v.existing.includes("production") && v.incoming.includes("staging")),
-      `conflictingValues should carry the env conflict; got ${JSON.stringify(c.conflictingValues)}`,
+      c.conflictingValues.some((v) => v.existing.includes("3.4.41") && v.incoming.includes("3.5.0")),
+      `conflictingValues should carry the version conflict; got ${JSON.stringify(c.conflictingValues)}`,
     );
   });
 
@@ -169,7 +176,7 @@ describe("ar corrections conflicts / retract (v4 W5)", () => {
     // — otherwise its absence afterward would be vacuous.
     const core = await import("agent-recall-core");
     core.setRoot(TEST_ROOT);
-    const beforeQuery = await core.queryMemory({ query: "env production deploys", project: project3, tiers: ["corrections"] });
+    const beforeQuery = await core.queryMemory({ query: "AgentRecall version deployed prod", project: project3, tiers: ["corrections"] });
     assert.ok(
       beforeQuery.items.some((i) => i.id === "r-old"),
       `precondition: r-old must surface via queryMemory(tiers:['corrections']) before retraction; got ${JSON.stringify(beforeQuery.items)}`,
@@ -206,7 +213,7 @@ describe("ar corrections conflicts / retract (v4 W5)", () => {
     // Destination-proof: the retracted rule must NEVER surface via
     // queryMemory's corrections tier anymore (W3's retracted-never-surfaces
     // guarantee holds through this new write path too).
-    const afterQuery = await core.queryMemory({ query: "env production deploys", project: project3, tiers: ["corrections"] });
+    const afterQuery = await core.queryMemory({ query: "AgentRecall version deployed prod", project: project3, tiers: ["corrections"] });
     assert.ok(
       !afterQuery.items.some((i) => i.id === "r-old"),
       `retracted r-old must never surface via queryMemory(tiers:['corrections']) after retraction; got ${JSON.stringify(afterQuery.items)}`,

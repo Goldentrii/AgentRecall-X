@@ -1,15 +1,7 @@
 /**
  * supersession.ts — P2: detect when a NEW correction CONTRADICTS an existing
- * active one on a versioned / status / key-value fact, and (suggest-default)
- * supersede the stale one.
- *
- * Reuses AgentRecall's existing conflict-token grammar (helpers/conflict-scan.ts)
- * — pure, NO LLM, NO network, NO key. SCOPE LIMIT (honest): this catches
- * contradictions expressed as a version bump ("X is 1.2.3" → "X is 1.3.0"), a
- * status flip ("status: blocked" → "status: done"), or a key-value change
- * ("env = prod" → "env = staging"). It does NOT catch arbitrary semantic
- * substitutions ("use middleware.ts" → "use proxy.ts") with no key — that needs
- * the optional semantic/LLM path and is intentionally out of scope here.
+ * active one on a versioned fact, and (suggest-default) supersede the stale
+ * one.
  *
  * Mutation policy: SUGGEST-ONLY by default. Set AR_CONSOLIDATE_AUTO=1 (or pass
  * { auto: true }) to actually retract the contradicted records (with
@@ -22,12 +14,59 @@
  * and their suggest-only/auto contract are unchanged) and still NEVER
  * mutates — only `ar corrections retract`'s explicit, human-typed id/
  * --superseded-by pair reaches `retractCorrection`, never this listing path.
+ *
+ * v4 PRE-SHIP GATE FIX (2026-09-08, reports/2026-09-08-v4-gatefix-report.md,
+ * correctness red-team must-fix) — SCOPE LIMIT (honest, replaces the previous
+ * "version / status / key-value" claim below): `compareForConflicts` used to
+ * check version, status-category, and generic key-value tokens (all three
+ * of `helpers/conflict-scan.ts`'s extractors), inherited unmodified from
+ * before this file had any callers. That was harmless while true — this
+ * file's own header used to note it "had no callers" — but v4 W5 gave it
+ * its FIRST callers (`listCorrectionConflicts` / `ar corrections conflicts`,
+ * a human-facing suggestion surface), and a correctness red-team reproduced,
+ * on that new surface, the EXACT SAME two false-positive classes an
+ * independent review already proved and fixed on the sibling retrieval
+ * module `retrieval/contradiction.ts` (commit 79fc3e2, 2026-08-31, "W5a
+ * salvage" — see that file's own header for the full HIGH-1/HIGH-2
+ * analysis):
+ *   - status/kv cross-branch defeat: "status: blocked" vs "status: stuck"
+ *     (or the equivalent unstructured prose) — genuinely the SAME fact
+ *     (`extractStatusTokens`' own category map treats both as "blocked"),
+ *     but the separate kv branch's raw "status" KEY + differing raw VALUES
+ *     ("blocked" vs "stuck") flagged it as a conflict anyway, defeating the
+ *     category-equivalence safeguard the status branch was built to provide.
+ *   - generic-key false positive: any two topically-unrelated corrections
+ *     sharing a common one-word label ("priority", "status", "mode", "env",
+ *     or even an un-marked version-shaped number like "deployed 1.2.3" vs
+ *     "deployed 5.6.7") got flagged conflicting purely on key-string
+ *     equality, with zero topical protection.
+ *
+ * FIX (this file, mirroring 79fc3e2's fix on the sibling module exactly):
+ * status and key-value detection are REMOVED from `compareForConflicts`
+ * ENTIRELY (not gated/pre-filtered) — this file no longer imports
+ * `extractStatusTokens`/`extractKVTokens` at all. The remaining version
+ * check is upgraded from the plain, unmarked-optional `extractVersionTokens`
+ * to `retrieval/contradiction.ts`'s exported `extractHighPrecisionVersionTokens`
+ * — a MANDATORY-marker (`v`/`@`/`ver`/`version`/`#`) semver extractor (see
+ * that file's own "HIGH-PRECISION GRAMMAR" header section for the full
+ * false-positive analysis) IMPORTED, not forked a third time: this module
+ * has zero imports of its own, so importing FROM it here creates no cycle.
+ * A shared, high-precision, explicitly-marked version bump ("X version
+ * 1.2.3" → "X version 1.3.0") remains the ONLY thing this module detects as
+ * a supersession trigger. It does NOT catch a status flip, a generic
+ * key-value change, or arbitrary semantic substitutions ("use middleware.ts"
+ * → "use proxy.ts") — those need the optional semantic/LLM path and are
+ * intentionally out of scope here, same as the sibling module's own
+ * documented scope limit.
+ *
+ * `helpers/conflict-scan.ts`'s `extractStatusTokens`/`extractKVTokens`
+ * remain exported and UNCHANGED there for their one remaining consumer:
+ * `scanForConflicts` (the smart-remember pre-save warning flow) — a soft,
+ * non-mutating notice shown at save time, not a supersession/retraction
+ * surface, so its wider recall / lower precision tradeoff is a deliberately
+ * different, unaffected risk profile and out of this gate fix's scope.
  */
-import {
-  extractVersionTokens,
-  extractStatusTokens,
-  extractKVTokens,
-} from "../helpers/conflict-scan.js";
+import { extractHighPrecisionVersionTokens } from "../retrieval/contradiction.js";
 import {
   readActiveCorrections,
   retractCorrection,
@@ -52,9 +91,12 @@ export interface SupersessionReview {
 }
 
 /**
- * Pairwise contradiction check over version + status + key-value tokens. Mirrors
- * the comparison in conflict-scan.ts::scanForConflicts so both agree on what a
- * "conflict" is (no fork of the grammar).
+ * Pairwise contradiction check — version tokens ONLY (v4 pre-ship gate fix,
+ * see this file's header for why the status/kv branches were removed and
+ * why the version check itself was upgraded to the high-precision,
+ * mandatory-marker extractor). No fork of the grammar: this is the exact
+ * same `extractHighPrecisionVersionTokens` function `retrieval/
+ * contradiction.ts`'s own `grammarConflict` uses, imported directly.
  */
 function compareForConflicts(
   newText: string,
@@ -62,40 +104,11 @@ function compareForConflicts(
 ): Array<{ existing: string; incoming: string }> {
   const out: Array<{ existing: string; incoming: string }> = [];
 
-  // 1. Version token conflicts (same key, different semver).
-  const newV = extractVersionTokens(newText);
+  const newV = extractHighPrecisionVersionTokens(newText);
   if (newV.size > 0) {
-    const exV = extractVersionTokens(existingText);
+    const exV = extractHighPrecisionVersionTokens(existingText);
     for (const [k, nv] of newV) {
       const ev = exV.get(k);
-      if (ev && ev !== nv) out.push({ existing: `${k} is ${ev}`, incoming: `${k} is ${nv}` });
-    }
-  }
-
-  // 2. Status category conflicts (existing has a category the new text lacks).
-  const newS = extractStatusTokens(newText);
-  if (newS.size > 0) {
-    const exS = extractStatusTokens(existingText);
-    const newCats = new Set(newS.values());
-    const exCats = new Set(exS.values());
-    for (const cat of exCats) {
-      if (!newCats.has(cat)) {
-        const exWord = [...exS.entries()].find(([, c]) => c === cat)?.[0] ?? cat;
-        const newCat = [...newCats][0];
-        if (newCat) {
-          const newWord = [...newS.entries()].find(([, c]) => c === newCat)?.[0] ?? newCat;
-          out.push({ existing: `status is ${exWord}`, incoming: `status is ${newWord}` });
-        }
-      }
-    }
-  }
-
-  // 3. Key-value conflicts (same key, different value).
-  const newKV = extractKVTokens(newText);
-  if (newKV.size > 0) {
-    const exKV = extractKVTokens(existingText);
-    for (const [k, nv] of newKV) {
-      const ev = exKV.get(k);
       if (ev && ev !== nv) out.push({ existing: `${k} is ${ev}`, incoming: `${k} is ${nv}` });
     }
   }
