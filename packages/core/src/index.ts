@@ -267,8 +267,8 @@ export type {
 } from "./storage/corrections.js";
 
 // Tools-logic — P2 supersession (contradiction → supersede; suggest-default)
-export { detectCorrectionConflicts, reviewSupersessions } from "./tools-logic/supersession.js";
-export type { SupersessionMatch, SupersessionReview } from "./tools-logic/supersession.js";
+export { detectCorrectionConflicts, reviewSupersessions, listCorrectionConflicts } from "./tools-logic/supersession.js";
+export type { SupersessionMatch, SupersessionReview, CorrectionConflict } from "./tools-logic/supersession.js";
 
 // Storage — A/B injection experiment (C4)
 export {

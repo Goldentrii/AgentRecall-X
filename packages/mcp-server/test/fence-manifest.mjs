@@ -120,6 +120,8 @@ export const MANIFEST = [
   { channel: "cli_subaction", id: "awareness.rollup", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "corrections.rejected", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "corrections.export", status: "allowlisted", reason: "a separate, deliberate egress path already covered by scrubForExport's fail-CLOSED secret scan — different mechanism, different threat model (secret exfil, not agent-context injection)." },
+  { channel: "cli_subaction", id: "corrections.conflicts", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subaction", id: "corrections.retract", status: "allowlisted", reason: "write confirmation only — structural fields (id/active/superseded_by/retracted_at), no rule/context prose readback. Same class as outcomes.record/digest.store." },
   { channel: "cli_subaction", id: "knowledge.write", status: "allowlisted", reason: "write confirmation only. Parity: SDK knowledgeWrite / MCP (unregistered) knowledge_write." },
   { channel: "cli_subaction", id: "knowledge.read", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "digest.store", status: "allowlisted", reason: "echoes this-turn's own submission / success flag only. Parity: MCP `digest` store action." },

@@ -14,13 +14,28 @@
  * Mutation policy: SUGGEST-ONLY by default. Set AR_CONSOLIDATE_AUTO=1 (or pass
  * { auto: true }) to actually retract the contradicted records (with
  * superseded_by set to the new correction's id). The default mutates NOTHING.
+ *
+ * v4 W5 (design memo §Q7 Wave 5, 2026-09-08) — this file gained its first
+ * caller: `ar corrections conflicts` / `ar corrections retract` (cli/src/
+ * index.ts). `listCorrectionConflicts` below is the store-wide listing that
+ * surface needs; it is ADDITIVE (detectCorrectionConflicts/reviewSupersessions
+ * and their suggest-only/auto contract are unchanged) and still NEVER
+ * mutates — only `ar corrections retract`'s explicit, human-typed id/
+ * --superseded-by pair reaches `retractCorrection`, never this listing path.
  */
 import {
   extractVersionTokens,
   extractStatusTokens,
   extractKVTokens,
 } from "../helpers/conflict-scan.js";
-import { readActiveCorrections, retractCorrection } from "../storage/corrections.js";
+import {
+  readActiveCorrections,
+  retractCorrection,
+  decayClassOf,
+  effectiveConfidenceOf,
+} from "../storage/corrections.js";
+import type { CorrectionRecord } from "../storage/corrections.js";
+import type { Confidence, DecayClass } from "../types.js";
 
 export interface SupersessionMatch {
   existingId: string;
@@ -88,14 +103,27 @@ function compareForConflicts(
   return out;
 }
 
-/** Find active corrections that contradict the candidate on a version/status/kv fact. */
+/**
+ * Find active corrections that contradict the candidate on a version/status/kv
+ * fact.
+ *
+ * `preloaded` (v4 W5, additive/optional): an already-read `readActiveCorrections()`
+ * result, same contract as `readActiveCorrections`/`readP0Corrections`'s own
+ * `preloaded` param (corrections.ts, PERF 2026-07-27 doc) — a pure in-memory
+ * filter substitution, order/semantics byte-identical to omitting it. Exists so
+ * `listCorrectionConflicts` below can read the store ONCE and pass the same
+ * array into every pairwise call instead of re-scanning disk per candidate.
+ * Every existing caller (reviewSupersessions, the P2 supersession tests) omits
+ * it and is unaffected.
+ */
 export function detectCorrectionConflicts(
   project: string,
   candidate: { id?: string; rule: string; context?: string },
+  preloaded?: CorrectionRecord[],
 ): SupersessionMatch[] {
   const newText = `${candidate.rule} ${candidate.context ?? ""}`.trim();
   const matches: SupersessionMatch[] = [];
-  for (const existing of readActiveCorrections(project)) {
+  for (const existing of readActiveCorrections(project, preloaded)) {
     if (candidate.id && existing.id === candidate.id) continue;
     const existingText = `${existing.rule} ${existing.context ?? ""}`.trim();
     const conflicts = compareForConflicts(newText, existingText);
@@ -108,6 +136,91 @@ export function detectCorrectionConflicts(
     }
   }
   return matches;
+}
+
+/**
+ * A suspected supersession pair for the human-confirmed CLI listing
+ * (`ar corrections conflicts`) — `existing*` is the chronologically OLDER
+ * active correction, `newer*` the one that contradicts it. Confidence/decay
+ * annotations reuse the SAME W1/W2 read-time computations `rankCorrections`/
+ * `getCorrectionKPIs` already use (`effectiveConfidenceOf`/`decayClassOf`) —
+ * no new derivation logic, no re-blending into any score.
+ */
+export interface CorrectionConflict extends SupersessionMatch {
+  existingConfidence: Confidence;
+  existingDecayClass: DecayClass;
+  newerId: string;
+  newerRule: string;
+  newerConfidence: Confidence;
+  newerDecayClass: DecayClass;
+}
+
+/**
+ * List suspected supersession pairs across ALL active corrections in a
+ * project — the store-wide counterpart to `detectCorrectionConflicts`'s
+ * one-candidate-vs-store shape, built for `ar corrections conflicts`
+ * (v4 W5, design memo Wave 5). READ-ONLY: never calls `retractCorrection`,
+ * never mutates anything — same guarantee as `detectCorrectionConflicts`.
+ *
+ * Shape decision (design memo CHALLENGE): `detectCorrectionConflicts` takes
+ * ONE candidate vs. the store, not "all conflicts in the store" — there is no
+ * existing all-pairs primitive to call. The minimal correct shape is pairwise:
+ * for each active correction as candidate, call `detectCorrectionConflicts`
+ * against the SAME preloaded snapshot (one disk read total, via the
+ * `preloaded` param above) — O(n) calls, each doing O(n) in-memory
+ * comparisons, so O(n²) comparisons overall. Corrections stores are small
+ * (P0-cap ~5-9 active typical per corrections.ts's own cap discussion), so
+ * O(n²) comparisons here is on the order of tens of comparisons in the
+ * realistic case, not a performance concern. This does NOT scale to a
+ * cross-project or unbounded-n use case — it is scoped, by design, to one
+ * project's active-corrections population, matching `detectCorrectionConflicts`'s
+ * own existing scope.
+ *
+ * Dedup: a contradiction between two records can be found from EITHER side
+ * (candidate=A finds existingId=B, and candidate=B finds existingId=A) since
+ * `compareForConflicts` doesn't track direction. Corrections are sorted
+ * chronologically once (date, then id as a tiebreak) and only pairs where the
+ * matched `existingId` is STRICTLY OLDER than the current candidate are kept
+ * — this reports each unordered pair exactly once, with `existing` always the
+ * older rule and `newer` the one that contradicts it (matching the CLI's
+ * "existing rule vs. newer conflicting rule" framing).
+ */
+export function listCorrectionConflicts(
+  project: string,
+  preloaded?: CorrectionRecord[],
+): CorrectionConflict[] {
+  const actives = readActiveCorrections(project, preloaded);
+  const sorted = [...actives].sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
+  const indexOf = new Map(sorted.map((r, i) => [r.id, i]));
+  const seen = new Set<string>();
+  const out: CorrectionConflict[] = [];
+  for (const candidate of sorted) {
+    const candidateIdx = indexOf.get(candidate.id)!;
+    const matches = detectCorrectionConflicts(project, candidate, sorted);
+    for (const m of matches) {
+      const existingIdx = indexOf.get(m.existingId);
+      // Only keep the direction where the matched partner is strictly OLDER
+      // than `candidate` — the newer side reports the pair exactly once.
+      if (existingIdx === undefined || existingIdx >= candidateIdx) continue;
+      const key = `${m.existingId}::${candidate.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const existingRecord = sorted[existingIdx];
+      out.push({
+        ...m,
+        existingConfidence: effectiveConfidenceOf(existingRecord),
+        existingDecayClass: decayClassOf(existingRecord),
+        newerId: candidate.id,
+        newerRule: candidate.rule,
+        newerConfidence: effectiveConfidenceOf(candidate),
+        newerDecayClass: decayClassOf(candidate),
+      });
+    }
+  }
+  return out;
 }
 
 /**
