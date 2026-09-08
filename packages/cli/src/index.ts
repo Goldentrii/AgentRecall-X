@@ -137,6 +137,11 @@ DIAGNOSTICS:
   ar corrections export [--all-projects] [--include-retracted] [--since YYYY-MM-DD] [--to-backend]
       Vendor-neutral, fail-closed-scrubbed export. Without --to-backend: JSON to stdout (pipe to an adapter).
       With --to-backend: push to the MemoryBackend selected by AR_MEMORY_BACKEND env var (e.g. local-archive).
+  ar corrections conflicts [--project <slug>]  List suspected supersession pairs (existing rule vs. newer
+      conflicting rule) across active corrections. READ-ONLY — suggest-only, never mutates or auto-retracts.
+  ar corrections retract <id> --superseded-by <newer-id> [--project <slug>]
+      Human-confirmed, single-record retract (active:false, superseded_by set). Both <id> and
+      --superseded-by must be explicit — no --all/--yes, no bulk mode, never auto-retracts.
   ar mirror [--json]   The Mirror: first-person, citation-backed self-model from your real corrections/insights (personal-tier, local-only; omit --project for the cross-project mirror)
   ar doctor [--json]   READ-ONLY store integrity check: index drift, stale locks, stalled consolidation seam
   ar repair [--apply] [--json]  Remediate doctor findings (DRY-RUN unless --apply): reindex drift, remove dead locks, login-free drain
@@ -760,8 +765,72 @@ async function main(): Promise<void> {
           }
           break;
         }
+        case "conflicts": {
+          // v4 W5 (design memo Wave 5, 2026-09-08) — human-confirmed supersession
+          // surface for the already-built, previously zero-caller supersession.ts
+          // conflict-detector. READ-ONLY: lists suspected pairs, NEVER mutates —
+          // `ar corrections retract` (below) is the only path that actually
+          // retracts anything, and it requires an explicit, human-typed id.
+          const slug = await core.resolveProject(project);
+          const conflicts = core.listCorrectionConflicts(slug);
+          // P1 fence (class-sweep, TOW2-388 pattern): existingRule/newerRule/
+          // conflictingValues are memory-derived correction prose — same
+          // injection-vector class as `corrections rejected`'s raw listing.
+          outputFenced(conflicts);
+          break;
+        }
+        case "retract": {
+          // Human-confirmed, single-record retract. NO bulk/auto path exists
+          // here on purpose (ASSERT_INVARIANT: never auto-retract) — both the
+          // id AND --superseded-by must be explicit, human-typed arguments;
+          // there is no --all/--yes flag and opts.auto is never threaded from
+          // this surface. `id` must be positional, immediately after "retract".
+          const id = rest[1];
+          const supersededBy = getFlag("--superseded-by", rest);
+          if (!id || id.startsWith("--")) {
+            process.stderr.write(
+              `Usage: ar corrections retract <id> --superseded-by <newer-id>\n` +
+              `Both <id> and --superseded-by are required and must be explicit — there is no bulk/auto retraction.\n`,
+            );
+            process.exitCode = 1;
+            break;
+          }
+          if (!supersededBy) {
+            process.stderr.write(
+              `ar corrections retract requires --superseded-by <newer-id> — an explicit, human-typed pointer to the ` +
+              `newer correction that replaces "${id}". This surface never auto-retracts.\n`,
+            );
+            process.exitCode = 1;
+            break;
+          }
+          const slug = await core.resolveProject(project);
+          const result = core.retractCorrection(
+            slug,
+            id,
+            `human-confirmed retract via \`ar corrections retract\` (superseded by ${supersededBy})`,
+            supersededBy,
+          );
+          if (!result.success) {
+            output(result);
+            process.exitCode = 1;
+            break;
+          }
+          // Report exactly what changed. Structural fields only (id/active/
+          // superseded_by/retracted_at) — no rule/context prose readback, so
+          // this stays an unfenced write-confirmation, same class as
+          // `outcomes.record`/`digest.store`.
+          const updated = core.readCorrections(slug).find((r) => r.id === id);
+          output({
+            success: true,
+            id: result.id,
+            active: updated?.active ?? false,
+            superseded_by: updated?.superseded_by,
+            retracted_at: updated?.retracted_at,
+          });
+          break;
+        }
         default:
-          process.stderr.write(`Unknown corrections subcommand: ${sub ?? "(none)"}\nUsage:\n  ar corrections rejected [--stats] [--json]\n  ar corrections export [--all-projects] [--include-retracted] [--since YYYY-MM-DD] [--to-backend]\n`);
+          process.stderr.write(`Unknown corrections subcommand: ${sub ?? "(none)"}\nUsage:\n  ar corrections rejected [--stats] [--json]\n  ar corrections export [--all-projects] [--include-retracted] [--since YYYY-MM-DD] [--to-backend]\n  ar corrections conflicts [--project <slug>]\n  ar corrections retract <id> --superseded-by <newer-id> [--project <slug>]\n`);
           process.exitCode = 1;
       }
       break;
