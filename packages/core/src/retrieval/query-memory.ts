@@ -239,7 +239,7 @@ import { parseSinceDate } from "../tools-logic/journal-search.js";
 import { CONFIDENCE_FLOOR } from "../tools-logic/confidence.js";
 import { scrubForCloud, fenceMemory } from "../storage/content-guard.js";
 import { isRescueSourcedContent, extractFrontmatterSource } from "../helpers/journal-filter.js";
-import { getLegacyRoot } from "../types.js";
+import { getLegacyRoot, type Confidence, type DecayClass } from "../types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -247,8 +247,22 @@ import * as path from "node:path";
 // Types
 // ---------------------------------------------------------------------------
 
-/** The three tiers that compete inside the shared RRF fusion this wave. */
-export type QueryMemoryTier = "journal" | "palace" | "insight";
+/**
+ * The tiers that compete inside the shared RRF fusion.
+ *
+ * v4 W3 (2026-09-08, reports/2026-09-08-v4-w3-corrections-tier-report.md,
+ * design authority reports/2026-09-08-v4-claims-design-memo.md Wave 3):
+ * `"corrections"` added — a real, RRF-fusing tier, matching every prior
+ * tier's own shape (a `TIER_SCORERS` row below), NOT a `queryMemory()`-
+ * internal parallel block. This follows the memo's own literal instruction
+ * ("a real tier ... matching the existing journal/palace-room reader
+ * shape") — no hard conflict was found between that instruction and how
+ * `insight` (the closest precedent) already competes in the SAME RANK/FUSE
+ * stage as journal/palace (see `queryMemory()`'s `for (const tier of
+ * input.tiers) { ... applyRRF(items, rrfMap); }` loop below — every
+ * requested tier, `insight` included, is fused identically).
+ */
+export type QueryMemoryTier = "journal" | "palace" | "insight" | "corrections";
 
 /** Every source label a `QueryMemoryItem` can carry, including the
  *  non-competing archive fallback (see `queryArchiveFallback`). */
@@ -346,6 +360,31 @@ export interface QueryMemoryItem {
    * avoid, not merely to relocate).
    */
   conflictsWith?: string[];
+  /**
+   * corrections tier only (v4 W3, 2026-09-08) — the assertion-time belief
+   * confidence (`CorrectionRecord.confidence`, always resolved by
+   * `applyCorrectionDefaults` by the time it reaches here, including for
+   * legacy pre-v4 records — see `readCorrectionCandidates`'s own doc
+   * comment). ANNOTATION ONLY, per the design memo's own repeated finding
+   * (rejected twice independently — the July 2 proposal's Option 2, and
+   * W5fix's removal of `CONTRADICTION_PENALTY`, both for the identical
+   * reason: blending confidence/staleness into a ranking score hides WHY an
+   * item dropped and risks silent rank inversion). `scoreCorrectionsTier`
+   * below NEVER reads this field when computing `internalScore` — verify
+   * that invariant holds before extending this tier's scoring formula.
+   * Absent on every non-corrections item.
+   */
+  confidence?: Confidence;
+  /**
+   * corrections tier only (v4 W3, 2026-09-08) — the computed decay class
+   * (`decayClassOf(record)`, corrections.ts) — `"slow"` for every
+   * corrections item this wave (corrections carry no `MemoryCategory`, so
+   * the class default is always `"slow"` unless the rare
+   * `decay_class_override` escape hatch is set — see `decayClassOf`'s own
+   * doc comment). ANNOTATION ONLY, same invariant as `confidence` above —
+   * never fed into `internalScore`. Absent on every non-corrections item.
+   */
+  decayClass?: DecayClass;
 }
 
 export interface QueryMemoryInput {
@@ -371,6 +410,9 @@ export interface QueryMemoryInput {
   journal?: { includeRollupArchive?: boolean; perTierLimit?: number };
   palace?: { room?: string; perTierLimit?: number };
   insight?: { perTierLimit?: number; includeAwareness?: boolean };
+  /** corrections tier only (v4 W3, 2026-09-08) — matches every sibling
+   *  tier's own per-tier options shape. */
+  corrections?: { perTierLimit?: number };
 }
 
 export interface QueryMemoryResult {
@@ -543,6 +585,25 @@ function lineMatchesQuery(line: string, keywords: string[]): boolean {
 // plan's recency-ledger / working-memory-live / session-card rows) joins
 // this set WHEN its scorer is built to populate `projects`/an equivalent
 // attribution field on its QueryMemoryItems — not before.
+//
+// v4 W3 CORRECTION (2026-09-08): the design memo's own Wave 3 table cell
+// reads "wire into SCOPE_ATTRIBUTED_TIERS (corrections are project-scoped)"
+// but "project-scoped" there means the OPPOSITE of what membership in this
+// Set requires. `readCorrectionCandidates` (retrieval/candidates.ts) calls
+// `readActiveCorrections(project)`, which only ever reads THAT project's
+// own `corrections/` directory (`projectSubPath(project, "corrections")`)
+// -- exactly the same "inherently per-slug, nothing cross-project to
+// filter" property this comment already documents for journal/palace-room
+// above, and `CorrectionRecord` carries no `projects: string[]`
+// attribution field at all. Per this Set's own stated purpose ("only these
+// tiers' items carry a genuine, POPULATED `projects` attribution"),
+// corrections must be EXCLUDED, same as journal/palace-room -- adding it
+// would wrongly exclude every corrections item under scope:"project" (an
+// absent `projects` field reads as "unattributed", not "trivially this
+// project's own"). This resolves the wave brief's own CHALLENGE (c)
+// ("scope: corrections are per-project on disk -> scope stage no-op (like
+// journal/palace) -- confirm") in favor of that literal confirmation, over
+// the memo's one-line parenthetical.
 const SCOPE_ATTRIBUTED_TIERS = new Set<QueryMemoryTier>(["insight"]);
 
 // ---------------------------------------------------------------------------
@@ -563,6 +624,17 @@ const SCOPE_ATTRIBUTED_TIERS = new Set<QueryMemoryTier>(["insight"]);
 // branch inside `applyContradictionStage`) keeps that decision explicit and
 // enumerable rather than an implicit side effect of insight items lacking a
 // `date` field.
+// v4 W3 (2026-09-08): "corrections" deliberately NOT added here (wave
+// brief CHALLENGE (d), pre-resolved, not re-litigated) -- corrections
+// already have their OWN, more precise supersession machinery
+// (`CorrectionRecord.active`/`superseded_by`, `retractCorrection()`), an
+// explicit human/agent action rather than a grammar guess. Running this
+// stage's version-token comparator over corrections text would be a
+// strictly WORSE signal for a tier that already has ground truth for "is
+// this rule current" -- and `readCorrectionCandidates` never surfaces a
+// retracted record in the first place (see that reader's own doc comment),
+// so there is nothing stale for this stage to find within the corrections
+// tier's own candidate set even in principle.
 const CONTRADICTION_TIERS = new Set<QueryMemoryTier>(["journal", "palace"]);
 
 /**
@@ -1073,6 +1145,99 @@ function scoreInsightTier(
   return items;
 }
 
+/**
+ * Corrections tier (v4 W3, 2026-09-08, reports/2026-09-08-v4-w3-corrections-
+ * tier-report.md; design authority reports/2026-09-08-v4-claims-design-
+ * memo.md Wave 3). Follows the SAME FETCH -> TRUST-FILTER -> TOKENIZE+SCORE
+ * shape every other MemoryCandidate-backed tier above already follows:
+ * `readCorrectionCandidates` (retrieval/candidates.ts) is the FETCH stage;
+ * `filterTrusted` is the mandatory TRUST-FILTER stage, run UNCONDITIONALLY
+ * here even though every corrections candidate is `untrusted: false` by
+ * construction (see that reader's own doc comment) — this tier is not
+ * special-cased out of the mandatory stage just because it happens to be a
+ * no-op today; matching every sibling tier's own call shape keeps that
+ * true structurally, not by omission.
+ *
+ * SCORING: matches on rule+context text via the shared tokenizer
+ * (`keywordExactness` — the SAME helper `scorePalaceTier`/`scoreInsightTier`
+ * already use above) and NOTHING else. `confidence`/`decayClass` are
+ * ANNOTATION ONLY on the returned item — per the design memo's own repeated
+ * finding, rejected TWICE independently (the July 2 proposal's Option 2,
+ * and W5fix's removal of `CONTRADICTION_PENALTY`, both for the identical
+ * stated reason: blending a confidence/staleness signal into a ranking
+ * score hides WHY an item dropped and risks a silent rank inversion) —
+ * `internalScore` below reads ONLY `exactness`. P0-ness reuses the
+ * EXISTING `severity` field (already populated by `scoreInsightTier` above)
+ * rather than inventing a parallel signal.
+ *
+ * `id` is the correction's OWN real, stable `CorrectionRecord.id`
+ * (`meta.correction_id`) — deliberately NOT a `stableId()` hash like every
+ * other tier mints. A correction already has a durable, globally-unique
+ * identity that corrections.ts's own API (`retractCorrection`/
+ * `recordOutcome`) keys off directly; reusing it here means a caller acting
+ * on a surfaced correction never needs a secondary id lookup.
+ */
+function scoreCorrectionsTier(
+  project: string,
+  query: string,
+  opts: { perTierLimit?: number },
+): QueryMemoryItem[] {
+  const candidates = filterTrusted(
+    readTierCandidates("corrections", project, { includeUntrusted: true }),
+  );
+  const keywords = tokenizeWords(query);
+  if (keywords.length === 0) return [];
+  const limit = opts.perTierLimit ?? 25;
+
+  const items: QueryMemoryItem[] = [];
+  for (const candidate of candidates) {
+    const meta = candidate.meta ?? {};
+    const context = meta.context ?? "";
+    const matchText = context ? `${candidate.content}\n${context}` : candidate.content;
+    const matchTextLower = matchText.toLowerCase();
+    if (!keywords.some((kw) => matchTextLower.includes(kw))) continue;
+
+    const exactness = keywordExactness(query, matchText);
+    const excerpt = matchText.length > 300 ? matchText.slice(0, 300) + "..." : matchText;
+    const title = candidate.content.length > 300 ? candidate.content.slice(0, 300) + "..." : candidate.content;
+    // Fallback (candidate.file sans ".json") only covers the defensive case
+    // where a future caller constructs a MemoryCandidate without `meta` —
+    // every real readCorrectionCandidates() candidate always sets
+    // meta.correction_id.
+    //
+    // ID-SPACE DISJOINTNESS (code-review LOW-1, 2026-09-08): `applyRRF`/
+    // `fuseCanonical` below key their cross-tier accumulation Maps on
+    // `item.id` directly — a collision would silently MERGE two unrelated
+    // items from different tiers (one vanishes from `items`, its RRF score
+    // folds into whichever survives), with no error. This is safe today
+    // because the two id shapes are DISJOINT BY CONSTRUCTION: a correction's
+    // own `record.id` always contains a `YYYY-MM-DD-` prefix (a literal
+    // `-`), while `stableId()` — the hash every OTHER tier mints — is a
+    // hyphen-free base36 string (`Math.abs(hash).toString(36)`, see
+    // `stableId`'s own implementation above). If a future correction ID
+    // grammar ever drops the date prefix (or a future stableId() variant
+    // ever introduces a `-`), this disjointness is no longer guaranteed —
+    // this comment exists so that change gets evaluated against this
+    // invariant, not discovered later as a silent cross-tier dedup bug.
+    const correctionId = meta.correction_id || candidate.file.replace(/\.json$/, "");
+
+    items.push({
+      id: correctionId,
+      source: "corrections",
+      title,
+      excerpt,
+      score: exactness,
+      date: candidate.date || undefined,
+      severity: meta.severity,
+      confidence: (meta.confidence as Confidence | undefined) || undefined,
+      decayClass: (meta.decay_class as DecayClass | undefined) || undefined,
+    });
+  }
+
+  items.sort((a, b) => b.score - a.score);
+  return items.slice(0, limit);
+}
+
 // ---------------------------------------------------------------------------
 // RANK/FUSE stage — two-stage RRF + canonical fusion + hot-window recency
 // boost. Ported verbatim from smart-recall.ts's applyRRF/fuseCanonical
@@ -1149,6 +1314,14 @@ const TIER_SCORERS: {
     scoreInsightTier(input.project, input.query, {
       // Matches smart-recall.ts's original `recallInsight({..., limit: limit*2})`.
       perTierLimit: input.insight?.perTierLimit ?? (input.limit ?? 10) * 2,
+    }),
+  // v4 W3 (2026-09-08) — no pre-existing surface's `perTierLimit` convention
+  // to match (corrections is new, unlike journal/palace/insight which each
+  // preserve a pre-pipeline caller's own limit multiplier); 25 mirrors
+  // journal's own default perTierLimit.
+  corrections: async (input) =>
+    scoreCorrectionsTier(input.project, input.query, {
+      perTierLimit: input.corrections?.perTierLimit ?? 25,
     }),
 };
 

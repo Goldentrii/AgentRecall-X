@@ -58,17 +58,27 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { journalDir, archiveRawDir, palaceDir } from "../storage/paths.js";
+import { journalDir, archiveRawDir, palaceDir, projectSubPath } from "../storage/paths.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { isRescueSourcedContent, extractFrontmatterSource } from "../helpers/journal-filter.js";
 import { listRooms } from "../palace/rooms.js";
+import { readActiveCorrections, decayClassOf } from "../storage/corrections.js";
 
 /**
  * Enumerated storage tiers `readTierCandidates` knows how to read. A future
  * tier is a new value here + a new `TIER_READERS` row — never a new
  * per-tier function (class-not-instance; see this file's own header).
+ *
+ * v4 W3 (2026-09-08, reports/2026-09-08-v4-w3-corrections-tier-report.md,
+ * design authority reports/2026-09-08-v4-claims-design-memo.md Wave 3):
+ * `"corrections"` added — corrections.ts's `active`/`superseded_by`
+ * behavioral-rule store, now a real `readTierCandidates` row matching the
+ * existing `readJournalCandidates`/`readPalaceRoomCandidates` shape. See
+ * `readCorrectionCandidates` below for the full FETCH-stage design (why
+ * `untrusted` is `false` by construction, why `sourcePath`/`file` are
+ * directory-level rather than per-record).
  */
-export type MemoryTier = "journal" | "palace-room";
+export type MemoryTier = "journal" | "palace-room" | "corrections";
 
 /**
  * Distinguishes WHICH on-disk source produced a candidate, even within the
@@ -83,7 +93,8 @@ export type CandidateSourceKind =
   | "journal-live"
   | "journal-rollup-archive"
   | "journal-archive-raw"
-  | "palace-room";
+  | "palace-room"
+  | "corrections";
 
 /**
  * The typed unit every future retrieval surface will consume. Trust and
@@ -118,6 +129,22 @@ export interface MemoryCandidate {
    *   the date the file was LAST MODIFIED, which can drift forward every
    *   time an entry is added to an existing room file — the opposite
    *   stability property from the journal tier's fixed filename date.
+   * - `tier: "corrections"` (v4 W3, 2026-09-08) — `CorrectionRecord.date`,
+   *   the record's ORIGINAL authored date (`YYYY-MM-DD`, set once at
+   *   `writeCorrection()` time). Same STABILITY property as the journal
+   *   tier's filename date, via a different mechanism: corrections.ts's
+   *   on-write consolidation (`normalizeRule` exact-match merge) explicitly
+   *   preserves the matched existing record's `id`/`date` when folding a
+   *   re-stated correction in ("the matched record keeps its id/date
+   *   (stable document_id)" — corrections.ts's own consolidation comment),
+   *   and `retractCorrection`/`recordOutcome` rewrite the record in place
+   *   without touching `date` either. Deliberately NOT `last_retrieved` or
+   *   `last_outcome` (both exist on `CorrectionRecord` and both drift on
+   *   every retrieval/outcome event) — those are activity timestamps, not
+   *   an authored-date signal, and using either would make a frequently-
+   *   surfaced OLD rule look artificially recent to any future date-based
+   *   ranking/truncation, the opposite of what a "when was this asserted"
+   *   field should mean.
    *
    * Empty string when undeterminable for either tier.
    */
@@ -521,6 +548,126 @@ function readPalaceRoomCandidates(project: string, opts: ReadTierCandidatesOpts)
 }
 
 /**
+ * corrections tier (v4 W3, 2026-09-08, reports/2026-09-08-v4-w3-corrections-
+ * tier-report.md — design authority reports/2026-09-08-v4-claims-design-
+ * memo.md Wave 3). Consumes storage/corrections.ts's EXISTING exports only
+ * (`readActiveCorrections`, `decayClassOf`) — this reader never touches
+ * corrections.ts's private `correctionsDir`/`slugify`/directory-scan
+ * internals, matching the FILE OWNERSHIP boundary this wave was built under.
+ *
+ * TRUST (`untrusted`) — `false` BY CONSTRUCTION, same documented decision as
+ * query-memory.ts's insight tier ("every insight item is `untrusted: false`
+ * by construction... not an oversight"), reached here by TRACING THE WRITE
+ * PATH rather than assumed: `writeCorrection()` (corrections.ts) takes a
+ * caller-supplied `CorrectionRecord` directly — `rule`/`context` are MCP
+ * tool-call arguments (`check()`'s `human_correction` field, or the `ar
+ * correct` CLI's own flags), never raw journal/palace file content scanned
+ * off disk. `isRescueSourcedContent`/`extractFrontmatterSource` (the choke
+ * every OTHER MemoryCandidate reader in this file calls) exist to quarantine
+ * a rescue-tagged **file** an attacker planted in a directory this package
+ * globs — corrections has no such glob-and-trust-whatever-is-there step at
+ * all; the only ingestion path is an explicit, single-record tool call. A
+ * hijacked working-memory-rescue session could in principle CALL `check()`
+ * itself with attacker-controlled `human_correction` text, but that is a
+ * fundamentally different threat (an attacker who can invoke MCP tools
+ * directly, not a passive file-glob injection) than the CRITICAL-2
+ * rescue-quarantine class this file's trust machinery defends against, and
+ * is out of this wave's scope. `sourceTag` is `undefined` for the same
+ * reason `untrusted` is unconditionally `false`: corrections.ts records are
+ * JSON, not frontmatter-tagged markdown, so there is no `source:` field to
+ * extract — the same "absent tag" case journal/palace already treat as
+ * trusted (see `MemoryCandidate.sourceTag`'s own doc comment).
+ *
+ * VISIBILITY — sources from `readActiveCorrections(project)`, NOT
+ * `readCorrections(project)`: retracted/superseded records (`active:false`)
+ * are filtered at the FETCH stage, before a `MemoryCandidate` for them ever
+ * exists — the strongest place to enforce "a retracted correction never
+ * surfaces" (destination-proof, not a downstream filter a future caller
+ * could accidentally bypass). `readActiveCorrections` already runs every
+ * record through `applyCorrectionDefaults` (via `readCorrections`), so
+ * `confidence`/`decay_class_override`/`severity`/`authoritative` are always
+ * resolved here, including for pre-v4 legacy records with none of those
+ * fields on disk.
+ *
+ * PROVENANCE (`sourcePath`/`file`) — DIRECTORY-level, not per-record.
+ * `readActiveCorrections`/`readCorrections` never expose which on-disk
+ * `*.json` file backs a given record (only `writeCorrection`'s own PRIVATE
+ * `findExistingCorrectionFile`/`slugify` can resolve that, and neither is
+ * exported). Re-implementing a second, independently-maintained
+ * corrections-directory scan here — just to recover a filename — would be
+ * exactly the "duplicate scanner deciding the same thing twice" anti-pattern
+ * this whole module exists to eliminate (see this file's own header), for a
+ * field no test or caller in this wave needs to be file-accurate. So:
+ * `sourcePath` is the corrections DIRECTORY itself (genuinely where
+ * `readActiveCorrections` read from — true, just not file-granular), and
+ * `file` is an id-derived label (`${record.id}.json`), NOT a verified
+ * on-disk filename — a caller must never open `candidate.sourcePath` as a
+ * single-record file. The record's real, stable,
+ * backlink-safe identity is `meta.correction_id` (`=== record.id`) — the
+ * SAME id corrections.ts's own `retractCorrection`/`recordOutcome` API keys
+ * off — and `query-memory.ts`'s corrections scorer reuses it AS the
+ * returned `QueryMemoryItem.id` (see that file's `scoreCorrectionsTier`),
+ * not a `stableId()` hash like every other tier mints.
+ *
+ * CONTENT / META — `content` is the rule text (`CorrectionRecord.rule`) —
+ * short by construction (the type's own doc comment: "the rule in one
+ * sentence"). The fuller `context` text, plus every other read-time-
+ * derivable annotation this wave's GOAL asks for (confidence, decay_class,
+ * P0-ness, the record's own id, and the raw authoritative flag for a
+ * possible future wave), lives in `meta` — the SAME forward-compat
+ * `Record<string,string>` bag `MemoryCandidate.meta`'s own doc comment
+ * describes as "somewhere [a field] can land without re-opening this type."
+ * `decayClassOf(record)` is called HERE, at fetch time, never persisted —
+ * exactly what that function's own doc comment requires ("call this at
+ * read/response time, not persist its return value").
+ */
+function readCorrectionCandidates(project: string, _opts: ReadTierCandidatesOpts): MemoryCandidate[] {
+  // No option is corrections-specific this wave (no room-restriction, no
+  // rollup/raw-archive variant axis exists for this tier) — `_opts` is
+  // accepted only to match every sibling reader's `TIER_READERS` signature.
+  const dir = projectSubPath(project, "corrections");
+  const records = readActiveCorrections(project);
+
+  const out: MemoryCandidate[] = records.map((record) => {
+    const rule = (record.rule ?? "").trim();
+    const context = (record.context ?? "").trim();
+    return {
+      content: rule || context || "(no rule text)",
+      tier: "corrections",
+      project,
+      date: record.date ?? "",
+      sourcePath: dir,
+      file: `${record.id}.json`,
+      sourceKind: "corrections",
+      untrusted: false,
+      sourceTag: undefined,
+      meta: {
+        correction_id: record.id,
+        context,
+        // Already resolved by applyCorrectionDefaults inside
+        // readCorrections() — the `??` fallback is defensive-only (every
+        // record reaching this point has gone through that defaulting), not
+        // a second, independent default definition.
+        confidence: record.confidence ?? "medium",
+        decay_class: decayClassOf(record),
+        severity: record.severity ?? "p1",
+        authoritative: String(record.authoritative ?? false),
+      },
+    };
+  });
+
+  // Sort-before-truncate (matches this file's own rollup-archive half and
+  // query-memory.ts's readLegacyJournalCandidates precedent): readCorrections()
+  // sorts by FILENAME descending, which tracks `date` closely but is not
+  // identical (two same-day corrections' relative filename order depends on
+  // slug text, not assertion time) — re-sort explicitly by the
+  // MemoryCandidate's own `date` field so any future perTierLimit
+  // truncation has a documented, date-true ordering to rely on.
+  out.sort((a, b) => b.date.localeCompare(a.date));
+  return out;
+}
+
+/**
  * Class-not-instance table: one row per enumerated tier. Extending coverage
  * (a future `"palace-pipeline"` tier, see this file's header CHALLENGE note)
  * is a new row here, never a new branch in `readTierCandidates` itself.
@@ -530,6 +677,7 @@ const TIER_READERS: {
 } = {
   journal: readJournalCandidates,
   "palace-room": readPalaceRoomCandidates,
+  corrections: readCorrectionCandidates,
 };
 
 /**

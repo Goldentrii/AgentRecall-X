@@ -1059,4 +1059,237 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       assert.equal(hit, undefined, `smart_recall must never surface a legacy-root rescue-tagged candidate; got ${JSON.stringify(smart.results)}`);
     });
   });
+
+  // ── PART G — v4 W3 (2026-09-08): corrections as a real queryMemory() tier ──
+  // reports/2026-09-08-v4-w3-corrections-tier-report.md, design authority
+  // reports/2026-09-08-v4-claims-design-memo.md Wave 3.
+  describe("PART G — corrections as a real queryMemory() tier (v4 W3)", () => {
+    // Mirrors journalDir(PROJECT)'s own resolution (projectSubPath(project,
+    // "journal")) — corrections.ts's private correctionsDir(project) is
+    // projectSubPath(project, "corrections"), the SAME base resolution, so
+    // journalDir's dirname + "corrections" reaches the identical directory
+    // without this test file re-implementing sanitizeProject/resolveProjectDirName.
+    function correctionsDirFor(project) {
+      return path.join(path.dirname(core.journalDir(project)), "corrections");
+    }
+
+    it("G1: tiers:['corrections'] returns a matching correction annotated with confidence/decayClass/severity(P0-ness)", async () => {
+      const PROJECT = "qmp-corrections-basic-demo";
+      const TERM = "QMP_CORRECTIONS_BASIC_UNIQUE_TERM";
+      const write = core.writeCorrection(PROJECT, {
+        id: "2026-09-01-g1-basic",
+        date: "2026-09-01",
+        severity: "p0",
+        project: PROJECT,
+        rule: `Never ${TERM} without explicit approval`,
+        context: `Never ${TERM} without explicit approval — this is a hard rule.`,
+        tags: ["g1"],
+        confidence: "high",
+      });
+      assert.ok(write.written, `precondition: fixture correction must actually write; got ${JSON.stringify(write)}`);
+
+      const result = await core.queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections"] });
+      const item = result.items.find((i) => i.excerpt?.includes(TERM) || i.title?.includes(TERM));
+      assert.ok(item, `queryMemory(tiers:['corrections']) must surface the matching correction; got ${JSON.stringify(result.items)}`);
+      assert.equal(item.source, "corrections");
+      assert.equal(item.id, "2026-09-01-g1-basic", "id must be the correction's OWN real record id, not a stableId() hash");
+      assert.equal(item.confidence, "high", "confidence must be threaded through as annotation");
+      assert.equal(item.decayClass, "slow", "decayClass must default to 'slow' (no MemoryCategory, no override)");
+      assert.equal(item.severity, "p0", "severity must carry P0-ness through");
+      assert.ok(result.sourcesQueried.includes("corrections"));
+      assert.equal(result.candidatesBySource.corrections, 1);
+    });
+
+    it("G2: a legacy pre-v4 record (no confidence/decay_class_override fields on disk at all) surfaces with correctly DERIVED defaults", async () => {
+      const PROJECT = "qmp-corrections-legacy-demo";
+      const TERM = "QMP_CORRECTIONS_LEGACY_UNIQUE_TERM";
+      const dir = correctionsDirFor(PROJECT);
+      fs.mkdirSync(dir, { recursive: true });
+      // A minimal, pre-v4-shaped record — deliberately omits confidence,
+      // provenance, decay_class_override, proof_count, authoritative: every
+      // field applyCorrectionDefaults is responsible for deriving at READ
+      // time (never persisted back — see decayClassOf's own doc comment).
+      fs.writeFileSync(
+        path.join(dir, "2026-01-05--legacy-g2.json"),
+        JSON.stringify({
+          id: "2026-01-05-legacy-g2",
+          date: "2026-01-05",
+          severity: "p1",
+          project: PROJECT,
+          rule: `Legacy rule mentioning ${TERM}`,
+          context: `Legacy rule mentioning ${TERM}, written before v4 shipped.`,
+          tags: [],
+        }),
+        "utf-8",
+      );
+
+      const result = await core.queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections"] });
+      const item = result.items.find((i) => i.excerpt?.includes(TERM) || i.title?.includes(TERM));
+      assert.ok(item, `a legacy no-fields record must still surface; got ${JSON.stringify(result.items)}`);
+      // p1 severity -> defaultWeight 0.7 -> defaultConfidence "medium"
+      // (corrections.ts's own applyCorrectionDefaults derivation table).
+      assert.equal(item.confidence, "medium", "legacy record's confidence must be DERIVED (p1 -> weight 0.7 -> medium), not left undefined");
+      assert.equal(item.decayClass, "slow", "legacy record's decayClass must default to 'slow' (no decay_class_override present)");
+      assert.equal(item.severity, "p1");
+    });
+
+    it("G3: mixed-tier call (corrections+journal+palace) surfaces all three without corrupting journal/palace — and a journal+palace-only call is BYTE-IDENTICAL whether or not a matching correction exists in the same project", async () => {
+      const PROJECT = "qmp-corrections-mixed-demo";
+      const CORR_TERM = "QMP_MIXED_CORRECTIONS_UNIQUE_TERM";
+      const JOURNAL_TERM = "QMP_MIXED_JOURNAL_UNIQUE_TERM";
+      const PALACE_TERM = "QMP_MIXED_PALACE_UNIQUE_TERM";
+      const COMBINED_QUERY = `${CORR_TERM} ${JOURNAL_TERM} ${PALACE_TERM}`;
+
+      // Seed journal + palace fixtures FIRST, with no correction yet.
+      const jdir = core.journalDir(PROJECT);
+      fs.mkdirSync(jdir, { recursive: true });
+      fs.writeFileSync(path.join(jdir, "2026-09-01--card--mixed.md"), `# mixed demo\n${JOURNAL_TERM}\n`, "utf-8");
+      core.ensurePalaceInitialized(PROJECT);
+      core.createRoom(PROJECT, "mixed-room", "Mixed Room", "fixture room", []);
+      const pd = core.palaceDir(PROJECT);
+      fs.writeFileSync(path.join(pd, "rooms", "mixed-room", "topic.md"), `${PALACE_TERM}\n`, "utf-8");
+
+      const beforeResult = await core.queryMemory({ query: COMBINED_QUERY, project: PROJECT, tiers: ["journal", "palace"] });
+
+      // Now add a correction that WOULD match the same combined query, in
+      // the SAME project — proving its mere existence does not change a
+      // journal+palace-only call's output at all.
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-g3-mixed",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: `Never ignore ${CORR_TERM}`,
+        context: `Never ignore ${CORR_TERM} — mixed-tier fixture.`,
+        tags: ["g3"],
+      });
+
+      const afterResult = await core.queryMemory({ query: COMBINED_QUERY, project: PROJECT, tiers: ["journal", "palace"] });
+      assert.deepEqual(
+        afterResult.items,
+        beforeResult.items,
+        "a journal+palace-only queryMemory() call must be BYTE-IDENTICAL whether or not a matching correction exists in the same project",
+      );
+      assert.deepEqual(afterResult.candidatesBySource, beforeResult.candidatesBySource);
+      assert.deepEqual(afterResult.sourcesQueried, beforeResult.sourcesQueried);
+      assert.ok(
+        !afterResult.items.some((i) => i.source === "corrections" || i.excerpt?.includes(CORR_TERM)),
+        "a journal+palace-only call must never surface corrections content",
+      );
+
+      // Now the mixed-tier call: all three tiers requested together — proves
+      // RRF fusion with corrections in the mix does not drop/corrupt the
+      // journal or palace items.
+      const mixedResult = await core.queryMemory({ query: COMBINED_QUERY, project: PROJECT, tiers: ["corrections", "journal", "palace"] });
+      const bySource = Object.fromEntries(["corrections", "journal", "palace"].map((s) => [s, mixedResult.items.filter((i) => i.source === s)]));
+      assert.ok(bySource.corrections.some((i) => i.excerpt?.includes(CORR_TERM) || i.title?.includes(CORR_TERM)), `mixed call must still surface the corrections hit; got ${JSON.stringify(mixedResult.items)}`);
+      assert.ok(bySource.journal.some((i) => i.excerpt?.includes(JOURNAL_TERM)), `mixed call must still surface the journal hit; got ${JSON.stringify(mixedResult.items)}`);
+      assert.ok(bySource.palace.some((i) => i.excerpt?.includes(PALACE_TERM)), `mixed call must still surface the palace hit; got ${JSON.stringify(mixedResult.items)}`);
+    });
+
+    it("G4: DEFAULT surfaces (smart_recall, journal_search) never see corrections content — their own explicit tier lists are unchanged, not merely empty by accident", async () => {
+      const PROJECT = "qmp-corrections-default-surface-demo";
+      const CORR_TERM = "QMP_DEFAULT_SURFACE_CORRECTIONS_UNIQUE_TERM";
+      const JOURNAL_TERM = "QMP_DEFAULT_SURFACE_JOURNAL_UNIQUE_TERM";
+
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-g4-default",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: `Never skip ${CORR_TERM}`,
+        context: `Never skip ${CORR_TERM} — default-surface regression fixture.`,
+        tags: ["g4"],
+      });
+      const jdir = core.journalDir(PROJECT);
+      fs.mkdirSync(jdir, { recursive: true });
+      fs.writeFileSync(path.join(jdir, "2026-09-01--card--g4.md"), `# g4 demo\n${JOURNAL_TERM}\n`, "utf-8");
+
+      // Non-vacuity FIRST: the correction is genuinely reachable via
+      // queryMemory() when explicitly opted in — proves the term isn't
+      // simply unmatchable/malformed.
+      const optedIn = await core.queryMemory({ query: CORR_TERM, project: PROJECT, tiers: ["corrections"] });
+      assert.ok(optedIn.items.some((i) => i.excerpt?.includes(CORR_TERM)), "precondition: the correction must be reachable when a caller opts into tiers:['corrections']");
+
+      // smart_recall — own tiers list is ["palace","journal","insight"],
+      // unchanged by this wave — must never surface the corrections hit,
+      // and must still surface the unrelated journal hit normally.
+      const smartCorrections = await core.smartRecall({ query: CORR_TERM, project: PROJECT, limit: 20 });
+      assert.ok(
+        !smartCorrections.results.some((r) => r.excerpt?.includes(CORR_TERM) || r.title?.includes(CORR_TERM)),
+        `smart_recall must never surface corrections content (it does not opt in); got ${JSON.stringify(smartCorrections.results)}`,
+      );
+      const smartJournal = await core.smartRecall({ query: JOURNAL_TERM, project: PROJECT, limit: 20 });
+      assert.ok(smartJournal.results.some((r) => r.excerpt?.includes(JOURNAL_TERM)), "smart_recall must still surface its own unrelated journal hit normally");
+
+      // journal_search — own tiers list is ["journal"], unchanged — must
+      // never surface the corrections hit either.
+      const journalSearchCorrections = await core.journalSearch({ query: CORR_TERM, project: PROJECT });
+      assert.ok(
+        !journalSearchCorrections.results.some((r) => r.excerpt?.includes(CORR_TERM)),
+        `journal_search must never surface corrections content (it does not opt in); got ${JSON.stringify(journalSearchCorrections.results)}`,
+      );
+    });
+
+    it("G5: a retracted (active:false/superseded) correction NEVER surfaces — RED-by-revert (surfaces before retraction, absent after, proving the absence is a real trust decision, not an already-empty query)", async () => {
+      const PROJECT = "qmp-corrections-retracted-demo";
+      const TERM = "QMP_CORRECTIONS_RETRACTED_UNIQUE_TERM";
+      const write = core.writeCorrection(PROJECT, {
+        id: "2026-09-01-g5-retract",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: `Always confirm ${TERM} before proceeding`,
+        context: `Always confirm ${TERM} before proceeding — retraction fixture.`,
+        tags: ["g5"],
+      });
+      assert.ok(write.written);
+
+      const beforeRetract = await core.queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections"] });
+      assert.ok(
+        beforeRetract.items.some((i) => i.excerpt?.includes(TERM)),
+        `precondition: the correction must surface BEFORE retraction — otherwise the absence below would be vacuous; got ${JSON.stringify(beforeRetract.items)}`,
+      );
+
+      const retract = core.retractCorrection(PROJECT, "2026-09-01-g5-retract", "test retraction", "2026-09-01-some-replacement");
+      assert.ok(retract.success, `precondition: retraction itself must succeed; got ${JSON.stringify(retract)}`);
+
+      const afterRetract = await core.queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections"] });
+      assert.ok(
+        !afterRetract.items.some((i) => i.excerpt?.includes(TERM)),
+        `a retracted correction must NEVER surface via queryMemory(); got ${JSON.stringify(afterRetract.items)}`,
+      );
+
+      // Also confirm the raw fetch stage itself excludes it — the
+      // destination-proof holds at the FETCH stage, not merely because the
+      // scorer's text no longer matches for some unrelated reason.
+      const rawCandidates = core.readTierCandidates("corrections", PROJECT, { includeUntrusted: true });
+      assert.ok(
+        !rawCandidates.some((c) => c.content.includes(TERM) || (c.meta?.context ?? "").includes(TERM)),
+        "readCorrectionCandidates() itself must never produce a MemoryCandidate for a retracted record — filtered at the FETCH stage, not a later stage a future caller could bypass",
+      );
+    });
+
+    // Code-review LOW-2 (2026-09-08): an empty-string query against
+    // tiers:["corrections"] must return zero items, never throw — same
+    // early-return guard (`tokenizeWords(query).length === 0`) every sibling
+    // tier's scorer already relies on (scoreJournalTier/scorePalaceTier/
+    // scoreInsightTier), made explicit here for the corrections tier too.
+    it("G6: an empty-string query against tiers:['corrections'] returns zero items, never throws (even with a real correction present)", async () => {
+      const PROJECT = "qmp-corrections-empty-query-demo";
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-g6-empty-query",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: "Never QMP_EMPTY_QUERY_UNIQUE_TERM without review",
+        context: "Never QMP_EMPTY_QUERY_UNIQUE_TERM without review.",
+        tags: ["g6"],
+      });
+      const result = await core.queryMemory({ query: "", project: PROJECT, tiers: ["corrections"] });
+      assert.deepEqual(result.items, []);
+      assert.equal(result.candidatesBySource.corrections, 0, "the tier is still successfully queried (no throw), just with zero scored candidates");
+      assert.ok(result.sourcesQueried.includes("corrections"), "the tier must still be recorded as successfully queried, distinguishing 'ran, found nothing' from 'failed to run'");
+    });
+  });
 });
