@@ -4,6 +4,7 @@ import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js"
 import type { SupabaseConfig } from "./config.js";
 import { calibratedConfidence, type ConfidenceScale } from "../tools-logic/confidence.js";
 import { isRescueSourceTag } from "../helpers/journal-filter.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 
 // Import the interface type — we can't import directly from recall-backend.ts
 // because it would create a circular dependency (it dynamically imports us).
@@ -112,6 +113,76 @@ export function mapFtsRows(rows: Array<Record<string, unknown>>): RecallResultIt
     );
 }
 
+/**
+ * Build the PostgreSQL FTS query string for the `ar_entries.body` `.textSearch(...,
+ * { type: "plain" })` leg — pure, testable in isolation (Wave 4 W4b FIX 1,
+ * 2026-09-08).
+ *
+ * BUG this replaces: the query was built as `query.split(/\s+/).join(" & ")`
+ * — a bare whitespace split. Chinese/Japanese text is normally written with
+ * NO spaces between words, so an unspaced CJK query (e.g. `"分析报告"`) finds
+ * zero whitespace, stays ONE segment, and gets handed to
+ * `plainto_tsquery('english', …)` as one opaque blob — the exact same
+ * "one giant token never matches" class that caused the v3.4.44 local-search
+ * CJK fix (`../helpers/tokenize.ts`'s header; L1 eval CJK hit@5 was 0/6
+ * before that fix). This Supabase-remote leg was never swept when that fix
+ * landed, even though `SupabaseRecallBackend` is the backend the owner's
+ * REAL `smart_recall` traffic resolves to (remote replaces local output when
+ * non-empty within 2500ms) — so CJK FTS has been silently broken on the
+ * actual production path.
+ *
+ * FIX: tokenize with the SAME shared CJK-aware tokenizer every local
+ * recall/search site already uses (`tokenizeWords` — imported, not forked;
+ * see that module's own header on why forking it recreated this exact bug
+ * class 7 times before v3.4.44). `tokenizeWords` extracts Han-script runs
+ * and segments them with `Intl.Segmenter` independently of ASCII
+ * whitespace-splitting, so `"分析报告"` (no internal whitespace at all)
+ * becomes `["分析", "报告"]` instead of one token.
+ *
+ * WHY joining segmented tokens with real whitespace still works under
+ * `{ type: "plain" }` (verified, not assumed): `.textSearch(..., { type:
+ * "plain" })` sends the string through Postgres's `plainto_tsquery`, which
+ * re-tokenizes the WHOLE string itself and ANDs together whatever "words" it
+ * finds (any `&` we insert is treated as punctuation-noise and dropped, not
+ * parsed as a boolean operator — that only applies to the default/`to_tsquery`
+ * mode). `plainto_tsquery` uses Postgres's OWN whitespace/punctuation-based
+ * parser, which — like the pre-fix JS `\s+` split — cannot itself segment an
+ * unspaced Han run into separate words. What it CAN do is treat any run
+ * already delimited by whitespace as one atomic token. So the fix's actual
+ * job is upstream of Postgres: pre-insert real whitespace at the CJK word
+ * boundaries `tokenizeWords` finds, so `plainto_tsquery` receives
+ * `"分析 & 报告"` and naturally isolates `分析` and `报告` as two lexemes
+ * instead of receiving `"分析报告"` and being unable to split it.
+ *
+ * RESIDUAL LIMITATION (out of scope for this fix, documented honestly): this
+ * only fixes the QUERY side. The INDEXED side — `idx_ar_entries_fts`'s
+ * `to_tsvector('english', …)` in migration.sql — has the identical inability
+ * to auto-segment CJK at write time (no CJK-aware text-search
+ * config/dictionary such as `zhparser`/`pg_jieba` is installed). For body
+ * content that is itself one long unpunctuated CJK run with no natural
+ * breaks, matching still fails, because the indexed side never produced the
+ * separate `分析`/`报告` lexemes to match against in the first place. In
+ * practice this owner's real memory content is heavily CJK+ASCII+punctuation
+ * mixed (see e.g. this very file's own commit-message/report conventions),
+ * which DOES naturally break into separate indexed tokens at punctuation/
+ * script boundaries — so this fix closes the common case (unspaced CJK
+ * QUERIES against naturally-punctuated stored content) without needing an
+ * index/schema change. A full write-side fix would require a CJK-aware
+ * `to_tsvector` config — a migration.sql/schema change, explicitly out of
+ * this task's scope.
+ *
+ * Returns `null` when tokenization yields zero tokens (pure
+ * stopword/punctuation query) — callers MUST skip the FTS leg entirely in
+ * that case rather than pass an empty string to `.textSearch(...)`, so an
+ * edge-case query can never reach Postgres as a malformed/empty tsquery
+ * input.
+ */
+export function buildFtsQuery(query: string): string | null {
+  const tokens = tokenizeWords(query);
+  if (tokens.length === 0) return null;
+  return tokens.join(" & ");
+}
+
 export class SupabaseRecallBackend {
   private config: SupabaseConfig;
   private embedding: EmbeddingProvider | null;
@@ -148,6 +219,14 @@ export class SupabaseRecallBackend {
       return localRecallSearch(query, project, limit);
     }
 
+    // FIX 1 (Wave 4 W4b, 2026-09-08): CJK-aware query segmentation — see
+    // `buildFtsQuery`'s own doc comment for the bug, the fix mechanism, and
+    // the documented residual (index-side) limitation. `null` means
+    // tokenization found nothing to search on (pure stopword/punctuation
+    // query) — skip the FTS leg entirely rather than hand Postgres an empty
+    // or malformed tsquery input.
+    const ftsQuery = buildFtsQuery(query);
+
     // Three parallel queries
     const [semanticResults, insightResults, ftsResults] = await Promise.all([
       // 1. pgvector cosine similarity on ar_entries
@@ -162,12 +241,14 @@ export class SupabaseRecallBackend {
         match_limit: limit,
       }),
       // 3. PostgreSQL FTS (keyword backup)
-      client
-        .from("ar_entries")
-        .select("id, project, store, room, slug, title, body, tags, metadata")
-        .eq("project", project)
-        .textSearch("body", query.split(/\s+/).join(" & "), { type: "plain" })
-        .limit(limit),
+      ftsQuery
+        ? client
+            .from("ar_entries")
+            .select("id, project, store, room, slug, title, body, tags, metadata")
+            .eq("project", project)
+            .textSearch("body", ftsQuery, { type: "plain" })
+            .limit(limit)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
     ]);
 
     // Identity-trust (P0 trust-class closure, 2026-08-30, wave/pipe-p0-trustclass,
@@ -183,6 +264,40 @@ export class SupabaseRecallBackend {
     // provider (this class has no DI seam for either).
     const semanticItems: RecallResultItem[] = mapSemanticRows(semanticResults.data ?? []);
 
+    // FIX 2 (Wave 4 W4b, 2026-09-08) — VERIFIED, not applied: this leg has NO
+    // rescue-provenance filter analogous to `isRescueRow` above, and after
+    // checking the actual schema it CANNOT get one the same way.
+    //   - `ar_insights` (migration.sql) has no `metadata` column at all
+    //     (unlike `ar_entries`, which does) — there is no jsonb field to
+    //     carry a `source:` provenance tag on this table, full stop.
+    //   - Even the one column that could theoretically double for this
+    //     (`ar_insights.tags text[]`) is not selected by the `ar_insight_search`
+    //     RPC's `RETURNS TABLE` (migration.sql): it returns only
+    //     `id, title, severity, confirmed, projects, similarity` — no body,
+    //     no metadata, no tags reach this code at all.
+    //   - A best-effort content-level check
+    //     (`isRescueSourcedContent`/`journal-filter.ts`) would be VACUOUS
+    //     here, not just weak: it parses a `---\nsource: …\n---` frontmatter
+    //     block out of raw file content, and `title`/`severity` are plain
+    //     short text fields, never frontmatter-delimited content — the
+    //     `content.startsWith("---")` guard would be false for every
+    //     realistic row, so the filter could never fire. Shipping it would
+    //     be exactly the "vacuous filter that looks fixed but never runs"
+    //     trap w5fix already caught once (body-vs-metadata, same file).
+    //   - Also verified structurally unreachable today regardless: `grep -rn
+    //     "ar_insights"` across `packages/*/src` finds zero writers to this
+    //     Supabase table (only a same-named but unrelated LOCAL
+    //     `palace/insights-index.ts` file index) — nothing in this codebase
+    //     inserts rows into `ar_insights` at all, so a rescue-tagged row
+    //     cannot reach this leg through any currently-shipped path.
+    // Net: this residual gap is real (a future writer to `ar_insights` that
+    // doesn't sanitize provenance would surface unfiltered here) but it is
+    // UNFILTERABLE BY THE CURRENT SCHEMA from this file alone — closing it
+    // requires a migration.sql change (add a metadata/source column, thread
+    // it through the RPC's RETURNS TABLE) and/or a real writer that respects
+    // it, both out of this task's scope (target file is
+    // `supabase/recall-backend.ts`, not `migration.sql`). Left as a
+    // documented gap rather than a filter that can never fire.
     const insightItemsList: RecallResultItem[] = (insightResults.data ?? []).map(
       (r: Record<string, unknown>) => ({
         id: r.id as string,

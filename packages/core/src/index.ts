@@ -505,7 +505,7 @@ export { DisabledMemoryBackend, getMemoryBackend, resetMemoryBackend } from "./t
 export type { MemoryBackend, RetainResult } from "./tools-logic/memory-backend.js";
 
 // Supabase — recall backend
-export { SupabaseRecallBackend, mapSemanticRows, mapFtsRows } from "./supabase/recall-backend.js";
+export { SupabaseRecallBackend, mapSemanticRows, mapFtsRows, buildFtsQuery } from "./supabase/recall-backend.js";
 export type { RecallResultItem } from "./supabase/recall-backend.js";
 
 // Local vector backend (no-Supabase semantic recall)

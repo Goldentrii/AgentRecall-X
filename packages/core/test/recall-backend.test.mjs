@@ -93,3 +93,82 @@ describe("P0 review-fix (FIX 2) — mapSemanticRows/mapFtsRows drop a rescue-tag
     assert.ok(items.some((i) => i.id === "legacy-1"), "a row with no source tag at all must not be dropped — 'absent tag => trusted' is the shipped, intentional default");
   });
 });
+
+// ── W4b FIX 1 (2026-09-08) — buildFtsQuery: CJK-aware FTS query segmentation
+// on the SupabaseRecallBackend remote path (the owner's REAL smart_recall
+// traffic — remote replaces local output when non-empty within 2500ms). See
+// recall-backend.ts's own `buildFtsQuery` doc comment for the full bug/fix
+// mechanism. The old code was `query.split(/\s+/).join(" & ")` — reproduced
+// inline below (never re-imported; it no longer exists in the source) so
+// each CJK assertion carries its own RED (old, buggy) vs GREEN (new, fixed)
+// proof in one place, without needing a separate git checkout.
+describe("W4b FIX 1 — buildFtsQuery (CJK-aware Postgres FTS query segmentation)", () => {
+  const oldBuggySplit = (query) => query.split(/\s+/).join(" & ");
+
+  it("RED->GREEN: unspaced CJK query collapses to ONE token under the old split, but segments into multiple &-joined lexemes under the fix", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    const query = "分析报告"; // "analysis report" — normal, space-free Chinese phrasing
+
+    // RED: the old `query.split(/\s+/).join(" & ")` finds ZERO whitespace in
+    // an unspaced CJK query, so it never segments at all — one opaque
+    // 4-character blob token that can only ever match an identical blob in
+    // the indexed content (the "hit@5 = 0%" bug class).
+    const redResult = oldBuggySplit(query);
+    assert.equal(redResult, "分析报告", "old split produces ONE unsegmented token — the bug this fix closes");
+    assert.ok(!redResult.includes("&"), "old split never introduces a boolean AND boundary for unspaced CJK");
+
+    // GREEN: the fix routes through the shared CJK-aware tokenizer first,
+    // which segments the Han run into word-level tokens BEFORE joining.
+    const greenResult = buildFtsQuery(query);
+    assert.equal(greenResult, "分析 & 报告", "fixed query-builder segments unspaced CJK into multiple &-joined lexemes");
+    assert.ok(greenResult.includes("&"), "fixed output introduces AND boundaries between CJK words");
+  });
+
+  it("segments a CJK run that is directly adjacent to ASCII (no whitespace boundary at all) into separate lexemes, Han-first", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    // Old split also fails this case: zero whitespace anywhere in the string
+    // means `"CJK修复bug".split(/\s+/)` never breaks it up either.
+    assert.equal(oldBuggySplit("CJK修复bug"), "CJK修复bug", "old split leaves CJK-adjacent-to-ASCII as one blob too");
+    assert.equal(buildFtsQuery("CJK修复bug"), "修复 & cjk & bug", "fix isolates the Han run from the ASCII runs even with zero surrounding whitespace");
+  });
+
+  it("ASCII query: produces the same &-joined tsquery as the old split.join for ordinary (>=3 char) words", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    const query = "hello world testing";
+    assert.equal(buildFtsQuery(query), oldBuggySplit(query), "ASCII queries with only >=3-char words are byte-identical to the old behavior");
+    assert.equal(buildFtsQuery(query), "hello & world & testing");
+  });
+
+  it("ASCII query of short (<3 char) words: CHARACTERIZED DIFFERENCE from old behavior — documented, not a regression", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    const query = "a to be";
+    // Old code had NO length floor at all, so it would have produced
+    // "a & to & be" (searching on near-meaningless 1-2 char stopword-like
+    // tokens). The shared `tokenizeWords` helper's default `minLength: 3` —
+    // the SAME floor every other recall/search site in this codebase already
+    // uses (journal-search.ts's `queryKeywords` doc comment: "reproduces the
+    // original `length > 2` floor exactly for ASCII input") — filters these
+    // out. This is the one accepted, documented minor ASCII difference the
+    // task brief permits ("minor differences like stemming/minLength are
+    // acceptable ONLY if characterized in the report"): short low-signal
+    // words no longer force a (mostly useless) FTS AND-clause, and the
+    // codebase-wide minLength convention now applies uniformly to this leg.
+    assert.equal(oldBuggySplit(query), "a & to & be", "documents what the OLD code would have produced (near-noise tokens)");
+    assert.equal(buildFtsQuery(query), null, "new code returns null — all tokens below the shared minLength floor, so the FTS leg is skipped rather than searching on noise");
+  });
+
+  it("empty-token guard: punctuation-only query returns null (safe fallback — search() must skip the FTS leg, never hand Postgres a malformed/empty tsquery)", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery("!! ?? --"), null, "punctuation-only tokens all fall below minLength, so no tokens survive");
+  });
+
+  it("empty-token guard: empty-string query returns null", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery(""), null);
+  });
+
+  it("empty-token guard: whitespace-only query returns null", async () => {
+    const { buildFtsQuery } = await import("agent-recall-core");
+    assert.equal(buildFtsQuery("   "), null);
+  });
+});
