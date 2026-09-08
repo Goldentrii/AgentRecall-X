@@ -115,7 +115,7 @@ import { palaceDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
-import { queryMemory, queryArchiveFallback, type QueryMemoryItem } from "../retrieval/query-memory.js";
+import { queryMemory, queryArchiveFallback, type QueryMemoryItem, type QueryMemorySource } from "../retrieval/query-memory.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -345,6 +345,33 @@ function verbatimKeyFor(item: QueryMemoryItem): VerbatimKey | undefined {
 }
 
 /**
+ * v4 W3 (2026-09-08) type-compat shim, NOT a behavior change: `queryMemory`'s
+ * `QueryMemorySource` union grew a `"corrections"` member this wave (a new
+ * competing RRF tier — see retrieval/candidates.ts/query-memory.ts), but
+ * `SmartRecallResultItem.source`'s own external contract (this file's own
+ * header comment, "kept singular for backward compatibility with existing
+ * consumers") deliberately stays `"palace" | "journal" | "insight" |
+ * "archive"` — smart_recall does NOT opt into the corrections tier this wave
+ * (its own `tiers: ["palace", "journal", "insight"]` call below is
+ * unchanged), so widening this exported type would be a false, unrequested
+ * contract change for every existing consumer. This narrows the (now wider)
+ * `QueryMemorySource` back down at the one call site that needs it, and
+ * FAILS LOUDLY (never silently mislabels) if a future edit ever adds
+ * `"corrections"` to the `tiers` array below without also updating
+ * `SmartRecallResultItem.source`'s contract first.
+ */
+function excludeCorrectionsSource(source: QueryMemorySource): "palace" | "journal" | "insight" | "archive" {
+  if (source === "corrections") {
+    throw new Error(
+      "localRecallSearch: unexpected 'corrections' source — this file's own " +
+      "tiers list must not request it without first updating " +
+      "SmartRecallResultItem.source's external contract",
+    );
+  }
+  return source;
+}
+
+/**
  * localRecallSearch — the core local search logic (palace + journal + insight).
  *
  * WAVE 2: delegates FETCH/TRUST-FILTER/TOKENIZE+SCORE/RANK-FUSE entirely to
@@ -401,8 +428,10 @@ export async function localRecallSearch(
   // correctly dropped, not a behavior change).
   const deduped: SmartRecallResultItem[] = result.items.map((item) => ({
     id: item.id,
-    source: item.source,
-    ...(item.alsoFoundIn && item.alsoFoundIn.length > 0 ? { alsoFoundIn: item.alsoFoundIn } : {}),
+    source: excludeCorrectionsSource(item.source),
+    ...(item.alsoFoundIn && item.alsoFoundIn.length > 0
+      ? { alsoFoundIn: item.alsoFoundIn.map(excludeCorrectionsSource) }
+      : {}),
     title: item.title,
     excerpt: item.excerpt,
     score: item.score,

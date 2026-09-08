@@ -321,6 +321,90 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     });
   });
 
+  // ── corrections tier (v4 W3, 2026-09-08) ────────────────────────────────
+  describe("corrections tier", () => {
+    const PROJECT = "candidates-corrections-demo";
+
+    it("returns a MemoryCandidate per active correction, content=rule, meta carries context/confidence/decay_class/severity/correction_id/authoritative", () => {
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-cand-basic",
+        date: "2026-09-01",
+        severity: "p0",
+        project: PROJECT,
+        rule: "Never CANDIDATES_UNIQUE_RULE_TERM without approval",
+        context: "Never CANDIDATES_UNIQUE_RULE_TERM without approval — full context text CANDIDATES_UNIQUE_CONTEXT_TERM.",
+        tags: ["cand"],
+        confidence: "high",
+        authoritative: true,
+      });
+
+      const candidates = core.readTierCandidates("corrections", PROJECT);
+      const c = candidates.find((c) => c.content.includes("CANDIDATES_UNIQUE_RULE_TERM"));
+      assert.ok(c, "fixture correction must be discoverable as a candidate");
+      assert.equal(c.tier, "corrections");
+      assert.equal(c.sourceKind, "corrections");
+      assert.equal(c.date, "2026-09-01");
+      assert.equal(c.untrusted, false, "corrections are untrusted:false by construction");
+      assert.equal(c.sourceTag, undefined, "corrections are JSON, not frontmatter-tagged markdown — no source: tag to extract");
+      assert.equal(c.content, "Never CANDIDATES_UNIQUE_RULE_TERM without approval", "content must be the rule text");
+      assert.ok(c.meta, "meta bag must be populated for corrections (unlike journal/palace-room, which leave it undefined this wave)");
+      assert.equal(c.meta.correction_id, "2026-09-01-cand-basic");
+      assert.ok(c.meta.context.includes("CANDIDATES_UNIQUE_CONTEXT_TERM"), "meta.context must carry the fuller context text, separate from content");
+      assert.equal(c.meta.confidence, "high");
+      assert.equal(c.meta.decay_class, "slow");
+      assert.equal(c.meta.severity, "p0");
+      assert.equal(c.meta.authoritative, "true");
+    });
+
+    it("a retracted correction (active:false) is never returned — filtered at the FETCH stage via readActiveCorrections()", () => {
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-cand-retract",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: "Always CANDIDATES_RETRACT_UNIQUE_TERM before merging",
+        context: "Always CANDIDATES_RETRACT_UNIQUE_TERM before merging.",
+        tags: [],
+      });
+      const before = core.readTierCandidates("corrections", PROJECT);
+      assert.ok(before.some((c) => c.content.includes("CANDIDATES_RETRACT_UNIQUE_TERM")), "precondition: must surface before retraction");
+
+      core.retractCorrection(PROJECT, "2026-09-01-cand-retract", "test");
+      const after = core.readTierCandidates("corrections", PROJECT);
+      assert.ok(!after.some((c) => c.content.includes("CANDIDATES_RETRACT_UNIQUE_TERM")), "a retracted correction must never be returned as a candidate");
+    });
+
+    it("a legacy no-fields record (no confidence/decay_class_override on disk) surfaces with DERIVED defaults, never undefined", () => {
+      core.writeCorrection(PROJECT, {
+        id: "2026-09-01-cand-legacy",
+        date: "2026-09-01",
+        severity: "p1",
+        project: PROJECT,
+        rule: "Never skip CANDIDATES_LEGACY_UNIQUE_TERM in a legacy record with no confidence field",
+        context: "Never skip CANDIDATES_LEGACY_UNIQUE_TERM in a legacy record with no confidence field.",
+        tags: [],
+        // confidence / decay_class_override / authoritative deliberately omitted
+      });
+      const candidates = core.readTierCandidates("corrections", PROJECT);
+      const c = candidates.find((c) => c.content.includes("CANDIDATES_LEGACY_UNIQUE_TERM"));
+      assert.ok(c);
+      assert.equal(c.meta.confidence, "medium", "p1 severity -> weight 0.7 -> derived confidence 'medium', never left blank");
+      assert.equal(c.meta.decay_class, "slow", "no override present -> derived default 'slow'");
+    });
+
+    // Code-review LOW-2 (2026-09-08): a project with no corrections/
+    // directory yet at all — must return an empty array, never throw. This
+    // is already handled by readCorrections()'s own `!fs.existsSync(dir)`
+    // guard (storage/corrections.ts), same pattern journal/palace-room rely
+    // on for a never-touched tier; this test makes that reliance explicit
+    // for the corrections tier specifically, rather than leaving it implicit.
+    it("a project with no corrections/ directory at all returns an empty array, never throws", () => {
+      const untouchedProject = "candidates-corrections-untouched-demo";
+      const candidates = core.readTierCandidates("corrections", untouchedProject);
+      assert.deepEqual(candidates, []);
+    });
+  });
+
   // ── W2 independent-review fix (T1, HIGH) — readTierCandidates() is safe by
   // default ────────────────────────────────────────────────────────────────
   // Before this fix, `readTierCandidates()` was a PUBLIC, exported escape
