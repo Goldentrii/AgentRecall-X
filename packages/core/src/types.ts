@@ -143,6 +143,17 @@ export interface PalaceGraph {
 export type Importance = "high" | "medium" | "low";
 export type Urgency = "today" | "this-week" | "eventual" | "none";
 export type Confidence = "high" | "medium" | "low";
+/**
+ * v4 W1 (2026-07-02 schema-infrastructure.md §5, field-design-options.md §A.5) —
+ * truth-decay classification. NEVER a stored field by default (Option 2, the
+ * proposal's recommendation): computed at read time from record-class-specific
+ * rules (e.g. corrections.ts's `decayClassOf`), with an optional per-record
+ * `*_override` escape hatch on record types that carry one. Shared here because
+ * the proposal frames `decay_class` as a cross-record-class concept (corrections,
+ * palace memories, insights) even though v4 Wave 1 wires it into CorrectionRecord
+ * only — see docs/proposals/2026-07-02-field-design-options.md §A.1/§A.5.
+ */
+export type DecayClass = "static" | "slow" | "volatile";
 export type WalkDepth = "identity" | "active" | "relevant" | "full";
 
 /** Category determines decay rate — architecture decisions decay slowly, daily blockers decay fast. */

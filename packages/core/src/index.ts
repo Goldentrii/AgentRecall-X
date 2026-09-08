@@ -26,6 +26,7 @@ export type {
   Importance,
   Urgency,
   Confidence,
+  DecayClass,
   WalkDepth,
   MemoryCategory,
   PinStatus,
@@ -245,6 +246,8 @@ export {
   isStaleCorrection,
   reviewNoiseCorrections,
   rankCorrections,
+  // v4 W1 — computed truth-decay classification (annotate-only; never stored).
+  decayClassOf,
 } from "./storage/corrections.js";
 export type {
   CorrectionRecord,
@@ -253,6 +256,8 @@ export type {
   RejectedCorrectionRecord,
   RejectedStats,
   NoiseReview,
+  // v4 W1 — assertion confidence + provenance (see CorrectionRecord).
+  CorrectionProvenance,
 } from "./storage/corrections.js";
 
 // Tools-logic — P2 supersession (contradiction → supersede; suggest-default)

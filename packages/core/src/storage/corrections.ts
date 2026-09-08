@@ -13,6 +13,7 @@ import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
+import type { Confidence, DecayClass } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,6 +118,50 @@ export interface CorrectionRecord {
    * absent on pre-RD-1 records, which readers treat as "other" (never rewritten).
    */
   failure_class?: FailureClass;
+  /**
+   * v4 W1 (2026-07-02 field-design-options.md §A.1) — assertion-time belief
+   * confidence, REUSING the discrete `Confidence` scale (types.ts) — no
+   * parallel float. ADDITIVE + OPTIONAL: absent on pre-v4 records, which
+   * `applyCorrectionDefaults` derives from `weight`/`severity` at read time
+   * (never persisted back to disk until the next write of that record).
+   *
+   * DISTINCT from `proof_confidence` (evidence-grounded Beta posterior over
+   * heeded/recurrence) and from `weight` (static authority prior) — this is
+   * assertion-time metadata about how sure the SOURCE was, not a
+   * recency-adjusted outcome signal. Per the proposal's decision matrix
+   * (§E, "rankCorrections() confidence feed" — Option B), this field is
+   * ANNOTATION ONLY and must never feed `rankCorrections()`'s scoring formula.
+   */
+  confidence?: Confidence;
+  /**
+   * v4 W1 (2026-07-02 field-design-options.md §A.1/§A.5) — escape hatch for
+   * the computed `decay_class` (see `decayClassOf` below). Corrections carry
+   * no `MemoryCategory`, so the per-class default is always "slow" (§A.1);
+   * this override exists only for the rare correction whose truth genuinely
+   * decays faster/slower than that default (the proposal's worked example:
+   * a location fact mistakenly filed as a correction would want "volatile").
+   * ADDITIVE + OPTIONAL. NEVER read by `decayClassOf` as anything but an
+   * override — `decay_class` itself is never a stored/defaulted field.
+   */
+  decay_class_override?: DecayClass;
+  /**
+   * v4 W1 (2026-07-02 field-design-options.md §A.1) — provenance of the
+   * assertion. ADDITIVE + OPTIONAL: absent on pre-v4 records, which
+   * `applyCorrectionDefaults` defaults to `{ source: holder ?? "unknown",
+   * mode: "told" }` at read time (corrections are always user-initiated —
+   * "told" is the safe default per the proposal).
+   */
+  provenance?: CorrectionProvenance;
+}
+
+/**
+ * v4 W1 (2026-07-02 field-design-options.md §A.1) — provenance of a
+ * correction assertion: where it came from and whether the agent inferred it
+ * ("observed") or the user stated it directly ("told").
+ */
+export interface CorrectionProvenance {
+  source: string;              // session id, tool name, or "unknown"
+  mode: "observed" | "told";   // agent inferred vs. user stated
 }
 
 /**
@@ -520,12 +565,31 @@ export function isStaleCorrection(rec: CorrectionRecord, nowMs: number = Date.no
   return nowMs - t > STALE_DAYS * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * v4 W1 (2026-07-02 field-design-options.md §A.1) — default `confidence` for a
+ * record that predates the field, derived from the ALREADY-RESOLVED `weight`
+ * (post `defaultWeight` fallback in `applyCorrectionDefaults`, so in practice
+ * this always receives a defined number: p0 → weight 1.0 → "high"; p1 → weight
+ * 0.7 → "medium"). The `weight` param stays optional and the `undefined` branch
+ * returns the proposal's documented "medium" fallback anyway — this function
+ * has no callers outside `applyCorrectionDefaults` today, but keeping it total
+ * over `number | undefined` means a future caller can't silently get `NaN`-driven
+ * comparisons if it is ever called before `weight` is resolved.
+ */
+function defaultConfidence(weight: number | undefined): Confidence {
+  if (weight === undefined) return "medium";
+  if (weight >= 0.8) return "high";
+  if (weight >= 0.5) return "medium";
+  return "low";
+}
+
 function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string): CorrectionRecord {
   const kind = record.kind ?? "correction";
   const weight = record.weight ?? defaultWeight(record.severity);
+  const holder = record.holder ?? holderDefault;
   return {
     ...record,
-    holder: record.holder ?? holderDefault,
+    holder,
     kind,
     weight,
     active: record.active ?? true,
@@ -539,7 +603,33 @@ function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string
     proof_count: record.proof_count ?? 1,
     proof_confidence: record.proof_confidence ?? weight,
     stale: record.stale ?? false,
+    // v4 W1 (§A.1) — assertion confidence + provenance. Both ADDITIVE +
+    // OPTIONAL: old records lack them and normalize here at read time, same
+    // pattern as weight/proof_count above. `decay_class_override` is
+    // deliberately NOT defaulted here — it stays absent unless the caller (or
+    // a prior write) set it; `decayClassOf` treats absence as "use the class
+    // default", not as "static/slow/volatile: undefined".
+    confidence: record.confidence ?? defaultConfidence(weight),
+    provenance: record.provenance ?? { source: holder ?? "unknown", mode: "told" },
   };
+}
+
+/**
+ * v4 W1 (2026-07-02 field-design-options.md §A.1/§A.5) — computed decay class
+ * for a correction. PURE — never mutates, never reads/writes disk. Corrections
+ * carry no `MemoryCategory`, so the class default is always `"slow"` (§A.1:
+ * "behavioral rules rarely become false — corrections.ts:2: persist forever").
+ * `decay_class_override` is the one escape hatch (§A.5's Option 2 recommendation:
+ * computed mapping + optional per-record override) for the rare correction whose
+ * truth genuinely decays faster/slower than that default.
+ *
+ * INVARIANT: `decay_class` is NEVER a stored/materialized field — it is
+ * recomputed from `decay_class_override` (if present) on every call. Callers
+ * needing it in a `SmartRecallResultItem`-shaped annotation should call this at
+ * read/response time, not persist its return value.
+ */
+export function decayClassOf(record: Pick<CorrectionRecord, "decay_class_override">): DecayClass {
+  return record.decay_class_override ?? "slow";
 }
 
 // ---------------------------------------------------------------------------
