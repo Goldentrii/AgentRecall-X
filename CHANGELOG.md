@@ -6,6 +6,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.48] — 2026-09-08
+
+Belief-semantics wave (v4 W1–W5, resuming the 2026-07-02 schema proposal shelved to fix the retrieval pipeline first): corrections now carry assertion-time confidence/provenance and a computed decay class, corrections are queryable as a first-class `queryMemory` tier with retracted records provably excluded at the fetch stage, the Supabase recall path gets the same CJK-aware FTS segmentation the local pipeline already had, and a human-confirmed CLI surface exposes the existing (previously zero-caller) supersession conflict-detector — suggest-only, never auto-retracts. Gated pre-ship by three adversarial/QA passes; their four should-fix findings are folded in below.
+
+### Added
+
+- **`confidence`/`provenance`/computed `decay_class` on `CorrectionRecord`** (W1) — additive/optional; reuses the existing discrete `Confidence` scale (no new float). Legacy records without these fields derive safe defaults at read time (`weight`-based confidence, `"told"` provenance); `decayClassOf()` is a pure read-time computation, never persisted.
+- **`decay_class`/effective-`confidence` annotations on `rankCorrections`/`getCorrectionKPIs`** (W2) — annotation only; ranking order and existing KPI fields are byte-identical. Out-of-union values from hand-edited disk JSON fall back to computed defaults rather than minting stray keys.
+- **Corrections as a first-class `queryMemory` tier** (W3) — `tiers: ["corrections"]` reaches active corrections through the same fetch → trust-filter → score → fence pipeline as journal/palace/insight; retracted/superseded records are excluded at the FETCH stage (destination-proof). Default surfaces (`smart_recall`, `journal_search`) are byte-identical — the tier is opt-in, with a fail-loud guard against silent opt-in.
+- **`ar corrections conflicts` / `ar corrections retract`** (W5) — human-confirmed CLI surface for the supersession conflict-detector. `conflicts` is read-only and fenced; `retract` requires an explicit, human-typed `<id>` and `--superseded-by <newer-id>` — no bulk/auto/`--all` path exists.
+
+### Fixed
+
+- **CJK-aware FTS query segmentation on the Supabase recall path** (W4b) — the remote recall backend now segments unspaced CJK queries into multiple lexemes via the shared tokenizer (previously an unspaced Chinese query collapsed into one unmatchable token on exactly the branch real Supabase-configured traffic uses); pure-punctuation queries safely skip the FTS leg instead of emitting garbage tokens (gate fix).
+- **Corrections conflict detection restricted to high-precision version tokens** (gate fix) — the previously-dormant detector still carried the loose status/kv grammar whose false-positive classes ("status: blocked" vs "status: stuck"; cross-topic generic-key collisions) were already diagnosed and removed from the retrieval contradiction stage in 3.4.47; wiring the detector to a human-facing CLI made porting that restriction mandatory, and the red-team's exact false-positive pairs are now regression tests.
+- **Honest trust posture for the corrections store** — the corrections tier's `untrusted:false` justification now states the read-path residual (the store directory-scans and trusts any parseable `.json`; provenance stamping is tracked as a follow-up), and a characterization test machine-records the current planted-file behavior instead of leaving the claim prose-only.
+- **`VERSION` constant now matches `package.json`** — 3.4.47's release commit bumped the manifest but not the constant; the consistency test that catches this now runs post-bump in the release flow.
+
 ## [3.4.47] — 2026-09-01
 
 Retrieval-pipeline refactor: the read path is now a single shared, staged pipeline (`queryMemory`) that data is *forced* through, replacing the ~9 independent per-surface readers that had let every cross-cutting property (trust-filtering, injection-fencing, CJK tokenization, scope) recur one surface at a time. This closes the rescue-injection class *by construction* rather than per-instance, and was hardened by two independent adversarial red-team passes before release (both found and fixed real gaps — see Security). External contracts are preserved; changes are additive.

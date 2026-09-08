@@ -15,6 +15,41 @@ This log tracks phase-by-phase improvements to AgentRecall's architecture, based
 | [Phase 2.5](#phase-25--intelligent-file-naming) | Intelligent File Naming — readable for humans, parseable for agents | ✅ Done (closed by Phase 6b) |
 | [Phase 5](#phase-5--protocol-foundations) | Protocol Foundations — schema + cross-LLM interoperability | 🔲 Long-term |
 | [Phase 6](#phase-6--research-driven-foundation-layer-2026-05-30) | Research-driven foundation: 4 memory layers, naming system, KPI, FSRS, Hopfield | 🔧 In Progress |
+| [Phase 7](#phase-7--retrieval-pipeline-unification-v3447-2026-09-01) | Retrieval Pipeline Unification — one forced read path, injection class closed | ✅ Done (v3.4.47) |
+| [Phase 8](#phase-8--belief-semantics-v3448-2026-09-08) | Belief Semantics — confidence/provenance/decay on corrections, supersession surfaced | ✅ Done (v3.4.48) |
+
+---
+
+## Phase 7 — Retrieval Pipeline Unification (v3.4.47, 2026-09-01)
+**Goal: stop fixing the same cross-cutting bug once per surface**
+
+### The design weakness
+The 2026-08-18 self-eval graded the write path solid and the read path D: ~9 retrieval surfaces (smart_recall, journal/palace search, resurrect, recall_insight, session_start…) each read storage independently, so every cross-cutting property — rescue-content trust-tiering, injection fencing, CJK tokenization, project scoping — had to be applied per-surface and kept recurring one surface at a time (5+ documented class-not-instance strikes). The purest symptom: a fully-built contradiction detector with zero callers.
+
+### What we changed
+- **`queryMemory()`** — a mandatory staged pipeline (fetch → trust-filter → score → scope → rank/fuse → fence) with **`readTierCandidates()`** as the single trust-safe FETCH stage (tier dispatch table: adding coverage = adding a row, not a branch). smart_recall, journalSearch, palaceSearch, recallInsight, journalColdStart, check migrated; resurrect deliberately kept bespoke (it legitimately surfaces untrusted content *labeled*).
+- **Rescue-injection class closed across 13 exposed readers**, including a write-then-remote-read path (session_start → autoBackfill → Supabase → remote recall) found by a design review, not by the harness.
+- **The completeness harness itself was cured**: it had been whole-file text-matching (a file whose *other* function called the choke was falsely certified) and blind to wrapper-based readers — rebuilt to function-scope AST + cross-package auto-discovery + a hardcoded-`untrusted:false` detector.
+- **Pre-publish adversarial gate became standing practice**: two independent red-teams + a QA audit against the *assembled* system caught a CRITICAL (an unlabeled rescue-content leak through the default `recall` tool via a legacy-root reader added mid-refactor) that three per-wave reviews and the rebuilt harness had all missed. Fixed, re-red-teamed, then shipped.
+
+### Why it matters
+Cross-cutting safety went from "every surface must remember" to "structurally forced". The recurring-bug class this product kept paying for is now closed by construction, and the gate that caught the last escape is encoded as the release ritual.
+
+## Phase 8 — Belief Semantics (v3.4.48, 2026-09-08)
+**Goal: memories carry how much to trust them, and superseded beliefs stop resurfacing silently**
+
+### The design weakness
+Corrections (the behavioral-calibration layer from Phase 4) stored *what* the human said but not *how confident/why/how perishable* — and the supersession detector built for them had zero callers, so contradicted rules just coexisted. Separately, the Supabase recall branch (the branch real cloud-configured traffic actually uses) never got the CJK tokenizer fix the local pipeline received, so unspaced Chinese queries silently missed.
+
+### What we changed (resuming the 2026-07-02 schema proposal, ratified by an adversarial design review that also killed a bigger "claim-store rewrite" as over-engineering)
+- **W1**: `confidence` (discrete scale, floats banned) + `provenance` + computed `decayClassOf()` on `CorrectionRecord` — additive, zero migration, legacy records derive defaults.
+- **W2**: those annotations threaded into `rankCorrections`/`getCorrectionKPIs` — annotation-only, ranking math untouched (byte-identical proof).
+- **W3**: corrections became a first-class opt-in `queryMemory` tier; retracted records provably never surface; default surfaces byte-identical.
+- **W4b**: CJK-aware FTS segmentation on the Supabase path (found by tracing which backend the owner's real traffic hits — it *replaces* local pipeline output, so pipeline-only fixes weren't reaching production reads).
+- **W5**: `ar corrections conflicts`/`retract` — the supersession detector's first real owner: suggest-only listing, human-typed retract, never auto-retracts. The pre-ship gate then forced porting v3.4.47's high-precision version-only grammar here too (the deferred status/kv false-positive classes reproduced on the first human-facing surface).
+
+### Why it matters
+The corrections ledger now behaves like a belief system — confidence at assertion, provenance, decay class, and human-adjudicated supersession — instead of an append-only rule pile. And the discipline compounding across releases is visible: three lessons from 3.4.47 (annotate-don't-rerank, version-only precision, post-bump harness) were each re-applied here by the gate before they could regress.
 
 ---
 
