@@ -248,6 +248,9 @@ export {
   rankCorrections,
   // v4 W1 — computed truth-decay classification (annotate-only; never stored).
   decayClassOf,
+  // v4 W2 — effective confidence (post-defaults), shared by rankCorrections
+  // and getCorrectionKPIs' annotation output (annotate-only; never stored).
+  effectiveConfidenceOf,
 } from "./storage/corrections.js";
 export type {
   CorrectionRecord,
@@ -258,6 +261,9 @@ export type {
   NoiseReview,
   // v4 W1 — assertion confidence + provenance (see CorrectionRecord).
   CorrectionProvenance,
+  // v4 W2 — rankCorrections' return shape (CorrectionRecord + decay_class +
+  // effective confidence annotations).
+  RankedCorrection,
 } from "./storage/corrections.js";
 
 // Tools-logic — P2 supersession (contradiction → supersede; suggest-default)

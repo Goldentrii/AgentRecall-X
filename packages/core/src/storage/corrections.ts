@@ -274,6 +274,22 @@ export interface CorrectionKPI {
    * script decides how to combine it later (see heed-design.md).
    */
   not_violated_count: number;
+  /**
+   * v4 W2 (2026-07-02 field-design-options.md §A.5/§E) — computed decay_class
+   * breakdown across ALL corrections (same population as `total`, NOT `active`
+   * — mirrors the retrieved/heeded/recurred loop above, which also aggregates
+   * over `all`). ANNOTATION ONLY: purely informational, never feeds precision/
+   * verdict_coverage/any other formula in this interface. Every `DecayClass`
+   * key is always present (0 when no records fall in that class) so callers
+   * never need an `?? 0` guard.
+   */
+  by_decay_class: Record<DecayClass, number>;
+  /**
+   * v4 W2 — effective `confidence` breakdown (post-defaults, via
+   * `effectiveConfidenceOf`) across the same ALL-corrections population as
+   * `by_decay_class`. Same ANNOTATION-ONLY guarantee.
+   */
+  by_confidence: Record<Confidence, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -627,9 +643,65 @@ function applyCorrectionDefaults(record: CorrectionRecord, holderDefault: string
  * recomputed from `decay_class_override` (if present) on every call. Callers
  * needing it in a `SmartRecallResultItem`-shaped annotation should call this at
  * read/response time, not persist its return value.
+ *
+ * DEFENSIVE (v4 W2 review fix): `decay_class_override` is loaded straight off
+ * disk-parsed JSON with no runtime validation — TypeScript's `DecayClass`
+ * union guards the WRITE path, not a hand-edited or corrupted file. Falling
+ * through to the union check below (rather than a bare `?? "slow"`) means an
+ * out-of-union value on disk normalizes to the documented default instead of
+ * leaking a garbage string into `getCorrectionKPIs`' `by_decay_class` tally,
+ * which would otherwise mint a stray `Record` key and silently break that
+ * field's "exhaustive partition, sums to `total`" invariant.
  */
 export function decayClassOf(record: Pick<CorrectionRecord, "decay_class_override">): DecayClass {
-  return record.decay_class_override ?? "slow";
+  const v = record.decay_class_override;
+  return v === "static" || v === "slow" || v === "volatile" ? v : "slow";
+}
+
+/**
+ * v4 W2 (2026-07-02 field-design-options.md §E, "rankCorrections() confidence
+ * feed — Option B") — effective `confidence` for ANNOTATION purposes, i.e. the
+ * value a record would carry AFTER `applyCorrectionDefaults` resolves it, but
+ * computed WITHOUT running the full defaulting pipeline (holder/kind/
+ * proof_count/authoritative/provenance are irrelevant to this one field).
+ *
+ * In practice every caller of `rankCorrections`/`getCorrectionKPIs` already
+ * receives records that went through `applyCorrectionDefaults` inside
+ * `readCorrections()`, so `record.confidence` is normally already resolved —
+ * this mirrors that SAME resolution rule (confidence ?? defaultConfidence(weight
+ * ?? defaultWeight(severity))) as a defensive fallback for the rare caller that
+ * hands in raw/unresolved records directly (e.g. unit-test fixtures), so the two
+ * downstream annotation sites never disagree with `applyCorrectionDefaults` on
+ * what "effective confidence" means. PURE — never mutates, never reads/writes
+ * disk. Kept as ONE shared helper (class-not-instance) rather than two separate
+ * inline computations in rankCorrections and getCorrectionKPIs.
+ *
+ * DEFENSIVE (v4 W2 review fix): same rationale as `decayClassOf` above — an
+ * out-of-union `confidence` value on disk (hand-edited/corrupted JSON) falls
+ * through to the computed default rather than propagating a garbage string
+ * into `getCorrectionKPIs`' `by_confidence` tally.
+ */
+export function effectiveConfidenceOf(
+  record: Pick<CorrectionRecord, "confidence" | "weight" | "severity">,
+): Confidence {
+  const v = record.confidence;
+  if (v === "high" || v === "medium" || v === "low") return v;
+  return defaultConfidence(record.weight ?? defaultWeight(record.severity));
+}
+
+/**
+ * v4 W2 — the shape `rankCorrections()` returns. A `CorrectionRecord` plus two
+ * ADDITIVE, ANNOTATION-ONLY fields computed at read time and never persisted:
+ *   - `decay_class`  — see `decayClassOf` above.
+ *   - `confidence`   — see `effectiveConfidenceOf` above; narrows the base
+ *     record's optional `confidence?` to always-present here, since every
+ *     ranked record has one resolved by the time it is returned.
+ * Neither field is read by `rankCorrections`' scoring formula — see the
+ * ASSERT_INVARIANT at that function's definition.
+ */
+export interface RankedCorrection extends CorrectionRecord {
+  decay_class: DecayClass;
+  confidence: Confidence;
 }
 
 // ---------------------------------------------------------------------------
@@ -2189,6 +2261,12 @@ export function getCorrectionKPIs(project: string, preloaded?: CorrectionRecord[
   let notViolated = 0;
   const noise: CorrectionKPI["noise_candidates"] = [];
   const hot: CorrectionKPI["high_signal"] = [];
+  // v4 W2 — decay_class/confidence breakdown, ANNOTATION ONLY (see the
+  // CorrectionKPI field docs). Pre-seed every enum key at 0 so callers never
+  // need an `?? 0` guard, then tally alongside the existing single pass over
+  // `all` rather than a second loop.
+  const byDecayClass: Record<DecayClass, number> = { static: 0, slow: 0, volatile: 0 };
+  const byConfidence: Record<Confidence, number> = { high: 0, medium: 0, low: 0 };
 
   for (const r of all) {
     retrieved += r.retrieved_count ?? 0;
@@ -2197,6 +2275,8 @@ export function getCorrectionKPIs(project: string, preloaded?: CorrectionRecord[
     // Heed-rate credit model Option A (2026-08-29): summed for VISIBILITY
     // only — NEVER folded into heeded/recurred/precision above.
     notViolated += r.not_violated_count ?? 0;
+    byDecayClass[decayClassOf(r)]++;
+    byConfidence[effectiveConfidenceOf(r)]++;
     const p = r.precision ?? null;
     const ret = r.retrieved_count ?? 0;
     if (p !== null && ret >= 3 && p < 0.3) {
@@ -2261,6 +2341,8 @@ export function getCorrectionKPIs(project: string, preloaded?: CorrectionRecord[
     unknown_count: unknownCount,
     not_triggered_count: notTriggeredCount,
     not_violated_count: notViolated,
+    by_decay_class: byDecayClass,
+    by_confidence: byConfidence,
   };
 }
 
@@ -2301,8 +2383,17 @@ export function reviewNoiseCorrections(project: string, opts?: { auto?: boolean 
  * evidence-backed + recently-relevant rules win the cap:
  *   severity (p0 always above p1) ≫ proof_confidence ≫ recency ≫ proof_count.
  * Deterministic and stable; pure (Date.now only for recency decay).
+ *
+ * v4 W2 (2026-07-02 field-design-options.md §E, "rankCorrections() confidence
+ * feed — Option B") — the returned records are additionally annotated with a
+ * computed `decay_class` (`decayClassOf`) and effective `confidence`
+ * (`effectiveConfidenceOf`). Both are attached AFTER `scoreOf`/`sort` have
+ * fully decided the ORDER — neither field is read inside `scoreOf`, so this
+ * is pure annotation on the output, never an input to the ranking formula
+ * (ASSERT_INVARIANT: order is byte-identical to the pre-annotation behavior;
+ * see corrections-rank.test.mjs).
  */
-export function rankCorrections(records: CorrectionRecord[], limit?: number): CorrectionRecord[] {
+export function rankCorrections(records: CorrectionRecord[], limit?: number): RankedCorrection[] {
   const nowMs = Date.now();
   const scoreOf = (r: CorrectionRecord): number => {
     const sev = r.severity === "p0" ? 1 : 0;
@@ -2316,5 +2407,12 @@ export function rankCorrections(records: CorrectionRecord[], limit?: number): Co
     return sev * 100 + conf * 10 + recency * 3 + proof;
   };
   const sorted = [...records].sort((a, b) => scoreOf(b) - scoreOf(a));
-  return limit !== undefined ? sorted.slice(0, limit) : sorted;
+  const limited = limit !== undefined ? sorted.slice(0, limit) : sorted;
+  // Annotate on a NEW object per record (never mutate the input's elements —
+  // same purity guarantee decayClassOf/effectiveConfidenceOf document).
+  return limited.map((r) => ({
+    ...r,
+    decay_class: decayClassOf(r),
+    confidence: effectiveConfidenceOf(r),
+  }));
 }
