@@ -23,13 +23,15 @@
 // checkAction() for check() to prove the SAME capability is reachable through
 // the default surface, not just the --full-only standalone tool.
 //
-// CJK variant: per audit-cjk-check-action.test.mjs's file-header finding,
-// corrections.ts's isLikelyRealCorrection capture-quality gate only recognizes
-// three hardcoded CJK actionable-signal words (偏好/喜欢/要求) — a Chinese
-// rule/context needs one of those present to clear the gate (独立 of the
-// tokenizer fix). The fixture below includes "要求" for that reason; the
-// matching claim under test is the tokenizer/overlap/verdict path, not the
-// capture gate (already covered by audit-cjk-check-action.test.mjs).
+// CJK variant: per audit-cjk-check-action.test.mjs's file-header finding
+// (RESOLVED — TOW2-326 class, see cjk-capture-gate.test.mjs), corrections.ts's
+// isLikelyRealCorrection capture-quality gate used to only recognize three
+// hardcoded CJK actionable-signal words (偏好/喜欢/要求). It now also
+// recognizes 必须/禁止/不要/不能/不得/... (STRONG_IMPERATIVE) and other CJK
+// imperative/preference markers, so "要求" in the fixture below is no longer
+// load-bearing for the capture gate — kept anyway so this file's matching
+// claim under test stays the tokenizer/overlap/verdict path, not the capture
+// gate (covered directly by cjk-capture-gate.test.mjs).
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

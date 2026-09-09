@@ -74,6 +74,15 @@ describe("saveTriggerKind — hedge-DEMOTION (must NOT be explicit-save)", () =>
     "we should probably checkpoint",
     "we could save this",
     "note to self: remember this",
+    // CJK (TOW2-326 class): the English-only hedge list meant a Chinese
+    // hedge/reminder was NOT demoted while its English equivalent was — an
+    // over-trigger asymmetry (opposite failure mode from the drop-CJK-
+    // corrections gap elsewhere in this class, but still an inconsistency).
+    "提醒我保存一下这个", // "remind me to save this"
+    "提醒我记住这个决定", // "remind me to remember this decision"
+    "也许应该记录一下这个决定", // "maybe we should note down this decision"
+    "或许可以保存这个", // "perhaps we could save this"
+    "记得提醒我保存一下", // "remember to remind me to save"
   ];
 
   for (const phrase of hedged) {

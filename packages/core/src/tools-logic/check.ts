@@ -160,7 +160,15 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       // Auto-detect severity based on correction language.
       // "no" alone is NOT a P0 trigger — it's too broad ("no, use the blue button" ≠ rule).
       // P0 requires explicit prohibition/mandate language.
-      const p0Patterns = /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b/i;
+      // INDEPENDENT-REVIEW FIX (2026-09-09, TOW2-326 class): CJK rows added,
+      // kept byte-identical to the duplicate copy in storage/corrections.ts's
+      // detectSeverity — see that function's doc comment for why this needed
+      // to move in lock-step with the capture gate's own CJK additions.
+      // Round 3: 不能 scoped to 你不能 (bare 不能 collides with capability/
+      // bug-report statements — see the identical fix on STRONG_IMPERATIVE
+      // in corrections.ts).
+      const p0Patterns =
+        /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b|永远不要|绝不|千万不要|总是|一直|始终|不要(?!担心|客气|急|着急|紧张|见外)|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止/i;
       const severity: "p0" | "p1" = p0Patterns.test(corrText) ? "p0" : "p1";
       const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
       const writeResult = writeCorrection(slug, {
