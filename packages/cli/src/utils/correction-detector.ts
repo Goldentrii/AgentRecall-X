@@ -4,11 +4,18 @@
  * Shared pattern-matching logic for the hook-correction and hook-ambient
  * commands. Exported so it can be unit-tested without spawning the CLI process.
  *
- * TWO-GATE DESIGN
+ * TWO-GATE DESIGN (+ one narrow bypass)
  * ──────────────
- * A prompt is captured only when BOTH gates fire:
+ * A prompt is captured when BOTH gates fire:
  *   • CORRECTION gate: text contradicts or negates something the agent did
  *   • BEHAVIORAL gate: text implies a durable rule, not a one-time task redirect
+ * — OR when the THIRD, independent GATED_PROHIBITION_PATTERNS bypass fires
+ *   (TOW2-326, see that list's own doc comment below): a narrow, structurally
+ *   self-sufficient class of CONDITIONAL prohibition ("never do X without Y
+ *   confirming first") that is a durable policy statement on its own, with no
+ *   CORRECTION_PATTERNS partner required or possible (see the SCOPE NOTE
+ *   above CORRECTION_PATTERNS for why that gate's contract cannot stretch to
+ *   cover bare prohibitions in general).
  *
  * INVARIANT (C1 review, 2026-07-03): a pattern must live in exactly ONE gate.
  * If the same phrase fires both gates, the two-gate design filters nothing for
@@ -31,12 +38,18 @@
  */
 
 export interface DetectionResult {
-  /** True when both the correction gate and behavioral gate fire (and prompt is non-trivial) */
+  /**
+   * True when (the correction gate AND the behavioral gate both fire) OR the
+   * GATED_PROHIBITION_PATTERNS bypass fires (TOW2-326) — and prompt is
+   * non-trivial (length > 3).
+   */
   captured: boolean;
   /** String form of the correction pattern that fired, or null */
   correctionHit: string | null;
   /** String form of the behavioral pattern that fired, or null */
   behavioralHit: string | null;
+  /** String form of the GATED_PROHIBITION_PATTERNS bypass entry that fired (TOW2-326), or null */
+  policyHit: string | null;
 }
 
 /**
@@ -212,6 +225,94 @@ export const BEHAVIORAL_SIGNALS: readonly RegExp[] = [
 ];
 
 /**
+ * GATED_PROHIBITION_PATTERNS — TOW2-326 third bypass path.
+ *
+ * The two-gate AND (CORRECTION_PATTERNS ∩ BEHAVIORAL_SIGNALS) cannot capture
+ * a bare forward-looking prohibition like "不要在未经用户确认的情况下发布代码"
+ * ("do not publish code without first getting user confirmation") — see the
+ * SCOPE NOTE above CORRECTION_PATTERNS: that gate's contract is "the agent's
+ * output/action was wrong," and a bare prohibition has NO CORRECTION_PATTERNS
+ * partner there BY DESIGN (adding one would reopen the exact self-capture
+ * failure mode the two-gate INVARIANT at the top of this file exists to
+ * prevent — a prohibition is exactly the kind of phrase that also tends to
+ * satisfy BEHAVIORAL_SIGNALS, so an unconditioned "any prohibition passes"
+ * rule would defeat the AND gate for that whole phrase class).
+ *
+ * What makes THIS narrow class of prohibition safe to capture on its own,
+ * with no independent CORRECTION_PATTERNS partner, is its CONDITIONAL shape:
+ * "never/don't <do X> WITHOUT <a confirmation event happening first>" /
+ * "不要/禁止/不得/不能 ... 未经/没有/经过 ... 确认/同意/许可/批准/审核 ...". The
+ * condition clause is what separates a durable POLICY statement from a bare
+ * one-off redirect — e.g. "这个功能不要做了，先做另一个" ("don't do this
+ * feature anymore, do the other one first") has no condition clause and
+ * correctly stays uncaptured (see cjk-prohibition-signals.test.mjs N09);
+ * "不要在未经用户确认的情况下发布代码" has one, and is exactly the shape a
+ * "don't push/merge/deploy without approval" house rule takes in either
+ * language. Ordinary encouragement ("不要担心"/"don't worry") and one-time
+ * redirects never carry a "without X first" clause, so this bypass does not
+ * reopen the self-capture risk the SCOPE NOTE above warns about.
+ *
+ * English + CJK rows in ONE table (class-not-instance, not a CJK-only special
+ * case) so a mixed-language prompt ("不要在没有 approval 的情况下 merge") still
+ * matches via the CJK skeleton with an English confirmation noun.
+ *
+ * This is a THIRD, INDEPENDENT capture path — `captured` is true when this
+ * list fires, regardless of whether CORRECTION_PATTERNS/BEHAVIORAL_SIGNALS
+ * also fire. The existing two-gate AND is completely unchanged for every
+ * other phrase; see detectCorrection() below.
+ *
+ * INDEPENDENT-REVIEW FIX (2026-09-09): pure surface-token matching over a
+ * generous character gap let ordinary reassurance sentences slip through —
+ * e.g. "不要担心，我还没有收到你的确认邮件" ("don't worry, I still haven't
+ * received your confirmation email") matches the CJK skeleton on paper (不要
+ * ... 没有 ... 确认 all present), but is not a policy statement at all; same
+ * for "Don't worry, we can merge without further approval since legal already
+ * signed off" in English. BEHAVIORAL_SIGNALS already solved this exact problem
+ * for its own 不要 entry with a closed-list negative lookahead over common
+ * benign completions (担心/客气/急/着急/紧张/见外) — this bypass had NOT
+ * reused that guard, reopening the self-capture risk the SCOPE NOTE above
+ * warns about. Fixed by applying the SAME exclusion to the opener in both
+ * rows (English: worry/hesitate/mind/sweat/fret — the closest English
+ * equivalents of that closed reassurance set).
+ *
+ * ROUND-2 INDEPENDENT-REVIEW FIX (2026-09-09): the closed exclusion list is
+ * NOT exhaustive by construction (an open-ended reassurance vocabulary can
+ * never be fully enumerated) — new openers outside the first list (慌/害怕/
+ * 在意 CJK; stress/panic English) reproduced the same false-positive class.
+ * Widened both lists AND added defense-in-depth on the CJK 没有 branch:
+ * excluding 没有(?!收到|接到) targets the SPECIFIC personal-status framing
+ * ("我没有收到/接到你的X") that keeps colliding with the confirmation-noun
+ * check, independent of which reassurance word opened the sentence — this
+ * does not claim to close the class exhaustively (accepted residual risk,
+ * same "known regex-hard miss, accepted" posture as 不得不/不能不 elsewhere
+ * in this file), but meaningfully narrows it beyond opener-enumeration alone.
+ */
+export const GATED_PROHIBITION_PATTERNS: readonly RegExp[] = [
+  // English: "never/don't/do not/must not/should not <verb...> without <confirmation-noun>"
+  // — excluding a closed set of benign-reassurance completions (worry/
+  // hesitate/mind/sweat it/fret/stress/panic) so "don't worry/stress/panic,
+  // ... without approval" (encouragement, not policy) does not fire.
+  /\b(?:never|don'?t|do\s+not|must\s+not|should\s+not)\b(?!\s+(?:worry|hesitate|mind|sweat|fret|stress|panic))[^.!?\n]{0,40}\bwithout\b[^.!?\n]{0,40}\b(?:confirm\w*|approval|permission|sign[- ]?off|review\w*|asking)\b/i,
+  // CJK skeleton: (不要|禁止|不得|不能|永远不要|绝不) ... (未经|没有|经过) ... (确认|同意|许可|批准|审核 or an English confirmation noun, for mixed prompts)
+  // — 不要 excludes a widened benign-completion set (BEHAVIORAL_SIGNALS'
+  // original 担心/客气/急/着急/紧张/见外 plus 慌/害怕/在意), so "不要担心/
+  // 不要慌/不要害怕/不要在意" openers never reach the confirmation-noun
+  // check at all. 没有 additionally excludes 收到/接到 (received/gotten) —
+  // the personal-status framing ("我没有收到你的确认") that reads as "I
+  // haven't gotten X yet," not "the policy waives X" — kept separate from
+  // 未经/经过, which are formal/literary markers with no such collision risk.
+  // 不能 scoped to second-person 你不能, NOT bare 不能 — mirrors
+  // BEHAVIORAL_SIGNALS' own /你不能(?!不)/ entry above (and its documented
+  // reasoning): bare 不能 collides with plain capability/bug-report
+  // statements ("系统现在不能在没有审核权限的情况下显示这个按钮" — a bug
+  // report, not a policy), and this bypass's confirmation-noun clause
+  // (未经/没有...确认/审核/...) makes that exact collision common in
+  // practice — a bug report about permission-gated UI reads almost
+  // identically to a permission-gated POLICY. Found via independent review.
+  /(?:不要(?!担心|客气|急|着急|紧张|见外|慌|害怕|在意)|禁止|不得(?!不)|你不能(?!不)|永远不要|绝不)[^。！？\n]{0,20}(?:未经|没有(?!收到|接到)|经过)[^。！？\n]{0,20}(?:确认|同意|许可|批准|审核|approval|confirm\w*)[^。！？\n]{0,10}/i,
+];
+
+/**
  * Determine whether a user prompt should be captured as a behavioral correction.
  *
  * Note: `correctionHit`/`behavioralHit` are reported even for prompts of
@@ -223,15 +324,20 @@ export const BEHAVIORAL_SIGNALS: readonly RegExp[] = [
  */
 export function detectCorrection(prompt: string): DetectionResult {
   if (!prompt) {
-    return { captured: false, correctionHit: null, behavioralHit: null };
+    return { captured: false, correctionHit: null, behavioralHit: null, policyHit: null };
   }
 
   const corrPat = CORRECTION_PATTERNS.find((p) => p.test(prompt));
   const behPat = BEHAVIORAL_SIGNALS.find((p) => p.test(prompt));
+  const policyPat = GATED_PROHIBITION_PATTERNS.find((p) => p.test(prompt));
+
+  const twoGateFires = corrPat !== undefined && behPat !== undefined;
 
   return {
-    captured: corrPat !== undefined && behPat !== undefined && prompt.length > 3,
+    // TOW2-326: the two-gate AND OR the independent policy-prohibition bypass.
+    captured: (twoGateFires || policyPat !== undefined) && prompt.length > 3,
     correctionHit: corrPat ? corrPat.toString() : null,
     behavioralHit: behPat ? behPat.toString() : null,
+    policyHit: policyPat ? policyPat.toString() : null,
   };
 }

@@ -30,20 +30,23 @@
 // Intl.Segmenter, script-detected via \p{Script=Han}) their own path with NO
 // length floor — see the "CJK fix" comment on tokenize() in check-action.ts.
 //
-// SEPARATE FINDING (NOT fixed here — out of scope, see task notes below):
+// SEPARATE FINDING — RESOLVED (TOW2-326 class, see cjk-capture-gate.test.mjs):
 // packages/core/src/storage/corrections.ts's `isLikelyRealCorrection`
-// capture-quality gate is ALSO English-directive-only. Its actionable-signal
-// scan only recognizes THREE hardcoded CJK trigger words (偏好/喜欢/要求) —
-// a Chinese correction whose only imperative markers are e.g. 必须/禁止/不要
-// (with none of those three specific words present) is silently REJECTED by
-// writeCorrection() before it ever reaches disk, independent of tokenize().
-// Verified directly: isLikelyRealCorrection("发布代码前必须获得用户确认")
-// returns { ok:false, reason:"no actionable signal..." } even after the
-// tokenize() fix below. Every fixture in this file that goes through
-// writeCorrection() therefore includes "要求" so it clears that unrelated
-// gate — this isolates the tokenize/overlap claim under test from a second,
-// pre-existing bug in corrections.ts (explicitly out of scope for this
-// change; flagged for whichever worker owns that file next).
+// capture-quality gate was ALSO English-directive-only. Its actionable-signal
+// scan only recognized THREE hardcoded CJK trigger words (偏好/喜欢/要求) —
+// a Chinese correction whose only imperative markers were e.g. 必须/禁止/不要
+// (with none of those three specific words present) was silently REJECTED by
+// writeCorrection() before it ever reached disk, independent of tokenize().
+// Verified directly (pre-fix): isLikelyRealCorrection("发布代码前必须获得用户确认")
+// returned { ok:false, reason:"no actionable signal..." } even after the
+// tokenize() fix below. Every fixture in THIS file that goes through
+// writeCorrection() still includes "要求" (harmless — it now clears the gate
+// redundantly alongside 必须/禁止, rather than being the ONLY thing that
+// clears it) so this file's tokenize/overlap claim stays isolated from the
+// capture-gate claim, which is now covered directly by
+// packages/core/test/cjk-capture-gate.test.mjs (STRONG_IMPERATIVE gained
+// 必须/禁止/不要/不能/不得/... CJK rows, mirroring correction-detector.ts's
+// existing CJK pattern rows).
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

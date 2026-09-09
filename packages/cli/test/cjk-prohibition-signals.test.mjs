@@ -18,44 +18,52 @@
 // NOT CHANGED: CORRECTION_PATTERNS. A bare forward-looking prohibition with
 // no reference to something already done is prescriptive, not corrective —
 // see the SCOPE NOTE above CORRECTION_PATTERNS in correction-detector.ts.
-// Consequence (documented, intentional): the audit's exact string still does
-// NOT capture on its own — the BEHAVIORAL gate now fires, but there is no
-// CORRECTION_PATTERNS partner, so the strict AND gate still blocks it. That
-// is verified explicitly below, not glossed over.
+// UPDATE (TOW2-326, this wave): the audit's exact string now DOES capture —
+// not via a new CORRECTION_PATTERNS entry (still none, and still correctly
+// none — see SCOPE NOTE), but via the new, independent
+// GATED_PROHIBITION_PATTERNS bypass (audit-cjk-capture-gate.test.mjs). The
+// BEHAVIORAL gate firing on 不要 (below) is unrelated to why it now captures;
+// the two-gate AND itself is untouched and still blocks every OTHER bare
+// prohibition that lacks the bypass's "without confirmation" condition clause
+// (see the realistic negative fixtures below, none of which changed status).
 //
 // This file focuses on TWO things the audit itself deferred:
 //   1. Realistic NEGATIVE fixtures — ordinary Chinese dev-instruction prose
 //      that shares vocabulary with the new patterns but must not capture.
 //   2. Confirming the new BEHAVIORAL patterns are load-bearing when they DO
 //      have a genuine CORRECTION_PATTERNS partner (i.e. they are not dead
-//      code, and the two-gate AND is what's blocking the audit string, not a
-//      typo in the new regexes).
+//      code) — independent of the newer GATED_PROHIBITION_PATTERNS bypass.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { detectCorrection } from "../dist/utils/correction-detector.js";
 
-// ── The audit string itself: behavioral gate now fires, capture still false ──
+// ── The audit string itself: now captures via the TOW2-326 bypass ──────────
 
 describe("CJK prohibition signals — audit string status after the fix", () => {
-  it("behavioral gate now recognizes the prohibition, but capture stays false (no correction partner)", () => {
+  it("behavioral gate recognizes the prohibition; capture now true via the GATED_PROHIBITION_PATTERNS bypass, not the two-gate AND", () => {
     const r = detectCorrection("不要在未经用户确认的情况下发布代码");
     assert.ok(
       r.behavioralHit,
-      "expected the new 不要 BEHAVIORAL_SIGNALS entry to fire on the audit string",
+      "expected the 不要 BEHAVIORAL_SIGNALS entry to still fire on the audit string",
     );
     assert.equal(
       r.correctionHit,
       null,
       "expected no CORRECTION_PATTERNS entry to fire — this is a forward-looking " +
         "prohibition, not a correction of something already done, and none was added " +
-        "for it (see SCOPE NOTE in correction-detector.ts)",
+        "for it (see SCOPE NOTE in correction-detector.ts) — the two-gate AND itself " +
+        "is unchanged and still can't fire on this string",
+    );
+    assert.ok(
+      r.policyHit,
+      "expected the GATED_PROHIBITION_PATTERNS bypass (TOW2-326) to fire on the audit string",
     );
     assert.equal(
       r.captured,
-      false,
-      "audit string must still NOT self-capture: strict AND gate requires both " +
-        "a correction hit and a behavioral hit; only behavioral fires here",
+      true,
+      "audit string now self-captures via the independent policy-prohibition bypass " +
+        "(TOW2-326), NOT via the two-gate AND, which still has no correction partner",
     );
   });
 });
@@ -133,4 +141,127 @@ describe("CJK prohibition signals — realistic negative fixtures (must NOT capt
       );
     });
   }
+});
+
+// ── GATED_PROHIBITION_PATTERNS-SPECIFIC negative fixtures ────────────────────
+// Independent-review fix (2026-09-09): the bypass's original CJK skeleton had
+// no benign-completion exclusion on its own 不要 alternative (unlike
+// BEHAVIORAL_SIGNALS' 不要 entry), so an ordinary reassurance sentence that
+// merely happens to ALSO mention an unrelated 没有/确认 or 批准 token
+// (structurally satisfying the bypass's surface-token pattern) would
+// self-capture even though it is not a policy statement at all. These
+// fixtures reproduce the exact reported false positives — both languages —
+// and pin the fix (a benign-completion exclusion on the opener, mirroring
+// BEHAVIORAL_SIGNALS' existing convention).
+describe("GATED_PROHIBITION_PATTERNS — benign-reassurance sentences that ALSO mention confirmation/approval tokens must NOT capture", () => {
+  const REASSURANCE_FALSE_POSITIVES = [
+    {
+      id: "R01",
+      text: "不要担心，我还没有收到你的确认邮件",
+      note: "reassurance (don't worry) that happens to mention 没有...确认",
+    },
+    {
+      id: "R02",
+      text: "不要着急，这个没有得到批准也没关系，先做着",
+      note: "reassurance (relax) explicitly WAIVING the need for approval — polarity-inverted from a policy",
+    },
+    {
+      id: "R03",
+      text: "Don't worry, we can merge without further approval since legal already signed off verbally",
+      note: "English reassurance that happens to mention without...approval",
+    },
+    {
+      id: "R04",
+      text: "Don't hesitate to ship without waiting for confirmation, the client already said yes",
+      note: "English encouragement-to-proceed that happens to mention without...confirmation",
+    },
+  ];
+
+  for (const { id, text, note } of REASSURANCE_FALSE_POSITIVES) {
+    it(`${id}: ${note}`, () => {
+      const r = detectCorrection(text);
+      assert.equal(
+        r.captured,
+        false,
+        `Expected SKIP for ${id} (${note}):\n  corr=${r.correctionHit}\n  beh=${r.behavioralHit}\n  policy=${r.policyHit}\n  text=${text}`,
+      );
+    });
+  }
+
+  it("REGRESSION GUARD: the audit string and the mixed CJK+EN fixture still capture (fix must not over-correct)", () => {
+    assert.equal(detectCorrection("不要在未经用户确认的情况下发布代码").captured, true);
+    assert.equal(detectCorrection("不要在没有 approval 的情况下 merge").captured, true);
+  });
+});
+
+// ── ROUND-2 INDEPENDENT-REVIEW FIX: widened exclusion + 没有 defense-in-depth ─
+// Round-1's benign-completion exclusion list (担心/客气/急/着急/紧张/见外;
+// worry/hesitate/mind/sweat/fret) closed the 4 originally-reported false
+// positives but is an inherently open-ended vocabulary — new reassurance
+// openers outside that list reproduced the same failure. Widened both lists
+// (慌/害怕/在意 CJK; stress/panic English) and added defense-in-depth on the
+// CJK 没有 branch (excluding 没有 followed by 收到|接到 — receive-verbs signaling
+// personal-status framing, not a policy waiver).
+describe("GATED_PROHIBITION_PATTERNS — round-2 widened exclusion (new reassurance openers must NOT capture)", () => {
+  const ROUND2_FALSE_POSITIVES = [
+    { id: "R05", text: "不要慌，这个没有经过审核也先别管", note: "reassurance (don't panic) with incidental 没有...审核 mention" },
+    { id: "R06", text: "不要害怕，虽然没有得到确认，我们先试试看", note: "reassurance (don't be afraid) with incidental 没有...确认 mention" },
+    { id: "R07", text: "不要在意，没有经过批准这件事也无所谓", note: "reassurance (don't mind it) explicitly waiving approval" },
+    { id: "R08", text: "Don't stress, we can proceed without formal sign-off this time", note: "English reassurance (don't stress) with incidental without...sign-off" },
+    { id: "R09", text: "Do not panic about shipping this without a formal confirmation", note: "English reassurance (don't panic) with incidental without...confirmation" },
+    { id: "R10", text: "Do not stress about merging this without getting sign-off", note: "English reassurance (do not stress) with incidental without...sign-off" },
+  ];
+
+  for (const { id, text, note } of ROUND2_FALSE_POSITIVES) {
+    it(`${id}: ${note}`, () => {
+      const r = detectCorrection(text);
+      assert.equal(
+        r.captured,
+        false,
+        `Expected SKIP for ${id} (${note}):\n  policy=${r.policyHit}\n  text=${text}`,
+      );
+    });
+  }
+
+  it("REGRESSION GUARD: the round-1 false positives stay fixed, and the genuine positives stay captured", () => {
+    assert.equal(detectCorrection("不要担心，我还没有收到你的确认邮件").captured, false);
+    assert.equal(detectCorrection("不要着急，这个没有得到批准也没关系，先做着").captured, false);
+    assert.equal(detectCorrection("不要在未经用户确认的情况下发布代码").captured, true);
+    assert.equal(detectCorrection("不要在没有 approval 的情况下 merge").captured, true);
+  });
+});
+
+// ── ROUND-3 INDEPENDENT-REVIEW FIX: 不能 scoped to 你不能 ────────────────────
+// Round 1 added bare 不能(?!不) to GATED_PROHIBITION_PATTERNS' CJK opener
+// group, without inheriting the scoping BEHAVIORAL_SIGNALS' own 不能 entry
+// already uses (`/你不能(?!不)/`, documented above that entry: bare 不能
+// collides with plain capability/bug-report statements). Combined with this
+// bypass's confirmation-noun clause (未经/没有...确认/审核/...), that
+// collision became common: a bug report about permission-gated UI behavior
+// ("系统现在不能在没有审核权限的情况下显示这个按钮") reads almost
+// identically to a permission-gated POLICY, and was wrongly captured as a
+// P0 house rule. Fixed: 不能 -> 你不能 in the bypass (mirroring the
+// pre-existing precedent exactly).
+describe("GATED_PROHIBITION_PATTERNS — round-3: 不能 scoped to 你不能 (capability/bug-report statements must NOT capture)", () => {
+  const ROUND3_FALSE_POSITIVES = [
+    { id: "R11", text: "系统现在不能在没有审核权限的情况下显示这个按钮", note: "bug report: the system can't show this button without audit permission" },
+    { id: "R12", text: "这个页面现在不能在没有登录确认的情况下访问", note: "bug report: this page can't be accessed without login confirmation" },
+    { id: "R13", text: "旧版本的客户端不能在没有网络确认的情况下同步数据", note: "bug report: the old client can't sync data without network confirmation" },
+    { id: "R14", text: "这个接口目前不能在没有二次确认弹窗的情况下调用", note: "bug report: this endpoint currently can't be called without the double-confirm dialog" },
+  ];
+
+  for (const { id, text, note } of ROUND3_FALSE_POSITIVES) {
+    it(`${id}: ${note}`, () => {
+      const r = detectCorrection(text);
+      assert.equal(
+        r.captured,
+        false,
+        `Expected SKIP for ${id} (${note}):\n  policy=${r.policyHit}\n  text=${text}`,
+      );
+    });
+  }
+
+  it("REGRESSION GUARD: genuine 你不能 corrections still capture (fix must not over-correct)", () => {
+    assert.equal(detectCorrection("你搞错了，你不能直接改这个文件").captured, true);
+  });
 });

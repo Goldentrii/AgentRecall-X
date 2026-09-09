@@ -56,9 +56,18 @@ export const DURABLE_INTENT_PATTERNS: ReadonlyArray<RegExp> = [
  * unhedged save directive is NOT demoted ("Actually wait, save this." stays 'explicit-save'
  * because the split-sentence logic of the caller would see "save this" in fragment 2).
  * This function tests the WHOLE text, so we rely on hedging being in the first clause.
+ *
+ * CJK ADDITIONS (TOW2-326 class): the English-only hedge list meant a Chinese
+ * hedge/reminder ("提醒我保存一下这个" — "remind me to save this") was NOT
+ * demoted, while its English equivalent ("remind me to save this") was — the
+ * OPPOSITE of the drop-CJK-corrections failure mode elsewhere in this class,
+ * but still an asymmetry: a CJK-primary user's hedge/scheduling phrasing would
+ * over-trigger the explicit-save lane where an English speaker's would not.
+ * CJK has no \b word boundaries, so these are bare substring alternatives
+ * anchored inside the same `^[\s\S]{0,60}?` opener window as the English rows.
  */
 const HEDGE_DEMOTE_PATTERN =
-  /^[\s\S]{0,60}?\b(remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b|(?:i|you|one)\s+could\s+(?:save|remember|log|checkpoint)\b|you\s+might\s+want\s+to\s+(?:save|remember|log)\b)/i;
+  /^[\s\S]{0,60}?(?:\b(?:remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b|(?:i|you|one)\s+could\s+(?:save|remember|log|checkpoint)\b|you\s+might\s+want\s+to\s+(?:save|remember|log)\b)|(?:提醒我[^\n]{0,6}(?:保存|记录|记住|存档)|(?:也许|或许|可能)[^\n]{0,6}(?:保存|记录一下|记住这个|存档)|记得提醒我[^\n]{0,6}(?:保存|记录|记住)))/i;
 
 /**
  * Correction-signal vocabulary — behavioral corrections from check.ts / hook-correction.

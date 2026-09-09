@@ -341,9 +341,28 @@ export const GATE_VERSION = "v4-2026-06-22";
  */
 const REJECTED_LOG_CAP = 2000;
 
-/** Auto-detect severity: p0 if uses strong negation/mandate language, else p1. */
+/**
+ * Auto-detect severity: p0 if uses strong negation/mandate language, else p1.
+ *
+ * INDEPENDENT-REVIEW FIX (2026-09-09, TOW2-326 class): this pattern was
+ * English-only, so a CJK-only P0-caliber prohibition (禁止/不得/不能/不要 with
+ * no English marker) would now clear the newly CJK-aware capture gate above
+ * but still classify as p1 — silently losing the P0 blocking power (see
+ * check.ts's own doctrine comment: P0 severity is what lets a correction
+ * OVERRIDE a plan via `verdict: "blocked"`) an equivalent English phrasing
+ * would get. CJK rows added, mirroring STRONG_IMPERATIVE above; kept
+ * byte-identical to the duplicate `p0Patterns` copy in tools-logic/check.ts
+ * (search that file for `p0Patterns`, not a line number — line references
+ * drift; that copy is the primary caller, which computes severity itself
+ * before calling writeCorrection — this function is the FALLBACK path for
+ * callers that don't pre-supply severity).
+ *
+ * INDEPENDENT-REVIEW FIX (2026-09-09, round 3): 不能 scoped to 你不能 —
+ * see the identical fix/reasoning on STRONG_IMPERATIVE above.
+ */
 function detectSeverity(text: string): "p0" | "p1" {
-  const p0Patterns = /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b/i;
+  const p0Patterns =
+    /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b|永远不要|绝不|千万不要|总是|一直|始终|不要(?!担心|客气|急|着急|紧张|见外)|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止/i;
   return p0Patterns.test(text) ? "p0" : "p1";
 }
 
@@ -759,22 +778,83 @@ export function splitSentences(text: string): string[] {
 // when the fragment is NOT a hedged/reporting frame. This is recall-safe: every
 // genuine fixture correction carries a STRONG marker, a preference shape, or a
 // non-hedged weak verb (verified by scripts/eval/capture-gate-confusion.mjs).
+// CJK ADDITIONS (TOW2-326 class): the audit found this gate was English-
+// directive-only — a Chinese correction whose only imperative markers are
+// e.g. 必须/禁止/不要 (with none of the three pre-existing PREFERENCE_PATTERN
+// trigger words 偏好/喜欢/要求 present) was silently REJECTED by
+// writeCorrection() before it ever reached disk (verified directly:
+// isLikelyRealCorrection("发布代码前必须获得用户确认") returned
+// { ok:false, reason:"no actionable signal..." } — see
+// audit-cjk-check-action.test.mjs's file-header finding, which flagged this
+// exact gap for "whichever worker owns this file next"). CJK has no word
+// boundaries (\b matches nothing meaningful around Han characters), so the
+// CJK rows below are bare substring alternatives, mirroring the existing CJK
+// rows in PREFERENCE_PATTERN (偏好|喜欢|要求) and in correction-detector.ts's
+// CORRECTION_PATTERNS/BEHAVIORAL_SIGNALS — same convention, same file class.
+//
+// INDEPENDENT-REVIEW FIX (2026-09-09, round 3): 不能 is scoped to
+// second-person 你不能, NOT bare 不能 — mirrors correction-detector.ts's
+// pre-existing BEHAVIORAL_SIGNALS entry `/你不能(?!不)/` (and that entry's
+// own documented reasoning): bare 不能 collides with plain capability/bug-
+// report statements ("这个不能这样跑，报错了"), which are common in this
+// gate's real traffic. The first version of this line added bare 不能(?!不)
+// without inheriting that existing scoping — same class-not-instance miss
+// this whole PR exists to close, just aimed at itself.
 const STRONG_IMPERATIVE =
-  /\b(never|always|don'?t|do not|must\s+not|must|should\s+not|needs?\s+(to|those|the|a|an|more|all)\b|instead|make\s+sure|remember\s+to|remove\s+all|replace\s+with|default\s+to|keep\s+the|keep\s+\w|show\s+(both|all|the|only))\b/i;
-const WEAK_IMPERATIVE = /\b(should|use|using|stop|avoid|prefer)\b/i;
+  /\b(never|always|don'?t|do not|must\s+not|must|should\s+not|needs?\s+(to|those|the|a|an|more|all)\b|instead|make\s+sure|remember\s+to|remove\s+all|replace\s+with|default\s+to|keep\s+the|keep\s+\w|show\s+(both|all|the|only))\b|永远不要|绝不|千万不要|总是|一直|始终|不要|别再|禁止|不可以|不准|你不能(?!不)|不得(?!不)|切勿|不应该|必须|务必|一定要|需要|而不是|改为|换成|确保|记得|切记|删除所有|去掉所有|替换为|改用|默认使用|默认为|保留|保持|显示所有|只显示|仅显示/i;
+// INDEPENDENT-REVIEW FIX (2026-09-09): English "OK, use the new endpoint
+// instead" is rescued by the actionable scan (via "use") BEFORE it ever
+// reaches the soft acknowledgmentPattern gate below — the CJK acknowledgment
+// list added 可以/好的 as pure-ack openers, but without an equivalent CJK
+// suggestion-verb row, a CJK sentence using the SAME "OK, do X" shape (可以
+// 试试.../ 好的，那...改成/统一叫做...) had nothing to rescue it and fell
+// into the ack gate as a false negative — the exact "correction silently
+// never reaches disk" failure this file's CJK additions exist to close.
+//
+// ROUND-2 INDEPENDENT-REVIEW FIX (2026-09-09): the first pass added these as
+// BARE 2-char substrings (试试|改成|统一), which — because CJK has no word
+// boundaries — collide with common COMPOUND-WORD junctions in ordinary,
+// non-directive Chinese: "面试" + "试讲" → "面试试讲" contains "试试"; "整改"
+// + "成效" → "整改成效" and "修改" + "成本" → "修改成本" both contain "改成";
+// and bare "统一" is itself an ordinary adjective/adverb ("统一标准", "统一
+// 安排") with no directive meaning at all. All three were REJECTED, not just
+// narrowed, in favor of structural patterns that require the actual
+// suggestion/naming-rule SHAPE the original fixtures were modeling, not a
+// bare substring:
+//   - 试试: only after a suggestion opener (可以/来/去) or before its most
+//     common completion (看) — "可以试试" / "试试...看" — not a bare
+//     mid-sentence occurrence that could straddle a compound-word boundary.
+//   - 改成: only after 把/将 (the object-marking preposition Mandarin's
+//     "change X to Y" construction always uses) — "把/将 ... 改成" — never
+//     a bare occurrence, closing the 整改+成效 / 修改+成本 collision.
+//   - 统一: only followed by a naming/directive completion (叫做/命名/称为/
+//     改为) — "统一叫做orderId" — never bare, closing the "统一标准/统一
+//     安排" ordinary-adjective false-positive. NOTE: 使用/采用 were
+//     considered but dropped from this completion list (own stress-testing,
+//     independent of the review rounds) — "统一使用"/"统一采用" are just as
+//     often ordinary descriptive prose ("公司统一使用企业微信办公" — the
+//     company uniformly uses X, a factual statement, not a correction) as a
+//     genuine naming rule, so they added false-positive risk without a
+//     matching precision gain; 叫做/命名/称为/改为 are naming-specific verbs
+//     with no equivalent descriptive-prose sense.
+const WEAK_IMPERATIVE =
+  /\b(should|use|using|stop|avoid|prefer)\b|应该|使用|停止|避免|(?:可以|来|去)[^\n]{0,4}试试|试试[^\n]{0,10}看|(?:把|将)[^\n]{0,10}改成|统一(?:叫做|命名|称为|改为)/i;
 // Tentative / reporting frame at the START of a fragment — the speaker is musing
 // or reporting, not issuing a rule. A WEAK marker inside such a frame is NOT a
 // directive. Anchored at ^ so it only catches the OPENER, never a directive
-// sentence that merely follows a hedge.
+// sentence that merely follows a hedge. CJK rows mirror the English hedge
+// openers (musing/intent/tentative-team framing) — no \b equivalent needed.
 const HEDGE_FRAME =
-  /^\s*(i\s+(think|guess|suppose|believe|reckon|feel|will)\b|i'?ll\b|i'?m\s+going\s+to\b|maybe\b|perhaps\b|sounds?\s+good\b|the\s+team\s+(wants?|thinks?|prefers?)\b|we\s+(could|might|may)\b)/i;
+  /^\s*(i\s+(think|guess|suppose|believe|reckon|feel|will)\b|i'?ll\b|i'?m\s+going\s+to\b|maybe\b|perhaps\b|sounds?\s+good\b|the\s+team\s+(wants?|thinks?|prefers?)\b|we\s+(could|might|may)\b|我觉得|我猜|我想|我认为|我感觉|我会|我打算|我要去|也许|可能|或许|听起来不错|听起来还行|团队希望|团队认为|团队倾向于|我们可以|我们也许|我们或许)/i;
 
 // Preference / corrective-fact statement. Includes user-preference verbs (CJK
 // equivalents) AND the "X not Y" / "wrong … not" corrective-fact shape that
 // carries real intent without an imperative verb (e.g. "Product names are
-// novada-search (not novada-mcp)"). Scanned per-fragment.
+// novada-search (not novada-mcp)"). Scanned per-fragment. CJK rows extended
+// (TOW2-326 class) beyond the original 偏好|喜欢|要求 three: 我要/我希望/想要
+// (first-person preference verbs) and 更喜欢/倾向于 (comparative preference).
 const PREFERENCE_PATTERN =
-  /(\buser\s+(wants?|prefers?|likes?|needs?|agreed|tested|chose|wanted)\b|\bthe\s+user\s+is\b|偏好|喜欢|要求|\bwrong\b[\s\S]{0,60}\bnot\b|\(not\s+[^)]+\)|\bnot\s+\w[\w-]*[,.]?\s+(it'?s|its|use|the\s+\w))/i;
+  /(\buser\s+(wants?|prefers?|likes?|needs?|agreed|tested|chose|wanted)\b|\bthe\s+user\s+is\b|偏好|喜欢|要求|我要|我希望|想要|更喜欢|倾向于|\bwrong\b[\s\S]{0,60}\bnot\b|\(not\s+[^)]+\)|\bnot\s+\w[\w-]*[,.]?\s+(it'?s|its|use|the\s+\w))/i;
 
 /**
  * Capture-quality gate — rejects context-free fragments, pure acknowledgments,
@@ -921,8 +1001,13 @@ export function isLikelyRealCorrection(rule: string, _context?: string): { ok: b
   // found NO directive, so anything matching here is a genuine content-free ack
   // ("ok sure", "no that's not what I meant", "confirmed"). NO length cap on the
   // anchor — only the trailing budget — matching the v2 behavior for true acks.
+  // CJK ack markers added (TOW2-326 class): bare Chinese acknowledgments
+  // ("好的，我明白了", "没问题，收到") must be rejected the same way their
+  // English counterparts are — only reached when the actionable scan above
+  // found NO directive anywhere in the text, so a genuine CJK correction that
+  // happens to open with one of these words is unaffected (rescued earlier).
   const acknowledgmentPattern =
-    /^(no[,.]?\s*(that'?s\s+wrong[.!]?)?|ok(ay)?\b|good\b|great\b|nice\b|yes\b|yeah\b|right\b|wait\b|hmm+\b|sure\b|thanks?\b|confirmed\b|fair\s+point\b)[\s\S]{0,80}$/i;
+    /^(no[,.]?\s*(that'?s\s+wrong[.!]?)?|ok(ay)?\b|good\b|great\b|nice\b|yes\b|yeah\b|right\b|wait\b|hmm+\b|sure\b|thanks?\b|confirmed\b|fair\s+point\b|不好意思|好的?|嗯+|哦+|噢+|是的?|对的?|没问题|收到|明白了?|知道了?|清楚了?|了解了?|确认了?|谢谢|辛苦了|行吧|可以的?)[\s\S]{0,80}$/i;
   if (acknowledgmentPattern.test(r)) {
     return { ok: false, reason: "pure acknowledgment or fragment — no rule content" };
   }
