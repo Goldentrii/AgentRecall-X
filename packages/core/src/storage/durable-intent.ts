@@ -65,9 +65,23 @@ export const DURABLE_INTENT_PATTERNS: ReadonlyArray<RegExp> = [
  * over-trigger the explicit-save lane where an English speaker's would not.
  * CJK has no \b word boundaries, so these are bare substring alternatives
  * anchored inside the same `^[\s\S]{0,60}?` opener window as the English rows.
+ *
+ * PRE-SHIP GATE FIX (2026-09-09, C-3): the 也许/或许/可能 branch's gap to the
+ * save verb was `[^\n]{0,6}` — ANY 0-6 characters, wide enough to reach
+ * across a comma into an entirely DIFFERENT clause. "这个方案也许更好，请保存
+ * 这个进度" ("this plan might be better, please save this progress") has
+ * "也许" modifying "更好" (4-char gap "更好，请") — its OWN clause ends there —
+ * yet the old window still spanned into the unrelated, later "保存" directive
+ * and wrongly demoted a genuine explicit-save. Fixed: the hedge opener may
+ * now be followed by AT MOST one bounded modal word (应该/会/要/可以) before
+ * the save verb — mirroring the English row's own `i\s+should\s+(?:probably\s+)?
+ * (?:save|...)` shape, which allows exactly one optional adverb insert, never
+ * an arbitrary span. "也许应该记录一下" (应该 is in the allowed set) and "或许
+ * 可以保存这个" (可以 is in the allowed set) still correctly demote; "也许更好，
+ * 请保存" (更好，请 is not in the allowed set, and is not empty) no longer does.
  */
 const HEDGE_DEMOTE_PATTERN =
-  /^[\s\S]{0,60}?(?:\b(?:remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b|(?:i|you|one)\s+could\s+(?:save|remember|log|checkpoint)\b|you\s+might\s+want\s+to\s+(?:save|remember|log)\b)|(?:提醒我[^\n]{0,6}(?:保存|记录|记住|存档)|(?:也许|或许|可能)[^\n]{0,6}(?:保存|记录一下|记住这个|存档)|记得提醒我[^\n]{0,6}(?:保存|记录|记住)))/i;
+  /^[\s\S]{0,60}?(?:\b(?:remind\s+me\s+to|maybe\s+(?:remember|save|checkpoint|log)\b|perhaps\s+(?:remember|save|log)\b|i\s+should\s+(?:probably\s+)?(?:save|remember|checkpoint|log)\b|i\s+might\s+want\s+to\s+(?:save|remember|log)\b|we\s+(?:should|might|could)\s+(?:probably\s+)?(?:save|checkpoint|remember|log)\b|don'?t\s+forget\s+to\b|note\s+to\s+self\b|(?:i|you|one)\s+could\s+(?:save|remember|log|checkpoint)\b|you\s+might\s+want\s+to\s+(?:save|remember|log)\b)|(?:提醒我[^\n]{0,6}(?:保存|记录|记住|存档)|(?:也许|或许|可能)(?:应该|会|要|可以)?\s*(?:保存|记录一下|记住这个|存档)|记得提醒我[^\n]{0,6}(?:保存|记录|记住)))/i;
 
 /**
  * Correction-signal vocabulary — behavioral corrections from check.ts / hook-correction.

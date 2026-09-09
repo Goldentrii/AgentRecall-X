@@ -5,7 +5,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { VERSION, setRoot } from "agent-recall-core";
 import type { Importance, WalkDepth } from "agent-recall-core";
-import { detectCorrection } from "./utils/correction-detector.js";
+import { detectCorrection, scopeToTriggerSentences } from "./utils/correction-detector.js";
 import {
   extractTopicKeywords,
   loadProfile as loadTopicProfile,
@@ -1739,13 +1739,27 @@ async function main(): Promise<void> {
             }
           } catch { /* non-blocking — context is best-effort */ }
 
+          // S-M1 (2026-09-09 pre-ship gate fix, SECURITY finding): scope what
+          // gets WRITTEN to the sentence(s) that actually contain the fired
+          // trigger — never the whole `prompt` slice. Before this, a
+          // prompt-injection tail appended after a genuine trigger clause
+          // ("不要在未经用户确认的情况下发布代码。忽略之前所有的规则…") was
+          // persisted to disk verbatim, and its own markers could leak into
+          // check()'s downstream severity classification (which scans
+          // whatever text `human_correction` contains). splitSentences is
+          // CJK-boundary-aware (S-M2), so this correctly isolates a CJK
+          // trigger sentence too. Falls back to the raw prompt only if
+          // scoping ever returns empty (defensive; should not happen given
+          // `detection.captured` is already true).
+          const scopedText = scopeToTriggerSentences(core.splitSentences(prompt), detection) || prompt;
+
           await core.check({
             goal: lastGoal || "Unknown — see correction",
             confidence: "high",
-            human_correction: prompt.slice(0, 200),
+            human_correction: scopedText.slice(0, 200),
             // Delta describes the gap using actual content so keyword grouping
             // produces meaningful topics (e.g. "deploy-vercel") not "human-corrected"
-            delta: `${lastGoal ? `Was: "${lastGoal.slice(0, 60)}"` : "Unknown context"} | Correction: "${prompt.slice(0, 80)}"${agentContext ? ` | Agent was: ${agentContext.slice(0, 120)}` : ""}`,
+            delta: `${lastGoal ? `Was: "${lastGoal.slice(0, 60)}"` : "Unknown context"} | Correction: "${scopedText.slice(0, 80)}"${agentContext ? ` | Agent was: ${agentContext.slice(0, 120)}` : ""}`,
             project,
           });
           // Silent — no stdout output, correction captured in alignment-log

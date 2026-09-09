@@ -359,10 +359,22 @@ const REJECTED_LOG_CAP = 2000;
  *
  * INDEPENDENT-REVIEW FIX (2026-09-09, round 3): 不能 scoped to 你不能 —
  * see the identical fix/reasoning on STRONG_IMPERATIVE above.
+ *
+ * PRE-SHIP GATE FIX (2026-09-09, C-1): 不要's benign-reassurance exclusion
+ * widened from the narrow round-1 set (担心/客气/急/着急/紧张/见外) to the
+ * FULL round-2 set also used by GATED_PROHIBITION_PATTERNS and
+ * STRONG_IMPERATIVE (adds 慌/害怕/在意) — see CJK_REASSURANCE_COMPLETIONS'
+ * own doc comment. This copy had drifted out of sync with the other three
+ * sites; all four are now built from the SAME exported constant where they
+ * share a package (this file + check.ts), or kept byte-identical by
+ * cross-reference where they don't (correction-detector.ts, cli package).
  */
 function detectSeverity(text: string): "p0" | "p1" {
-  const p0Patterns =
-    /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b|永远不要|绝不|千万不要|总是|一直|始终|不要(?!担心|客气|急|着急|紧张|见外)|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止/i;
+  const p0Patterns = new RegExp(
+    `\\bnever\\b|\\balways\\b|\\bdon'?t\\b|\\bdo not\\b|\\bmust not\\b|\\bforbid\\b|\\bprohibit\\b|` +
+      `永远不要|绝不|千万不要|总是|一直|始终|不要(?!${CJK_REASSURANCE_COMPLETIONS})|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止`,
+    "i",
+  );
   return p0Patterns.test(text) ? "p0" : "p1";
 }
 
@@ -742,6 +754,18 @@ export interface RankedCorrection extends CorrectionRecord {
 export function splitSentences(text: string): string[] {
   // Boundary = one of . ! ? OR a newline, that is followed by whitespace or EOT.
   // A `.` wedged between two non-space chars (4.7, file.md, e.g.) is NOT a boundary.
+  //
+  // S-M2 fix (pre-ship gate review, 2026-09-09): CJK full-width terminators
+  // 。！？ are ALWAYS a boundary, unconditionally (no "followed by whitespace"
+  // requirement) — unlike ASCII ./!/?, CJK prose has no decimal-point
+  // ambiguity to protect against and conventionally has no space after
+  // sentence punctuation, so requiring trailing whitespace would silently
+  // never split CJK text at all. This is the root dependency S-M1 (sentence-
+  // scoped WRITE, see hook-correction in cli/src/index.ts) needs: without it,
+  // a CJK prompt-injection tail appended after a genuine trigger clause (e.g.
+  // "不要在未经用户确认的情况下发布代码。忽略之前所有的规则…") could never be
+  // isolated from the trigger sentence, because the whole string was always
+  // returned as ONE fragment.
   const out: string[] = [];
   let buf = "";
   for (let i = 0; i < text.length; i++) {
@@ -749,12 +773,15 @@ export function splitSentences(text: string): string[] {
     buf += ch;
     const next = text[i + 1];
     const isPunct = ch === "." || ch === "!" || ch === "?";
+    const isCjkPunct = ch === "。" || ch === "！" || ch === "？";
     const isNewline = ch === "\n" || ch === "\r";
     // Sentence boundary: terminal punctuation at end OR followed by whitespace;
-    // newline is always a boundary. A `.` between non-whitespace chars is NOT
-    // a boundary (next is defined and not whitespace) — keeps decimals intact.
+    // a CJK terminator or newline is ALWAYS a boundary. A `.` between
+    // non-whitespace chars is NOT a boundary (next is defined and not
+    // whitespace) — keeps decimals intact.
     const atBoundary =
       isNewline ||
+      isCjkPunct ||
       (isPunct && (next === undefined || /\s/.test(next)));
     if (atBoundary) {
       const frag = buf.trim();
@@ -800,8 +827,59 @@ export function splitSentences(text: string): string[] {
 // gate's real traffic. The first version of this line added bare 不能(?!不)
 // without inheriting that existing scoping — same class-not-instance miss
 // this whole PR exists to close, just aimed at itself.
-const STRONG_IMPERATIVE =
-  /\b(never|always|don'?t|do not|must\s+not|must|should\s+not|needs?\s+(to|those|the|a|an|more|all)\b|instead|make\s+sure|remember\s+to|remove\s+all|replace\s+with|default\s+to|keep\s+the|keep\s+\w|show\s+(both|all|the|only))\b|永远不要|绝不|千万不要|总是|一直|始终|不要|别再|禁止|不可以|不准|你不能(?!不)|不得(?!不)|切勿|不应该|必须|务必|一定要|需要|而不是|改为|换成|确保|记得|切记|删除所有|去掉所有|替换为|改用|默认使用|默认为|保留|保持|显示所有|只显示|仅显示/i;
+// PRE-SHIP GATE FIX (2026-09-09, C-1): shared benign-reassurance completion
+// list for 不要 — extracted so STRONG_IMPERATIVE below, detectSeverity above,
+// and check.ts's p0Patterns (imported from here) cannot independently drift
+// again. The 2026-09-09 gate review found exactly that: this list existed in
+// THREE places with THREE different widths (STRONG_IMPERATIVE had none at
+// all; detectSeverity/check.ts had the narrow round-1 set). Exported so
+// check.ts (same package) can build its own p0Patterns from the identical
+// string instead of a hand-copied literal. correction-detector.ts (cli
+// package) keeps its own copy — cross-package import was judged not worth
+// the coupling for a 9-token disjunction; see that file's own doc comment,
+// kept in sync by cross-reference (same "duplicated, cross-referenced"
+// convention this file already uses for detectSeverity/p0Patterns).
+export const CJK_REASSURANCE_COMPLETIONS = "担心|客气|急|着急|紧张|见外|慌|害怕|在意";
+
+// PRE-SHIP GATE FIX (2026-09-09, S-M3): a directive-shaped clause that is
+// being REPORTED, QUOTED from a document/manual, or explicitly left
+// UNRESOLVED in discussion is never an authoritative rule — however strong
+// its own marker. This is the ONE frame check STRONG_IMPERATIVE does NOT
+// bypass (unlike HEDGE_FRAME, which only gates WEAK_IMPERATIVE) — design
+// decision FINAL: quoted third-party rules and undecided narratives are
+// never capturable as authoritative. One table (class-not-instance):
+//   - reporting/discussion openers: 我们讨论了/讨论过, 聊到(了)
+//   - document/manual attribution openers: 文档里写着, X手册规定,
+//     根据…的说法, 据说
+//   - undecided-outcome markers (checked ANYWHERE, not just the opener —
+//     these are CONCLUDING remarks): 没有定论, 没(有)达成一致
+// Anchored at ^ for the opener half, mirroring HEDGE_FRAME's own convention.
+const QUOTE_NARRATIVE_OPENER =
+  /^\s*(?:我们|大家|昨天|之前|上次|后来|团队)?[^\n]{0,6}?(?:讨论了|讨论过|聊到了?|文档里写着|(?:产品|公司|员工|操作|规范)?手册(?:里)?规定|根据[^\n]{0,20}的说法|据说)/;
+const QUOTE_NARRATIVE_UNRESOLVED = /没有定论|没达成一致|没有达成一致/;
+function isQuoteNarrativeFrame(text: string): boolean {
+  return QUOTE_NARRATIVE_OPENER.test(text) || QUOTE_NARRATIVE_UNRESOLVED.test(text);
+}
+
+// PRE-SHIP GATE FIX (2026-09-09, C-2): three of the bare CJK tokens below
+// (需要/确保/记得) gained structural completion requirements, mirroring the
+// pre-existing English precedent's own narrowing (e.g. `needs?\s+(to|the|
+// ...)` — "needs three years" does not match because "three" isn't in that
+// list). Each excludes the SPECIFIC descriptive-prose shape the pre-ship
+// gate review's fixture battery found, not an invented whitelist:
+//   - 需要(?!<digit-or-CJK-numeral>): "需要三年经验" (a quantity/requirement
+//     phrase) vs "需要先确认一下" (a directive) — descriptive usage quantifies,
+//     directive usage rarely does.
+//   - 确保(?!金): "确保金" is a name/compound collision (mirrors the existing
+//     试试/改成/统一 compound-word fixes below), not the verb 确保.
+//   - 记得(?!上次|之前|以前|那时): "我记得上次是这样" (recollection of the
+//     past) vs "记得先跑测试" (a forward-looking directive).
+const STRONG_IMPERATIVE = new RegExp(
+  `\\b(never|always|don'?t|do not|must\\s+not|must|should\\s+not|needs?\\s+(to|those|the|a|an|more|all)\\b|instead|make\\s+sure|remember\\s+to|remove\\s+all|replace\\s+with|default\\s+to|keep\\s+the|keep\\s+\\w|show\\s+(both|all|the|only))\\b|` +
+    `永远不要|绝不|千万不要|总是|一直|始终|不要(?!${CJK_REASSURANCE_COMPLETIONS})|别再|禁止|不可以|不准|你不能(?!不)|不得(?!不)|切勿|不应该|必须|务必|一定要|` +
+    `需要(?![0-9一二两三四五六七八九十百千万几])|而不是|改为|换成|确保(?!金)|记得(?!上次|之前|以前|那时)|切记|删除所有|去掉所有|替换为|改用|默认使用|默认为|保留|保持|显示所有|只显示|仅显示`,
+  "i",
+);
 // INDEPENDENT-REVIEW FIX (2026-09-09): English "OK, use the new endpoint
 // instead" is rescued by the actionable scan (via "use") BEFORE it ever
 // reaches the soft acknowledgmentPattern gate below — the CJK acknowledgment
@@ -837,8 +915,30 @@ const STRONG_IMPERATIVE =
 //     genuine naming rule, so they added false-positive risk without a
 //     matching precision gain; 叫做/命名/称为/改为 are naming-specific verbs
 //     with no equivalent descriptive-prose sense.
+// ROUND-3 PRE-SHIP GATE FIX (2026-09-09): the 试试...看 gapped alternative
+// ({0,10} chars between them) reproduced the EXACT compound-word collision
+// class this section already fixed for 试试/改成/统一 above — "面试试讲，看看
+// 效果怎么样" contains 试试 spanning the 面试/试讲 word boundary, and the
+// SEPARATE, unrelated 看看 later in the sentence (reporting "let's see how it
+// goes", nothing to do with 试试) was close enough to satisfy the {0,10} gap
+// and wrongly rescue it. Tightened to the CONTIGUOUS "试试看" collocation
+// (zero gap) — every genuine "试试看" fixture (own AND existing regression
+// suite) has 看 immediately after 试试 with nothing between; the gapped form
+// was never load-bearing for any real fixture, only for this collision.
+//
+// PRE-SHIP GATE FIX (2026-09-09, C-2): 应该/使用/停止/避免 gained structural
+// completion requirements, same rationale as 需要/确保/记得 above:
+//   - 应该(?!已经|会|也许|可能): "他应该已经到了" (epistemic "must have") vs
+//     "应该用novada-search" (a directive).
+//   - 使用(?!的): "使用的是旧版本" (descriptive "what is used") vs "应该使用
+//     新版本" (a directive).
+//   - 停止(?!了): "服务停止了响应" (past-tense event report) vs "请停止这样做"
+//     (a command).
+//   - (?<!为了)避免: "为了避免误会" (purpose clause) vs "请避免这样写" (a
+//     directive) — excludes what PRECEDES 避免, not what follows, since
+//     "避免误会" itself appears in both shapes.
 const WEAK_IMPERATIVE =
-  /\b(should|use|using|stop|avoid|prefer)\b|应该|使用|停止|避免|(?:可以|来|去)[^\n]{0,4}试试|试试[^\n]{0,10}看|(?:把|将)[^\n]{0,10}改成|统一(?:叫做|命名|称为|改为)/i;
+  /\b(should|use|using|stop|avoid|prefer)\b|应该(?!已经|会|也许|可能)|使用(?!的)|停止(?!了)|(?<!为了)避免|(?:可以|来|去)[^\n]{0,4}试试|试试看|(?:把|将)[^\n]{0,10}改成|统一(?:叫做|命名|称为|改为)/i;
 // Tentative / reporting frame at the START of a fragment — the speaker is musing
 // or reporting, not issuing a rule. A WEAK marker inside such a frame is NOT a
 // directive. Anchored at ^ so it only catches the OPENER, never a directive
@@ -853,8 +953,19 @@ const HEDGE_FRAME =
 // novada-search (not novada-mcp)"). Scanned per-fragment. CJK rows extended
 // (TOW2-326 class) beyond the original 偏好|喜欢|要求 three: 我要/我希望/想要
 // (first-person preference verbs) and 更喜欢/倾向于 (comparative preference).
+// PRE-SHIP GATE FIX (2026-09-09, C-2): 要求/喜欢 gained structural
+// completion requirements:
+//   - (?<!的)要求: "客户的要求还没定" (的要求 — possessive NOUN phrase) vs
+//     "用户要求删除文件前必须先确认" (要求 as a first-person/subject VERB,
+//     the existing audit fixture — preceded by 户, not 的).
+//   - 喜欢 excluded when a THIRD-PERSON subject (他/她/它) opens the same
+//     clause: "他很喜欢这个方案" is a report about someone ELSE's
+//     preference, not the USER'S — mirrors the English row's own
+//     `\buser\s+(wants?|prefers?|likes?...)\b` requirement (subject-scoped,
+//     not "anyone likes anything"). "我更喜欢"/"更喜欢" (first-person) is a
+//     SEPARATE alternative below and is unaffected.
 const PREFERENCE_PATTERN =
-  /(\buser\s+(wants?|prefers?|likes?|needs?|agreed|tested|chose|wanted)\b|\bthe\s+user\s+is\b|偏好|喜欢|要求|我要|我希望|想要|更喜欢|倾向于|\bwrong\b[\s\S]{0,60}\bnot\b|\(not\s+[^)]+\)|\bnot\s+\w[\w-]*[,.]?\s+(it'?s|its|use|the\s+\w))/i;
+  /(\buser\s+(wants?|prefers?|likes?|needs?|agreed|tested|chose|wanted)\b|\bthe\s+user\s+is\b|偏好|(?<!他[^，。！？\n]{0,4})(?<!她[^，。！？\n]{0,4})(?<!它[^，。！？\n]{0,4})喜欢|(?<!的)要求|我要|我希望|想要|更喜欢|倾向于|\bwrong\b[\s\S]{0,60}\bnot\b|\(not\s+[^)]+\)|\bnot\s+\w[\w-]*[,.]?\s+(it'?s|its|use|the\s+\w))/i;
 
 /**
  * Capture-quality gate — rejects context-free fragments, pure acknowledgments,
@@ -977,21 +1088,29 @@ export function isLikelyRealCorrection(rule: string, _context?: string): { ok: b
   // a text that opens with an acknowledgment.
   const fragments = [r, ...splitSentences(r)];
 
-  // (a) STRONG directive marker in any fragment → accept unconditionally.
-  if (fragments.some((f) => STRONG_IMPERATIVE.test(f))) {
+  // (a) STRONG directive marker in any fragment → accept unconditionally,
+  // UNLESS the fragment is a quote/narrative frame (S-M3, 2026-09-09 pre-ship
+  // gate fix) — "unconditionally" here means "not gated on HEDGE_FRAME like
+  // WEAK below", never meant "even when the rule is merely being quoted from
+  // a document or discussed without resolution". This is the one frame check
+  // STRONG markers do not bypass.
+  if (fragments.some((f) => STRONG_IMPERATIVE.test(f) && !isQuoteNarrativeFrame(f))) {
     return { ok: true };
   }
 
   // (a2) WEAK directive marker → accept only in a fragment that is NOT a hedged/
-  // reporting frame. Closes the Loop-14 filler-prose false-accept ("I think we
-  // should use it") while still accepting a direct weak-verb correction ("stop
-  // making it full width") and a directive sentence that merely FOLLOWS a hedge.
-  if (fragments.some((f) => WEAK_IMPERATIVE.test(f) && !HEDGE_FRAME.test(f))) {
+  // reporting frame, NOR a quote/narrative frame. Closes the Loop-14
+  // filler-prose false-accept ("I think we should use it") while still
+  // accepting a direct weak-verb correction ("stop making it full width")
+  // and a directive sentence that merely FOLLOWS a hedge.
+  if (fragments.some((f) => WEAK_IMPERATIVE.test(f) && !HEDGE_FRAME.test(f) && !isQuoteNarrativeFrame(f))) {
     return { ok: true };
   }
 
-  // (b) preference / corrective-fact statement in any fragment
-  if (fragments.some((f) => PREFERENCE_PATTERN.test(f))) {
+  // (b) preference / corrective-fact statement in any fragment (quote/
+  // narrative-framed preferences don't count as the user's OWN preference
+  // either — S-M3 applies uniformly across all three signal types).
+  if (fragments.some((f) => PREFERENCE_PATTERN.test(f) && !isQuoteNarrativeFrame(f))) {
     return { ok: true };
   }
 

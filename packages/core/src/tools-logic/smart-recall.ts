@@ -276,14 +276,20 @@ export interface SmartRecallResult {
    * distinguishes the outcomes inside smartRecall()'s `isRemote` branch.
    *   - "fused": both local+remote answered non-empty and
    *     `fuseRemoteWithLocal()` ran.
-   *   - "remote": remote answered (fusion did not run — one side was
-   *     empty; the flag can only be true to reach this branch at all, since
-   *     it is never set when the flag is off) — `results` is whichever of
-   *     remote/local the pre-existing ternary picked.
+   *   - "remote": remote answered NON-EMPTY (fusion did not run because
+   *     local was empty) — `results` is genuinely remote's data.
+   *   - "local" (pre-ship gate fix, 2026-09-09, F-1): remote answered (no
+   *     timeout) but was EMPTY — including the both-empty case — so
+   *     `results` is local data (possibly itself empty). Previously this
+   *     branch ALSO reported "remote", regardless of which side's data was
+   *     actually in `results` — a caller reading `recall_path` would see
+   *     "remote" on a call where every item came from the local pipeline.
+   *     Fixed: the label now reflects which side's data is actually
+   *     returned, never a hardcoded value for "fusion didn't run".
    *   - "local-timeout": remote timed out/errored — same case `degraded` is
    *     set for.
    */
-  recall_path?: "fused" | "remote" | "local-timeout";
+  recall_path?: "fused" | "remote" | "local" | "local-timeout";
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +839,12 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
           recallPath = "fused";
         } else {
           results = remoteResults.length > 0 ? remoteResults : localResults;
-          if (fusionEnabled()) recallPath = "remote";
+          // F-1 fix (pre-ship gate review, 2026-09-09): the label must match
+          // which side's data is actually in `results` — remote only when it
+          // genuinely answered non-empty; otherwise "local" (covers both
+          // "remote resolved empty, local had data" and "both empty"), never
+          // a hardcoded "remote" regardless of outcome.
+          if (fusionEnabled()) recallPath = remoteResults.length > 0 ? "remote" : "local";
         }
       } else {
         // Timed out (or errored inside withTimeout) — fall back to local.
