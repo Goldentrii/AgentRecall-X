@@ -11,7 +11,7 @@ import { resolveProject } from "../storage/project.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
-import { writeCorrection, splitSentences } from "../storage/corrections.js";
+import { writeCorrection, splitSentences, CJK_REASSURANCE_COMPLETIONS } from "../storage/corrections.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
@@ -167,8 +167,15 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       // Round 3: 不能 scoped to 你不能 (bare 不能 collides with capability/
       // bug-report statements — see the identical fix on STRONG_IMPERATIVE
       // in corrections.ts).
-      const p0Patterns =
-        /\bnever\b|\balways\b|\bdon'?t\b|\bdo not\b|\bmust not\b|\bforbid\b|\bprohibit\b|永远不要|绝不|千万不要|总是|一直|始终|不要(?!担心|客气|急|着急|紧张|见外)|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止/i;
+      // PRE-SHIP GATE FIX (2026-09-09, C-1): 不要's exclusion now built from
+      // corrections.ts's exported CJK_REASSURANCE_COMPLETIONS (the FULL
+      // widened set, including 慌/害怕/在意) instead of a hand-copied narrow
+      // literal — this copy had drifted out of sync with detectSeverity.
+      const p0Patterns = new RegExp(
+        `\\bnever\\b|\\balways\\b|\\bdon'?t\\b|\\bdo not\\b|\\bmust not\\b|\\bforbid\\b|\\bprohibit\\b|` +
+          `永远不要|绝不|千万不要|总是|一直|始终|不要(?!${CJK_REASSURANCE_COMPLETIONS})|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止`,
+        "i",
+      );
       const severity: "p0" | "p1" = p0Patterns.test(corrText) ? "p0" : "p1";
       const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
       const writeResult = writeCorrection(slug, {
