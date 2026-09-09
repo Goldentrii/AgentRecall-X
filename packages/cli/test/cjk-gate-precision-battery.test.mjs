@@ -87,6 +87,20 @@ describe("S-M4: GATED_PROHIBITION_PATTERNS — 许可证 (license) must not sati
     assert.equal(r.captured, true, `Expected CAPTURE via 许可, got: policy=${r.policyHit}`);
     assert.ok(r.policyHit, "expected the bypass to be the path that fired");
   });
+
+  // Sibling collision found by the independent re-verify (2026-09-09): 同意
+  // embeds inside 意见-compounds ("不同意见" = differing opinions, not consent)
+  // — same class as 许可/许可证, closed with the same (?!…) convention.
+  it("SIBLING (re-verify finding): 不同意见 (differing opinions) must not satisfy the confirmation-noun clause via embedded 同意", () => {
+    const r = detectCorrection("不得在没有充分听取不同意见的情况下发布最终方案");
+    assert.equal(r.captured, false, `Expected SKIP for 不同意见 compound, got: policy=${r.policyHit}`);
+  });
+
+  it("REGRESSION GUARD: genuine 同意 (consent) still satisfies the confirmation-noun clause", () => {
+    const r = detectCorrection("不要在未经用户同意的情况下发送邮件");
+    assert.equal(r.captured, true, `Expected CAPTURE via 同意, got: policy=${r.policyHit}`);
+    assert.ok(r.policyHit, "expected the bypass to be the path that fired");
+  });
 });
 
 // ---------------------------------------------------------------------------

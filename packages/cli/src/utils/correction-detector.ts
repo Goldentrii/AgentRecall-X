@@ -360,11 +360,15 @@ export const GATED_PROHIBITION_PATTERNS: readonly RegExp[] = [
   // bare "许可" substring inside "许可证" satisfied the confirmation-noun
   // clause and wrongly captured it as a P0 policy. Audited the other three
   // confirmation-nouns (确认/同意/批准/审核) for the same compound-word risk:
-  // their common compounds (确认书/同意书/批准文件/审核员) all still denote
+  // CORRECTION (independent re-verify, 2026-09-09): the original audit's "none
+  // found" claim was wrong — 同意 embeds inside 意见-compounds (不同意见 /
+  // 听取…同意见 = "differing opinions", not consent), so it now carries
+  // 同意(?!见), mirroring 许可(?!证). The remaining compounds
+  // (确认书/同意书/批准文件/审核员) all still denote
   // the SAME concept (a confirmation/approval/review artifact or role), so
   // no equivalent exclusion was needed there.
   new RegExp(
-    `(?:不要(?!${CJK_REASSURANCE_COMPLETIONS})|禁止|不得(?!不)|你不能(?!不)|永远不要|绝不)[^。！？\\n]{0,20}(?:未经|没有(?!收到|接到)|经过)[^。！？\\n]{0,20}(?:确认|同意|许可(?!证)|批准|审核|approval|confirm\\w*)[^。！？\\n]{0,10}`,
+    `(?:不要(?!${CJK_REASSURANCE_COMPLETIONS})|禁止|不得(?!不)|你不能(?!不)|永远不要|绝不)[^。！？\\n]{0,20}(?:未经|没有(?!收到|接到)|经过)[^。！？\\n]{0,20}(?:确认|同意(?!见)|许可(?!证)|批准|审核|approval|confirm\\w*)[^。！？\\n]{0,10}`,
     "i",
   ),
 ];
