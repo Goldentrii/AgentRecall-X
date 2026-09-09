@@ -36,6 +36,61 @@ export interface RecallResultItem {
   room?: string;
   date?: string;
   severity?: string;
+  /**
+   * remote-fusion wave #24 (2026-09-09) — the raw `ar_entries.slug` value
+   * (`sync.ts`'s `deriveSlug()`: `journal--${fileName}` /
+   * `palace--${room}--${fileName}`), passed through verbatim. This is the
+   * cross-origin dedup IDENTITY key `smart-recall.ts`'s `fuseRemoteWithLocal`
+   * uses to collapse a remote row with the SAME canonical local item — see
+   * that function's own doc comment. Populated by `mapSemanticRows`/
+   * `mapFtsRows` below (both `ar_semantic_search`'s `RETURNS TABLE` and the
+   * FTS `.select(...)` already carry `slug`, no schema/RPC change needed).
+   * Absent for insight rows — `ar_insights` has no `slug` column at all (see
+   * `search()`'s own insight-mapping comment on why it can carry no
+   * provenance-style column today).
+   */
+  slug?: string;
+  /**
+   * remote-fusion wave #24 (2026-09-09) — palace-only: the room-file
+   * basename (no `.md`), derived from `slug` by stripping THIS row's own
+   * `palace--${room}--` prefix (using the row's own `room` column, not a
+   * generic `--`-split, so a room name that itself happened to contain `--`
+   * can never mis-parse). Mirrors `QueryMemoryItem.file`
+   * (retrieval/query-memory.ts) — same semantics, one layer over on the
+   * remote side. Absent for journal/insight rows.
+   */
+  file?: string;
+}
+
+/**
+ * remote-fusion wave #24 (2026-09-09) — parse the journal-authored
+ * `YYYY-MM-DD` date out of a `deriveSlug()`-produced journal slug
+ * (`journal--${fileName}`, where `fileName` conventionally starts with that
+ * date per this codebase's own naming rule). Returns `undefined` (never
+ * throws) for a non-journal slug, a missing slug, or a legacy journal file
+ * whose name doesn't start with a date — this enrichment is additive, not a
+ * hard requirement every row must satisfy.
+ */
+const JOURNAL_SLUG_DATE_RE = /^journal--(\d{4}-\d{2}-\d{2})/;
+function journalDateFromSlug(slug: string | undefined): string | undefined {
+  if (!slug) return undefined;
+  const m = slug.match(JOURNAL_SLUG_DATE_RE);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * remote-fusion wave #24 (2026-09-09) — derive the palace room-file basename
+ * (no `.md`) from a `deriveSlug()`-produced palace slug
+ * (`palace--${room}--${fileName}`), stripping the row's OWN `room` value as
+ * the exact prefix rather than splitting generically on `--` (a room name
+ * containing `--` would otherwise mis-parse). Returns `undefined` when the
+ * slug/room are missing or the slug doesn't actually carry this room's own
+ * prefix (defensive; should not happen for a genuine palace row).
+ */
+function palaceFileFromSlug(slug: string | undefined, room: string | undefined): string | undefined {
+  if (!slug || !room) return undefined;
+  const prefix = `palace--${room}--`;
+  return slug.startsWith(prefix) ? slug.slice(prefix.length) : undefined;
 }
 
 /**
@@ -75,18 +130,26 @@ function isRescueRow(r: Record<string, unknown>): boolean {
 export function mapSemanticRows(rows: Array<Record<string, unknown>>): RecallResultItem[] {
   return rows
     .filter((r) => !isRescueRow(r))
-    .map(
-      (r) => ({
+    .map((r) => {
+      const source = (r.store === "journal" ? "journal" : "palace") as "palace" | "journal";
+      const slug = r.slug as string | undefined;
+      const room = r.room as string | undefined;
+      const journalDate = source === "journal" ? journalDateFromSlug(slug) : undefined;
+      const palaceFile = source === "palace" ? palaceFileFromSlug(slug, room) : undefined;
+      return {
         id: r.id as string,
-        source: (r.store === "journal" ? "journal" : "palace") as "palace" | "journal",
+        source,
         title: (r.title ?? r.slug) as string,
         excerpt: ((r.body as string) ?? "").slice(0, 300),
         score: (r.similarity as number) ?? 0,
         // cosine similarity is already 0..1.
         ...label((r.similarity as number) ?? 0, "cosine"),
-        room: (r.room as string) ?? undefined,
-      })
-    );
+        room,
+        ...(slug ? { slug } : {}),
+        ...(journalDate ? { date: journalDate } : {}),
+        ...(palaceFile ? { file: palaceFile } : {}),
+      };
+    });
 }
 
 /**
@@ -99,18 +162,26 @@ export function mapSemanticRows(rows: Array<Record<string, unknown>>): RecallRes
 export function mapFtsRows(rows: Array<Record<string, unknown>>): RecallResultItem[] {
   return rows
     .filter((r) => !isRescueRow(r))
-    .map(
-      (r, idx) => ({
+    .map((r, idx) => {
+      const source = (r.store === "journal" ? "journal" : "palace") as "palace" | "journal";
+      const slug = r.slug as string | undefined;
+      const room = r.room as string | undefined;
+      const journalDate = source === "journal" ? journalDateFromSlug(slug) : undefined;
+      const palaceFile = source === "palace" ? palaceFileFromSlug(slug, room) : undefined;
+      return {
         id: r.id as string,
-        source: (r.store === "journal" ? "journal" : "palace") as "palace" | "journal",
+        source,
         title: (r.title ?? r.slug) as string,
         excerpt: ((r.body as string) ?? "").slice(0, 300),
         score: 1 / (idx + 1),
         // reciprocal-rank 1/(idx+1) is already 0..1.
         ...label(1 / (idx + 1), "cosine"),
-        room: (r.room as string) ?? undefined,
-      })
-    );
+        room,
+        ...(slug ? { slug } : {}),
+        ...(journalDate ? { date: journalDate } : {}),
+        ...(palaceFile ? { file: palaceFile } : {}),
+      };
+    });
 }
 
 /**

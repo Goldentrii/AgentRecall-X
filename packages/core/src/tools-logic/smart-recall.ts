@@ -196,6 +196,31 @@ export interface SmartRecallResultItem {
    * W5a salvage visibility fix this field shares.
    */
   conflictsWith?: string[];
+  /**
+   * remote-fusion wave #24 (2026-09-09) — the raw `deriveSlug()`-shaped
+   * identity string (`sync.ts`'s `journal--${fileName}` /
+   * `palace--${room}--${fileName}`). Present on remote-origin items (passed
+   * through verbatim by `supabase/recall-backend.ts`'s `mapSemanticRows`/
+   * `mapFtsRows`); absent on local-origin items, which instead reconstruct
+   * an equivalent identity from `verbatimKey` inside `fuseRemoteWithLocal`
+   * (see that function's own doc comment) rather than populating this field
+   * — the field only ever needs to be READ by that one function, never
+   * written by the local pipeline. Purely additive; no other consumer reads
+   * it.
+   */
+  slug?: string;
+  /**
+   * remote-fusion wave #24 (2026-09-09) — set `true` on a LOCAL-origin item
+   * when `AGENT_RECALL_RECALL_FUSION=1` fusion found the SAME canonical
+   * memory in the remote backend's own results too (see
+   * `fuseRemoteWithLocal`). Deliberately a SEPARATE field from
+   * `alsoFoundIn`: that field's values are competing-TIER names
+   * (palace/journal/insight/archive) from the local pipeline's OWN internal
+   * RRF fusion, not a local-vs-remote BACKEND distinction — overloading it
+   * here would conflate two different fusion layers. Never set when the
+   * flag is off, fusion didn't run, or this item is remote-only.
+   */
+  foundInRemote?: boolean;
 }
 
 /** A verbatim source attached when a low-confidence top hit was drilled into. */
@@ -241,6 +266,24 @@ export interface SmartRecallResult {
    *  (localRecallSearch); absent for remote/vector-backend results, which
    *  don't have a "before fusion across 3 sources" notion. */
   candidates_by_source?: CandidatesBySource;
+  /**
+   * remote-fusion wave #24 (2026-09-09) — observability: which of the 3
+   * remote-configured-route outcomes produced `results`. ONLY set when
+   * `AGENT_RECALL_RECALL_FUSION=1` — kept OFF the default output entirely so
+   * flag-off behavior stays byte-identical to pre-wave (a hard equivalence
+   * invariant/test for this build; see `fuseRemoteWithLocal`'s own header).
+   * Absent for the `since`/pure-local-backend routes — this diagnostic only
+   * distinguishes the outcomes inside smartRecall()'s `isRemote` branch.
+   *   - "fused": both local+remote answered non-empty and
+   *     `fuseRemoteWithLocal()` ran.
+   *   - "remote": remote answered (fusion did not run — one side was
+   *     empty; the flag can only be true to reach this branch at all, since
+   *     it is never set when the flag is off) — `results` is whichever of
+   *     remote/local the pre-existing ternary picked.
+   *   - "local-timeout": remote timed out/errored — same case `degraded` is
+   *     set for.
+   */
+  recall_path?: "fused" | "remote" | "local-timeout";
 }
 
 // ---------------------------------------------------------------------------
@@ -506,9 +549,19 @@ interface WithRawCandidateCounts {
 
 /**
  * Budget for the semantic (remote) backend in ms.
- * Overridable via AGENT_RECALL_RECALL_BUDGET_MS for tuning / tests.
+ * Overridable via AGENT_RECALL_RECALL_BUDGET_MS for tuning / tests. Read
+ * PER-CALL, not cached at module load — this used to be a module-level
+ * `const` (frozen at first import), which silently made a per-test env-var
+ * override a no-op whenever the module had already been imported earlier in
+ * the same process (caught by independent code review, build #24,
+ * 2026-09-09 — the exact hazard `fusionEnabled()` below was already written
+ * to avoid for its own env var; this constant just hadn't been swept yet).
+ * `parseInt` on every call is negligible cost against an already-async
+ * network race.
  */
-const RECALL_BUDGET_MS = parseInt(process.env.AGENT_RECALL_RECALL_BUDGET_MS ?? "2500", 10);
+function recallBudgetMs(): number {
+  return parseInt(process.env.AGENT_RECALL_RECALL_BUDGET_MS ?? "2500", 10);
+}
 
 /**
  * Wrap a promise with a wall-clock timeout.
@@ -522,6 +575,182 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
       () => { clearTimeout(timer); resolve(null); }
     );
   });
+}
+
+// ---------------------------------------------------------------------------
+// Remote+local fusion (#24, 2026-09-09) — feature-flagged.
+// ---------------------------------------------------------------------------
+
+/**
+ * Kill-switch / enable-switch for remote+local fusion. Mirrors
+ * `recallBudgetMs()`'s own `AGENT_RECALL_RECALL_BUDGET_MS` env convention —
+ * read PER-CALL, not cached, for the identical reason: this flag's own
+ * equivalence test (flag OFF ⇒ byte-identical to pre-wave) and dedup tests
+ * (flag ON) both need to toggle it within the SAME test file/process.
+ */
+function fusionEnabled(): boolean {
+  return process.env.AGENT_RECALL_RECALL_FUSION === "1";
+}
+
+/** RRF constant for the local<->remote merge below — same constant every
+ *  other RRF pass in this codebase uses (query-memory.ts's `RRF_K`,
+ *  supabase/recall-backend.ts's `RRF_K`). */
+const FUSION_RRF_K = 60;
+
+/** Normalize an excerpt for identity comparison — BYTE-IDENTICAL to
+ *  query-memory.ts's `normalizeExcerpt` and supabase/recall-backend.ts's own
+ *  inline dedup key (`item.excerpt.toLowerCase().replace(/\s+/g, " ").trim()`)
+ *  — the SAME normalization every existing RRF/dedup pass in this codebase
+ *  already uses, not a fourth reinvention. */
+function normalizeExcerptForFusion(excerpt: string): string {
+  return excerpt.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Cross-origin fusion identity for one item. Prefers a `deriveSlug()`-shaped
+ * identity (EXACT — collapses a local item and a remote item that are
+ * genuinely the same on-disk file) and falls back to normalized-excerpt
+ * identity (the same fallback every existing RRF/dedup pass in this codebase
+ * already uses) when no slug-comparable identity can be produced:
+ *
+ *   - Remote-origin items: `item.slug` is already populated verbatim by
+ *     `supabase/recall-backend.ts`'s `mapSemanticRows`/`mapFtsRows` (INC1
+ *     enrichment) — used directly.
+ *   - Local-origin PALACE items: reconstructed from `verbatimKey.room`/
+ *     `.file` — `palace--${room}--${file}`, matching `sync.ts`'s
+ *     `deriveSlug()` output EXACTLY, since both derive from the same
+ *     underlying room/file-basename pair for the same on-disk file.
+ *   - INSIGHT items (either origin): `ar_insights.title` is UNIQUE at the DB
+ *     level (migration.sql) and the LOCAL insight tier mints its own item id
+ *     via `stableId("insight", i.title)` (query-memory.ts's
+ *     `scoreInsightTier`) — `title` is therefore a genuinely precise,
+ *     cross-origin-stable identity for this tier on BOTH sides, unlike its
+ *     `excerpt` (`[${severity}] ${applies_when...}` locally, `[${severity}]
+ *     confirmed ${n}x` remotely — exactly the low-entropy shape this file's
+ *     own header (Fix 5b) already documents as UNSAFE as a fusion identity:
+ *     two DIFFERENT insights sharing a severity + confirmation-count would
+ *     falsely collapse under excerpt identity). Used in preference to the
+ *     excerpt fallback below.
+ *   - Every other local-origin item (journal, archive, graph-walk): CANNOT
+ *     reconstruct an exact slug. Journal in particular carries only the bare
+ *     authored `date` (`YYYY-MM-DD`), not the slug-suffixed filename
+ *     `deriveSlug()` needs (`journal--${date}-${suffix}`) — two DIFFERENT
+ *     journal entries from the same day would collapse under a date-only
+ *     identity, a FALSE dedup that is worse than missing a true one. These
+ *     fall back to normalized-excerpt identity instead.
+ */
+function fusionIdentity(item: SmartRecallResultItem): string {
+  if (item.slug) return item.slug;
+  if (item.source === "palace" && item.verbatimKey?.kind === "palace" && item.verbatimKey.room && item.verbatimKey.file) {
+    return `palace--${item.verbatimKey.room}--${item.verbatimKey.file}`;
+  }
+  if (item.source === "insight" && item.title) {
+    return `insight::${item.title.toLowerCase().trim()}`;
+  }
+  return normalizeExcerptForFusion(item.excerpt);
+}
+
+/**
+ * remote-fusion wave #24 (2026-09-09) — rank-based RRF fusion of the local
+ * keyword-search results and the remote (Supabase) semantic-search results.
+ *
+ * THE BUG THIS FIXES: today, `smartRecall()`'s remote path is
+ * `results = remoteResults.length > 0 ? remoteResults : localResults` — the
+ * moment the remote backend answers with ANY non-empty result set, the ENTIRE
+ * local result set is discarded, even a genuine local-only hit the remote
+ * backend simply missed (e.g. a very recent journal entry not yet
+ * embedded/synced to Supabase — sync is fire-and-forget, see `sync.ts`'s
+ * `syncToSupabase()`). This function merges instead of replacing.
+ *
+ * RANK-BASED, NEVER RAW-SCORE (see this file's header, Fix 1, and
+ * confidence.ts's own header for the bug class this avoids): local's native
+ * score scale (~0..0.12, a 3-tier internal RRF) and remote's (~0..0.049, a
+ * 3-leg internal RRF, itself already re-labeled through a THIRD "cosine"/
+ * "rrf-supabase" scale) are mutually incompatible — summing them directly
+ * would let one origin systematically dominate, exactly the
+ * cross-source-raw-score-averaging bug this codebase has already fixed once.
+ * So neither list's `.score` is read here — only each item's RANK (its
+ * position within its OWN already-sorted list) feeds the RRF contribution
+ * `1/(FUSION_RRF_K+rank)`, the identical formula `query-memory.ts`'s
+ * `applyRRF` uses one layer down (there: fusing TIERS; here: fusing
+ * BACKENDS).
+ *
+ * ON A DUP (same `fusionIdentity()`): the LOCAL item's fields ALWAYS win —
+ * richer (real trust-filtered annotations: `supersededBy`/`conflictsWith`,
+ * match-anchored excerpt, `verbatimKey` for the Bridge) — only `.score` is
+ * replaced (the summed RRF contribution, used for this array's own sort
+ * order) and `foundInRemote` is set. `.confidence`/`.calibrated` are NEVER
+ * recomputed here: they stay exactly whatever the SURVIVING item's own
+ * origin already computed them as at ITS OWN scoring time (local items:
+ * "rrf-local" scale, set in `localRecallSearch`; remote-only items: "cosine"/
+ * "rrf-supabase", set in `recall-backend.ts`'s row mappers) — this is the
+ * safest possible way to keep `calibrated` correctly scaled to each item's
+ * ORIGIN: never re-deriving it from the new blended rank-score at all means
+ * it can never be accidentally run through the WRONG scale (Risk #8,
+ * confidence.ts's own header — the exact hazard this satisfies rather than
+ * reintroduces).
+ *
+ * Both input lists are assumed already rank-sorted (best first) — exactly
+ * what `localRecallSearch()`'s and `SupabaseRecallBackend.search()`'s own
+ * return values already are. Each input list is ALSO assumed to already be
+ * internally deduped (unique `fusionIdentity()` within its own list) —
+ * true today for both origins (`SupabaseRecallBackend.search()` already
+ * dedupes by id then by normalized excerpt before returning;
+ * `localRecallSearch()`'s own pipeline dedupes via `fuseCanonical()`). If
+ * that precondition were ever violated, a second same-identity item WITHIN
+ * one origin's own list would fold into the FIRST-seen item's map entry
+ * (same-origin collision, not a cross-origin one) — for a remote-side
+ * collision this would incorrectly leave `foundInRemote` at its default
+ * `false` (the field's own contract is "found in the OTHER origin", not
+ * "found more than once"); not a live bug given the precondition above, but
+ * worth knowing if either origin's own de-dup is ever relaxed.
+ */
+export function fuseRemoteWithLocal(
+  localResults: SmartRecallResultItem[],
+  remoteResults: SmartRecallResultItem[],
+): SmartRecallResultItem[] {
+  interface FusionEntry {
+    score: number;
+    item: SmartRecallResultItem;
+    foundInRemote: boolean;
+  }
+  const map = new Map<string, FusionEntry>();
+
+  // LOCAL pass first — a local item always seeds/owns its identity slot, so
+  // a later remote match folds INTO it rather than the reverse.
+  localResults.forEach((item, idx) => {
+    const contribution = 1 / (FUSION_RRF_K + (idx + 1));
+    const key = fusionIdentity(item);
+    const existing = map.get(key);
+    if (existing) {
+      existing.score += contribution;
+    } else {
+      map.set(key, { score: contribution, item, foundInRemote: false });
+    }
+  });
+
+  // REMOTE pass — a match folds its rank contribution into the LOCAL entry
+  // (local item's own fields kept, `foundInRemote` marked); a remote-only
+  // identity becomes its own new entry (remote item's fields kept as-is).
+  remoteResults.forEach((item, idx) => {
+    const contribution = 1 / (FUSION_RRF_K + (idx + 1));
+    const key = fusionIdentity(item);
+    const existing = map.get(key);
+    if (existing) {
+      existing.score += contribution;
+      existing.foundInRemote = true;
+    } else {
+      map.set(key, { score: contribution, item, foundInRemote: false });
+    }
+  });
+
+  const fused: SmartRecallResultItem[] = [...map.values()].map(({ score, item, foundInRemote }) => ({
+    ...item,
+    score,
+    ...(foundInRemote ? { foundInRemote: true } : {}),
+  }));
+  fused.sort((a, b) => b.score - a.score);
+  return fused;
 }
 
 export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallResult> {
@@ -557,6 +786,11 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
 
   let results: SmartRecallResultItem[];
   let degraded: SmartRecallDegraded | undefined;
+  // remote-fusion wave #24 (2026-09-09) — additive observability only; see
+  // `SmartRecallResult.recall_path`'s own doc comment for why this stays
+  // `undefined` (never added to the returned object) whenever the fusion
+  // flag is off, which is what keeps flag-off output byte-identical.
+  let recallPath: SmartRecallResult["recall_path"];
 
   if (input.since) {
     // `since` filter is only supported by localRecallSearch — always use local.
@@ -576,25 +810,37 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
       }
     } else {
       // Remote path: run local keyword search in parallel from the start.
-      // Use semantic results if they arrive within RECALL_BUDGET_MS; otherwise
-      // use local results (already computed — zero extra wait).
+      // Use semantic results if they arrive within the budget; otherwise use
+      // local results (already computed — zero extra wait).
       const localPromise = localRecallSearch(input.query, input.project, limit);
       const remotePromise = backend.search(input.query, input.project, limit);
 
       const [localResults, remoteResults] = await Promise.all([
         localPromise,
-        withTimeout(remotePromise, RECALL_BUDGET_MS),
+        withTimeout(remotePromise, recallBudgetMs()),
       ]);
 
       if (remoteResults !== null) {
         // Semantic results arrived in time — use them.
         recordRemoteSuccess();
-        results = remoteResults.length > 0 ? remoteResults : localResults;
+        // #24 fusion gate: ONLY when the flag is on AND both sides answered
+        // non-empty — every other case (flag off, or either side empty)
+        // falls through to the pre-existing ternary UNCHANGED, so this
+        // `if` can only ever ADD a new branch, never alter the existing
+        // one's condition or result.
+        if (fusionEnabled() && localResults.length > 0 && remoteResults.length > 0) {
+          results = fuseRemoteWithLocal(localResults, remoteResults);
+          recallPath = "fused";
+        } else {
+          results = remoteResults.length > 0 ? remoteResults : localResults;
+          if (fusionEnabled()) recallPath = "remote";
+        }
       } else {
         // Timed out (or errored inside withTimeout) — fall back to local.
         recordRemoteFailure();
         degraded = { reason: "timeout", backend: backendName };
         results = localResults;
+        if (fusionEnabled()) recallPath = "local-timeout";
       }
     }
   }
@@ -727,6 +973,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     sources_queried: sourcesQueried,
     ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
+    ...(recallPath ? { recall_path: recallPath } : {}),
     ...(bridged ? { bridged } : {}),
     ...(finalResults.length === 0
       ? { guidance: "No results found. Try `session_start` to initialize this project, or `bootstrap_scan` to import existing context." }

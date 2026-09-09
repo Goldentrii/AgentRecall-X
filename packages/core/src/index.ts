@@ -412,7 +412,7 @@ export { journalMerge, type JournalMergeInput, type MergeReceipt } from "./tools
 // Tool logic — smart routing
 export { smartRemember, type SmartRememberInput, type SmartRememberResult } from "./tools-logic/smart-remember.js";
 export { smartRemember as remember } from "./tools-logic/smart-remember.js";
-export { smartRecall, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded, type BridgedSource } from "./tools-logic/smart-recall.js";
+export { smartRecall, fuseRemoteWithLocal, type SmartRecallInput, type SmartRecallResult, type SmartRecallResultItem, type SmartRecallDegraded, type BridgedSource } from "./tools-logic/smart-recall.js";
 export { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceLabel, type ConfidenceScale, type CalibratedConfidence } from "./tools-logic/confidence.js";
 export { fetchVerbatim, type VerbatimKey, type VerbatimSource } from "./tools-logic/drill-down.js";
 export { buildPriors, type PriorCorrection } from "./tools-logic/prior-builder.js";
