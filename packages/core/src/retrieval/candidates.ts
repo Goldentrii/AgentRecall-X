@@ -685,6 +685,12 @@ function readCorrectionCandidates(project: string, _opts: ReadTierCandidatesOpts
         decay_class: decayClassOf(record),
         severity: record.severity ?? "p1",
         authoritative: String(record.authoritative ?? false),
+        // fix4 S1 (2026-09-11): evidence-count signal for the corrections
+        // scorer (query-memory.ts scoreCorrectionsTier) — the corrections-
+        // tier analogue of the insight tier's `confirmed_count`. Already
+        // defaulted to 1 by applyCorrectionDefaults; the `?? 1` is the same
+        // defensive-only fallback as `confidence` above.
+        proof_count: String(record.proof_count ?? 1),
       },
     };
   });

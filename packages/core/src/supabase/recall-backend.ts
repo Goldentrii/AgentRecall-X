@@ -26,8 +26,12 @@ export interface RecallResultItem {
   // included here ONLY to stay assignable from localRecallSearch()'s return
   // type below — localRecallSearch itself never actually produces "archive"
   // items; that source is appended separately by smartRecall(), never by the
-  // local fallback this file calls into.
-  source: "palace" | "journal" | "insight" | "archive";
+  // local fallback this file calls into. "corrections" (fix4 S1, 2026-09-11)
+  // mirrors the SmartRecallResultItem widening for the same
+  // assignability reason — the REMOTE mappers below never mint it (the
+  // corrections ledger is local-only, not synced), it only ever arrives via
+  // localRecallSearch()'s fallback return.
+  source: "palace" | "journal" | "insight" | "corrections" | "archive";
   title: string;
   excerpt: string;
   score: number;

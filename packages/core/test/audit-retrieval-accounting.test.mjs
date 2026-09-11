@@ -228,9 +228,14 @@ describe("Audit Finding 1 (FIXED) — canonical-excerpt fusion vs total_searched
       1,
       `expected exactly 1 displayed result (the fused canonical memory), got ${result.results.length}`
     );
+    // RETARGETED (fix4 S1, 2026-09-11): `corrections: 0` added — the
+    // CandidatesBySource contract gained an additive `corrections` field
+    // when smart_recall started requesting the corrections tier by default.
+    // No corrections exist in this fixture, so the count is 0; the test's
+    // intent (pre-fusion per-source accounting is truthful) is unchanged.
     assert.deepEqual(
       result.candidates_by_source,
-      { palace: 1, journal: 1, insight: 0 },
+      { palace: 1, journal: 1, insight: 0, corrections: 0 },
       `expected the per-source raw-candidate diagnostic to match, got ${JSON.stringify(result.candidates_by_source)}`
     );
   });

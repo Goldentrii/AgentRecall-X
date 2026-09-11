@@ -115,7 +115,7 @@ import { palaceDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
-import { queryMemory, queryArchiveFallback, type QueryMemoryItem, type QueryMemorySource } from "../retrieval/query-memory.js";
+import { queryMemory, queryArchiveFallback, type QueryMemoryItem } from "../retrieval/query-memory.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -144,19 +144,26 @@ export interface SmartRecallInput {
 export interface SmartRecallResultItem {
   id: string;
   /** Primary/display source — whichever source's RRF pass inserted this
-   *  canonical entry first (palace, then journal, then insight). Kept
-   *  singular for backward compatibility with existing consumers.
-   *  "archive" (F4, 2026-07-31) is DIFFERENT from the other three: it never
+   *  canonical entry first (palace, then journal, then insight, then
+   *  corrections). Kept singular for backward compatibility with existing
+   *  consumers.
+   *  "corrections" (fix4 S1, 2026-09-11) is a real competing RRF tier —
+   *  smart_recall now requests it by default (the S2-standard eval found
+   *  9/10 correction-homed golden facts unreachable because this surface
+   *  never asked for the tier queryMemory() already had). ADDITIVE contract
+   *  widening: existing consumers see a new possible string value on an
+   *  already-string field, plus new result rows they previously never got.
+   *  "archive" (F4, 2026-07-31) is DIFFERENT from the other four: it never
    *  competes inside the RRF fusion — it is appended separately by
    *  smartRecall() only when the fused top confidence from
-   *  palace/journal/insight is below medium (see the archive-fallback gate
-   *  below). */
-  source: "palace" | "journal" | "insight" | "archive";
+   *  palace/journal/insight/corrections is below medium (see the
+   *  archive-fallback gate below). */
+  source: "palace" | "journal" | "insight" | "corrections" | "archive";
   /** Other sources that ALSO matched this same canonical memory (same
    *  normalized excerpt) during RRF fusion. Present only when the item was
    *  found in more than one source — see Fix 5 in the file header.
    *  Never set for "archive" items — they are appended post-fusion. */
-  alsoFoundIn?: Array<"palace" | "journal" | "insight" | "archive">;
+  alsoFoundIn?: Array<"palace" | "journal" | "insight" | "corrections" | "archive">;
   title: string;
   excerpt: string;
   score: number;
@@ -244,11 +251,14 @@ export interface SmartRecallDegraded {
 }
 
 /** Raw per-source candidate counts, captured BEFORE RRF fusion collapses
- *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5). */
+ *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5).
+ *  fix4 S1 (2026-09-11): `corrections` added — additive field, matching the
+ *  tier's promotion to a default competing source. */
 export interface CandidatesBySource {
   palace: number;
   journal: number;
   insight: number;
+  corrections: number;
 }
 
 export interface SmartRecallResult {
@@ -264,7 +274,7 @@ export interface SmartRecallResult {
   /** Diagnostic: raw per-source candidate counts before RRF fusion (Fix 4/5).
    *  Present only when results came from the local multi-source pipeline
    *  (localRecallSearch); absent for remote/vector-backend results, which
-   *  don't have a "before fusion across 3 sources" notion. */
+   *  don't have a "before fusion across 4 sources" notion. */
   candidates_by_source?: CandidatesBySource;
   /**
    * remote-fusion wave #24 (2026-09-09) — observability: which of the 3
@@ -394,33 +404,6 @@ function verbatimKeyFor(item: QueryMemoryItem): VerbatimKey | undefined {
 }
 
 /**
- * v4 W3 (2026-09-08) type-compat shim, NOT a behavior change: `queryMemory`'s
- * `QueryMemorySource` union grew a `"corrections"` member this wave (a new
- * competing RRF tier — see retrieval/candidates.ts/query-memory.ts), but
- * `SmartRecallResultItem.source`'s own external contract (this file's own
- * header comment, "kept singular for backward compatibility with existing
- * consumers") deliberately stays `"palace" | "journal" | "insight" |
- * "archive"` — smart_recall does NOT opt into the corrections tier this wave
- * (its own `tiers: ["palace", "journal", "insight"]` call below is
- * unchanged), so widening this exported type would be a false, unrequested
- * contract change for every existing consumer. This narrows the (now wider)
- * `QueryMemorySource` back down at the one call site that needs it, and
- * FAILS LOUDLY (never silently mislabels) if a future edit ever adds
- * `"corrections"` to the `tiers` array below without also updating
- * `SmartRecallResultItem.source`'s contract first.
- */
-function excludeCorrectionsSource(source: QueryMemorySource): "palace" | "journal" | "insight" | "archive" {
-  if (source === "corrections") {
-    throw new Error(
-      "localRecallSearch: unexpected 'corrections' source — this file's own " +
-      "tiers list must not request it without first updating " +
-      "SmartRecallResultItem.source's external contract",
-    );
-  }
-  return source;
-}
-
-/**
  * localRecallSearch — the core local search logic (palace + journal + insight).
  *
  * WAVE 2: delegates FETCH/TRUST-FILTER/TOKENIZE+SCORE/RANK-FUSE entirely to
@@ -462,9 +445,17 @@ export async function localRecallSearch(
     // Order matters: RRF/fuseCanonical's "primary/display source" is
     // whichever source's items were inserted into the fusion map FIRST (Map
     // iteration = insertion order). The ORIGINAL localRecallSearch queried
-    // palace, then journal, then insight — this order must be preserved
+    // palace, then journal, then insight — that relative order is preserved
     // exactly (audit-retrieval-accounting.test.mjs asserts on it directly).
-    tiers: ["palace", "journal", "insight"],
+    // fix4 S1 (2026-09-11): "corrections" APPENDED as the 4th competing tier
+    // — appended, not prepended, so every pre-existing cross-tier collision
+    // keeps its pre-fix4 primary/display source; a correction that collides
+    // with a palace/journal/insight copy shows up via `alsoFoundIn`. The v4
+    // W3 shim (`excludeCorrectionsSource`) that guarded this exact wiring is
+    // retired in the same change that widened
+    // `SmartRecallResultItem.source`'s contract — the ordering its doc
+    // comment mandated ("update the contract first").
+    tiers: ["palace", "journal", "insight", "corrections"],
     limit,
     since,
   });
@@ -477,9 +468,9 @@ export async function localRecallSearch(
   // correctly dropped, not a behavior change).
   const deduped: SmartRecallResultItem[] = result.items.map((item) => ({
     id: item.id,
-    source: excludeCorrectionsSource(item.source),
+    source: item.source,
     ...(item.alsoFoundIn && item.alsoFoundIn.length > 0
-      ? { alsoFoundIn: item.alsoFoundIn.map(excludeCorrectionsSource) }
+      ? { alsoFoundIn: item.alsoFoundIn }
       : {}),
     title: item.title,
     excerpt: item.excerpt,
@@ -535,6 +526,7 @@ export async function localRecallSearch(
     palace: result.candidatesBySource.palace ?? 0,
     journal: result.candidatesBySource.journal ?? 0,
     insight: result.candidatesBySource.insight ?? 0,
+    corrections: result.candidatesBySource.corrections ?? 0,
   };
   (deduped as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS] = rawCandidateCounts;
 
@@ -911,7 +903,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // fused top-confidence of palace/journal/insight". This adds brand-new
   // result items sourced from journal/archive/raw/, so it must never compete
   // for rank inside the palace/journal/insight RRF fusion — it only steps in
-  // once those 3 sources have already failed to produce a confident #1
+  // once those 4 competing sources have already failed to produce a confident #1
   // answer. Placed AFTER the Bridge above so the Bridge's own `low` filter
   // (which also matches any verbatimKey-bearing item) only ever considers
   // genuine palace/journal/insight items — an archive item is already a raw
@@ -962,13 +954,13 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // survivor count and can legitimately be smaller). The raw counts side
   // channel is only present when `results` came straight from
   // localRecallSearch's local multi-source pipeline; remote/vector-backend
-  // results have no "before fusion across 3 sources" notion, so fall back to
+  // results have no "before fusion across 4 sources" notion, so fall back to
   // results.length for those (unchanged prior behavior). The archive source
   // is intentionally excluded from this count — it is not part of the
-  // 3-source fan-out this diagnostic describes.
+  // 4-source fan-out this diagnostic describes.
   const rawCandidateCounts = (results as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS];
   const totalSearched = rawCandidateCounts
-    ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight
+    ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight + rawCandidateCounts.corrections
     : results.length;
 
   const sourcesQueried = [...new Set(results.map((r) => r.source))];

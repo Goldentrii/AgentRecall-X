@@ -1187,7 +1187,16 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       assert.ok(bySource.palace.some((i) => i.excerpt?.includes(PALACE_TERM)), `mixed call must still surface the palace hit; got ${JSON.stringify(mixedResult.items)}`);
     });
 
-    it("G4: DEFAULT surfaces (smart_recall, journal_search) never see corrections content — their own explicit tier lists are unchanged, not merely empty by accident", async () => {
+    // RETARGETED (fix4 S1, 2026-09-11, reports/agentrecall-fix4-retrieval-
+    // 2026-09-11.md): this test originally pinned the v4 W3 decision that
+    // smart_recall does NOT opt into the corrections tier. fix4 S1 flips
+    // exactly that contract — the S2-standard golden eval measured 9/10
+    // correction-homed golden facts unreachable BECAUSE of that decision —
+    // so the smart_recall half now asserts the NEW contract positively
+    // (corrections surface on the default path, source-attributed), while
+    // the journal_search half (tiers:["journal"], genuinely unchanged) keeps
+    // its original never-sees-corrections assertion verbatim.
+    it("G4: smart_recall NOW surfaces corrections by default (fix4 S1 contract flip); journal_search still never sees corrections", async () => {
       const PROJECT = "qmp-corrections-default-surface-demo";
       const CORR_TERM = "QMP_DEFAULT_SURFACE_CORRECTIONS_UNIQUE_TERM";
       const JOURNAL_TERM = "QMP_DEFAULT_SURFACE_JOURNAL_UNIQUE_TERM";
@@ -1211,14 +1220,17 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       const optedIn = await core.queryMemory({ query: CORR_TERM, project: PROJECT, tiers: ["corrections"] });
       assert.ok(optedIn.items.some((i) => i.excerpt?.includes(CORR_TERM)), "precondition: the correction must be reachable when a caller opts into tiers:['corrections']");
 
-      // smart_recall — own tiers list is ["palace","journal","insight"],
-      // unchanged by this wave — must never surface the corrections hit,
-      // and must still surface the unrelated journal hit normally.
+      // smart_recall — own tiers list is ["palace","journal","insight",
+      // "corrections"] as of fix4 S1 — MUST surface the corrections hit on
+      // the default path, correctly source-attributed, and must still
+      // surface the unrelated journal hit normally.
       const smartCorrections = await core.smartRecall({ query: CORR_TERM, project: PROJECT, limit: 20 });
+      const corrHit = smartCorrections.results.find((r) => r.excerpt?.includes(CORR_TERM) || r.title?.includes(CORR_TERM));
       assert.ok(
-        !smartCorrections.results.some((r) => r.excerpt?.includes(CORR_TERM) || r.title?.includes(CORR_TERM)),
-        `smart_recall must never surface corrections content (it does not opt in); got ${JSON.stringify(smartCorrections.results)}`,
+        corrHit,
+        `smart_recall must surface corrections content on the default path (fix4 S1); got ${JSON.stringify(smartCorrections.results)}`,
       );
+      assert.equal(corrHit.source, "corrections", "the default-path hit must be attributed to the corrections source");
       const smartJournal = await core.smartRecall({ query: JOURNAL_TERM, project: PROJECT, limit: 20 });
       assert.ok(smartJournal.results.some((r) => r.excerpt?.includes(JOURNAL_TERM)), "smart_recall must still surface its own unrelated journal hit normally");
 

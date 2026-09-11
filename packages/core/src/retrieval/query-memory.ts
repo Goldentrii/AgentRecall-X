@@ -1158,17 +1158,37 @@ function scoreInsightTier(
  * no-op today; matching every sibling tier's own call shape keeps that
  * true structurally, not by omission.
  *
- * SCORING: matches on rule+context text via the shared tokenizer
- * (`keywordExactness` — the SAME helper `scorePalaceTier`/`scoreInsightTier`
- * already use above) and NOTHING else. `confidence`/`decayClass` are
- * ANNOTATION ONLY on the returned item — per the design memo's own repeated
- * finding, rejected TWICE independently (the July 2 proposal's Option 2,
- * and W5fix's removal of `CONTRADICTION_PENALTY`, both for the identical
- * stated reason: blending a confidence/staleness signal into a ranking
- * score hides WHY an item dropped and risks a silent rank inversion) —
- * `internalScore` below reads ONLY `exactness`. P0-ness reuses the
- * EXISTING `severity` field (already populated by `scoreInsightTier` above)
- * rather than inventing a parallel signal.
+ * SCORING (fix4 S1, 2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+ * matches on rule+context text via the shared tokenizer (`keywordExactness`
+ * — the SAME helper `scorePalaceTier`/`scoreInsightTier` already use above),
+ * blended with the record's own IMPORTANCE/EVIDENCE signals, mirroring the
+ * insight tier's shape (`relevance*0.40 + exactness*0.35 + confirmation*0.25`
+ * — see `scoreInsightTier` above):
+ *
+ *   internalScore = exactness*0.70 + severityBoost*0.15 + proofBoost*0.15
+ *     severityBoost: p0 -> 1.0, p1 -> 0.5 (P0-ness reuses the EXISTING
+ *       `severity` field, not a parallel signal)
+ *     proofBoost:    min(1, log2(proof_count+1)/3) — byte-identical to the
+ *       insight tier's `confirmed_count` curve; proof_count is the
+ *       corrections ledger's own on-write consolidation counter.
+ *
+ * Relevance DOMINATES (0.70): severity/proof can reorder near-equal matches
+ * but can never surface a non-matching record (zero-keyword candidates are
+ * skipped before scoring) nor lift a weak match past a strong one by more
+ * than 0.30. NON-TIME-DECAYING like the insight tier: no recency/decay term
+ * — an April rule and a September rule with equal relevance score equally
+ * (a correction is a standing rule, not an episodic memory).
+ *
+ * `confidence`/`decayClass` remain ANNOTATION ONLY on the returned item —
+ * per the design memo's own repeated finding, rejected TWICE independently
+ * (the July 2 proposal's Option 2, and W5fix's removal of
+ * `CONTRADICTION_PENALTY`, both for the identical stated reason: blending a
+ * confidence/STALENESS signal into a ranking score hides WHY an item
+ * dropped and risks a silent rank inversion) — `internalScore` below never
+ * reads either field. severity/proof_count are a DIFFERENT class of signal
+ * (importance/evidence, same class as the insight tier's already-scored
+ * `confirmed_count`), not belief-confidence or staleness — the invariant
+ * those two rejections protect is preserved, not relaxed.
  *
  * `id` is the correction's OWN real, stable `CorrectionRecord.id`
  * (`meta.correction_id`) — deliberately NOT a `stableId()` hash like every
@@ -1198,6 +1218,12 @@ function scoreCorrectionsTier(
     if (!keywords.some((kw) => matchTextLower.includes(kw))) continue;
 
     const exactness = keywordExactness(query, matchText);
+    // fix4 S1: severity/proof_count-aware blend — see this function's doc
+    // comment for the formula and the annotation-only invariant it preserves.
+    const severityBoost = meta.severity === "p0" ? 1.0 : 0.5;
+    const proofCount = Math.max(1, parseInt(meta.proof_count ?? "1", 10) || 1);
+    const proofBoost = Math.min(1.0, Math.log2(proofCount + 1) / 3);
+    const internalScore = exactness * 0.70 + severityBoost * 0.15 + proofBoost * 0.15;
     const excerpt = matchText.length > 300 ? matchText.slice(0, 300) + "..." : matchText;
     const title = candidate.content.length > 300 ? candidate.content.slice(0, 300) + "..." : candidate.content;
     // Fallback (candidate.file sans ".json") only covers the defensive case
@@ -1226,7 +1252,7 @@ function scoreCorrectionsTier(
       source: "corrections",
       title,
       excerpt,
-      score: exactness,
+      score: internalScore,
       date: candidate.date || undefined,
       severity: meta.severity,
       confidence: (meta.confidence as Confidence | undefined) || undefined,
