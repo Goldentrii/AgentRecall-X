@@ -452,22 +452,35 @@ export async function localRecallSearch(
   const result = await queryMemory({
     query,
     project: resolvedProject,
-    // Order matters: RRF/fuseCanonical's "primary/display source" is
-    // whichever source's items were inserted into the fusion map FIRST (Map
-    // iteration = insertion order). The ORIGINAL localRecallSearch queried
-    // palace, then journal, then insight — that relative order is preserved
-    // exactly (audit-retrieval-accounting.test.mjs asserts on it directly).
-    // fix4 S1 (2026-09-11): "corrections" APPENDED as the 4th competing tier
-    // — appended, not prepended, so every pre-existing cross-tier collision
-    // keeps its pre-fix4 primary/display source; a correction that collides
-    // with a palace/journal/insight copy shows up via `alsoFoundIn`. The v4
-    // W3 shim (`excludeCorrectionsSource`) that guarded this exact wiring is
-    // retired in the same change that widened
+    // Order matters TWICE: (a) RRF/fuseCanonical's "primary/display source"
+    // is whichever source's items were inserted into the fusion map FIRST
+    // (Map iteration = insertion order), and (b) the final fused sort is
+    // stable, so EXACT fused-score ties resolve in insertion order too.
+    // The ORIGINAL localRecallSearch queried palace, then journal, then
+    // insight — that relative order is preserved exactly
+    // (audit-retrieval-accounting.test.mjs asserts on it directly).
+    // fix4 S1 (2026-09-11) added "corrections" as the 4th competing tier;
+    // the v4 W3 shim (`excludeCorrectionsSource`) that guarded this exact
+    // wiring was retired in the same change that widened
     // `SmartRecallResultItem.source`'s contract — the ordering its doc
     // comment mandated ("update the contract first").
-    tiers: ["palace", "journal", "insight", "corrections"],
+    // fix4 S1-refinement (same day): corrections moved FIRST. With
+    // one-doc-one-vote scoring, single-source fused scores cluster at
+    // exactly 1/(60+rank), so cross-tier ties are the COMMON case — and a
+    // last-place insertion order systematically ranked the OWNER'S OWN
+    // CAPTURED RULE below every same-evidence derivative mention of it
+    // (palace notes, journal transcript lines). Authority order matches the
+    // product's existing doctrine (session_start P0 always-load, check()'s
+    // authoritative-override gate): at equal rank evidence, ground truth
+    // wins the tie. Fusion SCORES are order-independent (applyRRF sums per
+    // tier); only tie-break order and duplicate display-source change.
+    tiers: ["corrections", "palace", "journal", "insight"],
     limit,
     since,
+    // fix4 S4-completion: on THIS competitive surface one journal
+    // (date, section) gets one slot — see QueryMemoryInput.journal's own
+    // doc comment; journalSearch's per-line contract is unaffected.
+    journal: { perSectionDedupe: true },
   });
 
   // Final materialization: rrf-local confidence label (matches the ORIGINAL

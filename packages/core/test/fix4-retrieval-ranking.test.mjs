@@ -595,3 +595,369 @@ describe("fix4 S4 — palace relevance-over-salience", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// S5 — IDF (BM25-lite, pure local, in-pass over the scanned corpus)
+// ---------------------------------------------------------------------------
+
+describe("fix4 S5 — BM25-lite IDF: rare discriminative tokens outweigh ubiquitous ones", () => {
+  const SAVED_ENV = {};
+  let TMP;
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-s5-"));
+    setRoot(TMP);
+    resetRecallBackend();
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("S5a (journal, en): a doc matching only the RARE query token outranks newer docs matching only the ubiquitous one", async () => {
+    const PROJECT = "fix4-s5a-journal-en";
+    const RARE = "zzraretok7501";
+    const COMMON = "zzcommontok7502";
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    // Old doc: rare token only.
+    fs.writeFileSync(path.join(jdir, `${daysAgo(30)}--card--rare.md`), `# rare doc\n\n${RARE} deep dive lives here\n`);
+    // Newer docs: ubiquitous token only (5 of 6 corpus docs carry it).
+    fs.writeFileSync(path.join(jdir, `${daysAgo(10)}--card--common.md`), `# common doc\n\n${COMMON} status line\n`);
+    for (let i = 0; i < 4; i++) {
+      fs.writeFileSync(path.join(jdir, `${daysAgo(5 + i)}--card--filler-${i}.md`), `# filler ${i}\n\n${COMMON} routine note ${i}\n`);
+    }
+
+    const result = await queryMemory({ query: `${RARE} ${COMMON}`, project: PROJECT, tiers: ["journal"] });
+    assert.ok(result.items.length >= 2, `expected multiple matches; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      result.items[0].excerpt.includes(RARE),
+      `the rare-token doc must rank first: at equal match-count the rare token carries nearly all the ` +
+      `query's IDF mass (df 1/6 vs 5/6), which must outweigh the fillers' recency edge; got top ` +
+      `${JSON.stringify(result.items.slice(0, 3).map((i) => [i.title, i.excerpt, i.score]))}`,
+    );
+  });
+
+  it("S5b (journal, zh): CJK tokens get identical IDF treatment — the rare Han token wins over the ubiquitous one", async () => {
+    const PROJECT = "fix4-s5b-journal-zh";
+    const RARE = "熔断";   // rare: 1/6 docs
+    const COMMON = "版本"; // ubiquitous: 5/6 docs
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.writeFileSync(path.join(jdir, `${daysAgo(30)}--card--rare.md`), `# 深挖\n\n${RARE}机制的完整设计在这里\n`);
+    fs.writeFileSync(path.join(jdir, `${daysAgo(10)}--card--common.md`), `# 常规\n\n${COMMON}更新说明\n`);
+    for (let i = 0; i < 4; i++) {
+      fs.writeFileSync(path.join(jdir, `${daysAgo(5 + i)}--card--filler-${i}.md`), `# 填充 ${i}\n\n${COMMON}日常记录 ${i}\n`);
+    }
+
+    const result = await queryMemory({ query: `${RARE} ${COMMON}`, project: PROJECT, tiers: ["journal"] });
+    assert.ok(result.items.length >= 2, `expected multiple matches; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      result.items[0].excerpt.includes(RARE),
+      `the rare Han token must dominate exactly like its English mirror (tokenizeCJK segments Han; DF is ` +
+      `substring-based and script-agnostic); got top ` +
+      `${JSON.stringify(result.items.slice(0, 3).map((i) => [i.title, i.excerpt, i.score]))}`,
+    );
+  });
+
+  it("S5c (corrections): rare-token record outranks a NEWER common-token record at equal severity/proof", async () => {
+    const PROJECT = "fix4-s5c-corrections";
+    const RARE = "zzraretok8601";
+    const COMMON = "zzcommontok8602";
+    const dir = correctionsDirFor(PROJECT);
+    fs.mkdirSync(dir, { recursive: true });
+    // Rare-token record — OLDER (date-desc candidate order favors the other on a tie).
+    fs.writeFileSync(path.join(dir, "2026-03-01-rare.json"), JSON.stringify({
+      id: "2026-03-01-rare", date: "2026-03-01", severity: "p1", project: PROJECT,
+      rule: `Guard the ${RARE} pathway explicitly`, context: "", tags: [],
+    }));
+    // Common-token record — newer.
+    fs.writeFileSync(path.join(dir, `${daysAgo(5)}-common.json`), JSON.stringify({
+      id: `${daysAgo(5)}-common`, date: daysAgo(5), severity: "p1", project: PROJECT,
+      rule: `Track the ${COMMON} pathway explicitly`, context: "", tags: [],
+    }));
+    // Corpus: 4 more records carrying the common token (df 5/6 vs 1/6).
+    for (let i = 0; i < 4; i++) {
+      fs.writeFileSync(path.join(dir, `2026-04-0${i + 1}-filler-${i}.json`), JSON.stringify({
+        id: `2026-04-0${i + 1}-filler-${i}`, date: `2026-04-0${i + 1}`, severity: "p1", project: PROJECT,
+        rule: `Routine ${COMMON} note number ${i}`, context: "", tags: [],
+      }));
+    }
+
+    const result = await queryMemory({ query: `${RARE} ${COMMON} pathway`, project: PROJECT, tiers: ["corrections"] });
+    assert.ok(result.items.length >= 2, `expected both pathway records to match; got ${JSON.stringify(result.items)}`);
+    assert.equal(
+      result.items[0].id,
+      "2026-03-01-rare",
+      `the rare-token record must rank first (IDF over the scanned corrections corpus); got ` +
+      `${JSON.stringify(result.items.map((i) => [i.id, i.score]))}`,
+    );
+  });
+
+  it("S5d (palace): DF comes from the SCANNED CORPUS, not just the hit set — heading-only occurrences still count toward df", async () => {
+    const PROJECT = "fix4-s5d-palace";
+    const RARE = "zzpalacerare9701";
+    const COMMON = "zzpalacecommon9702";
+    ensurePalaceInitialized(PROJECT);
+    const roomsRoot = path.join(palaceDir(PROJECT), "rooms");
+    // docA (knowledge): rare token in body. Low salience.
+    fs.writeFileSync(path.join(roomsRoot, "knowledge", "rare-note.md"), `---\ntopic: rare-note\n---\n\n${RARE} incident analysis body\n`);
+    // docB (decisions): common token in body. High salience (wins a pre-IDF tie).
+    fs.writeFileSync(path.join(roomsRoot, "decisions", "common-note.md"), `---\ntopic: common-note\n---\n\n${COMMON} weekly sync body\n`);
+    // 8 corpus files where the common token appears ONLY in a heading line —
+    // structural headings are skipped by the palace line scanner (no hits),
+    // but the files ARE part of the scanned corpus, so corpus-DF must see
+    // them (hits-only DF cannot).
+    for (let i = 0; i < 8; i++) {
+      fs.writeFileSync(
+        path.join(roomsRoot, "architecture", `corpus-${i}.md`),
+        `---\ntopic: corpus-${i}\n---\n\n## ${COMMON} section ${i}\n\nunrelated body text ${i}\n`,
+      );
+    }
+    const setSal = (room, v) => {
+      const mp = path.join(roomsRoot, room, "_room.json");
+      const m = JSON.parse(fs.readFileSync(mp, "utf-8"));
+      m.salience = v;
+      fs.writeFileSync(mp, JSON.stringify(m, null, 2));
+    };
+    setSal("knowledge", 0.4);
+    setSal("decisions", 1.0);
+
+    const result = await queryMemory({ query: `${RARE} ${COMMON}`, project: PROJECT, tiers: ["palace"] });
+    const bodies = result.items.filter((i) => i.excerpt.includes("body"));
+    assert.ok(bodies.length >= 2, `both body docs must hit; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      bodies[0].excerpt.includes(RARE),
+      `corpus-wide DF (rare 1/10+, common 9/10+) must let the rare-token doc beat the high-salience ` +
+      `common-token doc — a hits-only DF sees df(common)=df(rare)=1 and ties them; got ` +
+      `${JSON.stringify(result.items.map((i) => [i.room, i.excerpt, i.keywordScore, i.score]))}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S4-completion — one document, one RRF vote (palace mega-file accumulation)
+//
+// Diagnosed IN this tranche (fix4 probe, 2026-09-11): S4's design premise
+// named salience as the mega-room mechanism, but the dominant leg in live
+// data is the W3b-documented palace id-collision — every matching LINE of a
+// room file shares stableId("palace", room/file), so applyRRF ACCUMULATES
+// one contribution per line into a single entry (goals/evolution reached
+// fused scores of 0.44-0.71 ≈ 30-40 summed ranks vs 0.0164 for a rank-1
+// single hit). That measures file LENGTH, not relevance — the exact signal
+// class BM25's TF-saturation exists to cap. Completion mechanism: the
+// palace tier returns ONE item per document (its best-scoring line as the
+// excerpt/evidence), so RRF sees one vote per document.
+// ---------------------------------------------------------------------------
+
+describe("fix4 S4-completion — palace one-doc-one-vote (TF saturation)", () => {
+  const SAVED_ENV = {};
+  let TMP;
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-s4c-"));
+    setRoot(TMP);
+    resetRecallBackend();
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("S4c: a mega-file with 30 weak-matching lines must NOT outrank a small file whose one line matches the full query", async () => {
+    const PROJECT = "fix4-s4c-megafile";
+    const A = "zzfixfourquebec1117";
+    const B = "zzfixfourromeo2218";
+    ensurePalaceInitialized(PROJECT);
+    const roomsRoot = path.join(palaceDir(PROJECT), "rooms");
+    // Mega-file: 30 lines each matching ONE of the two query words.
+    const megaLines = [];
+    for (let i = 0; i < 30; i++) megaLines.push(`entry ${i}: routine ${A} bookkeeping note`);
+    fs.writeFileSync(
+      path.join(roomsRoot, "goals", "evolution.md"),
+      `---\ntopic: evolution\n---\n\n${megaLines.join("\n")}\n`,
+    );
+    // Small file: ONE line matching BOTH query words.
+    fs.writeFileSync(
+      path.join(roomsRoot, "decisions", "the-answer.md"),
+      `---\ntopic: the-answer\n---\n\n${A} ${B} — the actual decision\n`,
+    );
+
+    const result = await queryMemory({ query: `${A} ${B}`, project: PROJECT, tiers: ["palace"] });
+    assert.ok(result.items.length >= 2, `both docs must surface; got ${JSON.stringify(result.items)}`);
+    assert.equal(
+      result.items[0].room,
+      "decisions",
+      `the full-match small file must outrank the 30-weak-line mega-file — line COUNT is length, not ` +
+      `relevance (one doc, one RRF vote); got ${JSON.stringify(result.items.slice(0, 3).map((i) => [i.room, i.title, i.score]))}`,
+    );
+    const megaItems = result.items.filter((i) => i.title === "goals/evolution");
+    assert.equal(megaItems.length, 1, "the mega-file must appear exactly once");
+    assert.ok(
+      megaItems[0].score < result.items[0].score,
+      `the mega-file's single vote (${megaItems[0].score}) must stay below the full match (${result.items[0].score}) — no per-line accumulation`,
+    );
+  });
+
+  it("S4d: a multi-line doc's surfaced excerpt is its BEST-matching line, not its first-matching line", async () => {
+    const PROJECT = "fix4-s4d-bestline";
+    const A = "zzfixfoursierra3319";
+    const B = "zzfixfourtango4420";
+    ensurePalaceInitialized(PROJECT);
+    fs.writeFileSync(
+      path.join(palaceDir(PROJECT), "rooms", "knowledge", "layered.md"),
+      `---\ntopic: layered\n---\n\nweak mention of ${A} first\nlater line: ${A} ${B} the full answer\n`,
+    );
+    const result = await queryMemory({ query: `${A} ${B}`, project: PROJECT, tiers: ["palace"] });
+    const doc = result.items.find((i) => i.title === "knowledge/layered");
+    assert.ok(doc, `expected the doc; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      doc.excerpt.includes("the full answer"),
+      `the excerpt must come from the best-scoring line (pre-fix applyRRF kept the FIRST line's excerpt ` +
+      `and discarded the stronger one); got "${doc.excerpt}"`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S4-completion (journal side) — competitive-surface flooding controls
+// ---------------------------------------------------------------------------
+
+describe("fix4 S4-completion — journal index exclusion + per-section dedupe on the fusion surface", () => {
+  const SAVED_ENV = {};
+  let TMP;
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-jflood-"));
+    setRoot(TMP);
+    resetRecallBackend();
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("JF-a: generated index files (index.md, _*.md) in journal/ and journal/archive/ never become retrieval candidates", async () => {
+    const PROJECT = "fix4-jf-index";
+    const TERM = "zzfixfouruniform5521";
+    const jdir = journalDir(PROJECT);
+    const adir = path.join(jdir, "archive");
+    fs.mkdirSync(adir, { recursive: true });
+    // Real entries — live and archived — plus generated index/infra files
+    // carrying the same term (an index is a TOC over everything, so it
+    // matches every query and floods the competitive surface).
+    fs.writeFileSync(path.join(jdir, `${daysAgo(10)}--card--real.md`), `# real\n\n${TERM} live entry INDEXFREE_L\n`);
+    fs.writeFileSync(path.join(adir, `${daysAgo(20)}--card--old.md`), `# old\n\n${TERM} archived entry INDEXFREE_A\n`);
+    fs.writeFileSync(path.join(jdir, "index.md"), `- ${TERM} INDEX_NOISE_LIVE\n`);
+    fs.writeFileSync(path.join(jdir, "_index.md"), `- ${TERM} INDEX_NOISE_LIVE_U\n`);
+    fs.writeFileSync(path.join(adir, "index.md"), `- ${TERM} INDEX_NOISE_ARCH\n`);
+    fs.writeFileSync(path.join(adir, "_rollup-state.md"), `- ${TERM} INDEX_NOISE_ARCH_U\n`);
+
+    const result = await queryMemory({ query: TERM, project: PROJECT, tiers: ["journal"] });
+    const text = JSON.stringify(result.items);
+    assert.ok(text.includes("INDEXFREE_L"), `live entry must surface; got ${text}`);
+    assert.ok(text.includes("INDEXFREE_A"), `archived entry must surface; got ${text}`);
+    for (const marker of ["INDEX_NOISE_LIVE", "INDEX_NOISE_LIVE_U", "INDEX_NOISE_ARCH", "INDEX_NOISE_ARCH_U"]) {
+      assert.ok(!text.includes(marker), `generated index/infra file content must never surface as a journal candidate; leaked: ${marker}`);
+    }
+  });
+
+  it("JF-b: on the smart_recall fusion surface, one journal (date, section) contributes at most ONE result slot; journalSearch keeps per-line results", async () => {
+    const PROJECT = "fix4-jf-dedupe";
+    const TERM = "zzfixfourvictor6622";
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.writeFileSync(
+      path.join(jdir, `${daysAgo(10)}--card--multi.md`),
+      `# entry\n\n## Notes\n\n${TERM} first mention here\n${TERM} second mention here\n${TERM} third mention here\n`,
+    );
+
+    // Fusion surface: the three same-section lines must occupy ONE slot.
+    const fused = await localRecallSearch(TERM, PROJECT, 10);
+    const journalItems = fused.filter((r) => r.source === "journal");
+    assert.equal(
+      journalItems.length,
+      1,
+      `three matching lines of the same (date, section) must collapse to one competitive slot; got ` +
+      `${JSON.stringify(journalItems.map((i) => [i.title, i.excerpt]))}`,
+    );
+
+    // journalSearch contract (per-line grep surface) is unchanged.
+    const { journalSearch } = await import("../dist/tools-logic/journal-search.js");
+    const grep = await journalSearch({ query: TERM, project: PROJECT });
+    assert.equal(
+      grep.results.length,
+      3,
+      `journalSearch's own per-line contract must be preserved (W3b decision); got ` +
+      `${JSON.stringify(grep.results.map((r) => r.excerpt))}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S1-refinement — authority tie-break: corrections win exact fused-score ties
+// ---------------------------------------------------------------------------
+
+describe("fix4 S1-refinement — corrections win exact RRF ties (authority order)", () => {
+  const SAVED_ENV = {};
+  let TMP;
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-tiebreak-"));
+    setRoot(TMP);
+    resetRecallBackend();
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("TB-a: at identical rank evidence (both tier-rank-1, fused 1/61, no boosts), the authoritative correction displays above the palace mention", async () => {
+    const PROJECT = "fix4-tb-authority";
+    const TERM = "zzfixfourwhiskey7723";
+    // Palace mention (no date pattern in content -> no hot-window boost).
+    ensurePalaceInitialized(PROJECT);
+    fs.writeFileSync(
+      path.join(palaceDir(PROJECT), "rooms", "knowledge", "mention.md"),
+      `---\ntopic: mention\n---\n\nsomeone mentioned ${TERM} in passing\n`,
+    );
+    // The authoritative rule (>72h old -> no hot-window boost).
+    const dir = correctionsDirFor(PROJECT);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `${daysAgo(10)}-tb-rule.json`),
+      JSON.stringify({
+        id: `${daysAgo(10)}-tb-rule`, date: daysAgo(10), severity: "p0", project: PROJECT,
+        rule: `Never bypass the ${TERM} gate`, context: "", tags: [],
+      }),
+    );
+
+    const results = await localRecallSearch(TERM, PROJECT, 10);
+    const corrIdx = results.findIndex((r) => r.source === "corrections");
+    const palIdx = results.findIndex((r) => r.source === "palace");
+    assert.ok(corrIdx !== -1 && palIdx !== -1, `both must surface; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`);
+    assert.ok(
+      Math.abs(results[corrIdx].score - results[palIdx].score) < 1e-9,
+      `precondition: the two must genuinely TIE on fused score (both tier-rank-1 = 1/61); got ` +
+      `${results[corrIdx].score} vs ${results[palIdx].score}`,
+    );
+    assert.ok(
+      corrIdx < palIdx,
+      `at an exact fused-score tie the AUTHORITATIVE record (the owner's own captured rule) must win ` +
+      `over a derivative mention — ties were previously broken by tier insertion order, which put ` +
+      `corrections dead last; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`,
+    );
+  });
+});

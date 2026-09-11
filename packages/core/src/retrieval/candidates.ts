@@ -421,7 +421,14 @@ function readJournalCandidates(project: string, opts: ReadTierCandidatesOpts): M
     const archiveDir = path.join(primaryDir, "archive");
     let archiveFiles: string[] = [];
     try {
-      archiveFiles = fs.readdirSync(archiveDir).filter((f) => f.endsWith(".md"));
+      // fix4 (2026-09-11): exclude generated index/infra files BY NAME —
+      // `index.md` (the Obsidian-compatible generated TOC; the raw-archive
+      // half below already excluded it, this half never did) and the
+      // `_`-prefixed reserved namespace (same class rule as the corrections
+      // store's `_index.md`/`_pending/` exclusion, S1). An index file is a
+      // TOC over everything, so it matches nearly every query and floods
+      // the competitive surface with non-answer rows.
+      archiveFiles = fs.readdirSync(archiveDir).filter((f) => f.endsWith(".md") && f !== "index.md" && !f.startsWith("_"));
     } catch {
       archiveFiles = []; // missing/unreadable archive dir — treat as empty, never throw
     }
@@ -463,7 +470,9 @@ function readJournalCandidates(project: string, opts: ReadTierCandidatesOpts): M
     const dir = archiveRawDir(project);
     let files: string[] = [];
     try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "index.md");
+      // fix4 (2026-09-11): + the `_`-prefixed reserved-namespace class —
+      // this half had the index.md INSTANCE exclusion but not the class.
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "index.md" && !f.startsWith("_"));
     } catch {
       files = []; // missing/unreadable raw-archive dir — treat as empty, never throw
     }
