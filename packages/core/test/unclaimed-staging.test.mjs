@@ -539,4 +539,184 @@ describe("fix5 — _unclaimed staging & projects/ creation invariant", () => {
 
     assert.deepEqual(projectDirs(tmpDir), [], "the creation invariant: no failed/zero-confidence path may materialize a projects/ dir");
   });
+
+  // -------------------------------------------------------------------------
+  // R. independent-review fix pins (2026-09-11 review of this branch)
+  // -------------------------------------------------------------------------
+  describe("R. review-fix pins", () => {
+    /** Minimal valid SessionCardResult for writeSessionCard. */
+    function cardFor(overrides = {}) {
+      return {
+        markdown: "# review pin card\n", title: "review pin card",
+        artifacts: [], linearRefs: [], decisions: [], nextStep: [],
+        sid: "sid-r", slug: "demo-app", date: "2026-09-11",
+        ...overrides,
+      };
+    }
+
+    it("R1 (HIGH-1): syncToSupabase never schedules a sync for the _unclaimed sentinel", async () => {
+      const { syncToSupabase, UNCLAIMED_PROJECT } = await import("agent-recall-core");
+      const realSetImmediate = globalThis.setImmediate;
+      const scheduled = [];
+      globalThis.setImmediate = (fn) => { scheduled.push(fn); return { unref() {} }; };
+      try {
+        // Sentinel: must return BEFORE any doSync is scheduled.
+        syncToSupabase("/fake/staged.md", "staged content", UNCLAIMED_PROJECT, "journal");
+        assert.equal(scheduled.length, 0, "staged (_unclaimed) content must never be scheduled for cloud sync");
+        // Control: a normal project DOES schedule (doSync itself no-ops
+        // without credentials — the captured callback is never invoked, so
+        // no network is touched either way).
+        syncToSupabase("/fake/normal.md", "normal content", "real-project", "journal");
+        assert.equal(scheduled.length, 1, "control: a normal-project journal sync must still be scheduled");
+      } finally {
+        globalThis.setImmediate = realSetImmediate;
+      }
+    });
+
+    it("R2a (MEDIUM-2): a traversal `date` on a STAGED card cannot escape the staging dir", async () => {
+      const { writeSessionCard } = await import("agent-recall-core");
+      const written = writeSessionCard(cardFor({ sid: "sid-r2a", slug: "auto", slug_confidence: 0, date: "../../evil" }));
+      assert.ok(written.path, "the staged write itself must succeed");
+      const stagedDir = path.join(tmpDir, "_unclaimed", "sid-r2a");
+      assert.ok(written.path.startsWith(stagedDir + path.sep), `card must land INSIDE the staging session dir, got ${written.path}`);
+      const files = ls(stagedDir).filter((f) => f.includes("--card--"));
+      assert.equal(files.length, 1);
+      assert.match(files[0], /^\d{4}-\d{2}-\d{2}--card--sid-r2a\.md$/, "invalid date must be replaced by a strict YYYY-MM-DD, not interpolated");
+      assert.ok(!ls(tmpDir).some((f) => f.includes("evil")), "no escape artifact may appear at the store root");
+    });
+
+    it("R2b (MEDIUM-2): a traversal `date` on a NORMAL card cannot escape the journal dir", async () => {
+      const { writeSessionCard } = await import("agent-recall-core");
+      const written = writeSessionCard(cardFor({ sid: "sid-r2b", slug: "demo-app", slug_confidence: 0.9, date: "../escape" }));
+      const jDir = path.join(tmpDir, "projects", "demo-app", "journal");
+      assert.ok(written.path.startsWith(jDir + path.sep), `card must land INSIDE the journal dir, got ${written.path}`);
+      assert.match(path.basename(written.path), /^\d{4}-\d{2}-\d{2}--card--sid-r2b\.md$/);
+      assert.ok(!ls(path.join(tmpDir, "projects", "demo-app")).some((f) => f.includes("escape")), "no escape artifact may appear in the project root");
+    });
+
+    it("R3 (MEDIUM-3): a mid-claim failure still appends the partial manifest entry — the partial move stays reversible", async () => {
+      const { writeSessionCard, claimUnclaimedSession, undoClaimUnclaimedSession, readClaimsLog } = await import("agent-recall-core");
+      writeSessionCard(cardFor({ sid: "sid-r3", slug: "auto", slug_confidence: 0, date: "2026-09-11" }));
+      const stagedDir = path.join(tmpDir, "_unclaimed", "sid-r3");
+      // Sabotage: a `journal` entry that is a FILE — existsSync passes,
+      // readdirSync throws ENOTDIR AFTER the top-level card already moved.
+      fs.writeFileSync(path.join(stagedDir, "journal"), "not a dir", "utf-8");
+
+      assert.throws(() => claimUnclaimedSession("sid-r3", "demo-app"), "the mid-claim error must propagate (explicit op)");
+
+      const entries = readClaimsLog().filter((e) => e.sid === "sid-r3" && e.op === "claim");
+      assert.equal(entries.length, 1, "the PARTIAL claim must still be manifest-logged");
+      assert.ok(entries[0].error, "the partial entry must carry the error");
+      assert.equal(entries[0].moved.length, 1, "the entry must record the file that DID move");
+
+      // And the partial move is reversible.
+      const undone = undoClaimUnclaimedSession("sid-r3");
+      assert.equal(undone.moved.length, 1, "undo must restore the partially-moved card");
+      assert.ok(ls(stagedDir).some((f) => f.includes("--card--sid-r3")), "card restored into staging");
+    });
+
+    it("R4 (MEDIUM-4): ensurePalaceInitialized cannot MINT a projects/ dir for an invalid slug — but still scaffolds an EXISTING legacy dir", async () => {
+      const { ensurePalaceInitialized } = await import("agent-recall-core");
+      ensurePalaceInitialized("default"); // the SDK .palace auto→"default" class
+      assert.deepEqual(projectDirs(tmpDir), [], "an invalid slug must never mint projects/<slug> via palace scaffolding");
+      // Backward compat (resolveProject explicit-branch rule): an existing
+      // legacy dir still scaffolds.
+      fs.mkdirSync(path.join(tmpDir, "projects", "default"), { recursive: true });
+      ensurePalaceInitialized("default");
+      assert.ok(
+        fs.existsSync(path.join(tmpDir, "projects", "default", "palace", "palace-index.json")),
+        "an EXISTING legacy dir must keep scaffolding (explicitly-scoped ghost projects stay usable)",
+      );
+    });
+
+    it("R5 (LOW-5): undo pairs with claims LIFO — two outstanding claims undo independently", async () => {
+      const { writeSessionCard, claimUnclaimedSession, undoClaimUnclaimedSession } = await import("agent-recall-core");
+      writeSessionCard(cardFor({ sid: "sid-r5", slug: "auto", slug_confidence: 0, date: "2026-09-01" }));
+      const first = claimUnclaimedSession("sid-r5", "demo-app");
+      assert.equal(first.moved.length, 1);
+      // New content staged between claims → a SECOND outstanding claim.
+      const stagedDir = path.join(tmpDir, "_unclaimed", "sid-r5");
+      fs.mkdirSync(stagedDir, { recursive: true });
+      fs.writeFileSync(path.join(stagedDir, "2026-09-02--card--sid-r5.md"), "# second\n", "utf-8");
+      const second = claimUnclaimedSession("sid-r5", "demo-app");
+      assert.equal(second.moved.length, 1);
+
+      const undo1 = undoClaimUnclaimedSession("sid-r5");
+      assert.ok(undo1.moved[0].to.endsWith("2026-09-02--card--sid-r5.md"), "first undo must reverse the MOST RECENT claim");
+      const undo2 = undoClaimUnclaimedSession("sid-r5");
+      assert.ok(undo2.moved[0].to.endsWith("2026-09-01--card--sid-r5.md"), "second undo must reverse the EARLIER claim (was permanently lost pre-fix)");
+      assert.equal(ls(stagedDir).filter((f) => f.includes("--card--")).length, 2, "both cards restored to staging");
+    });
+
+    it("R6 (LOW-6): a `_`-prefixed sid cannot stage into the reserved infrastructure namespace", async () => {
+      const { writeSessionCard, listUnclaimedCards, countUnclaimedSessions } = await import("agent-recall-core");
+      writeSessionCard(cardFor({ sid: "_archive", slug: "auto", slug_confidence: 0, date: "2026-09-11" }));
+      assert.ok(!fs.existsSync(path.join(tmpDir, "_unclaimed", "_archive")), "must never stage INTO _unclaimed/_archive (TTL/list/count are blind to it)");
+      assert.equal(stagedSessionDirs(tmpDir).length, 1, "the staged session must be enumerable");
+      assert.ok(countUnclaimedSessions() >= 1, "the staged session must be countable");
+      assert.ok(listUnclaimedCards().length >= 1, "the staged card must be claim-listable");
+    });
+
+    it("R7 (LOW-8): undo refuses manifest pairs outside the staging namespace (tampered _claims.jsonl)", async () => {
+      const { undoClaimUnclaimedSession } = await import("agent-recall-core");
+      // A real file inside a project journal that a tampered manifest tries
+      // to relocate to a NON-staging path inside the store.
+      const jDir = path.join(tmpDir, "projects", "victim", "journal");
+      fs.mkdirSync(jDir, { recursive: true });
+      const victimFile = path.join(jDir, "2026-09-11--card--sid-r7.md");
+      fs.writeFileSync(victimFile, "# victim\n", "utf-8");
+      const evilDest = path.join(tmpDir, "hooks-evil.md"); // inside root, OUTSIDE _unclaimed/
+      fs.mkdirSync(path.join(tmpDir, "_unclaimed"), { recursive: true });
+      fs.appendFileSync(
+        path.join(tmpDir, "_unclaimed", "_claims.jsonl"),
+        JSON.stringify({ ts: "t", op: "claim", sid: "sid-r7", project: "victim", moved: [{ from: evilDest, to: victimFile }], skipped: [] }) + "\n",
+        "utf-8",
+      );
+      const undone = undoClaimUnclaimedSession("sid-r7");
+      assert.equal(undone.moved.length, 0, "an out-of-staging manifest pair must never be moved");
+      assert.equal(undone.skipped.length, 1, "the refused pair must be recorded as skipped");
+      assert.ok(fs.existsSync(victimFile), "the victim file must stay where it is");
+      assert.ok(!fs.existsSync(evilDest), "no file may be relocated to the tampered destination");
+    });
+
+    it("R8 (LOW-7): resurrect is structurally blind to a planted projects/_unclaimed dir — including the sentinel RE-ROUTE to the current session's staging", async () => {
+      const { resurrect, archiveSession, getSessionId } = await import("agent-recall-core");
+      // The dangerous interaction (review LOW-7): a planted projects/_unclaimed
+      // enumerates as a "slug", and journalDir/archiveRawDir("_unclaimed")
+      // RE-ROUTE through the sentinel seam to the CURRENT PROCESS session's
+      // staging dir — so resurrect would read the current session's STAGED
+      // raw archive dump as if it were a project's. Stage one for real,
+      // keyed on THIS process's session id (the dir the re-route resolves):
+      archiveSession({
+        project: "auto", // invalid ⇒ archive-write self-gates ⇒ staged dump
+        sessionId: getSessionId(),
+        transcriptPath: "/fake/transcript.jsonl",
+        rawTranscript: '{"type":"user","message":{"content":[{"type":"text","text":"STAGED_R8_MARKER staged transcript body for resurrect"}]}}\n',
+        summary: "STAGED_R8_MARKER",
+      });
+      const planted = path.join(tmpDir, "projects", "_unclaimed", "journal");
+      fs.mkdirSync(planted, { recursive: true });
+      fs.writeFileSync(
+        path.join(planted, "2026-09-11--card--planted1.md"),
+        "---\nsid: planted1\ndate: 2026-09-11\nslug: _unclaimed\nslug_confidence: 0\nsource: session-card\n---\n# PLANTED_R8_MARKER\n",
+        "utf-8",
+      );
+      const briefs = resurrect({ days: 3650 });
+      const serialized = JSON.stringify(briefs);
+      assert.ok(!serialized.includes("planted1") && !serialized.includes("PLANTED_R8_MARKER"),
+        "a planted reserved-namespace dir under projects/ must never surface through resurrect");
+      assert.ok(!serialized.includes("STAGED_R8_MARKER"),
+        "the current session's STAGED content must never surface through resurrect via the planted-dir re-route");
+    });
+
+    it("R9 (INFO-11): createDigest with NO project stages instead of minting projects/unknown", async () => {
+      const { createDigest } = await import("agent-recall-core");
+      const res = createDigest({ title: "r9 digest", scope: "review pin", content: "digest body" });
+      assert.ok(res, "digest creation must still succeed");
+      assert.deepEqual(projectDirs(tmpDir), [], "an unresolved digest must never mint a projects/ dir (was projects/unknown/)");
+      const sessions = stagedSessionDirs(tmpDir);
+      assert.equal(sessions.length, 1, "the digest must stage under the current session");
+      assert.ok(fs.existsSync(path.join(tmpDir, "_unclaimed", sessions[0], "digest")), "staged digest dir exists");
+    });
+  });
 });

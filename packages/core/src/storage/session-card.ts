@@ -25,7 +25,7 @@ import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
 import { isValidProjectSlug } from "./project.js";
 import { stageUnclaimedCard } from "./unclaimed.js";
-import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
+import { ensureDir, todayISO, safeIsoDateOrToday, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { recordHookFailure } from "./hook-health.js";
 import { scrubForCloud } from "./content-guard.js";
@@ -363,7 +363,10 @@ export function writeSessionCard(card: SessionCardResult): WriteSessionCardResul
     const resolvedSlug = path.basename(path.dirname(dir));
     ensureDir(dir);
 
-    const dest = path.join(dir, `${card.date}--card--${sid}.md`);
+    // fix5 review MEDIUM-2 (2026-09-11): `card.date` can arrive from hook
+    // stdin (`meta.date`) — validate the shape before it enters the filename
+    // (sid is already sanitized above; date was the one raw interpolation).
+    const dest = path.join(dir, `${safeIsoDateOrToday(card.date)}--card--${sid}.md`);
     if (fs.existsSync(dest)) {
       return { path: dest, bytes: 0, slug: resolvedSlug };
     }

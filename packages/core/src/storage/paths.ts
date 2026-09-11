@@ -58,7 +58,13 @@ export function unclaimedRootDir(): string {
  * `sanitizeSlug` grammar every other sid-derived path in this package uses.
  */
 export function unclaimedSessionDir(sid: string): string {
-  const safe = sanitizeSlug(sid);
+  // fix5 review LOW-6 (2026-09-11): `sanitizeSlug` preserves leading
+  // underscores, so a hook-stdin sid like "_archive" would stage INTO the
+  // reserved `_`-prefixed infrastructure namespace — excluded BY NAME from
+  // session enumeration, hence invisible to the count line, `ar claim
+  // --list`, and the TTL sweep forever (a silent hiding spot). Strip the
+  // reserved prefix so every staged session dir is enumerable.
+  const safe = sanitizeSlug(sid).replace(/^[_.]+/, "") || "unnamed";
   const resolved = path.join(unclaimedRootDir(), safe);
   assertInsideRoot(resolved, getRoot(), `_unclaimed/${sid}`);
   return resolved;

@@ -8,7 +8,8 @@ import * as crypto from "node:crypto";
 import type { RoomMeta, Importance } from "../types.js";
 import { DEFAULT_PALACE_ROOMS, VERSION } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
-import { palaceDir, sanitizeSlug, isUnclaimedProject } from "../storage/paths.js";
+import { palaceDir, sanitizeSlug, isUnclaimedProject, projectsRootDir } from "../storage/paths.js";
+import { isValidProjectSlug } from "../storage/project.js";
 import { readJsonSafe, writeJsonAtomic } from "../storage/fs-utils.js";
 import { roomReadmeContent } from "./obsidian.js";
 import { computeSalience } from "./salience.js";
@@ -177,6 +178,24 @@ export function ensurePalaceInitialized(project: string): void {
   // path reads a palace. No-op, never throw (this runs on session_start's
   // hot path for a sentinel-resolved session).
   if (isUnclaimedProject(project)) return;
+  // fix5 review MEDIUM-4 (2026-09-11): creation gate — an INVALID slug must
+  // never MINT a projects/ dir through palace scaffolding. The concrete hole
+  // was the SDK `.palace` getter's hardcoded auto→"default" mapping (zero
+  // resolution, deny-listed slug, fresh `projects/default/` with 6 rooms);
+  // gating INSIDE this function closes the class for every caller — the
+  // CLI's consolidate-drain guard remains as belt-and-braces. Mirrors
+  // resolveProject's explicit-branch backward-compat rule exactly: an
+  // ALREADY-EXISTING legacy dir (raw existence probe, deliberately not
+  // routed through the sanitizing resolver — see project.ts's comment on
+  // what "exists" must mean for already-invalid slugs) still scaffolds, so
+  // explicitly-scoped ghost/legacy projects keep working unchanged.
+  if (!isValidProjectSlug(project)) {
+    try {
+      if (!fs.existsSync(path.join(projectsRootDir(), project))) return;
+    } catch {
+      return; // never throw on session_start's hot path
+    }
+  }
   const pd = palaceDir(project);
   const indexPath = path.join(pd, "palace-index.json");
 

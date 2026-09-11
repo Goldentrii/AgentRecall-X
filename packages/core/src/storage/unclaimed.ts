@@ -37,7 +37,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ensureDir } from "./fs-utils.js";
+import { ensureDir, safeIsoDateOrToday } from "./fs-utils.js";
+import { getRoot } from "../types.js";
 import {
   journalDir,
   sanitizeSlug,
@@ -269,7 +270,10 @@ export function stageUnclaimedCard(card: SessionCardResult): WriteSessionCardRes
     slug_confidence: card.slug_confidence ?? 0,
   });
 
-  const dest = path.join(dir, `${card.date}--card--${sid}.md`);
+  // fix5 review MEDIUM-2 (2026-09-11): `card.date` can arrive from hook
+  // stdin (`meta.date`) — validate the shape before it enters the filename,
+  // same shared rule as writeSessionCard's normal path (class fix).
+  const dest = path.join(dir, `${safeIsoDateOrToday(card.date)}--card--${sid}.md`);
   if (fs.existsSync(dest)) {
     return { path: dest, bytes: 0, slug: UNCLAIMED_PROJECT };
   }
@@ -369,18 +373,40 @@ export function claimUnclaimedSession(sid: string, project: string): ClaimResult
     moved.push({ from, to });
   };
 
-  // Top-level staged cards (and any other top-level .md the writers staged).
-  for (const f of fs.readdirSync(srcDir)) {
-    if (!f.endsWith(".md") || f.startsWith("_")) continue;
-    moveOne(path.join(srcDir, f), path.join(destJournal, f));
-  }
-  // Sentinel-routed journal writes.
-  const stagedJournal = path.join(srcDir, "journal");
-  if (fs.existsSync(stagedJournal)) {
-    for (const f of fs.readdirSync(stagedJournal)) {
+  // fix5 review MEDIUM-3 (2026-09-11): the manifest entry used to be
+  // appended only AFTER the whole move loop succeeded — a renameSync throw
+  // mid-loop (permissions, ENOSPC, a staged `journal` entry that is not a
+  // directory) left the files ALREADY MOVED into the real project unlogged
+  // and therefore un-undoable, breaking the "manifest-logged and reversible"
+  // contract exactly when reversal matters most. On any mid-claim error the
+  // partial manifest entry (whatever `moved` accumulated, plus an `error`
+  // field) is appended BEFORE rethrowing, so `--undo` can restore the
+  // partial move.
+  try {
+    // Top-level staged cards (and any other top-level .md the writers staged).
+    for (const f of fs.readdirSync(srcDir)) {
       if (!f.endsWith(".md") || f.startsWith("_")) continue;
-      moveOne(path.join(stagedJournal, f), path.join(destJournal, f));
+      moveOne(path.join(srcDir, f), path.join(destJournal, f));
     }
+    // Sentinel-routed journal writes.
+    const stagedJournal = path.join(srcDir, "journal");
+    if (fs.existsSync(stagedJournal)) {
+      for (const f of fs.readdirSync(stagedJournal)) {
+        if (!f.endsWith(".md") || f.startsWith("_")) continue;
+        moveOne(path.join(stagedJournal, f), path.join(destJournal, f));
+      }
+    }
+  } catch (err) {
+    appendClaimLog({
+      ts: new Date().toISOString(),
+      op: "claim",
+      moved,
+      skipped,
+      project,
+      sid: sanitizeSlug(sid),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
   }
 
   if (moved.length === 0 && skipped.length === 0) {
@@ -402,21 +428,47 @@ export function claimUnclaimedSession(sid: string, project: string): ClaimResult
 export function undoClaimUnclaimedSession(sid: string): ClaimResult {
   const safeSid = sanitizeSlug(sid);
   const log = readClaimsLog();
-  // Latest claim for this sid that has no LATER undo for the same sid.
-  let target: Record<string, unknown> | null = null;
+  // fix5 review LOW-5 (2026-09-11): STACK semantics — undos pair with claims
+  // 1:1 (LIFO). The old scan nulled the target on ANY undo entry, so with
+  // TWO outstanding claims for a sid (new content staged and claimed between
+  // them) a single undo made the EARLIER claim permanently un-undoable.
+  // Push each claim, pop on each undo; the undo target is the top of the
+  // stack. Partial-failure claim entries (MEDIUM-3, carrying `error`) are
+  // pushed too — reversing a partial move is exactly what they exist for.
+  const stack: Array<Record<string, unknown>> = [];
   for (const entry of log) {
     if (entry.sid !== safeSid) continue;
-    if (entry.op === "claim") target = entry;
-    else if (entry.op === "undo-claim") target = null;
+    if (entry.op === "claim") stack.push(entry);
+    else if (entry.op === "undo-claim") stack.pop();
   }
+  const target: Record<string, unknown> | null = stack.length > 0 ? stack[stack.length - 1] : null;
   if (!target || !Array.isArray(target.moved)) {
     throw new Error(`No undoable claim found for session "${sid}" in the claims manifest.`);
   }
+
+  // fix5 review LOW-8 (2026-09-11): defense-in-depth on manifest replay —
+  // the manifest is store-internal (written only by appendClaimLog from
+  // validated builders), but replaying rename targets read from a JSON file
+  // without a bounds check is an unnecessary rename primitive if the file
+  // is ever tampered with. Undo must only move files FROM inside the store
+  // root BACK INTO the _unclaimed staging namespace; anything else is
+  // recorded as skipped, never moved.
+  const rootWithSep = getRoot().endsWith(path.sep) ? getRoot() : getRoot() + path.sep;
+  const stagingWithSep = unclaimedRootDir() + path.sep;
+  const pairInBounds = (pair: { from: string; to: string }): boolean =>
+    typeof pair.from === "string" &&
+    typeof pair.to === "string" &&
+    pair.from.startsWith(stagingWithSep) &&
+    pair.to.startsWith(rootWithSep);
 
   const moved: Array<{ from: string; to: string }> = [];
   const skipped: Array<{ from: string; to: string }> = [];
   for (const pair of target.moved as Array<{ from: string; to: string }>) {
     // Reverse direction: the claim's `to` goes back to its `from`.
+    if (!pairInBounds(pair)) {
+      skipped.push({ from: pair.to, to: pair.from });
+      continue;
+    }
     if (!fs.existsSync(pair.to)) {
       skipped.push({ from: pair.to, to: pair.from });
       continue;
