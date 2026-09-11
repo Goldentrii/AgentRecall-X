@@ -20,6 +20,7 @@ import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { extractKeywords } from "../helpers/auto-name.js";
+import { tokenizeWords } from "../helpers/tokenize.js";
 import { withLock } from "../storage/filelock.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
@@ -267,7 +268,14 @@ export function addInsight(
 ): { action: "merged" | "added" | "replaced"; insight: Insight } | { accepted: false; reason: string } {
   // ── Quality gate — reject obviously bad insights ──────────────────────────
   const title = newInsight.title?.trim() ?? "";
-  if (title.split(/\s+/).filter(Boolean).length < 3) return { accepted: false, reason: "title_too_short" };
+  // CJK-aware word count (fix #3, 2026-09-11): the pre-fix
+  // `title.split(/\s+/)` counted an unspaced CJK title as ONE "word" and
+  // rejected every such insight as title_too_short — the final dead gate in
+  // the CJK promotion chain (insights-index confirm-first → promotion dedup
+  // → THIS gate). tokenizeWords segments Han runs via Intl.Segmenter;
+  // minLength 1 preserves the old ASCII semantics exactly (any
+  // whitespace-delimited word counted, regardless of length).
+  if (tokenizeWords(title, { minLength: 1 }).length < 3) return { accepted: false, reason: "title_too_short" };
   if (/^test\s+insight/i.test(title)) return { accepted: false, reason: "test_fixture" };
   if (!newInsight.evidence || newInsight.evidence.trim().length < 5) return { accepted: false, reason: "no_evidence" };
 

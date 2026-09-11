@@ -10,6 +10,7 @@
 
 import { addInsight, readAwarenessState } from "../palace/awareness.js";
 import { readInsightsIndex } from "../palace/insights-index.js";
+import { tokenizeWords, NON_ASCII_RE } from "../helpers/tokenize.js";
 
 export interface PromotionResult {
   promoted: string[];  // titles of insights promoted into awareness
@@ -35,15 +36,24 @@ export function promoteConfirmedInsights(threshold = 3): PromotionResult {
   for (const insight of index.insights) {
     if (insight.confirmed_count < threshold) continue;
 
-    // Title-similarity dedup: exact match first, then word overlap
+    // Title-similarity dedup: exact match first, then word overlap.
+    // CJK-aware (fix #3, 2026-09-11): the pre-fix grammar was
+    // `titleLower.split(/\s+/)` + `w.length > 3` — an unspaced CJK title
+    // became ONE giant token and every CJK word was dropped by the
+    // English-tuned length floor, so a zh insight promoted in a previous
+    // run was re-promoted forever. tokenizeWords segments Han runs
+    // (Intl.Segmenter) and lowercases/whitespace-splits the rest exactly
+    // like the old grammar did for ASCII; the length floor now exempts
+    // non-ASCII tokens (NON_ASCII_RE — the floor is English-tuned).
     const titleLower = insight.title.toLowerCase();
-    const words = titleLower.split(/\s+/);
+    const words = tokenizeWords(insight.title, { minLength: 0 });
     const alreadyPresent = [...existingTitles].some((existing) => {
       // Exact title match (fast path)
       if (existing === titleLower) return true;
       // Word-overlap similarity (same logic as addIndexedInsight)
-      const existingWords = existing.split(/\s+/);
-      const overlap = words.filter((w) => existingWords.includes(w) && w.length > 3).length;
+      const existingWords = tokenizeWords(existing, { minLength: 0 });
+      if (words.length === 0 || existingWords.length === 0) return false;
+      const overlap = words.filter((w) => existingWords.includes(w) && (w.length > 3 || NON_ASCII_RE.test(w))).length;
       return overlap / Math.max(existingWords.length, words.length) > 0.5;
     });
 
