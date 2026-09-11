@@ -10,7 +10,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { digestDir, digestGlobalDir } from "../storage/paths.js";
 import { ensureDir, readJsonSafe, writeJsonAtomic } from "../storage/fs-utils.js";
-import { withLock } from "../storage/filelock.js";
+import { withLock, withLockSync } from "../storage/filelock.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
@@ -79,7 +79,7 @@ function estimateTokens(content: string): number {
 /**
  * Store a new digest or refresh an existing one if title overlaps.
  */
-export function createDigest(input: DigestStoreInput): DigestStoreResult {
+export async function createDigest(input: DigestStoreInput): Promise<DigestStoreResult> {
   const project = input.project ?? "unknown";
   const isGlobal = input.global ?? false;
   const dir = isGlobal ? digestGlobalDir() : digestDir(project);
@@ -184,31 +184,53 @@ export function listDigests(
   return entries;
 }
 
+/** Shared critical section for markStale/markStaleAsync — caller holds the
+ * `digest-*` lock. */
+function markStaleInSection(dir: string, id: string, reason: string): boolean {
+  const index = readIndex(dir);
+  const entry = index.entries.find((e) => e.id === id);
+  if (!entry) return false;
+  entry.stale = true;
+  entry.stale_reason = reason;
+  writeIndex(dir, index);
+  return true;
+}
+
 /**
- * Mark a digest as stale (soft-delete).
+ * Mark a digest as stale (soft-delete) — SYNCHRONOUS variant.
+ *
+ * fix6-locks: stays on withLockSync ONLY because the published SDK signature
+ * AgentRecall.digestInvalidate(): void is sync (converting it is an
+ * owner-level SDK-surface decision). Same liveness-gated protocol as the
+ * async primitive, but the wait BLOCKS the event loop — the SDK pin is the
+ * only sanctioned caller (review MEDIUM-2). Server/CLI paths must use
+ * markStaleAsync.
  */
 export function markStale(project: string, id: string, reason: string, global?: boolean): boolean {
   const dir = global ? digestGlobalDir() : digestDir(project);
   let found = false;
-  withLock(`digest-${global ? "global" : project}`, () => {
-    const index = readIndex(dir);
-    const entry = index.entries.find((e) => e.id === id);
-    if (entry) {
-      entry.stale = true;
-      entry.stale_reason = reason;
-      writeIndex(dir, index);
-      found = true;
-    }
+  withLockSync(`digest-${global ? "global" : project}`, () => {
+    found = markStaleInSection(dir, id, reason);
   });
   return found;
 }
 
 /**
+ * Mark a digest as stale (soft-delete) — async variant (event-loop-friendly
+ * waiting). Use this from every long-lived process (MCP server, CLI); see
+ * markStale's doc comment for why the sync twin still exists.
+ */
+export async function markStaleAsync(project: string, id: string, reason: string, global?: boolean): Promise<boolean> {
+  const dir = global ? digestGlobalDir() : digestDir(project);
+  return withLock(`digest-${global ? "global" : project}`, () => markStaleInSection(dir, id, reason));
+}
+
+/**
  * Record an access (bump count + timestamp).
  */
-export function recordAccess(project: string, id: string, global?: boolean): void {
+export async function recordAccess(project: string, id: string, global?: boolean): Promise<void> {
   const dir = global ? digestGlobalDir() : digestDir(project);
-  withLock(`digest-${global ? "global" : project}`, () => {
+  await withLock(`digest-${global ? "global" : project}`, () => {
     const index = readIndex(dir);
     const entry = index.entries.find((e) => e.id === id);
     if (entry) {
@@ -222,11 +244,11 @@ export function recordAccess(project: string, id: string, global?: boolean): voi
 /**
  * Check for expired digests and mark them stale. Returns newly staled entries.
  */
-export function checkExpiry(project: string, global?: boolean): DigestEntry[] {
+export async function checkExpiry(project: string, global?: boolean): Promise<DigestEntry[]> {
   const dir = global ? digestGlobalDir() : digestDir(project);
   const newlyStale: DigestEntry[] = [];
 
-  withLock(`digest-${global ? "global" : project}`, () => {
+  await withLock(`digest-${global ? "global" : project}`, () => {
     const index = readIndex(dir);
     const now = Date.now();
 
@@ -250,12 +272,12 @@ export function checkExpiry(project: string, global?: boolean): DigestEntry[] {
 /**
  * Permanently delete stale digests older than threshold.
  */
-export function pruneStale(project: string, olderThanDays: number = 30, global?: boolean): number {
+export async function pruneStale(project: string, olderThanDays: number = 30, global?: boolean): Promise<number> {
   const dir = global ? digestGlobalDir() : digestDir(project);
   let pruned = 0;
   const cutoff = Date.now() - olderThanDays * 86_400_000;
 
-  withLock(`digest-${global ? "global" : project}`, () => {
+  await withLock(`digest-${global ? "global" : project}`, () => {
     const index = readIndex(dir);
     const keep: DigestEntry[] = [];
 

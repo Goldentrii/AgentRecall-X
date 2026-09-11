@@ -899,11 +899,11 @@ function scoreJournalTier(
  *  smart-recall.ts's original `internalScore = keyScore*0.65 + salience*0.35`.
  *  TRUST-FILTERED before any of this runs — CLOSES the known gap
  *  documented in this file's header, CHALLENGE (b). */
-function scorePalaceTier(
+async function scorePalaceTier(
   project: string,
   query: string,
   opts: { room?: string; perTierLimit?: number },
-): QueryMemoryItem[] {
+): Promise<QueryMemoryItem[]> {
   // Matches palace-search.ts's own first executable step — scaffolds the
   // palace dir + default rooms (writing each default room's `_room.json`) on
   // first touch. Without this, `listRooms()` (both here and inside
@@ -1021,7 +1021,7 @@ function scorePalaceTier(
   // (once per room that contributed >=1 hit).
   for (const room of roomsWithHits) {
     try {
-      recordAccess(project, room);
+      await recordAccess(project, room);
     } catch { /* best-effort, never block scoring on a bookkeeping write */ }
   }
 

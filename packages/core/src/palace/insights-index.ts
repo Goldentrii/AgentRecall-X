@@ -150,7 +150,7 @@ export function writeInsightsIndex(index: InsightsIndex): void {
  * Returns the insight that was confirmed or added.
  * Returns null only when the cap is full of count>=2 entries (no room for count-1).
  */
-export function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): IndexedInsight | null {
+export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): Promise<IndexedInsight | null> {
   return withLock("insights-index", () => {
   const index = readInsightsIndex();
   const now = new Date().toISOString();

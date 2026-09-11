@@ -43,13 +43,13 @@ const RMR_REPORT_SCRIPT = fileURLToPath(
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-wave0-not-violated-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -67,7 +67,7 @@ function readRecordById(project, id) {
 // ---------------------------------------------------------------------------
 
 describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", () => {
-  it("increments ONLY not_violated_count; heeded_count/recurrence_count/precision/proof_confidence stay byte-identical", () => {
+  it("increments ONLY not_violated_count; heeded_count/recurrence_count/precision/proof_confidence stay byte-identical", async () => {
     const project = "not-violated-isolation";
     const record = {
       id: "2026-08-29-nv-isolation",
@@ -78,12 +78,12 @@ describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", (
       context: "Deletion is irreversible; confirmation prevents accidents.",
       tags: ["data", "deletion"],
     };
-    writeCorrection(project, record);
+    await writeCorrection(project, record);
 
     // Seed some real heeded/recurred history FIRST so we can prove it survives untouched.
     const at1 = "2026-08-29T09:00:00.000Z";
-    recordOutcome({ correction_id: record.id, project, kind: "retrieved", at: at1, evidence: "seed" });
-    recordOutcome({ correction_id: record.id, project, kind: "heeded", at: at1, evidence: "seed heeded" });
+    await recordOutcome({ correction_id: record.id, project, kind: "retrieved", at: at1, evidence: "seed" });
+    await recordOutcome({ correction_id: record.id, project, kind: "heeded", at: at1, evidence: "seed heeded" });
 
     const before = readRecordById(project, record.id);
     assert.equal(before.heeded_count, 1);
@@ -97,7 +97,7 @@ describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", (
     // up but nothing rose to the level of a real trigger or a recurrence).
     const at2 = "2026-08-29T10:00:00.000Z";
     for (let i = 0; i < 3; i++) {
-      recordOutcome({
+      await recordOutcome({
         correction_id: record.id,
         project,
         kind: "not_violated",
@@ -117,7 +117,7 @@ describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", (
     assert.equal(after.last_outcome, at2);
   });
 
-  it("a not_violated event is NOT one of the ledger-only early-return kinds — it DOES rewrite the materialized record", () => {
+  it("a not_violated event is NOT one of the ledger-only early-return kinds — it DOES rewrite the materialized record", async () => {
     const project = "not-violated-rmw";
     const record = {
       id: "2026-08-29-nv-rmw",
@@ -128,10 +128,10 @@ describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", (
       context: "Leaked credentials require rotation.",
       tags: ["security", "secrets"],
     };
-    writeCorrection(project, record);
-    recordOutcome({ correction_id: record.id, project, kind: "retrieved", at: "2026-08-29T09:00:00.000Z", evidence: "seed" });
+    await writeCorrection(project, record);
+    await recordOutcome({ correction_id: record.id, project, kind: "retrieved", at: "2026-08-29T09:00:00.000Z", evidence: "seed" });
 
-    recordOutcome({
+    await recordOutcome({
       correction_id: record.id,
       project,
       kind: "not_violated",
@@ -149,7 +149,7 @@ describe("Wave 0 / Option A: recordOutcome not_violated — isolated counter", (
 // ---------------------------------------------------------------------------
 
 describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
-  it("getCorrectionKPIs.not_violated_count is additive-visible; heeded/recurred/precision are unaffected by its presence", () => {
+  it("getCorrectionKPIs.not_violated_count is additive-visible; heeded/recurred/precision are unaffected by its presence", async () => {
     const projA = "kpi-no-nv";
     const projB = "kpi-with-nv";
     const at = "2026-08-29T10:00:00.000Z";
@@ -162,12 +162,12 @@ describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
         id, date: "2026-08-29", severity: "p1", project,
         rule: `Always follow rule ${id}`, context: "seeded", tags: [],
       });
-      writeCorrection(project, mk("h1"));
-      writeCorrection(project, mk("r1"));
-      recordOutcome({ correction_id: "h1", project, kind: "retrieved", at, evidence: "seed" });
-      recordOutcome({ correction_id: "h1", project, kind: "heeded", at, evidence: "seed heeded" });
-      recordOutcome({ correction_id: "r1", project, kind: "retrieved", at, evidence: "seed" });
-      recordOutcome({ correction_id: "r1", project, kind: "recurred", at, evidence: "seed recurred" });
+      await writeCorrection(project, mk("h1"));
+      await writeCorrection(project, mk("r1"));
+      await recordOutcome({ correction_id: "h1", project, kind: "retrieved", at, evidence: "seed" });
+      await recordOutcome({ correction_id: "h1", project, kind: "heeded", at, evidence: "seed heeded" });
+      await recordOutcome({ correction_id: "r1", project, kind: "retrieved", at, evidence: "seed" });
+      await recordOutcome({ correction_id: "r1", project, kind: "recurred", at, evidence: "seed recurred" });
     }
 
     // ONLY project B gets not_violated events, on a THIRD, otherwise-uninvolved
@@ -175,8 +175,8 @@ describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
     // retrieved/heeded denominators used by `precision` stay IDENTICAL
     // between A and B; the only difference between the two projects is
     // not_violated activity itself.
-    writeCorrection(projB, { id: "nv1", date: "2026-08-29", severity: "p1", project: projB, rule: "Always follow rule nv1", context: "seeded", tags: [] });
-    recordOutcome({ correction_id: "nv1", project: projB, kind: "not_violated", at, evidence: "topical overlap; no recurrence marker" });
+    await writeCorrection(projB, { id: "nv1", date: "2026-08-29", severity: "p1", project: projB, rule: "Always follow rule nv1", context: "seeded", tags: [] });
+    await recordOutcome({ correction_id: "nv1", project: projB, kind: "not_violated", at, evidence: "topical overlap; no recurrence marker" });
 
     const kpiA = getCorrectionKPIs(projA);
     const kpiB = getCorrectionKPIs(projB);
@@ -192,7 +192,7 @@ describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
     assert.equal(kpiA.precision, kpiB.precision, "precision (heeded/retrieved) must be identical regardless of not_violated activity");
   });
 
-  it("rmr-report.mjs heed_rate + c3_heed_rate_evidence_grounded are BYTE-IDENTICAL whether or not not_violated events exist for another correction", () => {
+  it("rmr-report.mjs heed_rate + c3_heed_rate_evidence_grounded are BYTE-IDENTICAL whether or not not_violated events exist for another correction", async () => {
     const projA = "rmr-no-nv";
     const projB = "rmr-with-nv";
     const at = "2026-08-29T10:00:00.000Z";
@@ -204,22 +204,22 @@ describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
         id, date: "2026-08-29", severity: "p1", project,
         rule: `Always follow rule ${id}`, context: "seeded", tags: [],
       });
-      writeCorrection(project, mk("h1"));
-      writeCorrection(project, mk("h2"));
-      writeCorrection(project, mk("r1"));
-      recordOutcome({ correction_id: "h1", project, kind: "retrieved", at, evidence: "seed" });
-      recordOutcome({ correction_id: "h1", project, kind: "heeded", at, evidence: "seed heeded" });
-      recordOutcome({ correction_id: "h2", project, kind: "retrieved", at, evidence: "seed" });
-      recordOutcome({ correction_id: "h2", project, kind: "heeded", at, evidence: "seed heeded" });
-      recordOutcome({ correction_id: "r1", project, kind: "retrieved", at, evidence: "seed" });
-      recordOutcome({ correction_id: "r1", project, kind: "recurred", at, evidence: "seed recurred" });
+      await writeCorrection(project, mk("h1"));
+      await writeCorrection(project, mk("h2"));
+      await writeCorrection(project, mk("r1"));
+      await recordOutcome({ correction_id: "h1", project, kind: "retrieved", at, evidence: "seed" });
+      await recordOutcome({ correction_id: "h1", project, kind: "heeded", at, evidence: "seed heeded" });
+      await recordOutcome({ correction_id: "h2", project, kind: "retrieved", at, evidence: "seed" });
+      await recordOutcome({ correction_id: "h2", project, kind: "heeded", at, evidence: "seed heeded" });
+      await recordOutcome({ correction_id: "r1", project, kind: "retrieved", at, evidence: "seed" });
+      await recordOutcome({ correction_id: "r1", project, kind: "recurred", at, evidence: "seed recurred" });
     }
 
     // Project B ONLY: add not_violated events for a fourth correction.
-    writeCorrection(projB, { id: "nv1", date: "2026-08-29", severity: "p1", project: projB, rule: "Always follow rule nv1", context: "seeded", tags: [] });
-    recordOutcome({ correction_id: "nv1", project: projB, kind: "retrieved", at, evidence: "seed" });
+    await writeCorrection(projB, { id: "nv1", date: "2026-08-29", severity: "p1", project: projB, rule: "Always follow rule nv1", context: "seeded", tags: [] });
+    await recordOutcome({ correction_id: "nv1", project: projB, kind: "retrieved", at, evidence: "seed" });
     for (let i = 0; i < 4; i++) {
-      recordOutcome({ correction_id: "nv1", project: projB, kind: "not_violated", at, evidence: "topical overlap; no recurrence marker" });
+      await recordOutcome({ correction_id: "nv1", project: projB, kind: "not_violated", at, evidence: "topical overlap; no recurrence marker" });
     }
 
     const runReport = (project) => {
@@ -258,7 +258,7 @@ describe("Wave 0 / Option A: north-star heed_rate stays byte-identical", () => {
 // ---------------------------------------------------------------------------
 
 describe("Wave 0 / Option A: backward compatibility with pre-existing (no not_violated) data", () => {
-  it("a correction record with NO not_violated_count field loads fine via readCorrections/getCorrectionKPIs", () => {
+  it("a correction record with NO not_violated_count field loads fine via readCorrections/getCorrectionKPIs", async () => {
     const project = "bwcompat-record";
     const dir = correctionsDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
@@ -284,22 +284,22 @@ describe("Wave 0 / Option A: backward compatibility with pre-existing (no not_vi
     assert.equal(kpi.recurred, 1);
   });
 
-  it("a ledger with ZERO not_violated lines rebuilds fine (dry-run) — recomputed not_violated_count stays undefined, no crash", () => {
+  it("a ledger with ZERO not_violated lines rebuilds fine (dry-run) — recomputed not_violated_count stays undefined, no crash", async () => {
     const project = "bwcompat-ledger";
     // Build the record + ledger through the REAL recordOutcome path (not
     // hand-typed JSON) so the materialized record and the ledger are
     // guaranteed self-consistent by construction — this isolates the ONE
     // thing under test (a ledger with zero not_violated lines) from any
     // unrelated precision/proof_confidence arithmetic mismatch.
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "legacy-2", date: "2026-08-01", severity: "p1", project,
       rule: "Always validate config before deploy", context: "seeded", tags: [],
     });
     const at = "2026-08-01T09:00:00.000Z";
-    recordOutcome({ correction_id: "legacy-2", project, kind: "retrieved", at, evidence: "seed" });
-    recordOutcome({ correction_id: "legacy-2", project, kind: "heeded", at, evidence: "seed heeded (pre-Option-A style — never a not_violated line)" });
+    await recordOutcome({ correction_id: "legacy-2", project, kind: "retrieved", at, evidence: "seed" });
+    await recordOutcome({ correction_id: "legacy-2", project, kind: "heeded", at, evidence: "seed heeded (pre-Option-A style — never a not_violated line)" });
 
-    const result = runOutcomesRebuild(project, { apply: false });
+    const result = await runOutcomesRebuild(project, { apply: false });
     assert.equal(result.apply, false);
     const entry = result.corrections.find((c) => c.id === "legacy-2");
     assert.ok(entry, "rebuild plan must consider the legacy record (it has counter-affecting ledger events)");
@@ -313,7 +313,7 @@ describe("Wave 0 / Option A: backward compatibility with pre-existing (no not_vi
 // ---------------------------------------------------------------------------
 
 describe("Wave 0 / Option A: outcomes rebuild repairs/populates not_violated_count", () => {
-  it("runOutcomesRebuild({apply:true}) writes not_violated_count back to disk from ledger replay, and is idempotent on a second run", () => {
+  it("runOutcomesRebuild({apply:true}) writes not_violated_count back to disk from ledger replay, and is idempotent on a second run", async () => {
     const project = "rebuild-not-violated";
     const dir = correctionsDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
@@ -343,12 +343,12 @@ describe("Wave 0 / Option A: outcomes rebuild repairs/populates not_violated_cou
       "utf-8",
     );
 
-    const dryRun = runOutcomesRebuild(project, { apply: false });
+    const dryRun = await runOutcomesRebuild(project, { apply: false });
     const dryEntry = dryRun.corrections.find((c) => c.id === "rb-1");
     assert.ok(dryEntry.changed, "dry-run must detect the divergence (disk missing not_violated_count the ledger proves happened)");
     assert.equal(dryEntry.after.not_violated_count, 3, "replay must recompute not_violated_count = 3 from the ledger");
 
-    const applied = runOutcomesRebuild(project, { apply: true });
+    const applied = await runOutcomesRebuild(project, { apply: true });
     const appliedEntry = applied.corrections.find((c) => c.id === "rb-1");
     assert.ok(appliedEntry.changed, "apply pass must report the change it made");
 
@@ -358,7 +358,7 @@ describe("Wave 0 / Option A: outcomes rebuild repairs/populates not_violated_cou
     assert.equal(onDisk.recurrence_count, 0, "unrelated counters must be untouched by the rebuild");
 
     // Idempotency (mirrors runOutcomesRebuild's own documented invariant #2).
-    const second = runOutcomesRebuild(project, { apply: true });
+    const second = await runOutcomesRebuild(project, { apply: true });
     const secondEntry = second.corrections.find((c) => c.id === "rb-1");
     assert.equal(secondEntry.changed, false, "a second apply run against an already-rebuilt store must be a no-op");
   });

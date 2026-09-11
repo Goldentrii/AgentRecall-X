@@ -76,7 +76,7 @@ export async function palaceWalk(input: PalaceWalkInput): Promise<PalaceWalkResu
   output += "## Active Rooms\n\n";
   for (const room of topRooms) {
     output += roomSummary(room) + "\n";
-    recordAccess(slug, room.slug);
+    await recordAccess(slug, room.slug);
   }
   output += "\n";
 
@@ -110,7 +110,7 @@ export async function palaceWalk(input: PalaceWalkInput): Promise<PalaceWalkResu
           const readme = readmeCandidate.content.replace(/^---[\s\S]*?---\n*/, "").trim();
           output += "  " + readme.slice(0, 1000) + "\n";
         }
-        recordAccess(slug, room.slug);
+        await recordAccess(slug, room.slug);
       }
       output += "\n";
     }
@@ -123,7 +123,7 @@ export async function palaceWalk(input: PalaceWalkInput): Promise<PalaceWalkResu
   output += "## All Rooms\n\n";
   for (const room of rooms) {
     output += readRoomContent(slug, room);
-    recordAccess(slug, room.slug);
+    await recordAccess(slug, room.slug);
   }
 
   return { project: slug, depth, rooms_count: rooms.length, content: output.trim() };

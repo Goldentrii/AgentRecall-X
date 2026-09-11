@@ -59,7 +59,7 @@ export interface DecayOptions {
  * Run the decay pass for a project. Flags stale skills (FSRS) and rooms
  * (salience) as `archived:true` without deleting. Never throws.
  */
-export function runDecayPass(project: string, opts: DecayOptions = {}): DecayReport {
+export async function runDecayPass(project: string, opts: DecayOptions = {}): Promise<DecayReport> {
   const dryRun = opts.dryRun === true;
   const report: DecayReport = { scanned: 0, archived_candidates: [], skipped: [] };
 
@@ -100,7 +100,7 @@ export function runDecayPass(project: string, opts: DecayOptions = {}): DecayRep
         keystone: meta.keystone,
       });
       if (sal <= SALIENCE_ARCHIVE_THRESHOLD) {
-        if (!dryRun) updateRoomMeta(project, meta.slug, { archived: true });
+        if (!dryRun) await updateRoomMeta(project, meta.slug, { archived: true });
         report.archived_candidates.push({ slug: meta.slug, kind: "room", r: sal });
       }
     }

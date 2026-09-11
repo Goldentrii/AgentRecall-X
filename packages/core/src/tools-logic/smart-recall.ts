@@ -107,7 +107,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomic } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { getConnectedRooms } from "../palace/graph.js";
@@ -115,6 +115,7 @@ import { palaceDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
+import { withLock, LockContentionError } from "../storage/filelock.js";
 import { queryMemory, queryArchiveFallback, type QueryMemoryItem, type QueryMemorySource } from "../retrieval/query-memory.js";
 
 // ---------------------------------------------------------------------------
@@ -259,6 +260,14 @@ export interface SmartRecallResult {
   guidance?: string;
   /** Present when semantic backend timed out or errored and local fallback was used. */
   degraded?: SmartRecallDegraded;
+  /**
+   * fix6-locks (review LOW-3 — "never silent" doctrine): set when the
+   * feedback entries submitted WITH this call could not be persisted to
+   * feedback-log.json because another live process held the feedback-log
+   * lock past the timeout. Ranking for THIS call used the on-disk log;
+   * the submitted entries were dropped (resubmit to persist them).
+   */
+  feedback_log_skipped?: true;
   /** Verbatim sources attached for low-confidence top hits (Wave 4 bridge). */
   bridged?: BridgedSource[];
   /** Diagnostic: raw per-source candidate counts before RRF fusion (Fix 4/5).
@@ -334,23 +343,48 @@ function readFeedbackLog(): FeedbackEntry[] {
   try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return []; }
 }
 
-function processFeedback(feedback: RecallFeedback[], query: string): FeedbackEntry[] {
+async function processFeedback(
+  feedback: RecallFeedback[],
+  query: string,
+): Promise<{ log: FeedbackEntry[]; persistenceSkipped: boolean }> {
   ensureDir(path.dirname(feedbackLogPath()));
-  const log = readFeedbackLog();
-  const date = new Date().toISOString().slice(0, 10);
-  for (const f of feedback) {
-    // Only deduplicate when a stable ID is present. Without an ID there's no
-    // reliable key, so always log the entry (allows accumulation across calls).
-    const isDuplicate = f.id
-      ? log.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
-      : false;
-    if (!isDuplicate) {
-      log.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
+  try {
+    // fix6-locks: the read→push→write span runs as ONE locked critical section.
+    // feedback-log.json is GLOBAL and written by every live session that
+    // submits recall feedback — the old unlocked read-modify-write dropped
+    // concurrent sessions' entries (feedback-log-concurrency.test.mjs
+    // reproduced 46/120 lost on main HEAD).
+    return await withLock("feedback-log", () => {
+      const log = readFeedbackLog();
+      const date = new Date().toISOString().slice(0, 10);
+      for (const f of feedback) {
+        // Only deduplicate when a stable ID is present. Without an ID there's no
+        // reliable key, so always log the entry (allows accumulation across calls).
+        const isDuplicate = f.id
+          ? log.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
+          : false;
+        if (!isDuplicate) {
+          log.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
+        }
+      }
+      const updated = log.slice(-1000);
+      // Atomic: readers (readFeedbackLog in every smartRecall call) are
+      // lock-free — never let them observe a truncated file.
+      writeTextAtomic(feedbackLogPath(), JSON.stringify(updated, null, 2));
+      return { log: updated, persistenceSkipped: false };
+    });
+  } catch (err) {
+    if (err instanceof LockContentionError) {
+      // Advisory ranking data: never fail (or stall) a recall because the
+      // feedback log is contended past the timeout — log the skip explicitly
+      // and rank with the current on-disk log. The entries are lost, loudly:
+      // stderr for the host log AND persistenceSkipped for the caller
+      // (surfaced as SmartRecallResult.feedback_log_skipped — review LOW-3).
+      console.error(`[agent-recall] smart_recall feedback: ${err.message} — this call's feedback entries were NOT persisted.`);
+      return { log: readFeedbackLog(), persistenceSkipped: true };
     }
+    throw err;
   }
-  const updated = log.slice(-1000);
-  fs.writeFileSync(feedbackLogPath(), JSON.stringify(updated, null, 2), "utf-8");
-  return updated;
 }
 
 /** Count positive and negative feedback for a result item. Query-aware. */
@@ -780,9 +814,15 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   }
 
   // Process feedback first; reuse the returned log to avoid a second disk read
-  const feedbackLog = (input.feedback && input.feedback.length > 0)
-    ? processFeedback(input.feedback, input.query)
-    : readFeedbackLog();
+  let feedbackLogSkipped = false;
+  let feedbackLog: FeedbackEntry[];
+  if (input.feedback && input.feedback.length > 0) {
+    const fb = await processFeedback(input.feedback, input.query);
+    feedbackLog = fb.log;
+    feedbackLogSkipped = fb.persistenceSkipped;
+  } else {
+    feedbackLog = readFeedbackLog();
+  }
 
   const limit = input.limit ?? 10;
   // CJK-aware (P0-b): shared tokenizer — feeds getFeedbackCounts' relevance
@@ -982,6 +1022,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     results: finalResults,
     total_searched: totalSearched,
     sources_queried: sourcesQueried,
+    ...(feedbackLogSkipped ? { feedback_log_skipped: true as const } : {}),
     ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
     ...(recallPath ? { recall_path: recallPath } : {}),

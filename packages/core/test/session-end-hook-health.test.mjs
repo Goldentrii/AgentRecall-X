@@ -27,13 +27,13 @@ import { sessionEnd } from "../dist/tools-logic/session-end.js";
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-seh-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -88,7 +88,7 @@ describe("sessionEnd — F5 hook-health wiring", () => {
 
     // A real seed correction for the CURRENT project, classified (not "other"),
     // captured today — satisfies the seeds.length > 0 gate.
-    const written = writeCorrection(seedSlug, {
+    const written = await writeCorrection(seedSlug, {
       id: `${today}-seh-seed-rule`,
       date: today,
       severity: "p1",

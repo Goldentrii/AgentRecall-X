@@ -36,7 +36,7 @@ function writeCorrection(root, project, rec) {
  *   - project "lonely-proj": one isolated correction → not predictable, never
  *     fires (exercises the honest "uncomputable / zero" branches).
  */
-function buildFixture(root) {
+async function buildFixture(root) {
   const cluster = [
     {
       id: "deploy-staging-a",
@@ -72,7 +72,7 @@ function buildFixture(root) {
     },
   ];
   for (const c of cluster) {
-    writeCorrection(root, "deploy-proj", {
+    await writeCorrection(root, "deploy-proj", {
       severity: "p0",
       project: "deploy-proj",
       weight: 1,
@@ -82,7 +82,7 @@ function buildFixture(root) {
     });
   }
 
-  writeCorrection(root, "lonely-proj", {
+  await writeCorrection(root, "lonely-proj", {
     id: "isolated-rule",
     date: "2026-02-01",
     severity: "p1",
@@ -97,17 +97,17 @@ function buildFixture(root) {
 }
 
 describe("Loop 3 — LOO predict eval harness (deterministic fixture)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     fixtureRoot = path.join(tmpdir(), `ar-loo-fixture-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(fixtureRoot, { recursive: true });
-    buildFixture(fixtureRoot);
+    await buildFixture(fixtureRoot);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
-  it("runs end-to-end and reports computable metrics + buckets", () => {
+  it("runs end-to-end and reports computable metrics + buckets", async () => {
     const r = runLooEval(fixtureRoot);
 
     // Harness shape — every field present and internally consistent.
@@ -159,7 +159,7 @@ describe("Loop 3 — LOO predict eval harness (deterministic fixture)", () => {
     );
   });
 
-  it("isolated correction is NOT predictable and never fires (honest zero branch)", () => {
+  it("isolated correction is NOT predictable and never fires (honest zero branch)", async () => {
     const r = runLooEval(fixtureRoot);
     const lonely = r.by_project["lonely-proj"];
     assert.ok(lonely, "lonely-proj appears in the corpus buckets");
@@ -168,19 +168,19 @@ describe("Loop 3 — LOO predict eval harness (deterministic fixture)", () => {
     assert.equal(lonely.hits, 0, "isolated rule yields no hit");
   });
 
-  it("active_predictable EXCLUDES cases whose only enabling sibling is retracted (active===false)", () => {
+  it("active_predictable EXCLUDES cases whose only enabling sibling is retracted (active===false)", async () => {
     const root = path.join(tmpdir(), `ar-loo-retracted-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     // A RETRACTED (active:false) prior, then an ACTIVE later correction in the
     // same cluster. deriveBlindSpots() drops active===false, so the active-only
     // blind profile can never represent the later one — it inflates `predictable`
     // (theoretical) but must NOT count toward `active_predictable` (achievable).
-    writeCorrection(root, "retracted-proj", {
+    await writeCorrection(root, "retracted-proj", {
       id: "pin-digest-old", date: "2026-03-01", severity: "p0", project: "retracted-proj",
       rule: "Always pin the docker base image digest",
       context: "A floating docker tag drifted the build. Always pin the docker base image digest.",
       tags: ["docker", "pin", "digest"], weight: 1, active: false, kind: "correction",
     });
-    writeCorrection(root, "retracted-proj", {
+    await writeCorrection(root, "retracted-proj", {
       id: "pin-digest-new", date: "2026-03-02", severity: "p0", project: "retracted-proj",
       rule: "Pin the docker base image to a digest, never a tag",
       context: "The image moved under a tag again and broke prod. Pin the docker base image to a digest, never a tag.",
@@ -199,7 +199,7 @@ describe("Loop 3 — LOO predict eval harness (deterministic fixture)", () => {
     }
   });
 
-  it("empty corpus → honest nulls, no throw", () => {
+  it("empty corpus → honest nulls, no throw", async () => {
     const emptyRoot = path.join(tmpdir(), `ar-loo-empty-${Date.now()}`);
     fs.mkdirSync(path.join(emptyRoot, "projects"), { recursive: true });
     try {

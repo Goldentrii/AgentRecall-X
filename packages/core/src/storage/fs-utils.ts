@@ -31,6 +31,21 @@ export function writeJsonAtomic(filePath: string, data: unknown): void {
   fs.renameSync(tmp, filePath); // atomic on POSIX
 }
 
+/**
+ * Atomic PRE-SERIALIZED text write (tmp + rename) — for callers that must
+ * transform the payload before it touches disk (e.g. scrubForCloud over the
+ * serialized JSON). fix6-locks review finding: a locked read-modify-write
+ * span that ends in plain writeFileSync (truncate-then-write) still exposes
+ * LOCK-FREE readers (and crash-mid-write) to torn files; rename-atomicity
+ * closes that without requiring readers to lock.
+ */
+export function writeTextAtomic(filePath: string, text: string): void {
+  ensureDir(path.dirname(filePath));
+  const tmp = filePath + ".tmp." + process.pid;
+  fs.writeFileSync(tmp, text, "utf-8");
+  fs.renameSync(tmp, filePath); // atomic on POSIX
+}
+
 // ---------------------------------------------------------------------------
 // M8 (review fix, 2026-07-31) — shared UTF-8-safe byte-boundary helpers.
 //

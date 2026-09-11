@@ -51,12 +51,12 @@ import { tmpdir } from "node:os";
 import { isLikelyRealCorrection, writeCorrection, readCorrections } from "../dist/storage/corrections.js";
 
 describe("CJK capture gate — audit fixture now passes WITHOUT the '要求' workaround", () => {
-  it("发布代码前必须获得用户确认 (bare, no 偏好/喜欢/要求) is accepted via 必须 (STRONG_IMPERATIVE)", () => {
+  it("发布代码前必须获得用户确认 (bare, no 偏好/喜欢/要求) is accepted via 必须 (STRONG_IMPERATIVE)", async () => {
     const r = isLikelyRealCorrection("发布代码前必须获得用户确认");
     assert.equal(r.ok, true, `expected acceptance via the new 必须 STRONG_IMPERATIVE row, got: ${JSON.stringify(r)}`);
   });
 
-  it("禁止在未经用户确认的情况下发布代码 (bare, no 偏好/喜欢/要求) is accepted via 禁止", () => {
+  it("禁止在未经用户确认的情况下发布代码 (bare, no 偏好/喜欢/要求) is accepted via 禁止", async () => {
     const r = isLikelyRealCorrection("禁止在未经用户确认的情况下发布代码");
     assert.equal(r.ok, true, `expected acceptance via 禁止, got: ${JSON.stringify(r)}`);
   });
@@ -75,7 +75,7 @@ describe("CJK capture gate — new positive fixtures", () => {
     assert.equal(isLikelyRealCorrection("必须先运行完整测试套件才能合并这个分支").ok, true);
   });
 
-  it("mixed CJK+EN: 你搞错了，必须 use spaces not tabs for indentation", () => {
+  it("mixed CJK+EN: 你搞错了，必须 use spaces not tabs for indentation", async () => {
     assert.equal(isLikelyRealCorrection("你搞错了，必须 use spaces not tabs for indentation").ok, true);
   });
 
@@ -98,7 +98,7 @@ describe("CJK capture gate — new positive fixtures", () => {
 });
 
 describe("CJK capture gate — hedge-frame suppression (mirrors English 'I think we should use it')", () => {
-  it("我觉得应该使用这个方案，看看效果如何 — hedge opener suppresses the bare WEAK markers, rejected", () => {
+  it("我觉得应该使用这个方案，看看效果如何 — hedge opener suppresses the bare WEAK markers, rejected", async () => {
     const r = isLikelyRealCorrection("我觉得应该使用这个方案，看看效果如何");
     assert.equal(
       r.ok,
@@ -109,22 +109,22 @@ describe("CJK capture gate — hedge-frame suppression (mirrors English 'I think
 });
 
 describe("CJK capture gate — noise guard: CJK junk stays rejected, same as English junk", () => {
-  it("rejects a pasted Chinese log line (no actionable signal)", () => {
+  it("rejects a pasted Chinese log line (no actionable signal)", async () => {
     const r = isLikelyRealCorrection("[2026-09-09T10:23:01Z] ERROR 数据库连接超时，重试次数已达上限");
     assert.equal(r.ok, false, `pasted log line must stay rejected, got: ${JSON.stringify(r)}`);
   });
 
-  it("rejects a bare CJK question with no imperative marker", () => {
+  it("rejects a bare CJK question with no imperative marker", async () => {
     const r = isLikelyRealCorrection("这个功能之后是不是要放到设置里面？");
     assert.equal(r.ok, false, `bare question must stay rejected, got: ${JSON.stringify(r)}`);
   });
 
-  it("rejects a pure CJK noun phrase (no verb, no directive)", () => {
+  it("rejects a pure CJK noun phrase (no verb, no directive)", async () => {
     const r = isLikelyRealCorrection("登录页面顶部导航栏的图标间距");
     assert.equal(r.ok, false, `pure noun phrase must stay rejected, got: ${JSON.stringify(r)}`);
   });
 
-  it("rejects a longer CJK acknowledgment the actionable scan does not rescue", () => {
+  it("rejects a longer CJK acknowledgment the actionable scan does not rescue", async () => {
     const r = isLikelyRealCorrection("好的，我明白了，谢谢你的提醒");
     assert.equal(r.ok, false, `CJK ack must stay rejected, got: ${JSON.stringify(r)}`);
     assert.match(r.reason, /acknowledgment/);
@@ -136,22 +136,22 @@ describe("CJK capture gate — English behavior byte-identical (no regression)",
   // capture-gate-v3.test.mjs — the CJK additions are pure alternation
   // additions to the SAME regexes, so English-only text must classify
   // exactly as it did before this change.
-  it("English hedged filler is still rejected", () => {
+  it("English hedged filler is still rejected", async () => {
     assert.equal(isLikelyRealCorrection("I think we should use it").ok, false);
     assert.equal(isLikelyRealCorrection("the team wants to use the new API endpoint").ok, false);
   });
 
-  it("English strong/weak directives are still accepted", () => {
+  it("English strong/weak directives are still accepted", async () => {
     assert.equal(isLikelyRealCorrection("maybe, but never put secrets in the KV store").ok, true);
     assert.equal(isLikelyRealCorrection("stop making the button full width, it should be inline").ok, true);
   });
 
-  it("English acknowledgments are still rejected", () => {
+  it("English acknowledgments are still rejected", async () => {
     assert.equal(isLikelyRealCorrection("ok sure thing").ok, false);
     assert.equal(isLikelyRealCorrection("confirmed and done now").ok, false);
   });
 
-  it("English doc/report headers are still rejected", () => {
+  it("English doc/report headers are still rejected", async () => {
     assert.equal(
       isLikelyRealCorrection("# AgentRecall Dreaming Agent\n\nDate: 2026-06-20  Time: 11:01").ok,
       false,
@@ -167,7 +167,7 @@ describe("CJK capture gate — INDEPENDENT-REVIEW FIX regressions (2026-09-09)",
   // and that carried no OTHER STRONG/WEAK/PREFERENCE marker, was silently
   // rejected as a false "pure acknowledgment" instead of the true
   // "no actionable signal" reason. Fixed: `行吧` (no `?`).
-  it("行为很奇怪 does not spuriously match the ack gate via bare 行 (行吧 bug)", () => {
+  it("行为很奇怪 does not spuriously match the ack gate via bare 行 (行吧 bug)", async () => {
     const r = isLikelyRealCorrection("行为很奇怪，可能是网络问题导致的");
     assert.equal(r.ok, false, "correctly not a rule, but for the RIGHT reason");
     assert.doesNotMatch(
@@ -177,7 +177,7 @@ describe("CJK capture gate — INDEPENDENT-REVIEW FIX regressions (2026-09-09)",
     );
   });
 
-  it("行程安排冲突 does not spuriously match the ack gate via bare 行 (行吧 bug)", () => {
+  it("行程安排冲突 does not spuriously match the ack gate via bare 行 (行吧 bug)", async () => {
     const r = isLikelyRealCorrection("行程安排冲突了，得重新协调一下时间");
     assert.equal(r.ok, false);
     assert.doesNotMatch(r.reason, /acknowledgment/, `got: ${JSON.stringify(r)}`);
@@ -189,21 +189,21 @@ describe("CJK capture gate — INDEPENDENT-REVIEW FIX regressions (2026-09-09)",
   // because "OK, use X instead" is rescued by "use" (WEAK_IMPERATIVE) before
   // it ever reaches the ack gate — CJK had no equivalent suggestion-verb
   // rescue. Fixed: 试试/改成/统一 added to WEAK_IMPERATIVE (same shape as "use").
-  it("可以试试这个新的方案看看效果 — a genuine suggestion opened with 可以, now rescued", () => {
+  it("可以试试这个新的方案看看效果 — a genuine suggestion opened with 可以, now rescued", async () => {
     assert.equal(isLikelyRealCorrection("可以试试这个新的方案看看效果").ok, true);
   });
 
-  it("可以把这个按钮的颜色改成红色试试 — a genuine change-request opened with 可以, now rescued", () => {
+  it("可以把这个按钮的颜色改成红色试试 — a genuine change-request opened with 可以, now rescued", async () => {
     assert.equal(isLikelyRealCorrection("可以把这个按钮的颜色改成红色试试").ok, true);
   });
 
-  it("好的，那这个字段以后统一叫做orderId — a genuine naming rule opened with 好的, now rescued", () => {
+  it("好的，那这个字段以后统一叫做orderId — a genuine naming rule opened with 好的, now rescued", async () => {
     assert.equal(isLikelyRealCorrection("好的，那这个字段以后统一叫做orderId").ok, true);
   });
 
   // Regression guard: the ack gate itself must still reject a PURE CJK ack
   // that carries no suggestion verb at all (the fix must not over-correct).
-  it("REGRESSION GUARD: a pure CJK ack with no suggestion verb still rejects", () => {
+  it("REGRESSION GUARD: a pure CJK ack with no suggestion verb still rejects", async () => {
     const r = isLikelyRealCorrection("好的，我明白了，谢谢你的提醒");
     assert.equal(r.ok, false);
     assert.match(r.reason, /acknowledgment/);
@@ -234,13 +234,13 @@ describe("CJK capture gate — ROUND-2 INDEPENDENT-REVIEW FIX: WEAK_IMPERATIVE c
     { id: "C06", text: "这次投标统一采用固定价格模式", note: "统一采用 as ordinary descriptive business-process prose, not a directive" },
   ];
   for (const { id, text, note } of COLLISIONS) {
-    it(`${id}: ${note}`, () => {
+    it(`${id}: ${note}`, async () => {
       const r = isLikelyRealCorrection(text);
       assert.equal(r.ok, false, `Expected REJECT for ${id} (${note}), got: ${JSON.stringify(r)}`);
     });
   }
 
-  it("REGRESSION GUARD: the original round-1 positive fixtures still pass", () => {
+  it("REGRESSION GUARD: the original round-1 positive fixtures still pass", async () => {
     assert.equal(isLikelyRealCorrection("可以试试这个新的方案看看效果").ok, true);
     assert.equal(isLikelyRealCorrection("可以把这个按钮的颜色改成红色试试").ok, true);
     assert.equal(isLikelyRealCorrection("好的，那这个字段以后统一叫做orderId").ok, true);
@@ -258,18 +258,18 @@ describe("CJK capture gate — severity classification stays in sync (detectSeve
   // exported writeCorrection() path (detectSeverity is internal/unexported —
   // exercised indirectly via a correction with no `severity` pre-set).
   let testRoot;
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-cjk-severity-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("a CJK-only absolute prohibition (禁止, no severity pre-set) auto-classifies as p0", () => {
-    const res = writeCorrection("cjk-severity-proj", {
+  it("a CJK-only absolute prohibition (禁止, no severity pre-set) auto-classifies as p0", async () => {
+    const res = await writeCorrection("cjk-severity-proj", {
       id: "2026-09-09-cjk-severity",
       date: "2026-09-09",
       project: "cjk-severity-proj",
@@ -283,8 +283,8 @@ describe("CJK capture gate — severity classification stays in sync (detectSeve
     assert.equal(record.severity, "p0", `expected CJK 禁止 to auto-classify as p0, got: ${JSON.stringify(record)}`);
   });
 
-  it("an ordinary 不要担心 reassurance does NOT auto-classify as p0 (benign-completion exclusion applies to severity too)", () => {
-    const res = writeCorrection("cjk-severity-proj", {
+  it("an ordinary 不要担心 reassurance does NOT auto-classify as p0 (benign-completion exclusion applies to severity too)", async () => {
+    const res = await writeCorrection("cjk-severity-proj", {
       id: "2026-09-09-cjk-severity-benign",
       date: "2026-09-09",
       project: "cjk-severity-proj",
@@ -307,12 +307,12 @@ describe("CJK capture gate — ROUND-3 INDEPENDENT-REVIEW FIX: 不能 scoped to 
   // permission-gated UI behavior was silently classified as an actionable,
   // P0-severity house rule. Fixed: 不能 -> 你不能 in STRONG_IMPERATIVE and
   // both p0Patterns copies (mirroring the pre-existing precedent exactly).
-  it("a bug report using bare 不能 (no 你不能) does not clear the capture gate at all", () => {
+  it("a bug report using bare 不能 (no 你不能) does not clear the capture gate at all", async () => {
     const r = isLikelyRealCorrection("系统现在不能在没有审核权限的情况下显示这个按钮");
     assert.equal(r.ok, false, `bug report must not be treated as a rule, got: ${JSON.stringify(r)}`);
   });
 
-  it("a second-person 你不能 correction (isolated from other STRONG markers) still clears the gate", () => {
+  it("a second-person 你不能 correction (isolated from other STRONG markers) still clears the gate", async () => {
     const r = isLikelyRealCorrection("你不能在没有批准的情况下直接部署这个服务");
     assert.equal(r.ok, true, `你不能 must still be load-bearing on its own, got: ${JSON.stringify(r)}`);
   });
@@ -320,18 +320,18 @@ describe("CJK capture gate — ROUND-3 INDEPENDENT-REVIEW FIX: 不能 scoped to 
 
 describe("CJK capture gate — end-to-end writeCorrection() persists the audit fixture unaided", () => {
   let testRoot;
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-cjk-gate-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("persists a CJK correction whose ONLY imperative marker is 必须/禁止 (no 偏好/喜欢/要求)", () => {
-    const res = writeCorrection("cjk-gate-proj", {
+  it("persists a CJK correction whose ONLY imperative marker is 必须/禁止 (no 偏好/喜欢/要求)", async () => {
+    const res = await writeCorrection("cjk-gate-proj", {
       id: "2026-09-09-cjk-publish-gate",
       date: "2026-09-09",
       severity: "p0",

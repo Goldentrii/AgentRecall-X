@@ -23,19 +23,19 @@ import {
 let testRoot;
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-life-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   delete process.env.AR_CONSOLIDATE_AUTO;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
 
 describe("P4 staleness", () => {
-  it("isStaleCorrection: old touch is stale, fresh is not", () => {
+  it("isStaleCorrection: old touch is stale, fresh is not", async () => {
     const today = new Date().toISOString().slice(0, 10);
     assert.equal(isStaleCorrection({ date: "2020-01-01" }), true);
     assert.equal(isStaleCorrection({ date: today }), false);
@@ -43,12 +43,12 @@ describe("P4 staleness", () => {
     assert.equal(isStaleCorrection({ date: "2020-01-01", last_retrieved: now() }), false);
   });
 
-  it("KPI surfaces stale active corrections", () => {
-    writeCorrection("p", {
+  it("KPI surfaces stale active corrections", async () => {
+    await writeCorrection("p", {
       id: "2020-01-01-old", date: "2020-01-01", severity: "p0",
       project: "p", rule: "Never commit secrets to the repository", context: "", tags: [],
     });
-    writeCorrection("p", {
+    await writeCorrection("p", {
       id: "fresh", date: new Date().toISOString().slice(0, 10), severity: "p0",
       project: "p", rule: "Always rebase before merging a feature branch", context: "", tags: [],
     });
@@ -59,29 +59,29 @@ describe("P4 staleness", () => {
 });
 
 describe("P4 noise review", () => {
-  function seedNoise() {
-    writeCorrection("p", {
+  async function seedNoise() {
+    await writeCorrection("p", {
       id: "2026-05-19-noise", date: "2026-05-19", severity: "p1",
       project: "p", rule: "Always add a changelog entry for every change", context: "", tags: [],
     });
     // 3 retrievals, 0 heeded → precision 0 (< 0.3), retrieved ≥ 3 → noise candidate.
     for (let i = 0; i < 3; i++) {
-      recordOutcome({ correction_id: "2026-05-19-noise", project: "p", kind: "retrieved", at: now() });
+      await recordOutcome({ correction_id: "2026-05-19-noise", project: "p", kind: "retrieved", at: now() });
     }
   }
 
-  it("suggest-only by default: surfaces but does not retract", () => {
-    seedNoise();
-    const review = reviewNoiseCorrections("p");
+  it("suggest-only by default: surfaces but does not retract", async () => {
+    await seedNoise();
+    const review = await reviewNoiseCorrections("p");
     assert.equal(review.auto, false);
     assert.equal(review.suggestions.length, 1);
     assert.equal(review.pruned.length, 0);
     assert.equal(readActiveCorrections("p").length, 1, "default must not mutate");
   });
 
-  it("auto mode retracts the noise candidate", () => {
-    seedNoise();
-    const review = reviewNoiseCorrections("p", { auto: true });
+  it("auto mode retracts the noise candidate", async () => {
+    await seedNoise();
+    const review = await reviewNoiseCorrections("p", { auto: true });
     assert.equal(review.auto, true);
     assert.deepEqual(review.pruned, ["2026-05-19-noise"]);
     assert.equal(readActiveCorrections("p").length, 0, "auto must retract");

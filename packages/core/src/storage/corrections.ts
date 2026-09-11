@@ -11,7 +11,7 @@ import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
-import { withLock } from "./filelock.js";
+import { withLock, LockContentionError } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
 import type { Confidence, DecayClass } from "../types.js";
 
@@ -1170,7 +1170,7 @@ function normalizeRule(rule: string): string {
  * are unaffected (the return value was void, now it is an object; ignoring it
  * still compiles and runs correctly).
  */
-export function writeCorrection(project: string, correction: CorrectionRecord): WriteCorrectionResult {
+export async function writeCorrection(project: string, correction: CorrectionRecord): Promise<WriteCorrectionResult> {
   // Capture-quality gate — reject noise before touching disk.
   // v3 (Loop 8): classify on the FULL correction text, not the truncated rule.
   // `rule` is a first-sentence title slice (set by check.ts) that hid the
@@ -1408,12 +1408,12 @@ export interface RetractCorrectionResult {
  * The file is rewritten atomically — never deleted. The record remains in
  * _outcomes.jsonl history and can be manually reactivated by editing the JSON.
  */
-export function retractCorrection(
+export async function retractCorrection(
   project: string,
   id: string,
   reason?: string,
   supersededBy?: string,
-): RetractCorrectionResult {
+): Promise<RetractCorrectionResult> {
   const dir = correctionsDir(project);
 
   // ── LOCKED critical section (P0 data-loss fix, 2026-07-25) ────────────────
@@ -1467,7 +1467,7 @@ export function retractCorrection(
  *   the core-level enforcement of the single-producer contract (the CLI's
  *   `ar outcomes record` is the one caller that adds the prefix).
  */
-export function recordOutcome(outcome: CorrectionOutcome): void {
+export async function recordOutcome(outcome: CorrectionOutcome): Promise<void> {
   // C3b single-producer gate: not_triggered without the dream-audit evidence
   // prefix indicates an unauthorized producer — fail loudly, never silently.
   if (
@@ -1516,7 +1516,16 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
   // DIFFERENT corrections' index writes race). See the matching note in
   // writeCorrection/retractCorrection above; same lock name, same pattern as
   // `palace-index-${project}` / `digest-${project}` elsewhere in this codebase.
-  withLock(`corrections-${outcome.project}`, () => {
+  //
+  // fix6-locks contention handling: the jsonl ledger line above is ALREADY
+  // appended (append-only, lossless), and the materialized counters below are
+  // fully re-derivable from that ledger via runOutcomesRebuild. So if another
+  // LIVE process holds the lock past the timeout, skipping this counter pass
+  // loses NOTHING durable — log the skip and return instead of stealing the
+  // lock (old behavior, mid-write corruption risk) or failing the caller's
+  // hot path (session_start / session_end / check_action record inline).
+  try {
+  await withLock(`corrections-${outcome.project}`, () => {
     // Update the per-correction file's counters.
     const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
     if (!target) return; // outcome can still be replayed later if record is restored
@@ -1597,6 +1606,17 @@ export function recordOutcome(outcome: CorrectionOutcome): void {
     // preserving the existing hot-path optimization documented above.)
     regenerateCorrectionsIndex(outcome.project);
   });
+  } catch (err) {
+    if (err instanceof LockContentionError) {
+      console.error(
+        `[agent-recall] recordOutcome(${outcome.kind}, ${outcome.correction_id}): ${err.message} ` +
+        `— materialized counter update skipped; the _outcomes.jsonl ledger already holds this ` +
+        `event and \`ar outcomes rebuild\` re-derives the counters.`,
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2009,10 +2029,10 @@ function toPublicDiffs(entries: DivergenceEntry[]): OutcomesRebuildCorrectionDif
  *   4. Only per-correction JSON files that actually differ are rewritten; the
  *      shared _index.md is regenerated ONCE at the end, only if anything wrote.
  */
-export function runOutcomesRebuild(
+export async function runOutcomesRebuild(
   project: string,
   opts: OutcomesRebuildOptions = {},
-): OutcomesRebuildResult {
+): Promise<OutcomesRebuildResult> {
   const apply = opts.apply === true;
 
   if (!apply) {
@@ -2566,13 +2586,13 @@ export interface NoiseReview {
  * posture: deleting belief is a deliberate act, so the default never mutates;
  * an explicit human (or opt-in flag) triggers the retraction.
  */
-export function reviewNoiseCorrections(project: string, opts?: { auto?: boolean }): NoiseReview {
+export async function reviewNoiseCorrections(project: string, opts?: { auto?: boolean }): Promise<NoiseReview> {
   const auto = opts?.auto ?? (process.env.AR_CONSOLIDATE_AUTO === "1");
   const suggestions = getCorrectionKPIs(project).noise_candidates;
   const pruned: string[] = [];
   if (auto) {
     for (const c of suggestions) {
-      const res = retractCorrection(project, c.id, "auto-pruned: low signal (precision<0.3, retrieved≥3)");
+      const res = await retractCorrection(project, c.id, "auto-pruned: low signal (precision<0.3, retrieved≥3)");
       if (res.success) pruned.push(c.id);
     }
   }

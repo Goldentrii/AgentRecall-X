@@ -22,14 +22,14 @@ export async function digestRead(input: DigestReadInput): Promise<DigestReadResu
   // Try project-scoped first
   let result = readDigestFromStore(project, input.digest_id, false);
   if (result.meta) {
-    recordAccess(project, input.digest_id, false);
+    await recordAccess(project, input.digest_id, false);
     return { success: true, ...capContent(result) };
   }
 
   // Try global
   result = readDigestFromStore(project, input.digest_id, true);
   if (result.meta) {
-    recordAccess("__global__", input.digest_id, true);
+    await recordAccess("__global__", input.digest_id, true);
     return { success: true, ...capContent(result) };
   }
 

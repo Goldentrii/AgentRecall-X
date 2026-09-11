@@ -15,12 +15,12 @@ describe("Palace rooms — module integration", () => {
     rooms = await import("../dist/palace/rooms.js");
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  it("ensurePalaceInitialized creates default rooms", () => {
+  it("ensurePalaceInitialized creates default rooms", async () => {
     rooms.ensurePalaceInitialized("test-proj");
     const list = rooms.listRooms("test-proj");
     assert.ok(list.length >= 5, `Expected 5+ rooms, got ${list.length}`);
@@ -32,35 +32,35 @@ describe("Palace rooms — module integration", () => {
     assert.ok(slugs.includes("knowledge"));
   });
 
-  it("ensurePalaceInitialized is idempotent", () => {
+  it("ensurePalaceInitialized is idempotent", async () => {
     rooms.ensurePalaceInitialized("test-proj");
     rooms.ensurePalaceInitialized("test-proj");
     const list = rooms.listRooms("test-proj");
     assert.equal(list.length, 6); // still 6, not 12
   });
 
-  it("ensurePalaceInitialized creates identity.md", () => {
+  it("ensurePalaceInitialized creates identity.md", async () => {
     const identityPath = path.join(TEST_ROOT, "projects", "test-proj", "palace", "identity.md");
     assert.ok(fs.existsSync(identityPath));
     const content = fs.readFileSync(identityPath, "utf-8");
     assert.ok(content.includes("test-proj"));
   });
 
-  it("ensurePalaceInitialized creates graph.json", () => {
+  it("ensurePalaceInitialized creates graph.json", async () => {
     const graphPath = path.join(TEST_ROOT, "projects", "test-proj", "palace", "graph.json");
     assert.ok(fs.existsSync(graphPath));
     const graph = JSON.parse(fs.readFileSync(graphPath, "utf-8"));
     assert.ok(Array.isArray(graph.edges));
   });
 
-  it("createRoom creates a new custom room", () => {
+  it("createRoom creates a new custom room", async () => {
     const meta = rooms.createRoom("test-proj", "custom", "Custom Room", "Test room", ["test"]);
     assert.equal(meta.slug, "custom");
     assert.equal(meta.salience, 0.5);
     assert.ok(rooms.roomExists("test-proj", "custom"));
   });
 
-  it("getRoomMeta reads room metadata", () => {
+  it("getRoomMeta reads room metadata", async () => {
     const meta = rooms.getRoomMeta("test-proj", "goals");
     assert.ok(meta);
     assert.equal(meta.slug, "goals");
@@ -68,35 +68,35 @@ describe("Palace rooms — module integration", () => {
     assert.ok(typeof meta.salience === "number");
   });
 
-  it("getRoomMeta returns null for non-existent room", () => {
+  it("getRoomMeta returns null for non-existent room", async () => {
     assert.equal(rooms.getRoomMeta("test-proj", "nonexistent"), null);
   });
 
-  it("updateRoomMeta updates and preserves other fields", () => {
-    const updated = rooms.updateRoomMeta("test-proj", "goals", { salience: 0.9 });
+  it("updateRoomMeta updates and preserves other fields", async () => {
+    const updated = await rooms.updateRoomMeta("test-proj", "goals", { salience: 0.9 });
     assert.ok(updated);
     assert.equal(updated.salience, 0.9);
     assert.equal(updated.slug, "goals"); // preserved
     assert.equal(updated.name, "Goals"); // preserved
   });
 
-  it("listRooms sorts by salience descending", () => {
-    rooms.updateRoomMeta("test-proj", "architecture", { salience: 0.95 });
-    rooms.updateRoomMeta("test-proj", "goals", { salience: 0.7 });
+  it("listRooms sorts by salience descending", async () => {
+    await rooms.updateRoomMeta("test-proj", "architecture", { salience: 0.95 });
+    await rooms.updateRoomMeta("test-proj", "goals", { salience: 0.7 });
     const list = rooms.listRooms("test-proj");
     assert.equal(list[0].slug, "architecture"); // 0.95
     assert.ok(list[0].salience >= list[1].salience);
   });
 
-  it("recordAccess bumps access_count and last_accessed", () => {
+  it("recordAccess bumps access_count and last_accessed", async () => {
     const before = rooms.getRoomMeta("test-proj", "goals");
     const prevCount = before.access_count;
-    rooms.recordAccess("test-proj", "goals");
+    await rooms.recordAccess("test-proj", "goals");
     const after = rooms.getRoomMeta("test-proj", "goals");
     assert.equal(after.access_count, prevCount + 1);
   });
 
-  it("roomExists returns false for non-existent room", () => {
+  it("roomExists returns false for non-existent room", async () => {
     assert.equal(rooms.roomExists("test-proj", "nope"), false);
   });
 });

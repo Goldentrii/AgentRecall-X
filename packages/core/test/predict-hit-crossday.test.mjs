@@ -66,13 +66,13 @@ function countPredictHits(project, id) {
 }
 
 describe("Loop 3 — cross-day predict_hit (formerly dead code)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-predict-hit-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
@@ -81,7 +81,7 @@ describe("Loop 3 — cross-day predict_hit (formerly dead code)", () => {
     const id = "2026-06-01-deploy-staging-first";
     // The rule's >=4-char content words must appear in the summary (>=2) to make
     // the recurrence heuristic fire: deploy, staging, production, first.
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id,
       date: "2026-06-01",
       severity: "p0",
@@ -135,7 +135,7 @@ describe("Loop 3 — cross-day predict_hit (formerly dead code)", () => {
 
   it("SAME-DAY prediction that recurs today → NO predict_hit (anti-self-confirm)", async () => {
     const id = "2026-06-02-same-day";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id,
       date: "2026-06-02",
       severity: "p0",

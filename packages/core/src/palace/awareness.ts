@@ -18,7 +18,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomic } from "../storage/fs-utils.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { withLock } from "../storage/filelock.js";
 import { syncToSupabase } from "../supabase/sync.js";
@@ -61,8 +61,24 @@ export function readAwareness(): string {
   return fs.readFileSync(p, "utf-8");
 }
 
-export function writeAwareness(content: string): void {
-  withLock("awareness", () => {
+/**
+ * Lock discipline (fix6-locks):
+ *   AWARENESS_STATE_LOCK ("awareness-state") guards BOTH awareness-state.json
+ *   and awareness-archive.json — they are mutated together (demote/resurrect
+ *   move insights between the two files), so a single lock keeps the pair
+ *   consistent.
+ *   AWARENESS_MD_LOCK ("awareness") guards awareness.md.
+ * ORDERING: "awareness-state" → "awareness" (render runs inside the state
+ * lock so a stale render can never overwrite a newer one). NEVER acquire
+ * "awareness-state" while holding "awareness". Same-name nesting is a
+ * deadlock — the *Unlocked internals below exist precisely so locked spans
+ * never re-enter their own lock.
+ */
+const AWARENESS_STATE_LOCK = "awareness-state";
+const AWARENESS_MD_LOCK = "awareness";
+
+export async function writeAwareness(content: string): Promise<void> {
+  await withLock(AWARENESS_MD_LOCK, () => {
     const p = awarenessPath();
     ensureDir(path.dirname(p));
 
@@ -159,19 +175,57 @@ export function readAwarenessState(): AwarenessState | null {
   }
 }
 
-export function writeAwarenessState(state: AwarenessState): void {
-  withLock("awareness-state", () => {
-    const p = AWARENESS_JSON_PATH();
-    ensureDir(path.dirname(p));
-    state.lastUpdated = new Date().toISOString();
-    // Scrub the serialized JSON before it touches disk. session-start.ts reads
-    // this file DIRECTLY (readAwarenessState()) to build its briefing — not just
-    // via the rendered awareness.md — so an unscrubbed insight.evidence/title,
-    // compound-insight pattern, trajectory, or blind-spot string here reaches
-    // session_start injection even if the markdown render path is clean.
-    // scrubForCloud's replacement placeholders are plain ASCII with no quote/
-    // brace characters, so scrubbing the full JSON string is JSON-safe.
-    fs.writeFileSync(p, scrubForCloud(JSON.stringify(state, null, 2)), "utf-8");
+/** Bare state write — caller MUST hold AWARENESS_STATE_LOCK. */
+function writeAwarenessStateUnlocked(state: AwarenessState): void {
+  const p = AWARENESS_JSON_PATH();
+  ensureDir(path.dirname(p));
+  state.lastUpdated = new Date().toISOString();
+  // Scrub the serialized JSON before it touches disk. session-start.ts reads
+  // this file DIRECTLY (readAwarenessState()) to build its briefing — not just
+  // via the rendered awareness.md — so an unscrubbed insight.evidence/title,
+  // compound-insight pattern, trajectory, or blind-spot string here reaches
+  // session_start injection even if the markdown render path is clean.
+  // scrubForCloud's replacement placeholders are plain ASCII with no quote/
+  // brace characters, so scrubbing the full JSON string is JSON-safe.
+  // Atomic (tmp+rename): readers are lock-free, so a truncate-then-write here
+  // could tear under a concurrent read — and a torn readAwarenessState()
+  // returning null makes awareness-update's init path WIPE the whole state.
+  writeTextAtomic(p, scrubForCloud(JSON.stringify(state, null, 2)));
+}
+
+export async function writeAwarenessState(state: AwarenessState): Promise<void> {
+  await withLock(AWARENESS_STATE_LOCK, () => writeAwarenessStateUnlocked(state));
+}
+
+/**
+ * The ONE locked read-modify-write combinator for awareness state (fix6-locks).
+ *
+ * Every writer that reads awareness-state.json, mutates it, and writes it back
+ * MUST go through this function — the whole span runs under
+ * AWARENESS_STATE_LOCK (the old shape, where writeAwarenessState locked only
+ * the final write, lost concurrent writers' insights wholesale: two processes
+ * read the same state, each merged one insight, and the last write discarded
+ * the other's — reproduced by awareness-state-concurrency.test.mjs).
+ *
+ * `fn` runs INSIDE the lock: it receives the freshly-read state (null if the
+ * store has none) and returns `{ state?, result }`. When `state` is returned
+ * it is written AND rendered (render happens inside the state lock, acquiring
+ * the "awareness" md lock — the documented "awareness-state" → "awareness"
+ * ordering) so renders can never land out of order. fn itself must be
+ * synchronous and must NOT call any locked awareness API (addInsight,
+ * writeAwarenessState, resurrectFromArchive, ... — the lock is not reentrant);
+ * the *Unlocked internals are available to it via closure inside this module.
+ */
+export async function mutateAwarenessState<R>(
+  fn: (current: AwarenessState | null) => { state?: AwarenessState; result: R },
+): Promise<R> {
+  return withLock(AWARENESS_STATE_LOCK, async () => {
+    const out = fn(readAwarenessState());
+    if (out.state) {
+      writeAwarenessStateUnlocked(out.state);
+      await renderAwareness(out.state);
+    }
+    return out.result;
   });
 }
 
@@ -187,17 +241,25 @@ export function readAwarenessArchive(): Insight[] {
   }
 }
 
-export function writeAwarenessArchive(archive: Insight[]): void {
+/** Bare archive write — caller MUST hold AWARENESS_STATE_LOCK (the archive
+ * shares the state lock: demote/resurrect mutate both files together). */
+function writeAwarenessArchiveUnlocked(archive: Insight[]): void {
   const p = AWARENESS_ARCHIVE_PATH();
   ensureDir(path.dirname(p));
   // Keep newest first, cap at MAX_ARCHIVE. Scrubbed for the same reason as
   // writeAwarenessState — resurrectFromArchive() can bring an archived insight's
   // evidence/title back into the live topInsights list (and therefore back into
   // session_start injection) without ever passing through writeAwareness's render.
-  fs.writeFileSync(p, scrubForCloud(JSON.stringify(archive.slice(0, MAX_ARCHIVE), null, 2)), "utf-8");
+  // Atomic for the same torn-lock-free-reader reason as writeAwarenessStateUnlocked.
+  writeTextAtomic(p, scrubForCloud(JSON.stringify(archive.slice(0, MAX_ARCHIVE), null, 2)));
 }
 
-/** Archive a demoted insight. If a matching insight exists in archive, strengthen it. */
+export async function writeAwarenessArchive(archive: Insight[]): Promise<void> {
+  await withLock(AWARENESS_STATE_LOCK, () => writeAwarenessArchiveUnlocked(archive));
+}
+
+/** Archive a demoted insight. If a matching insight exists in archive, strengthen it.
+ * Caller MUST hold AWARENESS_STATE_LOCK. */
 function archiveInsight(demoted: Insight): void {
   const archive = readAwarenessArchive();
   const demotedKeywords = extractKeywords(demoted.title, 3);
@@ -218,11 +280,12 @@ function archiveInsight(demoted: Insight): void {
     archive.unshift(demoted);
   }
 
-  writeAwarenessArchive(archive);
+  writeAwarenessArchiveUnlocked(archive);
 }
 
-/** Check archive for a matching insight to resurrect. Returns the insight if found. */
-export function resurrectFromArchive(keywords: string[]): Insight | null {
+/** Check archive for a matching insight to resurrect. Returns the insight if
+ * found. Caller MUST hold AWARENESS_STATE_LOCK. */
+function resurrectFromArchiveUnlocked(keywords: string[]): Insight | null {
   const archive = readAwarenessArchive();
 
   for (let i = 0; i < archive.length; i++) {
@@ -232,7 +295,7 @@ export function resurrectFromArchive(keywords: string[]): Insight | null {
       // Remove from archive and return for resurrection
       const [resurrected] = archive.splice(i, 1);
       resurrected.confirmations += 1; // boost for being rediscovered
-      writeAwarenessArchive(archive);
+      writeAwarenessArchiveUnlocked(archive);
       return resurrected;
     }
   }
@@ -240,11 +303,13 @@ export function resurrectFromArchive(keywords: string[]): Insight | null {
   return null;
 }
 
-/**
- * Initialize awareness from scratch.
- */
-export function initAwareness(identity: string): AwarenessState {
-  const state: AwarenessState = {
+/** Locked wrapper for external callers. */
+export async function resurrectFromArchive(keywords: string[]): Promise<Insight | null> {
+  return withLock(AWARENESS_STATE_LOCK, () => resurrectFromArchiveUnlocked(keywords));
+}
+
+export function createInitialState(identity: string): AwarenessState {
+  return {
     identity,
     topInsights: [],
     compoundInsights: [],
@@ -252,9 +317,16 @@ export function initAwareness(identity: string): AwarenessState {
     blindSpots: [],
     lastUpdated: new Date().toISOString(),
   };
-  writeAwarenessState(state);
-  renderAwareness(state);
-  return state;
+}
+
+/**
+ * Initialize awareness from scratch.
+ */
+export async function initAwareness(identity: string): Promise<AwarenessState> {
+  return mutateAwarenessState((_current) => {
+    const state = createInitialState(identity);
+    return { state, result: state };
+  });
 }
 
 /**
@@ -262,18 +334,22 @@ export function initAwareness(identity: string): AwarenessState {
  * If similar insight exists (by title keyword overlap), merge and strengthen.
  * If new, add and demote lowest if over 20.
  */
-export function addInsight(
+export async function addInsight(
   newInsight: Omit<Insight, "id" | "confirmations" | "lastConfirmed"> & { source_project?: string }
-): { action: "merged" | "added" | "replaced"; insight: Insight } | { accepted: false; reason: string } {
+): Promise<{ action: "merged" | "added" | "replaced"; insight: Insight } | { accepted: false; reason: string }> {
   // ── Quality gate — reject obviously bad insights ──────────────────────────
   const title = newInsight.title?.trim() ?? "";
   if (title.split(/\s+/).filter(Boolean).length < 3) return { accepted: false, reason: "title_too_short" };
   if (/^test\s+insight/i.test(title)) return { accepted: false, reason: "test_fixture" };
   if (!newInsight.evidence || newInsight.evidence.trim().length < 5) return { accepted: false, reason: "no_evidence" };
 
-  let state = readAwarenessState();
+  // fix6-locks: the ENTIRE read→merge→write span runs under the state lock
+  // via mutateAwarenessState — the old shape (unlocked read, locked write)
+  // lost concurrent sessions' insights wholesale.
+  return mutateAwarenessState<{ action: "merged" | "added" | "replaced"; insight: Insight }>((current) => {
+  let state = current;
   if (!state) {
-    state = initAwareness("(unknown user)");
+    state = createInitialState("(unknown user)");
   }
 
   const now = new Date().toISOString();
@@ -284,7 +360,7 @@ export function addInsight(
 
   // ── Resurrect from archive if this insight was previously demoted ─────────
   // Skip if an insight with the same ID already exists in topInsights (dedup)
-  const resurrected = resurrectFromArchive(newKeywords);
+  const resurrected = resurrectFromArchiveUnlocked(newKeywords);
   if (resurrected && !state.topInsights.some((i) => i.id === resurrected.id)) {
     // resurrectFromArchive already bumps confirmations by 1 — don't double-bump
     resurrected.lastConfirmed = now;
@@ -305,9 +381,7 @@ export function addInsight(
       const demoted = state.topInsights.pop()!;
       archiveInsight(demoted);
     }
-    writeAwarenessState(state);
-    renderAwareness(state);
-    return { action: "added", insight: resurrected };
+    return { state, result: { action: "added" as const, insight: resurrected } };
   }
 
   let bestMatch: { idx: number; overlap: number } | null = null;
@@ -342,9 +416,7 @@ export function addInsight(
         }
       }
       existing.trend = computeTrend(existing);
-      writeAwarenessState(state);
-      renderAwareness(state);
-      return { action: "merged", insight: existing };
+      return { state, result: { action: "merged" as const, insight: existing } };
     }
 
     // Moderate topic match → check evidence before merging
@@ -367,9 +439,7 @@ export function addInsight(
         }
       }
       existing.trend = computeTrend(existing);
-      writeAwarenessState(state);
-      renderAwareness(state);
-      return { action: "merged", insight: existing };
+      return { state, result: { action: "merged" as const, insight: existing } };
     }
     // Same topic, very different evidence → add as separate insight
     // Fall through to the "new insight" path below
@@ -391,9 +461,7 @@ export function addInsight(
 
   if (state.topInsights.length < 20) {
     state.topInsights.push(insight);
-    writeAwarenessState(state);
-    renderAwareness(state);
-    return { action: "added", insight };
+    return { state, result: { action: "added" as const, insight } };
   }
 
   // Over 20: demote lowest-confirmation insight to archive (not deleted)
@@ -402,18 +470,19 @@ export function addInsight(
   archiveInsight(demoted);
   state.topInsights.push(insight);
 
-  writeAwarenessState(state);
-  renderAwareness(state);
-  return { action: "replaced", insight };
+  return { state, result: { action: "replaced" as const, insight } };
+  }); // end mutateAwarenessState
 }
 
 /**
  * Detect compound insights — patterns spanning 3+ individual insights.
  * Looks for shared appliesWhen keywords across insights.
  */
-export function detectCompoundInsights(): CompoundInsight[] {
-  const state = readAwarenessState();
-  if (!state || state.topInsights.length < 3) return [];
+export async function detectCompoundInsights(): Promise<CompoundInsight[]> {
+  // fix6-locks: read→derive→write span under the state lock (same lost-update
+  // class as addInsight).
+  return mutateAwarenessState((state) => {
+  if (!state || state.topInsights.length < 3) return { result: [] };
 
   // Group insights by shared appliesWhen keywords
   const keywordMap = new Map<string, Insight[]>();
@@ -444,11 +513,11 @@ export function detectCompoundInsights(): CompoundInsight[] {
 
   if (compounds.length > 0) {
     state.compoundInsights = [...state.compoundInsights, ...compounds].slice(0, 10);
-    writeAwarenessState(state);
-    renderAwareness(state);
+    return { state, result: compounds };
   }
 
-  return compounds;
+  return { result: compounds };
+  }); // end mutateAwarenessState
 }
 
 /**
@@ -546,7 +615,7 @@ export function findCrystallizationCandidates(
 /**
  * Render awareness state into the 200-line markdown document.
  */
-export function renderAwareness(state: AwarenessState): void {
+export async function renderAwareness(state: AwarenessState): Promise<void> {
   const lines: string[] = [];
 
   lines.push("# Awareness");
@@ -601,5 +670,5 @@ export function renderAwareness(state: AwarenessState): void {
     lines.push("_(none detected yet)_");
   }
 
-  writeAwareness(lines.join("\n"));
+  await writeAwareness(lines.join("\n"));
 }

@@ -451,7 +451,7 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     // Record a verdict via core (CLI path already tested above).
     // recorded_at will be new Date().toISOString() — UTC.
     const wallClockBefore = Date.now();
-    recordOutcome({
+    await recordOutcome({
       correction_id: corrId,
       project: PROJECT,
       kind: "not_triggered",
@@ -501,7 +501,9 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     const { setRoot, recordOutcome } = await import("agent-recall-core");
     setRoot(TEST_ROOT);
 
-    assert.throws(
+    // Retarget (fix6-locks): recordOutcome is async now — the C3b
+    // single-producer gate still fails loudly, as a rejection.
+    await assert.rejects(
       () => recordOutcome({
         correction_id: "any-id",
         project: PROJECT,
@@ -513,8 +515,8 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
       "direct core call without dream-audit: prefix must throw with guidance to use ar outcomes record",
     );
 
-    // Also throws when evidence is entirely absent
-    assert.throws(
+    // Also rejects when evidence is entirely absent (async API, same gate)
+    await assert.rejects(
       () => recordOutcome({
         correction_id: "any-id",
         project: PROJECT,
@@ -532,8 +534,8 @@ describe("ar outcomes — C3b dream-audit verdict surface", () => {
     setRoot(TEST_ROOT);
     const corrId = "2026-07-01-core-positive-control";
 
-    // Must NOT throw — this is the CLI path's core-level contract
-    recordOutcome({
+    // Must NOT throw/reject — this is the CLI path's core-level contract
+    await recordOutcome({
       correction_id: corrId,
       project: PROJECT,
       kind: "not_triggered",

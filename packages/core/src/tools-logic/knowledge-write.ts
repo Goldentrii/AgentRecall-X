@@ -90,8 +90,8 @@ export async function knowledgeWrite(input: KnowledgeWriteInput): Promise<Knowle
       }
     }
 
-    fanOut(slug, "knowledge", safeCategory, `${input.title}: ${input.what_happened}`, [], severity === "critical" ? "high" : "medium");
-    updatePalaceIndex(slug);
+    await fanOut(slug, "knowledge", safeCategory, `${input.title}: ${input.what_happened}`, [], severity === "critical" ? "high" : "medium");
+    await updatePalaceIndex(slug);
     palaceResult = { room: "knowledge", topic: safeCategory };
   } catch {
     // Palace integration is optional

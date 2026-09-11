@@ -31,7 +31,7 @@ function writeRaw(project, filename, record) {
 }
 
 describe("corrections pipeline e2e (via public index export)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(
       tmpdir(),
       `ar-e2e-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -40,13 +40,13 @@ describe("corrections pipeline e2e (via public index export)", () => {
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("full round-trip: write then read returns same correction", () => {
-    writeCorrection("e2e-proj", {
+  it("full round-trip: write then read returns same correction", async () => {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-do-not-push",
       date: "2026-05-19",
       severity: "p0",
@@ -62,9 +62,9 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(results[0].severity, "p0");
   });
 
-  it("holder defaults to today's ISO date when not supplied", () => {
+  it("holder defaults to today's ISO date when not supplied", async () => {
     const today = new Date().toISOString().slice(0, 10);
-    writeCorrection("e2e-proj", {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-no-holder",
       date: today,
       severity: "p1",
@@ -78,8 +78,8 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(record.holder, today);
   });
 
-  it("kind defaults to 'correction' when not supplied", () => {
-    writeCorrection("e2e-proj", {
+  it("kind defaults to 'correction' when not supplied", async () => {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-no-kind",
       date: "2026-05-19",
       severity: "p1",
@@ -93,8 +93,8 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(record.kind, "correction");
   });
 
-  it("weight auto-derived from severity: p0→1.0, p1→0.7", () => {
-    writeCorrection("e2e-proj", {
+  it("weight auto-derived from severity: p0→1.0, p1→0.7", async () => {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-p0",
       date: "2026-05-19",
       severity: "p0",
@@ -103,7 +103,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
       context: "",
       tags: [],
     });
-    writeCorrection("e2e-proj", {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-p1",
       date: "2026-05-18",
       severity: "p1",
@@ -120,8 +120,8 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(p1.weight, 0.7);
   });
 
-  it("explicit weight:0 and active:false survive default-filling (nullish coalescing)", () => {
-    writeCorrection("e2e-proj", {
+  it("explicit weight:0 and active:false survive default-filling (nullish coalescing)", async () => {
+    await writeCorrection("e2e-proj", {
       id: "2026-05-19-explicit-false",
       date: "2026-05-19",
       severity: "p0",
@@ -138,7 +138,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(record.active, false, "active:false must not be overwritten by default true");
   });
 
-  it("readActiveCorrections filters out active:false records", () => {
+  it("readActiveCorrections filters out active:false records", async () => {
     writeRaw("e2e-proj", "2026-05-19-active.json", {
       id: "active", date: "2026-05-19", severity: "p0",
       project: "e2e-proj", rule: "Active rule", context: "", tags: [], active: true,
@@ -156,7 +156,7 @@ describe("corrections pipeline e2e (via public index export)", () => {
     assert.equal(active[0].id, "active");
   });
 
-  it("old records missing new fields get backward-compat defaults on read", () => {
+  it("old records missing new fields get backward-compat defaults on read", async () => {
     writeRaw("e2e-proj", "2026-01-01-legacy.json", {
       id: "legacy", date: "2026-01-01", severity: "p1",
       project: "e2e-proj", rule: "Legacy rule", context: "Old format.", tags: [],

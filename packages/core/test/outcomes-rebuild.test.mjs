@@ -52,7 +52,7 @@ function findCorrectionFile(project, id) {
 }
 
 describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(
       tmpdir(),
       `ar-outcomes-rebuild-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -61,19 +61,19 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("(a) recomputes exact hand-verified counters from a small synthetic ledger", () => {
+  it("(a) recomputes exact hand-verified counters from a small synthetic ledger", async () => {
     const project = "rebuild-hand-calc";
 
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-1", date: "2026-07-01", severity: "p1", project,
       rule: "Always verify before shipping", context: "Test correction one.", tags: [],
     });
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-2", date: "2026-07-01", severity: "p1", project,
       rule: "Never skip the predict loop check", context: "Test correction two.", tags: [],
     });
@@ -117,7 +117,7 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     const raw = [...lines1, ...lines2].map((l) => JSON.stringify(l)).join("\n") + "\n";
     writeLedgerRaw(project, raw);
 
-    const plan = runOutcomesRebuild(project, { apply: false });
+    const plan = await runOutcomesRebuild(project, { apply: false });
 
     assert.equal(plan.apply, false);
     assert.equal(plan.malformedRows.length, 0);
@@ -147,9 +147,9 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     assert.equal(d2.after.proof_confidence, 0.7);
   });
 
-  it("(b) malformed/corrupt ledger lines are quarantined, not silently dropped, and do not crash the rebuild", () => {
+  it("(b) malformed/corrupt ledger lines are quarantined, not silently dropped, and do not crash the rebuild", async () => {
     const project = "rebuild-malformed";
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-a", date: "2026-07-01", severity: "p1", project,
       rule: "Always verify before shipping", context: "ctx", tags: [],
     });
@@ -163,8 +163,8 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     const raw = [goodLine1, badLineJson, badLineShape, goodLine2, ""].join("\n");
     writeLedgerRaw(project, raw);
 
-    assert.doesNotThrow(() => runOutcomesRebuild(project, { apply: false }));
-    const plan = runOutcomesRebuild(project, { apply: false });
+    await assert.doesNotReject(() => runOutcomesRebuild(project, { apply: false }));
+    const plan = await runOutcomesRebuild(project, { apply: false });
 
     assert.equal(plan.malformedRows.length, 2);
     assert.equal(plan.malformedRows[0].line, 2);
@@ -180,9 +180,9 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     assert.equal(d.after.heeded_count, 1);
   });
 
-  it("(c) dry-run computes the plan but writes NOTHING to disk (file content + mtime + shared index all untouched)", () => {
+  it("(c) dry-run computes the plan but writes NOTHING to disk (file content + mtime + shared index all untouched)", async () => {
     const project = "rebuild-dry-run";
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-dry", date: "2026-07-01", severity: "p1", project,
       rule: "Always verify before shipping", context: "ctx", tags: [],
     });
@@ -201,11 +201,11 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     const idxMtimeBefore = fs.statSync(idxPath).mtimeMs;
 
     // Default (no opts) is also dry-run — confirm both explicit and implicit default.
-    const planDefault = runOutcomesRebuild(project);
+    const planDefault = await runOutcomesRebuild(project);
     assert.equal(planDefault.apply, false);
     assert.equal(planDefault.summary.changed, 1, "the plan must show the change that WOULD happen");
 
-    const planExplicit = runOutcomesRebuild(project, { apply: false });
+    const planExplicit = await runOutcomesRebuild(project, { apply: false });
     assert.equal(planExplicit.summary.changed, 1);
 
     const contentAfter = fs.readFileSync(filePath, "utf-8");
@@ -219,9 +219,9 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     assert.equal(idxMtimeAfter, idxMtimeBefore, "dry-run must not touch the shared _index.md mtime");
   });
 
-  it("(d) apply-mode rewrites divergent records correctly, and a second back-to-back apply run is a true no-op (idempotent)", () => {
+  it("(d) apply-mode rewrites divergent records correctly, and a second back-to-back apply run is a true no-op (idempotent)", async () => {
     const project = "rebuild-apply-idempotent";
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-apply", date: "2026-07-01", severity: "p1", project,
       rule: "Always verify before shipping", context: "ctx", tags: [],
     });
@@ -242,7 +242,7 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     ].map((l) => JSON.stringify(l)).join("\n") + "\n";
     writeLedgerRaw(project, raw);
 
-    const result1 = runOutcomesRebuild(project, { apply: true });
+    const result1 = await runOutcomesRebuild(project, { apply: true });
     assert.equal(result1.apply, true);
     assert.equal(result1.summary.changed, 1);
     assert.equal(result1.summary.malformed, 0);
@@ -259,7 +259,7 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
 
     // Second apply run against the SAME (unchanged) ledger: disk now already
     // matches a fresh replay, so this must be a genuine no-op.
-    const result2 = runOutcomesRebuild(project, { apply: true });
+    const result2 = await runOutcomesRebuild(project, { apply: true });
     assert.equal(result2.summary.changed, 0, "second apply run on an already-rebuilt store must be a no-op");
 
     const fileContentAfterSecond = fs.readFileSync(filePath, "utf-8");
@@ -271,9 +271,9 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     assert.equal(idxMtimeAfterSecond, idxMtimeAfterFirst, "idempotent: shared index must not be regenerated when nothing changed");
   });
 
-  it("corrections with ZERO ledger events are left untouched (no ledger evidence to rebuild from)", () => {
+  it("corrections with ZERO ledger events are left untouched (no ledger evidence to rebuild from)", async () => {
     const project = "rebuild-no-ledger";
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "corr-no-ledger", date: "2026-07-01", severity: "p1", project,
       rule: "Always verify before shipping", context: "ctx", tags: [],
       // A pre-existing counter with NO corresponding ledger events at all.
@@ -284,10 +284,10 @@ describe("runOutcomesRebuild (ledger-replay repair for TOW2-321-class corruption
     fs.writeFileSync(filePath, JSON.stringify(onDisk, null, 2), "utf-8");
 
     // No _outcomes.jsonl at all for this project.
-    const plan = runOutcomesRebuild(project, { apply: false });
+    const plan = await runOutcomesRebuild(project, { apply: false });
     assert.equal(plan.summary.totalCorrections, 0, "a correction with no ledger events must not appear in the plan");
 
-    const applied = runOutcomesRebuild(project, { apply: true });
+    const applied = await runOutcomesRebuild(project, { apply: true });
     assert.equal(applied.summary.changed, 0);
     const stillOnDisk = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     assert.equal(stillOnDisk.retrieved_count, 5, "apply must never zero out a counter with no ledger evidence backing it");

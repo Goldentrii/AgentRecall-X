@@ -79,10 +79,10 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
       importance: "high",
     });
     // Rebuild the index so memory_count matches disk truth.
-    indexManager.updatePalaceIndex(PROJECT);
+    await indexManager.updatePalaceIndex(PROJECT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     typesMod.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
@@ -98,7 +98,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(doctor.storeDoctorBanner(r), null);
   });
 
-  it("CHECK 1: hand-edited palace-index memory_count → vector_index_drift flips RED", () => {
+  it("CHECK 1: hand-edited palace-index memory_count → vector_index_drift flips RED", async () => {
     const idxPath = path.join(TEST_ROOT, "projects", PROJECT, "palace", "palace-index.json");
     const idx = JSON.parse(fs.readFileSync(idxPath, "utf-8"));
     // Inflate the cached count far beyond the on-disk `### ` block count.
@@ -111,7 +111,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(r.status, "red");
   });
 
-  it("CHECK 1: drift within tolerance stays OK", () => {
+  it("CHECK 1: drift within tolerance stays OK", async () => {
     const idxPath = path.join(TEST_ROOT, "projects", PROJECT, "palace", "palace-index.json");
     const idx = JSON.parse(fs.readFileSync(idxPath, "utf-8"));
     const live = idx.rooms["architecture"].memory_count;
@@ -123,7 +123,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(drift.level, "ok", drift.detail);
   });
 
-  it("CHECK 2: a fresh .lock-* dir is silent; a stale one WARNs; an old one is RED", () => {
+  it("CHECK 2: a fresh .lock-* dir is silent; a stale one WARNs; an old one is RED", async () => {
     const lockPath = path.join(TEST_ROOT, ".lock-doctor-test");
     fs.mkdirSync(lockPath, { recursive: true });
 
@@ -144,7 +144,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(stale.level, "red", stale.detail);
   });
 
-  it("CHECK 3 (genuine stall): a raw segment OLDER than the retention window, unconsumed → dreaming_stale RED", () => {
+  it("CHECK 3 (genuine stall): a raw segment OLDER than the retention window, unconsumed → dreaming_stale RED", async () => {
     const dir = rawDir(TEST_ROOT, PROJECT);
     fs.mkdirSync(dir, { recursive: true });
     const seg = path.join(dir, "2025-01-01--old-sess.md");
@@ -164,7 +164,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(r.status, "red");
   });
 
-  it("CHECK 3 (healthy buffer): RECENT raw segments stay OK regardless of marker freshness", () => {
+  it("CHECK 3 (healthy buffer): RECENT raw segments stay OK regardless of marker freshness", async () => {
     const dir = rawDir(TEST_ROOT, PROJECT);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "2026-06-21--sess.md"), "---\n---\nraw\n", "utf-8");
@@ -177,7 +177,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(dream.level, "ok", dream.detail);
   });
 
-  it("CHECK 3 (WARN tier): a NULL marker with raw older than the warn floor (but within retention) → WARN", () => {
+  it("CHECK 3 (WARN tier): a NULL marker with raw older than the warn floor (but within retention) → WARN", async () => {
     const dir = rawDir(TEST_ROOT, PROJECT);
     fs.mkdirSync(dir, { recursive: true });
     const seg = path.join(dir, "2026-05-01--mid-sess.md");
@@ -195,7 +195,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(dream.level, "warn", dream.detail);
   });
 
-  it("CHECK 3 (login-free false-positive guard): RECENT raw + NULL marker is OK, not RED", () => {
+  it("CHECK 3 (login-free false-positive guard): RECENT raw + NULL marker is OK, not RED", async () => {
     // This is the live-store shape that the old "consumed within 24h" rule
     // false-positived on: a login-free store used within the last day, whose raw
     // segments are recent backups and whose marker has not advanced yet. The
@@ -212,7 +212,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(dream.level, "ok", dream.detail);
   });
 
-  it("CHECK 4: a .consumed.json claiming progress with no raw segments → orphaned_consume_marker WARN", () => {
+  it("CHECK 4: a .consumed.json claiming progress with no raw segments → orphaned_consume_marker WARN", async () => {
     const dir = rawDir(TEST_ROOT, PROJECT);
     fs.mkdirSync(dir, { recursive: true });
     // Marker claims progress but there are NO raw .md segments.
@@ -228,7 +228,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.ok(r.status === "warn" || r.status === "red");
   });
 
-  it("CHECK 4: a freshly-seeded marker (lastConsumedAt=null) with no data is NOT an orphan", () => {
+  it("CHECK 4: a freshly-seeded marker (lastConsumedAt=null) with no data is NOT an orphan", async () => {
     const dir = rawDir(TEST_ROOT, PROJECT);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -240,7 +240,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(orphan.level, "ok", orphan.detail);
   });
 
-  it("READ-ONLY: doctor still runs when fs mutators are stubbed to throw", () => {
+  it("READ-ONLY: doctor still runs when fs mutators are stubbed to throw", async () => {
     const MUTATORS = [
       "writeFileSync",
       "mkdirSync",
@@ -280,9 +280,9 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     }
   });
 
-  it("NO DEADLOCK: doctor returns promptly while a palace-index lock is held", () => {
+  it("NO DEADLOCK: doctor returns promptly while a palace-index lock is held", async () => {
     // Acquire a real lock for this project's index and hold it across the run.
-    const release = filelock.acquireLock(`palace-index-${PROJECT}`);
+    const release = await filelock.acquireLock(`palace-index-${PROJECT}`);
     try {
       const start = Date.now();
       const r = doctor.runStoreDoctor();
@@ -296,8 +296,8 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     }
   });
 
-  it("CHECK 5: outcomes ledger and materialized counters in agreement stays OK", () => {
-    corrections.writeCorrection(PROJECT, {
+  it("CHECK 5: outcomes ledger and materialized counters in agreement stays OK", async () => {
+    await corrections.writeCorrection(PROJECT, {
       id: "outcomes-clean",
       date: "2026-06-20",
       severity: "p1",
@@ -306,13 +306,13 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
       context: "Test correction for the clean ledger/counter agreement case.",
       tags: [],
     });
-    corrections.recordOutcome({
+    await corrections.recordOutcome({
       correction_id: "outcomes-clean",
       project: PROJECT,
       kind: "retrieved",
       at: "2026-06-20T00:00:00.000Z",
     });
-    corrections.recordOutcome({
+    await corrections.recordOutcome({
       correction_id: "outcomes-clean",
       project: PROJECT,
       kind: "heeded",
@@ -324,8 +324,8 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.equal(check.level, "ok", check.detail);
   });
 
-  it("CHECK 5: a hand-corrupted retrieved_count flips outcomes_ledger_divergence RED; `ar outcomes rebuild --apply` clears it", () => {
-    corrections.writeCorrection(PROJECT, {
+  it("CHECK 5: a hand-corrupted retrieved_count flips outcomes_ledger_divergence RED; `ar outcomes rebuild --apply` clears it", async () => {
+    await corrections.writeCorrection(PROJECT, {
       id: "outcomes-corrupt",
       date: "2026-06-20",
       severity: "p1",
@@ -335,13 +335,13 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
       tags: [],
     });
     // Two real, lock-protected recordOutcome calls -> retrieved_count should be 2.
-    corrections.recordOutcome({
+    await corrections.recordOutcome({
       correction_id: "outcomes-corrupt",
       project: PROJECT,
       kind: "retrieved",
       at: "2026-06-20T00:00:00.000Z",
     });
-    corrections.recordOutcome({
+    await corrections.recordOutcome({
       correction_id: "outcomes-corrupt",
       project: PROJECT,
       kind: "retrieved",
@@ -369,7 +369,7 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
     assert.match(check.detail, /outcomes-corrupt/);
 
     // Repair via rebuild --apply, then confirm the doctor reports clean again.
-    const rebuildResult = corrections.runOutcomesRebuild(PROJECT, { apply: true });
+    const rebuildResult = await corrections.runOutcomesRebuild(PROJECT, { apply: true });
     assert.equal(rebuildResult.summary.changed, 1);
 
     const after = doctor.runStoreDoctor().checks.find((c) => c.name === "outcomes_ledger_divergence");

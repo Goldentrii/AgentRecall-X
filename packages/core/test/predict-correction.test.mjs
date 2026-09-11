@@ -23,13 +23,13 @@ function correction(id, rule, severity = "p1") {
 }
 
 describe("Wave 5 — predictCorrection", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-predict-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
@@ -42,9 +42,9 @@ describe("Wave 5 — predictCorrection", () => {
 
   it("high-recurrence correction + overlapping plan → high likelihood", async () => {
     // Several corrections forming a strong cluster, with recurrence weight.
-    writeCorrection(PROJECT, { ...correction("2026-06-01-infra-a", "Never build infrastructure over revenue features", "p0") });
-    writeCorrection(PROJECT, { ...correction("2026-06-02-infra-b", "Avoid infrastructure detours, prioritize revenue") });
-    writeCorrection(PROJECT, { ...correction("2026-06-03-infra-c", "Infrastructure must serve revenue first") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-01-infra-a", "Never build infrastructure over revenue features", "p0") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-02-infra-b", "Avoid infrastructure detours, prioritize revenue") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-03-infra-c", "Infrastructure must serve revenue first") });
 
     // bump recurrence on disk to lift the score (recurrence weight in predictor)
     const dir = path.join(testRoot, "projects", PROJECT, "corrections");
@@ -65,9 +65,9 @@ describe("Wave 5 — predictCorrection", () => {
   });
 
   it("records a 'predicted' outcome for fired risks (instrumentation)", async () => {
-    writeCorrection(PROJECT, { ...correction("2026-06-01-infra-a", "Never build infrastructure over revenue features", "p0") });
-    writeCorrection(PROJECT, { ...correction("2026-06-02-infra-b", "Avoid infrastructure detours, prioritize revenue") });
-    writeCorrection(PROJECT, { ...correction("2026-06-03-infra-c", "Infrastructure must serve revenue first") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-01-infra-a", "Never build infrastructure over revenue features", "p0") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-02-infra-b", "Avoid infrastructure detours, prioritize revenue") });
+    await writeCorrection(PROJECT, { ...correction("2026-06-03-infra-c", "Infrastructure must serve revenue first") });
 
     await predictCorrection({
       plan: "build more infrastructure instead of revenue features this week",

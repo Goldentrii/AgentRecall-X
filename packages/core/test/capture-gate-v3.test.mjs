@@ -25,7 +25,7 @@ import {
 } from "../dist/storage/corrections.js";
 
 describe("capture gate v3 — GATE_VERSION stamp", () => {
-  it("GATE_VERSION is bumped to v4-2026-06-22 (Loop 14 precision fix)", () => {
+  it("GATE_VERSION is bumped to v4-2026-06-22 (Loop 14 precision fix)", async () => {
     assert.equal(GATE_VERSION, "v4-2026-06-22");
   });
 });
@@ -33,7 +33,7 @@ describe("capture gate v3 — GATE_VERSION stamp", () => {
 describe("capture gate v4 — PRECISION: hedged filler rejected, recall preserved", () => {
   // Loop 14 round-table found a MEDIUM false-accept: bare weak verbs
   // (use/should/avoid/stop/prefer) accepted tentative first-person filler.
-  it("rejects tentative first-person filler whose only signal is a weak verb", () => {
+  it("rejects tentative first-person filler whose only signal is a weak verb", async () => {
     const filler = [
       "I think we should use it",
       "the team wants to use the new API endpoint",
@@ -45,25 +45,25 @@ describe("capture gate v4 — PRECISION: hedged filler rejected, recall preserve
     }
   });
 
-  it("STILL accepts a hedged opener when a STRONG directive marker is present (recall-safe)", () => {
+  it("STILL accepts a hedged opener when a STRONG directive marker is present (recall-safe)", async () => {
     // The hedge frame must NOT swallow a real rule that carries a strong marker.
     assert.equal(isLikelyRealCorrection("I think we should always deploy to staging first").ok, true);
     assert.equal(isLikelyRealCorrection("maybe, but never put secrets in the KV store").ok, true);
   });
 
-  it("STILL accepts a directive sentence that FOLLOWS a hedged opener (per-fragment, not whole-text)", () => {
+  it("STILL accepts a directive sentence that FOLLOWS a hedged opener (per-fragment, not whole-text)", async () => {
     // A hedged first sentence must not poison a later directive sentence.
     assert.equal(isLikelyRealCorrection("I think that part is fine. Use inline, not full width.").ok, true);
   });
 
-  it("STILL accepts a direct weak-verb correction with no hedge frame (no recall loss)", () => {
+  it("STILL accepts a direct weak-verb correction with no hedge frame (no recall loss)", async () => {
     assert.equal(isLikelyRealCorrection("stop making the button full width, it should be inline").ok, true);
     assert.equal(isLikelyRealCorrection("avoid the floating docker tag, prefer a pinned digest").ok, true);
   });
 });
 
 describe("splitSentences — decimal-safe sentence splitter", () => {
-  it("does NOT split on a decimal inside a version/model token", () => {
+  it("does NOT split on a decimal inside a version/model token", async () => {
     // "Opus 4.7" and "v3.4.32" must stay intact — the Loop-7 mis-split bug.
     assert.deepEqual(
       splitSentences("Show BOTH Opus 4.7 and 4.8 — keep the full Opus lineup"),
@@ -75,21 +75,21 @@ describe("splitSentences — decimal-safe sentence splitter", () => {
     );
   });
 
-  it("DOES split on sentence punctuation followed by whitespace/end", () => {
+  it("DOES split on sentence punctuation followed by whitespace/end", async () => {
     assert.deepEqual(
       splitSentences("No, that's wrong. Don't use dark backgrounds."),
       ["No, that's wrong.", "Don't use dark backgrounds."],
     );
   });
 
-  it("splits on newlines and drops empty fragments", () => {
+  it("splits on newlines and drops empty fragments", async () => {
     assert.deepEqual(
       splitSentences("first line\n\nsecond line"),
       ["first line", "second line"],
     );
   });
 
-  it("does not split a bare decimal mid-number (e.g. file.md, e.g.)", () => {
+  it("does not split a bare decimal mid-number (e.g. file.md, e.g.)", async () => {
     // "readme.md" must not become two fragments.
     assert.deepEqual(
       splitSentences("change the readme.md for github"),
@@ -99,20 +99,20 @@ describe("splitSentences — decimal-safe sentence splitter", () => {
 });
 
 describe("capture gate v3 — RECALL: directive in sentence 2 is now ACCEPTED", () => {
-  it("accepts a multi-sentence soft correction whose directive lives in sentence 2", () => {
+  it("accepts a multi-sentence soft correction whose directive lives in sentence 2", async () => {
     // v2 saw only "No, that's wrong" (first-sentence slice) → rejected as ack.
     // v3 scans the full text → "Don't use …" in sentence 2 is a real directive.
     const r = isLikelyRealCorrection("No, that's wrong. Don't use dark backgrounds for new products.");
     assert.equal(r.ok, true, "directive in sentence 2 must rescue the leading acknowledgment");
   });
 
-  it("accepts a soft correction whose directive follows a decimal-containing first clause", () => {
+  it("accepts a soft correction whose directive follows a decimal-containing first clause", async () => {
     // v2 chopped "Show BOTH Opus 4" off the decimal and lost the imperative.
     const r = isLikelyRealCorrection("Show BOTH Opus 4.7 and 4.8 — keep the full Opus lineup even when prices match");
     assert.equal(r.ok, true, "imperative must survive the decimal; not mis-split into 'Show BOTH Opus 4'");
   });
 
-  it("accepts the verbatim Loop-7 leaked soft corrections", () => {
+  it("accepts the verbatim Loop-7 leaked soft corrections", async () => {
     const cases = [
       "no that is wrong, stop making the button full width, it should be inline",
       "again you made it full width, i told you it needs to be inline",
@@ -124,7 +124,7 @@ describe("capture gate v3 — RECALL: directive in sentence 2 is now ACCEPTED", 
     }
   });
 
-  it("REGRESSION PIN: the truncated first sentence alone is rejected — full-text scan is what rescues", () => {
+  it("REGRESSION PIN: the truncated first sentence alone is rejected — full-text scan is what rescues", async () => {
     // If a future change re-introduces the v2 first-sentence slice, "No, that's
     // wrong" on its own rejects (ack) — proving the 2-sentence accept above is
     // owed to the full-text scan, not to the opener.
@@ -148,13 +148,13 @@ describe("capture gate v3 — PRECISION FLOOR: Loop-7 true-noise STILL rejected"
     assert.match(r.reason, /system\/tool fragment/);
   });
 
-  it("rejects bare acknowledgments the actionable scan does NOT rescue", () => {
+  it("rejects bare acknowledgments the actionable scan does NOT rescue", async () => {
     for (const ack of ["confirmed and done now", "ok sure thing", "no that's not what I meant", "yeah right"]) {
       assert.equal(isLikelyRealCorrection(ack).ok, false, `ack must stay rejected: ${ack}`);
     }
   });
 
-  it("rejects doc / report / mission / transcript headers (pasted artifacts)", () => {
+  it("rejects doc / report / mission / transcript headers (pasted artifacts)", async () => {
     const noise = [
       "AgentRecall Local Test Report — 2026-04-22",
       "# AgentRecall Dreaming Agent\n\nDate: 2026-06-20  Time: 11:01\nYou are the nightly agent.",
@@ -178,20 +178,20 @@ describe("capture gate v3 — PRECISION FLOOR: Loop-7 true-noise STILL rejected"
 
 describe("capture gate v3 — writeCorrection end-to-end via the full-text gate", () => {
   let testRoot;
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-gate-v3-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("persists a correction whose directive is in the CONTEXT (rule is a truncated title)", () => {
+  it("persists a correction whose directive is in the CONTEXT (rule is a truncated title)", async () => {
     // Mirrors the production check.ts path: rule = first-sentence title slice,
     // context = the full correction with the directive in sentence 2.
-    const res = writeCorrection("gate-v3-proj", {
+    const res = await writeCorrection("gate-v3-proj", {
       id: "2026-06-21-ctx-directive",
       date: "2026-06-21",
       severity: "p1",
@@ -204,8 +204,8 @@ describe("capture gate v3 — writeCorrection end-to-end via the full-text gate"
     assert.equal(readCorrections("gate-v3-proj").length, 1);
   });
 
-  it("still rejects when BOTH rule and context are pure noise", () => {
-    const res = writeCorrection("gate-v3-proj", {
+  it("still rejects when BOTH rule and context are pure noise", async () => {
+    const res = await writeCorrection("gate-v3-proj", {
       id: "2026-06-21-noise",
       date: "2026-06-21",
       severity: "p1",

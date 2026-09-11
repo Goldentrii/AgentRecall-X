@@ -46,7 +46,7 @@ describe("session_start — room topics content-quality guard", () => {
     core.setRoot(TEST_ROOT);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot?.();
     delete process.env.AGENT_RECALL_ROOT;
     if (savedAbEnabled !== undefined) process.env.AR_AB_ENABLED = savedAbEnabled;
@@ -75,7 +75,7 @@ describe("session_start — room topics content-quality guard", () => {
     // Boost salience so this empty room still sorts ahead of the OTHER
     // (also-empty) default rooms within the top-3 slice, without touching
     // description or writing any entry (must stay at 0 entries).
-    core.updateRoomMeta(project, "empty-custom", { salience: 0.95 });
+    await core.updateRoomMeta(project, "empty-custom", { salience: 0.95 });
     assert.equal(core.countRoomEntries(project, "empty-custom"), 0, "room must have zero entries for this case");
 
     const result = await core.sessionStart({ project });

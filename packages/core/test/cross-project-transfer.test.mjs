@@ -61,7 +61,7 @@ describe("Loop 11 — scoreView instrument (synthetic multi-project corpus)", ()
     },
   ];
 
-  it("HIT: a held-out class that also appears in another project (rule-only)", () => {
+  it("HIT: a held-out class that also appears in another project (rule-only)", async () => {
     const v = scoreView(corpus, sigRuleOnly);
     // b1's class ("push"/"explicit"/"approval") is seen in project A → HIT.
     // a1's class is seen in project B (b1) → HIT.
@@ -75,7 +75,7 @@ describe("Loop 11 — scoreView instrument (synthetic multi-project corpus)", ()
     assert.equal(b.hits, 1, "only b1 transfers; b2 is novel cross-project");
   });
 
-  it("MISS: a class unique to one project never transfers", () => {
+  it("MISS: a class unique to one project never transfers", async () => {
     // Corpus where B's only correction is unique → no cross-project HIT possible.
     const c = [
       { id: "a1", project: "A", date: "2026-01-01", rule: "Never push without explicit approval", tags: [], active: true },
@@ -88,7 +88,7 @@ describe("Loop 11 — scoreView instrument (synthetic multi-project corpus)", ()
     assert.equal(v.hit_rate_all, 0, "hit-rate is a hard 0, not null");
   });
 
-  it("rule-only HITs are a SUBSET of with-tags HITs (tag inflation is visible)", () => {
+  it("rule-only HITs are a SUBSET of with-tags HITs (tag inflation is visible)", async () => {
     // Two projects whose rules DO NOT overlap by >=2 content tokens, but which
     // share boilerplate category tags ('backend','deployment'). The shared tags
     // alone glue them into a spurious cross-project class under with-tags, while
@@ -107,7 +107,7 @@ describe("Loop 11 — scoreView instrument (synthetic multi-project corpus)", ()
     );
   });
 
-  it("active_predictable denominator: a retracted other-project sibling cannot transfer ACTIVELY", () => {
+  it("active_predictable denominator: a retracted other-project sibling cannot transfer ACTIVELY", async () => {
     // B's class matches ONLY a RETRACTED (active:false) correction in A. It is a
     // HIT in the all-predictable view (the class did appear) but NOT in the
     // active ceiling (no ACTIVE other-project sibling the live profile can hold).
@@ -140,21 +140,21 @@ function writeCorrection(root, project, rec) {
 
 describe("Loop 11 — runCrossProjectTransfer end-to-end (synthetic corpus)", () => {
   let root;
-  beforeEach(() => {
+  beforeEach(async () => {
     root = path.join(tmpdir(), `ar-xproj-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(root, { recursive: true });
   });
-  afterEach(() => {
+  afterEach(async () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("UNTESTABLE when there are too few held-out testable corrections", () => {
+  it("UNTESTABLE when there are too few held-out testable corrections", async () => {
     // Just two corrections total → far below MIN_HELDOUT_TO_DECIDE (10).
-    writeCorrection(root, "A", {
+    await writeCorrection(root, "A", {
       id: "a1", date: "2026-01-01", severity: "p1", project: "A",
       rule: "Never push without explicit approval", tags: ["correction"], active: true, kind: "correction", weight: 1,
     });
-    writeCorrection(root, "B", {
+    await writeCorrection(root, "B", {
       id: "b1", date: "2026-02-01", severity: "p1", project: "B",
       rule: "Require explicit approval before push", tags: ["correction"], active: true, kind: "correction", weight: 1,
     });
@@ -163,7 +163,7 @@ describe("Loop 11 — runCrossProjectTransfer end-to-end (synthetic corpus)", ()
     assert.equal(r.views.active_rule_only.testable_heldout, 2, "exactly 2 testables");
   });
 
-  it("MEASURED-RATE verdict when there are enough held-out testables", () => {
+  it("MEASURED-RATE verdict when there are enough held-out testables", async () => {
     // Build >= 10 testable corrections across 3 projects. Half share a class that
     // recurs across projects (deploy/staging/production) → cross-project HITs;
     // the rest are per-project-unique nonsense → MISSes. The verdict must report a
@@ -181,17 +181,17 @@ describe("Loop 11 — runCrossProjectTransfer end-to-end (synthetic corpus)", ()
     let n = 0;
     for (const proj of ["alpha", "bravo", "charlie", "delta"]) {
       // one shared-class correction per project (transfers across projects)
-      writeCorrection(root, proj, {
+      await writeCorrection(root, proj, {
         id: `${proj}-shared`, date: `2026-01-0${++n}`, severity: "p0", project: proj,
         rule: shared, tags: ["deployment"], active: true, kind: "correction", weight: 1,
       });
       // two project-unique corrections (novel cross-project → MISS); each project's
       // vocabulary is disjoint from every other project's, so no spurious transfer.
-      writeCorrection(root, proj, {
+      await writeCorrection(root, proj, {
         id: `${proj}-u1`, date: `2026-02-0${++n}`, severity: "p1", project: proj,
         rule: uniqueVocab[proj][0], tags: ["correction"], active: true, kind: "correction", weight: 1,
       });
-      writeCorrection(root, proj, {
+      await writeCorrection(root, proj, {
         id: `${proj}-u2`, date: `2026-03-0${++n}`, severity: "p1", project: proj,
         rule: uniqueVocab[proj][1], tags: ["correction"], active: true, kind: "correction", weight: 1,
       });

@@ -158,7 +158,7 @@ export function isKeystone(project: string, room: string, topic: string): boolea
  *
  * Returns the number of rooms marked as keystone.
  */
-export function markKeystones(project: string): number {
+export async function markKeystones(project: string): Promise<number> {
   const keystones = scanKeystoneMemories(project);
   if (keystones.length === 0) return 0;
 
@@ -181,7 +181,7 @@ export function markKeystones(project: string): number {
       keystone: true,
     });
 
-    updateRoomMeta(project, room, { keystone: true, salience: newSalience });
+    await updateRoomMeta(project, room, { keystone: true, salience: newSalience });
     marked++;
   }
 

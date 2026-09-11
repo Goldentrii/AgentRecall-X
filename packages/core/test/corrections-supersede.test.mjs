@@ -33,41 +33,41 @@ let testRoot;
 const OLD = "Always run AgentRecall version 3.4.41 in prod";
 const NEW = "Always run AgentRecall version 3.5.0 in prod";
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-sup-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   delete process.env.AR_CONSOLIDATE_AUTO;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
 
-function seed() {
-  writeCorrection("p", { id: "old", date: "2026-05-19", severity: "p0", project: "p", rule: OLD, context: "", tags: [] });
-  writeCorrection("p", { id: "new", date: "2026-05-20", severity: "p0", project: "p", rule: NEW, context: "", tags: [] });
+async function seed() {
+  await writeCorrection("p", { id: "old", date: "2026-05-19", severity: "p0", project: "p", rule: OLD, context: "", tags: [] });
+  await writeCorrection("p", { id: "new", date: "2026-05-20", severity: "p0", project: "p", rule: NEW, context: "", tags: [] });
 }
 
 describe("P2 supersession", () => {
-  it("detects a version contradiction between two corrections", () => {
-    seed();
+  it("detects a version contradiction between two corrections", async () => {
+    await seed();
     const matches = detectCorrectionConflicts("p", { id: "new", rule: NEW });
     assert.ok(matches.some((m) => m.existingId === "old"), "should flag the contradicting older rule");
   });
 
-  it("suggest-only by default: nothing retracted", () => {
-    seed();
-    const r = reviewSupersessions("p", { id: "new", rule: NEW });
+  it("suggest-only by default: nothing retracted", async () => {
+    await seed();
+    const r = await reviewSupersessions("p", { id: "new", rule: NEW });
     assert.equal(r.auto, false);
     assert.ok(r.suggestions.length >= 1);
     assert.equal(r.superseded.length, 0);
     assert.equal(readActiveCorrections("p").length, 2, "default must not mutate");
   });
 
-  it("auto retracts the contradicted rule and sets superseded_by", () => {
-    seed();
-    const r = reviewSupersessions("p", { id: "new", rule: NEW }, { auto: true });
+  it("auto retracts the contradicted rule and sets superseded_by", async () => {
+    await seed();
+    const r = await reviewSupersessions("p", { id: "new", rule: NEW }, { auto: true });
     assert.deepEqual(r.superseded, ["old"]);
     const old = readCorrections("p").find((x) => x.id === "old");
     assert.equal(old.active, false);
@@ -75,9 +75,9 @@ describe("P2 supersession", () => {
     assert.equal(readActiveCorrections("p").length, 1);
   });
 
-  it("two unrelated corrections produce no supersession", () => {
-    writeCorrection("p", { id: "a", date: "2026-05-19", severity: "p0", project: "p", rule: "Never commit secrets to git", context: "", tags: [] });
-    writeCorrection("p", { id: "b", date: "2026-05-20", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
+  it("two unrelated corrections produce no supersession", async () => {
+    await writeCorrection("p", { id: "a", date: "2026-05-19", severity: "p0", project: "p", rule: "Never commit secrets to git", context: "", tags: [] });
+    await writeCorrection("p", { id: "b", date: "2026-05-20", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
     assert.equal(detectCorrectionConflicts("p", { id: "b", rule: "Prefer functional React components" }).length, 0);
   });
 });
@@ -87,8 +87,8 @@ describe("P2 supersession", () => {
 // asserts on the returned listing, never on any mutation (retraction is a
 // separate CLI-level surface, tested in packages/cli/test).
 describe("v4 W5 — listCorrectionConflicts (store-wide supersession listing)", () => {
-  it("(a) planted conflicting pair is listed once, with correct ids/values, existing=older/newer=newer", () => {
-    seed(); // OLD (2026-05-19, id "old") vs NEW (2026-05-20, id "new"), version 3.4.41 vs 3.5.0
+  it("(a) planted conflicting pair is listed once, with correct ids/values, existing=older/newer=newer", async () => {
+    await seed(); // OLD (2026-05-19, id "old") vs NEW (2026-05-20, id "new"), version 3.4.41 vs 3.5.0
     const conflicts = listCorrectionConflicts("p");
     assert.equal(conflicts.length, 1, `expected exactly one suspected pair, got ${JSON.stringify(conflicts)}`);
     const c = conflicts[0];
@@ -108,34 +108,34 @@ describe("v4 W5 — listCorrectionConflicts (store-wide supersession listing)", 
     assert.ok(["static", "slow", "volatile"].includes(c.newerDecayClass));
   });
 
-  it("(b) non-conflicting store returns an empty listing", () => {
-    writeCorrection("p", { id: "a", date: "2026-05-19", severity: "p0", project: "p", rule: "Never commit secrets to git", context: "", tags: [] });
-    writeCorrection("p", { id: "b", date: "2026-05-20", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
+  it("(b) non-conflicting store returns an empty listing", async () => {
+    await writeCorrection("p", { id: "a", date: "2026-05-19", severity: "p0", project: "p", rule: "Never commit secrets to git", context: "", tags: [] });
+    await writeCorrection("p", { id: "b", date: "2026-05-20", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
     const conflicts = listCorrectionConflicts("p");
     assert.deepEqual(conflicts, [], "no conflicting pair should produce an empty listing");
   });
 
-  it("an empty corrections store returns an empty listing without throwing", () => {
+  it("an empty corrections store returns an empty listing without throwing", async () => {
     assert.deepEqual(listCorrectionConflicts("p"), []);
   });
 
-  it("each unordered pair is reported exactly once across 3 active corrections (no double-count from either candidate direction)", () => {
+  it("each unordered pair is reported exactly once across 3 active corrections (no double-count from either candidate direction)", async () => {
     // "a" (oldest) and "c" (newest) both carry an explicit-marker version bump
     // on the same key ("agentrecall") — a real conflict pair.
     // "b" is unrelated (no version tokens at all) — must contribute nothing.
-    writeCorrection("p", { id: "a", date: "2026-05-18", severity: "p0", project: "p", rule: "Always run AgentRecall version 3.4.41 in prod", context: "", tags: [] });
-    writeCorrection("p", { id: "b", date: "2026-05-19", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
-    writeCorrection("p", { id: "c", date: "2026-05-20", severity: "p0", project: "p", rule: "Always run AgentRecall version 3.5.0 in prod", context: "", tags: [] });
+    await writeCorrection("p", { id: "a", date: "2026-05-18", severity: "p0", project: "p", rule: "Always run AgentRecall version 3.4.41 in prod", context: "", tags: [] });
+    await writeCorrection("p", { id: "b", date: "2026-05-19", severity: "p1", project: "p", rule: "Prefer functional React components", context: "", tags: [] });
+    await writeCorrection("p", { id: "c", date: "2026-05-20", severity: "p0", project: "p", rule: "Always run AgentRecall version 3.5.0 in prod", context: "", tags: [] });
     const conflicts = listCorrectionConflicts("p");
     assert.equal(conflicts.length, 1, `expected exactly one pair (a,c), got ${JSON.stringify(conflicts)}`);
     assert.equal(conflicts[0].existingId, "a");
     assert.equal(conflicts[0].newerId, "c");
   });
 
-  it("RED-by-revert: retracting the older side of a conflicting pair removes it from the listing", () => {
-    seed();
+  it("RED-by-revert: retracting the older side of a conflicting pair removes it from the listing", async () => {
+    await seed();
     assert.equal(listCorrectionConflicts("p").length, 1, "precondition: the pair must be listed before retraction");
-    const r = reviewSupersessions("p", { id: "new", rule: NEW }, { auto: true });
+    const r = await reviewSupersessions("p", { id: "new", rule: NEW }, { auto: true });
     assert.deepEqual(r.superseded, ["old"]);
     assert.equal(
       listCorrectionConflicts("p").length,
@@ -160,7 +160,7 @@ describe("v4 W5 — listCorrectionConflicts (store-wide supersession listing)", 
 // "both records actually persisted" precondition before the zero-conflict
 // assertion.
 describe("v4 pre-ship gate fix — status/kv false-positive classes removed from compareForConflicts", () => {
-  it("FP (unstructured prose, HIGH-1 class): 'is blocked' vs 'is stuck' — same status category, common phrasing — NOT flagged", () => {
+  it("FP (unstructured prose, HIGH-1 class): 'is blocked' vs 'is stuck' — same status category, common phrasing — NOT flagged", async () => {
     // Verified via a temporary RED-by-revert probe against the pre-fix
     // three-extractor compareForConflicts: this exact "X is blocked"/"X is
     // stuck" phrasing DOES reproduce the HIGH-1 cross-branch defeat there
@@ -172,30 +172,30 @@ describe("v4 pre-ship gate fix — status/kv false-positive classes removed from
     // sound like one.
     const rule1 = "The onboarding flow is blocked, always escalate immediately";
     const rule2 = "The onboarding flow is stuck, always escalate immediately";
-    const w1 = writeCorrection("p", { id: "prose-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
-    const w2 = writeCorrection("p", { id: "prose-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
+    const w1 = await writeCorrection("p", { id: "prose-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
+    const w2 = await writeCorrection("p", { id: "prose-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
     assert.ok(w1.written && w2.written, `precondition: both fixtures must clear the capture-quality gate and persist; got ${JSON.stringify([w1, w2])}`);
 
     assert.equal(detectCorrectionConflicts("p", { id: "prose-b", rule: rule2 }).length, 0);
     assert.deepEqual(listCorrectionConflicts("p"), []);
   });
 
-  it("FP (explicit 'status: X' form, HIGH-1 class): 'status: blocked' vs 'status: stuck' — NOT flagged", () => {
+  it("FP (explicit 'status: X' form, HIGH-1 class): 'status: blocked' vs 'status: stuck' — NOT flagged", async () => {
     const rule1 = "Never merge while status: blocked for the onboarding flow";
     const rule2 = "Never merge while status: stuck for the onboarding flow";
-    const w1 = writeCorrection("p", { id: "kv-status-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
-    const w2 = writeCorrection("p", { id: "kv-status-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
+    const w1 = await writeCorrection("p", { id: "kv-status-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
+    const w2 = await writeCorrection("p", { id: "kv-status-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
     assert.ok(w1.written && w2.written, `precondition: both fixtures must clear the capture-quality gate and persist; got ${JSON.stringify([w1, w2])}`);
 
     assert.equal(detectCorrectionConflicts("p", { id: "kv-status-b", rule: rule2 }).length, 0);
     assert.deepEqual(listCorrectionConflicts("p"), []);
   });
 
-  it("FP (cross-topic generic-key collision, HIGH-2 class): two unrelated 'deployed' rules sharing only the un-marked generic key 'deployed' — NOT flagged", () => {
+  it("FP (cross-topic generic-key collision, HIGH-2 class): two unrelated 'deployed' rules sharing only the un-marked generic key 'deployed' — NOT flagged", async () => {
     const rule1 = "Always keep the marketing service deployed 1.2.3 in prod";
     const rule2 = "Always keep the internal wiki deployed 5.6.7 in prod";
-    const w1 = writeCorrection("p", { id: "deployed-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
-    const w2 = writeCorrection("p", { id: "deployed-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
+    const w1 = await writeCorrection("p", { id: "deployed-a", date: "2026-05-19", severity: "p1", project: "p", rule: rule1, context: "", tags: [] });
+    const w2 = await writeCorrection("p", { id: "deployed-b", date: "2026-05-20", severity: "p1", project: "p", rule: rule2, context: "", tags: [] });
     assert.ok(w1.written && w2.written, `precondition: both fixtures must clear the capture-quality gate and persist; got ${JSON.stringify([w1, w2])}`);
 
     // "deployed 1.2.3" carries no v/@/ver/version/# marker immediately before
@@ -206,8 +206,8 @@ describe("v4 pre-ship gate fix — status/kv false-positive classes removed from
     assert.deepEqual(listCorrectionConflicts("p"), []);
   });
 
-  it("genuine version pair (control, not an FP): explicit-marker version bump on the same key is still flagged", () => {
-    seed();
+  it("genuine version pair (control, not an FP): explicit-marker version bump on the same key is still flagged", async () => {
+    await seed();
     const matches = detectCorrectionConflicts("p", { id: "new", rule: NEW });
     assert.ok(
       matches.some((m) => m.existingId === "old"),

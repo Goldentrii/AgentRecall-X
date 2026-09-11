@@ -38,13 +38,13 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     core.setRoot(TEST_ROOT);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot?.();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fs.rmSync(path.join(TEST_ROOT, "projects"), { recursive: true, force: true });
   });
 
@@ -140,7 +140,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       assert.ok(rawCandidates.some((c) => c.content.includes("UNIQUE_RAW_ARCHIVE_TRANSCRIPT")), "raw archive content must be reachable when opted in");
     });
 
-    it("trust-tags a rescue-sourced journal entry as untrusted:true, leaves a genuine entry untrusted:false", () => {
+    it("trust-tags a rescue-sourced journal entry as untrusted:true, leaves a genuine entry untrusted:false", async () => {
       const jdir = core.journalDir(PROJECT);
       fs.mkdirSync(jdir, { recursive: true });
       fs.writeFileSync(
@@ -171,7 +171,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     // the untrusted boolean — a rescue candidate must be BOTH sourceTag
     // "working-memory-rescue" AND untrusted:true; a hook-end candidate must
     // be BOTH sourceTag "hook-end" AND untrusted:false.
-    it("preserves the raw frontmatter source value on sourceTag, alongside (not instead of) the untrusted boolean", () => {
+    it("preserves the raw frontmatter source value on sourceTag, alongside (not instead of) the untrusted boolean", async () => {
       const jdir = core.journalDir(PROJECT);
       fs.mkdirSync(jdir, { recursive: true });
       fs.writeFileSync(
@@ -204,7 +204,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     // must be present in the type (no consumer needs a cast to reference
     // it) but left undefined, a documented "possibly-empty-now" contract,
     // not a silently-broken promise of populated scoring inputs.
-    it("carries an optional, currently-unpopulated meta field (forward-compatible placeholder, not pre-computed scores)", () => {
+    it("carries an optional, currently-unpopulated meta field (forward-compatible placeholder, not pre-computed scores)", async () => {
       const jdir = core.journalDir(PROJECT);
       fs.mkdirSync(jdir, { recursive: true });
       fs.writeFileSync(
@@ -275,7 +275,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       assert.equal(thisRoomCandidates.length, 2, "candidates-room must contribute exactly its own 2 files (README.md + extra-topic.md)");
     });
 
-    it("{room: <slug>} restricts to that single room only", () => {
+    it("{room: <slug>} restricts to that single room only", async () => {
       core.ensurePalaceInitialized(PROJECT);
       core.createRoom(PROJECT, "room-a", "Room A", "fixture", []);
       core.createRoom(PROJECT, "room-b", "Room B", "fixture", []);
@@ -289,7 +289,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       assert.ok(!candidates.some((c) => c.content.includes("UNIQUE_ROOM_B_MARKER")));
     });
 
-    it("trust-tags a rescue-sourced room file as untrusted:true, leaves a genuine room file untrusted:false", () => {
+    it("trust-tags a rescue-sourced room file as untrusted:true, leaves a genuine room file untrusted:false", async () => {
       core.ensurePalaceInitialized(PROJECT);
       core.createRoom(PROJECT, "trust-room", "Trust Room", "fixture", []);
       const pd = core.palaceDir(PROJECT);
@@ -325,8 +325,8 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
   describe("corrections tier", () => {
     const PROJECT = "candidates-corrections-demo";
 
-    it("returns a MemoryCandidate per active correction, content=rule, meta carries context/confidence/decay_class/severity/correction_id/authoritative", () => {
-      core.writeCorrection(PROJECT, {
+    it("returns a MemoryCandidate per active correction, content=rule, meta carries context/confidence/decay_class/severity/correction_id/authoritative", async () => {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-cand-basic",
         date: "2026-09-01",
         severity: "p0",
@@ -356,8 +356,8 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       assert.equal(c.meta.authoritative, "true");
     });
 
-    it("a retracted correction (active:false) is never returned — filtered at the FETCH stage via readActiveCorrections()", () => {
-      core.writeCorrection(PROJECT, {
+    it("a retracted correction (active:false) is never returned — filtered at the FETCH stage via readActiveCorrections()", async () => {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-cand-retract",
         date: "2026-09-01",
         severity: "p1",
@@ -369,13 +369,13 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       const before = core.readTierCandidates("corrections", PROJECT);
       assert.ok(before.some((c) => c.content.includes("CANDIDATES_RETRACT_UNIQUE_TERM")), "precondition: must surface before retraction");
 
-      core.retractCorrection(PROJECT, "2026-09-01-cand-retract", "test");
+      await core.retractCorrection(PROJECT, "2026-09-01-cand-retract", "test");
       const after = core.readTierCandidates("corrections", PROJECT);
       assert.ok(!after.some((c) => c.content.includes("CANDIDATES_RETRACT_UNIQUE_TERM")), "a retracted correction must never be returned as a candidate");
     });
 
-    it("a legacy no-fields record (no confidence/decay_class_override on disk) surfaces with DERIVED defaults, never undefined", () => {
-      core.writeCorrection(PROJECT, {
+    it("a legacy no-fields record (no confidence/decay_class_override on disk) surfaces with DERIVED defaults, never undefined", async () => {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-cand-legacy",
         date: "2026-09-01",
         severity: "p1",
@@ -398,7 +398,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     // guard (storage/corrections.ts), same pattern journal/palace-room rely
     // on for a never-touched tier; this test makes that reliance explicit
     // for the corrections tier specifically, rather than leaving it implicit.
-    it("a project with no corrections/ directory at all returns an empty array, never throws", () => {
+    it("a project with no corrections/ directory at all returns an empty array, never throws", async () => {
       const untouchedProject = "candidates-corrections-untouched-demo";
       const candidates = core.readTierCandidates("corrections", untouchedProject);
       assert.deepEqual(candidates, []);
@@ -423,7 +423,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     // should intentionally FLIP this test (assert the planted record is
     // rejected or flagged untrusted) when it closes the gap, rather than
     // discover it silently green for the wrong reason.
-    it("CHARACTERIZATION (documented residual): a raw .json planted directly into corrections/, bypassing writeCorrection(), surfaces exactly like a genuine record — untrusted:false", () => {
+    it("CHARACTERIZATION (documented residual): a raw .json planted directly into corrections/, bypassing writeCorrection(), surfaces exactly like a genuine record — untrusted:false", async () => {
       const plantedProject = "candidates-corrections-planted-demo";
       const dir = path.join(TEST_ROOT, "projects", plantedProject, "corrections");
       fs.mkdirSync(dir, { recursive: true });
@@ -472,7 +472,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
     const JOURNAL_PROJECT = "candidates-safe-default-journal-demo";
     const PALACE_PROJECT = "candidates-safe-default-palace-demo";
 
-    it("journal tier: default call drops a rescue-tagged candidate; includeUntrusted:true still returns it (flagged); a non-rescue sourceTag candidate is KEPT under the default", () => {
+    it("journal tier: default call drops a rescue-tagged candidate; includeUntrusted:true still returns it (flagged); a non-rescue sourceTag candidate is KEPT under the default", async () => {
       const jdir = core.journalDir(JOURNAL_PROJECT);
       fs.mkdirSync(jdir, { recursive: true });
       fs.writeFileSync(
@@ -505,7 +505,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       assert.equal(rescuedFlagged.untrusted, true, "...correctly flagged untrusted:true, not silently trusted");
     });
 
-    it("palace-room tier: default call drops a rescue-tagged room file; includeUntrusted:true still returns it (flagged)", () => {
+    it("palace-room tier: default call drops a rescue-tagged room file; includeUntrusted:true still returns it (flagged)", async () => {
       core.ensurePalaceInitialized(PALACE_PROJECT);
       core.createRoom(PALACE_PROJECT, "safe-default-room", "Safe Default Room", "fixture", []);
       const pd = core.palaceDir(PALACE_PROJECT);
@@ -535,7 +535,7 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
   // ── T3 — filterTrusted() is a real, publicly exported, discriminating
   // predicate (not a private implementation detail duplicated per surface) ──
   describe("filterTrusted() — the canonical, publicly exported trust predicate", () => {
-    it("is exported from the built package; drops untrusted:true; keeps untrusted:false AND untrusted:undefined", () => {
+    it("is exported from the built package; drops untrusted:true; keeps untrusted:false AND untrusted:undefined", async () => {
       assert.equal(typeof core.filterTrusted, "function", "filterTrusted must be exported from the package");
       const candidates = [
         { untrusted: true, tag: "drop-explicit-true" },

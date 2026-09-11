@@ -85,10 +85,10 @@ describe("store-repair (write-side remediation of store-doctor findings)", () =>
       content: "Use RRF with k=60 for cross-store fusion.",
       importance: "high",
     });
-    indexManager.updatePalaceIndex(PROJECT);
+    await indexManager.updatePalaceIndex(PROJECT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     typesMod.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });

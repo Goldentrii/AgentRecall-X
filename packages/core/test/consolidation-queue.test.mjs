@@ -13,23 +13,23 @@ import { setRoot, resetRoot } from "agent-recall-core";
 describe("consolidation queue (Wave 2)", () => {
   let tmpDir;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-queue-"));
     setRoot(tmpDir);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     resetRoot();
   });
 
   it("enqueue then drain marks each job done and invokes the handler", async () => {
     const { enqueueConsolidation, drainConsolidationQueue } = await import("agent-recall-core");
-    enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
-    enqueueConsolidation({ project: "p2", sessionId: "s2", reason: "test" });
+    await enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
+    await enqueueConsolidation({ project: "p2", sessionId: "s2", reason: "test" });
 
     const seen = [];
-    const report = drainConsolidationQueue((job) => {
+    const report = await drainConsolidationQueue((job) => {
       seen.push(job.project);
     });
     assert.equal(report.processed, 2);
@@ -39,23 +39,23 @@ describe("consolidation queue (Wave 2)", () => {
 
   it("a second drain is a no-op (jobs already marked done)", async () => {
     const { enqueueConsolidation, drainConsolidationQueue } = await import("agent-recall-core");
-    enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
-    drainConsolidationQueue(() => {});
+    await enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
+    await drainConsolidationQueue(() => {});
 
     const seen = [];
-    const report = drainConsolidationQueue((job) => seen.push(job.project));
+    const report = await drainConsolidationQueue((job) => seen.push(job.project));
     assert.equal(report.processed, 0, "second drain should process nothing");
     assert.equal(seen.length, 0);
   });
 
   it("one bad job (throwing handler) does not block the rest", async () => {
     const { enqueueConsolidation, drainConsolidationQueue } = await import("agent-recall-core");
-    enqueueConsolidation({ project: "good-1", sessionId: "s1", reason: "test" });
-    enqueueConsolidation({ project: "bad", sessionId: "s2", reason: "test" });
-    enqueueConsolidation({ project: "good-2", sessionId: "s3", reason: "test" });
+    await enqueueConsolidation({ project: "good-1", sessionId: "s1", reason: "test" });
+    await enqueueConsolidation({ project: "bad", sessionId: "s2", reason: "test" });
+    await enqueueConsolidation({ project: "good-2", sessionId: "s3", reason: "test" });
 
     const succeeded = [];
-    const report = drainConsolidationQueue((job) => {
+    const report = await drainConsolidationQueue((job) => {
       if (job.project === "bad") throw new Error("boom");
       succeeded.push(job.project);
     });
@@ -82,8 +82,10 @@ describe("consolidation queue (Wave 2)", () => {
     const queueFile = path.join(tmpDir, ".consolidation-queue", `${today}.jsonl`);
     fs.mkdirSync(queueFile, { recursive: true }); // block the append target with a directory
 
-    assert.doesNotThrow(() => {
-      enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
+    // Retarget (fix6-locks): enqueueConsolidation is async now — same
+    // never-throws contract, observed via doesNotReject.
+    await assert.doesNotReject(async () => {
+      await enqueueConsolidation({ project: "p1", sessionId: "s1", reason: "test" });
     });
 
     const jsonlPath = path.join(tmpDir, "hook-health.jsonl");
@@ -96,7 +98,7 @@ describe("consolidation queue (Wave 2)", () => {
     const { drainConsolidationQueue } = await import("agent-recall-core");
     fs.writeFileSync(path.join(tmpDir, ".consolidation-queue"), "blocker"); // dir is actually a file
 
-    const report = drainConsolidationQueue(() => {});
+    const report = await drainConsolidationQueue(() => {});
     assert.equal(report.processed, 0);
     assert.equal(report.failed, 0);
 
@@ -110,7 +112,7 @@ describe("consolidation queue (Wave 2)", () => {
     const { drainConsolidationQueue } = await import("agent-recall-core");
     fs.mkdirSync(path.join(tmpDir, ".consolidation-queue", "fake.jsonl"), { recursive: true });
 
-    const report = drainConsolidationQueue(() => {});
+    const report = await drainConsolidationQueue(() => {});
     assert.equal(report.processed, 0);
     assert.equal(report.failed, 0);
 
@@ -122,13 +124,13 @@ describe("consolidation queue (Wave 2)", () => {
 
   it("F5: records 'consolidation-drain-parse' for a malformed line, preserves it verbatim, and keeps processing the rest of the file", async () => {
     const { enqueueConsolidation, drainConsolidationQueue } = await import("agent-recall-core");
-    enqueueConsolidation({ project: "good", sessionId: "s1", reason: "test" });
+    await enqueueConsolidation({ project: "good", sessionId: "s1", reason: "test" });
     const today = new Date().toISOString().slice(0, 10);
     const queueFile = path.join(tmpDir, ".consolidation-queue", `${today}.jsonl`);
     fs.appendFileSync(queueFile, "not valid json{{{\n", "utf-8");
 
     const seen = [];
-    const report = drainConsolidationQueue((job) => seen.push(job.project));
+    const report = await drainConsolidationQueue((job) => seen.push(job.project));
     assert.deepEqual(seen, ["good"], "the well-formed job still processes");
     assert.equal(report.processed, 1);
 

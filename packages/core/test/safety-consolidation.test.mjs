@@ -72,7 +72,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
 
   /** Seed an above-threshold crystallization cluster: ≥3 insights sharing ≥2
    *  appliesWhen keywords, total confirmations ≥ the graduation floor. */
-  function seedCrystallizationCluster() {
+  async function seedCrystallizationCluster() {
     const now = new Date().toISOString();
     const shared = ["deploy", "rollback"]; // ≥2 shared keywords binds the cluster
     const mk = (n, confirmations) => ({
@@ -86,7 +86,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
       source_project: PROJECT,
       trend: "stable",
     });
-    writeAwarenessState({
+    await writeAwarenessState({
       identity: "test user",
       // 3 insights, total confirmations 4+4+4 = 12 ≥ floor (8)
       topInsights: [mk(1, 4), mk(2, 4), mk(3, 4)],
@@ -97,7 +97,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
     });
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // The pass MUST work with NO OpenAI key and NO Claude login. Unset the key
     // for the duration of each test so we prove the login-free contract.
     savedOpenAiKey = process.env.OPENAI_API_KEY;
@@ -110,7 +110,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
     rooms.ensurePalaceInitialized(PROJECT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = savedOpenAiKey;
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -125,7 +125,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
     // (a) a stale skill that decay should flag archived.
     const skillPath = writeStaleSkill("ancient-deploy-skill");
     // (c) an above-threshold crystallization cluster.
-    seedCrystallizationCluster();
+    await seedCrystallizationCluster();
 
     const res = await runSafetyConsolidation(PROJECT, { dryRun: false });
 
@@ -157,7 +157,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
 
   it("2) idempotency: a 2nd run is a no-op (no double-prune, no duplicate graduation)", async () => {
     const seg = writeSegment("2020-02-02--old-session.md", "DATA", 200);
-    seedCrystallizationCluster();
+    await seedCrystallizationCluster();
 
     const first = await runSafetyConsolidation(PROJECT, { dryRun: false });
     assert.equal(first.pruned.gzipped, 1, "first run gzips the segment");
@@ -186,7 +186,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
     // throws, then assert decay + graduate still ran (per-step try/catch isolation).
     writeSegment("2020-03-03--old-session.md", "DATA", 200);
     writeStaleSkill("ancient-skill-2");
-    seedCrystallizationCluster();
+    await seedCrystallizationCluster();
 
     // Make the raw dir a FILE where pruneRawArchive/advanceConsumeMarker expect a
     // dir → forces the prune step to throw inside runSafetyConsolidation.
@@ -211,7 +211,7 @@ describe("runSafetyConsolidation (L2 — login-free safety pass)", () => {
   it("4) dryRun writes NOTHING (no prune, no decay flag, no graduation)", async () => {
     const seg = writeSegment("2020-04-04--old-session.md", "DATA", 200);
     const skillPath = writeStaleSkill("ancient-skill-3");
-    seedCrystallizationCluster();
+    await seedCrystallizationCluster();
 
     // Seed the consume marker so we can prove dryRun does not advance it.
     fs.writeFileSync(

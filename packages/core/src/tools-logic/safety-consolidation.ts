@@ -49,9 +49,7 @@ import {
 } from "../storage/archive-prune.js";
 import {
   findCrystallizationCandidates,
-  readAwarenessState,
-  writeAwarenessState,
-  renderAwareness,
+  mutateAwarenessState,
   type CrystallizationCandidate,
 } from "../palace/awareness.js";
 import { archiveRawDir } from "../storage/paths.js";
@@ -223,46 +221,47 @@ function advanceConsumeMarker(
  * ONLY — no LLM-authored summary. Idempotent: findCrystallizationCandidates
  * excludes already-CRYSTALLIZED titles, so a graduated insight never re-graduates.
  */
-function graduateCandidates(
+async function graduateCandidates(
   candidates: CrystallizationCandidate[],
   minConfirmations: number,
   dryRun: boolean,
-): { graduated: number; titles: string[] } {
+): Promise<{ graduated: number; titles: string[] }> {
   const eligible = candidates.filter(
     (c) => c.total_confirmations >= minConfirmations,
   );
   if (eligible.length === 0) return { graduated: 0, titles: [] };
 
-  const state = readAwarenessState();
-  if (!state) return { graduated: 0, titles: [] };
+  // fix6-locks: read→re-title→write as ONE locked span (mutateAwarenessState)
+  // — the old unlocked read here raced concurrent addInsight writers.
+  return mutateAwarenessState((state) => {
+    if (!state) return { result: { graduated: 0, titles: [] } };
 
-  const titles: string[] = [];
-  let mutated = false;
+    const titles: string[] = [];
+    let mutated = false;
 
-  for (const cand of eligible) {
-    // Pick the strongest member (most confirmations) that is still un-graduated.
-    const members = state.topInsights
-      .filter((i) => cand.insight_ids.includes(i.id))
-      .filter((i) => !/^\s*(crystallized|critical)\b/i.test(i.title ?? ""));
-    if (members.length === 0) continue; // already graduated → idempotent skip
+    for (const cand of eligible) {
+      // Pick the strongest member (most confirmations) that is still un-graduated.
+      const members = state.topInsights
+        .filter((i) => cand.insight_ids.includes(i.id))
+        .filter((i) => !/^\s*(crystallized|critical)\b/i.test(i.title ?? ""));
+      if (members.length === 0) continue; // already graduated → idempotent skip
 
-    members.sort((a, b) => b.confirmations - a.confirmations);
-    const lead = members[0];
-    const newTitle = `CRYSTALLIZED: ${lead.title}`;
-    titles.push(newTitle);
+      members.sort((a, b) => b.confirmations - a.confirmations);
+      const lead = members[0];
+      const newTitle = `CRYSTALLIZED: ${lead.title}`;
+      titles.push(newTitle);
 
-    if (!dryRun) {
-      lead.title = newTitle;
-      mutated = true;
+      if (!dryRun) {
+        lead.title = newTitle;
+        mutated = true;
+      }
     }
-  }
 
-  if (mutated && !dryRun) {
-    writeAwarenessState(state);
-    renderAwareness(state);
-  }
-
-  return { graduated: titles.length, titles };
+    return {
+      state: mutated && !dryRun ? state : undefined,
+      result: { graduated: titles.length, titles },
+    };
+  });
 }
 
 /**
@@ -303,13 +302,13 @@ export async function runSafetyConsolidation(
   // re-count would under-report. Capture the candidate count from a dryRun pass
   // FIRST (pre-write), then run the real consolidate to apply the flags.
   try {
-    const report = runDecayPass(project, { dryRun: true });
+    const report = await runDecayPass(project, { dryRun: true });
     decay.scanned = report.scanned;
     decay.archived = report.archived_candidates.length;
     if (!dryRun) {
       // Distill journal → palace (regex), which internally applies the decay
       // flags. Counts already captured above (pre-write) so they stay honest.
-      consolidateJournalToPalace(project);
+      await consolidateJournalToPalace(project);
     }
     decay.ran = true;
   } catch (err) {
@@ -343,7 +342,7 @@ export async function runSafetyConsolidation(
   try {
     const candidates = findCrystallizationCandidates();
     graduated.candidates = candidates.length;
-    const g = graduateCandidates(
+    const g = await graduateCandidates(
       candidates,
       minConfirmations,
       dryRun,

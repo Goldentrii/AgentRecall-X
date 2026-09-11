@@ -20,7 +20,7 @@ export interface PromotionResult {
  * Promote insights from insights-index into awareness when confirmed_count >= threshold.
  * @param threshold minimum confirmations required (default 3)
  */
-export function promoteConfirmedInsights(threshold = 3): PromotionResult {
+export async function promoteConfirmedInsights(threshold = 3): Promise<PromotionResult> {
   const index = readInsightsIndex();
   const state = readAwarenessState();
 
@@ -52,7 +52,7 @@ export function promoteConfirmedInsights(threshold = 3): PromotionResult {
       continue;
     }
 
-    const result = addInsight({
+    const result = await addInsight({
       title: insight.title,
       evidence: `Auto-promoted from insights-index (confirmed ${insight.confirmed_count}×, projects: ${(insight.projects ?? []).join(", ") || "_global"})`,
       appliesWhen: insight.applies_when,

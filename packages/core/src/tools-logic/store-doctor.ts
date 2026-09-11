@@ -173,8 +173,11 @@ function checkIndexDrift(): DoctorCheck {
 
 /**
  * Scan getRoot()/.lock-* dirs. A lock whose mtime is older than STALE_LOCK_MS
- * is WARN (it will be force-broken on the next acquire, but its presence hints
- * a process crashed mid-write); older than LOCK_RED_MS is RED.
+ * is WARN (fix6-locks: a lock with a DEAD recorded holder is reclaimed on the
+ * next acquire; one with no owner record is reclaimed once past this mtime
+ * threshold; a lock whose recorded holder is still ALIVE is never broken —
+ * its persistence hints a stuck or pid-recycled holder); older than
+ * LOCK_RED_MS is RED.
  *
  * READ-ONLY: stat only. Does NOT remove the lock (acquireLock does that); the
  * doctor only reports. Never blocks waiting for a lock.
@@ -220,8 +223,8 @@ function checkStaleLock(): DoctorCheck {
     level,
     detail: `${offenders.length} stale lock dir(s): ${offenders.slice(0, 8).join(", ")}.`,
     fix_hint: level === "red"
-      ? "A writer likely crashed. After confirming no `ar` process is running, remove the stale `.lock-*` dir under ~/.agent-recall."
-      : "Lock is older than the stale threshold; it will be auto-broken on the next write. Investigate if it persists.",
+      ? "A writer likely crashed or its pid was recycled. Check `.lock-*/owner.json` for the holder pid; after confirming that process is not an `ar` writer, remove the stale `.lock-*` dir under ~/.agent-recall."
+      : "If the recorded holder pid is dead this lock is reclaimed automatically on the next acquire; a lock that persists with a live holder pid means a stuck writer — investigate.",
   };
 }
 

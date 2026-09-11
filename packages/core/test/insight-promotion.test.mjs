@@ -52,25 +52,25 @@ describe("promoteConfirmedInsights", () => {
     }), "utf-8");
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     if (TEST_ROOT) fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  it("promotes insights with confirmed_count >= threshold", () => {
-    const result = core.promoteConfirmedInsights(3);
+  it("promotes insights with confirmed_count >= threshold", async () => {
+    const result = await core.promoteConfirmedInsights(3);
     assert.ok(result.promoted.length >= 1, "should promote at least 1 insight");
     assert.ok(result.promoted.some((t) => t.includes("ar CLI")), "should promote the high-confirmed insight");
   });
 
-  it("does not promote low-confirmed insights", () => {
-    const result = core.promoteConfirmedInsights(3);
+  it("does not promote low-confirmed insights", async () => {
+    const result = await core.promoteConfirmedInsights(3);
     assert.ok(!result.promoted.some((t) => t.includes("Low confidence")), "should not promote low-confirmed insight");
   });
 
-  it("is idempotent — second run promotes nothing new", () => {
-    core.promoteConfirmedInsights(3); // ensure first run happened
-    const second = core.promoteConfirmedInsights(3);
+  it("is idempotent — second run promotes nothing new", async () => {
+    await core.promoteConfirmedInsights(3); // ensure first run happened
+    const second = await core.promoteConfirmedInsights(3);
     assert.strictEqual(second.promoted.length, 0, "second run should promote nothing (already in awareness)");
   });
 });

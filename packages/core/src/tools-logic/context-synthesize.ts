@@ -182,7 +182,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
           const fm = generateFrontmatter({ room: "architecture", topic: "decisions", created: new Date().toISOString(), source: "consolidation" });
           fs.writeFileSync(decPath, `${fm}# architecture / decisions\n${entry}`, "utf-8");
         }
-        fanOut(slug, "architecture", "decisions", decisionsData, ["goals"], "high");
+        await fanOut(slug, "architecture", "decisions", decisionsData, ["goals"], "high");
         consolidated++;
       }
 
@@ -214,7 +214,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
         consolidated++;
       }
 
-      updatePalaceIndex(slug);
+      await updatePalaceIndex(slug);
     } catch {
       // Consolidation is optional
     }

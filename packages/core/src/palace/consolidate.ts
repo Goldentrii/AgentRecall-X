@@ -65,10 +65,10 @@ export function formatTechnicalBrief(brief: string): string {
  * 4. Add source traceability (which journal entry it came from)
  * 5. Trigger fan-out for cross-references
  */
-export function consolidateJournalToPalace(
+export async function consolidateJournalToPalace(
   project: string,
   entryCount: number = 5
-): ConsolidationResult {
+): Promise<ConsolidationResult> {
   ensurePalaceInitialized(project);
 
   const entries = listJournalFiles(project);
@@ -135,21 +135,21 @@ export function consolidateJournalToPalace(
         const existing = fs.readFileSync(topicPath, "utf-8");
         if (existing.includes(`### ${entry.date}`)) continue;
         fs.appendFileSync(topicPath, memoryEntry, "utf-8");
-        touchRoom(project, route.room);
+        await touchRoom(project, route.room);
       } else {
         fs.writeFileSync(
           topicPath,
           `${fm}# ${route.room} / ${route.topic}\n${memoryEntry}`,
           "utf-8"
         );
-        touchRoom(project, route.room);
+        await touchRoom(project, route.room);
       }
 
       updatedRooms.add(route.room);
       result.memoriesCreated++;
 
       // Fan-out with source reference
-      fanOut(project, route.room, route.topic, sectionContent, [], "medium");
+      await fanOut(project, route.room, route.topic, sectionContent, [], "medium");
     }
 
     // Extract brief → goals/evolution
@@ -167,13 +167,13 @@ export function consolidateJournalToPalace(
         const existing = fs.readFileSync(evoPath, "utf-8");
         if (!existing.includes(`### ${entry.date}`)) {
           fs.appendFileSync(evoPath, evoEntry, "utf-8");
-          touchRoom(project, "goals");
+          await touchRoom(project, "goals");
           result.memoriesCreated++;
         }
       } else {
         const fm = generateFrontmatter({ room: "goals", topic: "evolution", created: new Date().toISOString(), source: "consolidation" });
         fs.writeFileSync(evoPath, `${fm}# goals / evolution\n${evoEntry}`, "utf-8");
-        touchRoom(project, "goals");
+        await touchRoom(project, "goals");
         result.memoriesCreated++;
       }
       updatedRooms.add("goals");
@@ -185,14 +185,14 @@ export function consolidateJournalToPalace(
   result.roomsUpdated = Array.from(updatedRooms);
 
   // Update palace index
-  updatePalaceIndex(project);
+  await updatePalaceIndex(project);
 
   // Stamp keystone flag on rooms referenced by pipeline milestones.
   // Runs here (consolidation) not on every write — milestone scan is O(rooms×milestones).
   // Best-effort: failure does not break consolidation.
   let keystonesMarked = 0;
   try {
-    keystonesMarked = markKeystones(project);
+    keystonesMarked = await markKeystones(project);
   } catch {
     // Keystone marking is best-effort — never breaks consolidation
   }
@@ -201,7 +201,7 @@ export function consolidateJournalToPalace(
   // archived (non-destructive). Best-effort: never breaks consolidation.
   let decay: DecayReport | null = null;
   try {
-    decay = runDecayPass(project, { dryRun: false });
+    decay = await runDecayPass(project, { dryRun: false });
   } catch {
     // Decay is best-effort — never breaks consolidation
   }

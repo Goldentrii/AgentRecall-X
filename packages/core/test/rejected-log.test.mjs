@@ -19,21 +19,21 @@ function rejectedPath(project) {
 }
 
 describe("capture-gate rejected log (survivorship-bias probe)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-rejected-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("a rejected soft-correction lands EXACTLY ONE line with the right reason + full text", () => {
+  it("a rejected soft-correction lands EXACTLY ONE line with the right reason + full text", async () => {
     // "that's not what I meant" matches the acknowledgment/no-fragment gate.
     const softText = "no, that's not what I meant";
-    const res = writeCorrection("test-proj", {
+    const res = await writeCorrection("test-proj", {
       id: "2026-06-21-soft",
       date: "2026-06-21",
       severity: "p1",
@@ -59,8 +59,8 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     assert.equal(raw.split("\n").filter((l) => l.trim()).length, 1);
   });
 
-  it("a short fragment is rejected and logged with the 'too short' reason", () => {
-    const res = writeCorrection("test-proj", {
+  it("a short fragment is rejected and logged with the 'too short' reason", async () => {
+    const res = await writeCorrection("test-proj", {
       id: "2026-06-21-short",
       date: "2026-06-21",
       severity: "p1",
@@ -75,8 +75,8 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     assert.equal(rows[0].reason, "too short");
   });
 
-  it("an ACCEPTED correction lands NONE in the rejected log", () => {
-    const res = writeCorrection("test-proj", {
+  it("an ACCEPTED correction lands NONE in the rejected log", async () => {
+    const res = await writeCorrection("test-proj", {
       id: "2026-06-21-accepted",
       date: "2026-06-21",
       severity: "p0",
@@ -91,7 +91,7 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     assert.equal(readRejectedCorrections("test-proj").length, 0);
   });
 
-  it("the logger never throws even if the rejected file is unwritable — writeCorrection still returns its result", () => {
+  it("the logger never throws even if the rejected file is unwritable — writeCorrection still returns its result", async () => {
     const dir = path.join(testRoot, "projects", "test-proj", "corrections");
     fs.mkdirSync(dir, { recursive: true });
     const p = path.join(dir, "_rejected.jsonl");
@@ -99,8 +99,10 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     fs.mkdirSync(p);
 
     let res;
-    assert.doesNotThrow(() => {
-      res = writeCorrection("test-proj", {
+    // Retarget (fix6-locks): writeCorrection is async now — doesNotThrow on an
+    // async fn neither awaits it nor observes rejections; doesNotReject does.
+    await assert.doesNotReject(async () => {
+      res = await writeCorrection("test-proj", {
         id: "2026-06-21-unwritable",
         date: "2026-06-21",
         severity: "p1",
@@ -115,7 +117,7 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     assert.ok(res.reason, "reason still returned even when log write fails");
   });
 
-  it("logRejectedCorrection in isolation never throws on an unwritable path", () => {
+  it("logRejectedCorrection in isolation never throws on an unwritable path", async () => {
     const dir = path.join(testRoot, "projects", "iso-proj", "corrections");
     fs.mkdirSync(dir, { recursive: true });
     fs.mkdirSync(path.join(dir, "_rejected.jsonl")); // dir blocks append
@@ -124,13 +126,13 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     });
   });
 
-  it("getRejectedStats aggregates discard count, rate, and top reasons", () => {
+  it("getRejectedStats aggregates discard count, rate, and top reasons", async () => {
     // 3 short, 1 acknowledgment → 4 rejections; 1 accepted.
-    writeCorrection("stats-proj", mk("nope"));        // too short
-    writeCorrection("stats-proj", mk("no"));          // too short
-    writeCorrection("stats-proj", mk("ok"));          // too short (len<12)
-    writeCorrection("stats-proj", mk("no, that's not what I meant")); // acknowledgment
-    writeCorrection("stats-proj", mk("Never delete local files after a push to remote")); // accepted
+    await writeCorrection("stats-proj", mk("nope"));        // too short
+    await writeCorrection("stats-proj", mk("no"));          // too short
+    await writeCorrection("stats-proj", mk("ok"));          // too short (len<12)
+    await writeCorrection("stats-proj", mk("no, that's not what I meant")); // acknowledgment
+    await writeCorrection("stats-proj", mk("Never delete local files after a push to remote")); // accepted
 
     const accepted = 1;
     const stats = getRejectedStats("stats-proj", accepted);
@@ -144,7 +146,7 @@ describe("capture-gate rejected log (survivorship-bias probe)", () => {
     assert.equal(stats.top_reasons[0].count, 3);
   });
 
-  it("rotation cap holds — the log never grows past REJECTED_LOG_CAP rows", () => {
+  it("rotation cap holds — the log never grows past REJECTED_LOG_CAP rows", async () => {
     // Directly hammer the logger past the cap (2000). Use a smaller proxy by
     // writing well over the cap and asserting it is bounded.
     const N = 2100;

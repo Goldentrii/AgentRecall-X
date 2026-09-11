@@ -14,13 +14,13 @@ describe("Digest store — CRUD", () => {
     core = await import("../dist/index.js");
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  it("creates a digest and returns success", () => {
-    const result = core.createDigest({
+  it("creates a digest and returns success", async () => {
+    const result = await core.createDigest({
       title: "Business logic analysis of novada-site",
       scope: "novada-site full codebase architecture",
       content: "# Analysis\n\nNovada is a B2B proxy SaaS platform with 10 products.",
@@ -35,8 +35,8 @@ describe("Digest store — CRUD", () => {
     assert.ok(result.expires !== null);
   });
 
-  it("reads back a created digest", () => {
-    const created = core.createDigest({
+  it("reads back a created digest", async () => {
+    const created = await core.createDigest({
       title: "API route analysis",
       scope: "novada-site API routes",
       content: "POST /api/search proxies to scraperapi.novada.com",
@@ -48,36 +48,48 @@ describe("Digest store — CRUD", () => {
     assert.ok(content.includes("POST /api/search"));
   });
 
-  it("lists all digests for a project", () => {
-    core.createDigest({ title: "Kubernetes deployment configuration", scope: "kubernetes infra", content: "k8s content", project: "list-test" });
-    core.createDigest({ title: "Python machine learning pipeline", scope: "ml training", content: "ml content", project: "list-test" });
+  it("lists all digests for a project", async () => {
+    await core.createDigest({ title: "Kubernetes deployment configuration", scope: "kubernetes infra", content: "k8s content", project: "list-test" });
+    await core.createDigest({ title: "Python machine learning pipeline", scope: "ml training", content: "ml content", project: "list-test" });
     const all = core.listDigests("list-test");
     assert.ok(all.length >= 2, `Expected >=2 digests, got ${all.length}`);
   });
 
-  it("lists only non-stale digests when stale=false", () => {
-    const d = core.createDigest({ title: "Will go stale", scope: "stale test", content: "x", project: "stale-filter" });
+  it("lists only non-stale digests when stale=false", async () => {
+    const d = await core.createDigest({ title: "Will go stale", scope: "stale test", content: "x", project: "stale-filter" });
     core.markStale("stale-filter", d.id, "test reason");
     const fresh = core.listDigests("stale-filter", { stale: false });
     assert.ok(fresh.every(e => !e.stale));
   });
 
-  it("marks a digest as stale", () => {
-    const d = core.createDigest({ title: "Stale candidate", scope: "s", content: "c", project: "stale-test" });
+  it("marks a digest as stale", async () => {
+    const d = await core.createDigest({ title: "Stale candidate", scope: "s", content: "c", project: "stale-test" });
     core.markStale("stale-test", d.id, "code changed");
     const { meta } = core.readDigest("stale-test", d.id);
     assert.equal(meta.stale, true);
     assert.equal(meta.stale_reason, "code changed");
   });
 
-  it("refreshes an existing digest when title overlaps", () => {
-    core.createDigest({
+  it("markStaleAsync (review MEDIUM-2 pin): event-loop-friendly twin marks stale identically; false on missing id", async () => {
+    // Server/CLI paths must use this variant — the sync markStale parks the
+    // whole event loop (Atomics.wait) under digest-lock contention and exists
+    // only to pin the published sync SDK signature (digestInvalidate).
+    const d = await core.createDigest({ title: "Async stale candidate", scope: "s", content: "c", project: "stale-async" });
+    assert.equal(await core.markStaleAsync("stale-async", d.id, "async invalidate"), true);
+    const { meta } = core.readDigest("stale-async", d.id);
+    assert.equal(meta.stale, true);
+    assert.equal(meta.stale_reason, "async invalidate");
+    assert.equal(await core.markStaleAsync("stale-async", "digest-nonexistent", "x"), false);
+  });
+
+  it("refreshes an existing digest when title overlaps", async () => {
+    await core.createDigest({
       title: "Novada business logic analysis deep dive",
       scope: "novada full architecture",
       content: "Version 1 of the analysis",
       project: "refresh-test",
     });
-    const refreshed = core.createDigest({
+    const refreshed = await core.createDigest({
       title: "Novada business logic analysis updated",
       scope: "novada full architecture",
       content: "Version 2 — updated analysis with new findings",
@@ -91,16 +103,16 @@ describe("Digest store — CRUD", () => {
     assert.ok(content.includes("Version 2"));
   });
 
-  it("estimates tokens within reasonable range", () => {
+  it("estimates tokens within reasonable range", async () => {
     const text = "x".repeat(1000);
-    const d = core.createDigest({ title: "Token test", scope: "s", content: text, project: "token-test" });
+    const d = await core.createDigest({ title: "Token test", scope: "s", content: text, project: "token-test" });
     // 1000 chars / 3.5 ≈ 286 tokens
     assert.ok(d.token_estimate >= 200 && d.token_estimate <= 400);
   });
 
-  it("checkExpiry marks TTL-expired digests as stale", () => {
+  it("checkExpiry marks TTL-expired digests as stale", async () => {
     // Create with TTL=0 (immediate expiry still sets an expires timestamp)
-    const d = core.createDigest({
+    const d = await core.createDigest({
       title: "Expiring digest",
       scope: "s",
       content: "c",
@@ -108,29 +120,29 @@ describe("Digest store — CRUD", () => {
       project: "expiry-test",
     });
     // Wait a tick then check
-    const staled = core.checkExpiry("expiry-test");
+    const staled = await core.checkExpiry("expiry-test");
     // The expiry might have already passed
     if (staled.length > 0) {
       assert.ok(staled[0].stale);
     }
   });
 
-  it("pruneStale removes old stale digests", () => {
+  it("pruneStale removes old stale digests", async () => {
     const proj = "prune-test-" + Date.now();
-    const d = core.createDigest({ title: "Prune target unique entry", scope: "pruning scope", content: "prune content", project: proj });
+    const d = await core.createDigest({ title: "Prune target unique entry", scope: "pruning scope", content: "prune content", project: proj });
     core.markStale(proj, d.id, "old");
     // With olderThanDays=0 everything stale gets pruned
-    const pruned = core.pruneStale(proj, 0);
+    const pruned = await core.pruneStale(proj, 0);
     assert.ok(pruned >= 1, `Expected >=1 pruned, got ${pruned}`);
     const remaining = core.listDigests(proj);
     assert.equal(remaining.length, 0);
   });
 
-  it("respects MAX_DIGESTS_PER_PROJECT by evicting least-accessed", () => {
+  it("respects MAX_DIGESTS_PER_PROJECT by evicting least-accessed", async () => {
     const project = "overflow-test";
     // Create MAX + 1 digests
     for (let i = 0; i < core.MAX_DIGESTS_PER_PROJECT + 1; i++) {
-      core.createDigest({
+      await core.createDigest({
         title: `Digest overflow ${i} unique title ${Math.random()}`,
         scope: `scope ${i}`,
         content: `content ${i}`,
@@ -141,8 +153,8 @@ describe("Digest store — CRUD", () => {
     assert.ok(all.length <= core.MAX_DIGESTS_PER_PROJECT);
   });
 
-  it("creates global digest when global=true", () => {
-    const d = core.createDigest({
+  it("creates global digest when global=true", async () => {
+    const d = await core.createDigest({
       title: "Cross-project insight",
       scope: "global knowledge",
       content: "Applicable across all projects",
@@ -154,8 +166,8 @@ describe("Digest store — CRUD", () => {
     assert.ok(meta);
   });
 
-  it("never expires when ttl_hours=0", () => {
-    const d = core.createDigest({
+  it("never expires when ttl_hours=0", async () => {
+    const d = await core.createDigest({
       title: "Permanent digest",
       scope: "s",
       content: "c",

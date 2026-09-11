@@ -14,13 +14,13 @@ describe("Awareness system — module integration", () => {
     awareness = await import("../dist/palace/awareness.js");
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  it("initAwareness creates state and markdown files", () => {
-    const state = awareness.initAwareness("tongwu — AI product builder");
+  it("initAwareness creates state and markdown files", async () => {
+    const state = await awareness.initAwareness("tongwu — AI product builder");
     assert.equal(state.identity, "tongwu — AI product builder");
     assert.equal(state.topInsights.length, 0);
 
@@ -31,14 +31,14 @@ describe("Awareness system — module integration", () => {
     assert.ok(fs.existsSync(jsonPath));
   });
 
-  it("readAwareness returns the markdown content", () => {
+  it("readAwareness returns the markdown content", async () => {
     const content = awareness.readAwareness();
     assert.ok(content.includes("# Awareness"));
     assert.ok(content.includes("tongwu"));
   });
 
-  it("addInsight adds a new insight", () => {
-    const result = awareness.addInsight({
+  it("addInsight adds a new insight", async () => {
+    const result = await awareness.addInsight({
       title: "Agents skip extraction steps under context pressure",
       evidence: "Seen in novada replication sessions",
       appliesWhen: ["replication", "extraction"],
@@ -48,8 +48,8 @@ describe("Awareness system — module integration", () => {
     assert.equal(result.insight.confirmations, 1);
   });
 
-  it("addInsight merges similar insight (>50% word overlap)", () => {
-    const result = awareness.addInsight({
+  it("addInsight merges similar insight (>50% word overlap)", async () => {
+    const result = await awareness.addInsight({
       title: "Agents skip extraction steps when tired",
       evidence: "Second occurrence in brightdata session",
       appliesWhen: ["extraction", "fatigue"],
@@ -62,8 +62,8 @@ describe("Awareness system — module integration", () => {
     assert.ok(result.insight.appliesWhen.includes("fatigue"));
   });
 
-  it("addInsight adds distinct insights separately", () => {
-    awareness.addInsight({
+  it("addInsight adds distinct insights separately", async () => {
+    await awareness.addInsight({
       title: "Rate limiting prevents runaway costs",
       evidence: "proxy-veil Browser API incident",
       appliesWhen: ["cost", "browser"],
@@ -73,9 +73,9 @@ describe("Awareness system — module integration", () => {
     assert.equal(state.topInsights.length, 2);
   });
 
-  it("addInsight replaces lowest when over 20", () => {
+  it("addInsight replaces lowest when over 20", async () => {
     // Reset to clean state
-    awareness.initAwareness("overflow test");
+    await awareness.initAwareness("overflow test");
 
     // Add 20 completely distinct insights (no word overlap possible)
     const topics = [
@@ -101,7 +101,7 @@ describe("Awareness system — module integration", () => {
       "Wasm component interface types",
     ];
     for (const title of topics) {
-      awareness.addInsight({
+      await awareness.addInsight({
         title,
         evidence: `Evidence for ${title}`,
         appliesWhen: [title.split(" ")[0].toLowerCase()],
@@ -112,7 +112,7 @@ describe("Awareness system — module integration", () => {
     assert.equal(state.topInsights.length, 20);
 
     // 21st should trigger replacement
-    const result = awareness.addInsight({
+    const result = await awareness.addInsight({
       title: "Completely novel Zig comptime metaprogramming",
       evidence: "Fresh evidence",
       appliesWhen: ["zig"],
@@ -123,17 +123,17 @@ describe("Awareness system — module integration", () => {
     assert.equal(state.topInsights.length, 20); // still 20, not 21
   });
 
-  it("writeAwareness enforces 200-line max", () => {
+  it("writeAwareness enforces 200-line max", async () => {
     const longContent = Array.from({ length: 300 }, (_, i) => `Line ${i}`).join("\n");
-    awareness.writeAwareness(longContent);
+    await awareness.writeAwareness(longContent);
     const content = awareness.readAwareness();
     const lineCount = content.split("\n").length;
     assert.ok(lineCount <= 201, `Expected ≤201 lines, got ${lineCount}`);
   });
 
-  it("renderAwareness includes all sections", () => {
+  it("renderAwareness includes all sections", async () => {
     const state = awareness.readAwarenessState();
-    awareness.renderAwareness(state);
+    await awareness.renderAwareness(state);
     const content = awareness.readAwareness();
     assert.ok(content.includes("## Identity"));
     assert.ok(content.includes("## Top Insights"));
@@ -141,25 +141,25 @@ describe("Awareness system — module integration", () => {
     assert.ok(content.includes("## Blind Spots"));
   });
 
-  it("detectCompoundInsights finds patterns across 3+ insights", () => {
+  it("detectCompoundInsights finds patterns across 3+ insights", async () => {
     // Reset with fresh state
-    awareness.initAwareness("test user");
+    await awareness.initAwareness("test user");
 
     // Add 3 distinct insights sharing "deployment" keyword in appliesWhen
     // Titles must be completely different to avoid merge
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "PostgreSQL migration rollback strategy",
       evidence: "Seen in prod incident",
       appliesWhen: ["deployment", "database"],
       source: "test",
     });
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "Kubernetes canary release patterns",
       evidence: "From SRE handbook",
       appliesWhen: ["deployment", "kubernetes"],
       source: "test",
     });
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "Terraform provider version pinning",
       evidence: "Broke staging once",
       appliesWhen: ["deployment", "infrastructure"],
@@ -169,7 +169,7 @@ describe("Awareness system — module integration", () => {
     const state = awareness.readAwarenessState();
     assert.equal(state.topInsights.length, 3, "Should have 3 distinct insights");
 
-    const compounds = awareness.detectCompoundInsights();
+    const compounds = await awareness.detectCompoundInsights();
     assert.ok(compounds.length > 0, "Should detect 'deployment' compound");
     assert.ok(compounds[0].sourceInsights.length >= 3);
   });
@@ -244,34 +244,34 @@ describe("Wave 3 — crystallization candidates", () => {
     awareness = await import("../dist/palace/awareness.js");
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(ROOT, { recursive: true, force: true });
   });
 
-  it("returns [] when no awareness state exists", () => {
+  it("returns [] when no awareness state exists", async () => {
     // Fresh root, no state written yet.
     const candidates = awareness.findCrystallizationCandidates();
     assert.deepEqual(candidates, []);
   });
 
-  it("clusters 3 insights sharing ≥2 appliesWhen keywords with enough confirmations", () => {
-    awareness.initAwareness("crystallize user");
+  it("clusters 3 insights sharing ≥2 appliesWhen keywords with enough confirmations", async () => {
+    await awareness.initAwareness("crystallize user");
     // Three distinct insights sharing the keywords "deploy" + "rollback" in appliesWhen.
     // Bump confirmations by re-adding strongly-overlapping titles so sum >= 5.
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "PostgreSQL migration must run before deploy rollback window",
       evidence: "prod incident A",
       appliesWhen: ["deploy", "rollback", "database"],
       source: "test",
     });
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "Kubernetes canary needs deploy rollback automation",
       evidence: "sre handbook B",
       appliesWhen: ["deploy", "rollback", "kubernetes"],
       source: "test",
     });
-    awareness.addInsight({
+    await awareness.addInsight({
       title: "Terraform provider pin avoids deploy rollback churn",
       evidence: "staging break C",
       appliesWhen: ["deploy", "rollback", "infrastructure"],
@@ -281,7 +281,7 @@ describe("Wave 3 — crystallization candidates", () => {
     // Push total confirmations up so the cluster clears minTotalConfirm.
     const state = awareness.readAwarenessState();
     for (const ins of state.topInsights) ins.confirmations = 2;
-    awareness.writeAwarenessState(state);
+    await awareness.writeAwarenessState(state);
 
     const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
     assert.ok(candidates.length >= 1, "should find at least one cluster");
@@ -292,7 +292,7 @@ describe("Wave 3 — crystallization candidates", () => {
     assert.ok(Array.isArray(cluster.insight_ids) && cluster.insight_ids.length >= 3);
   });
 
-  it("does not synthesize a principle string — candidates only", () => {
+  it("does not synthesize a principle string — candidates only", async () => {
     const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
     for (const c of candidates) {
       assert.equal(c.principle, undefined, "must NOT write a synthesized principle");
@@ -300,24 +300,24 @@ describe("Wave 3 — crystallization candidates", () => {
     }
   });
 
-  it("requires minTotalConfirm — under-confirmed clusters are dropped", () => {
-    awareness.initAwareness("low confirm user");
-    awareness.addInsight({ title: "Alpha deploy rollback alpha note", evidence: "e1", appliesWhen: ["deploy", "rollback"], source: "t" });
-    awareness.addInsight({ title: "Beta deploy rollback beta note", evidence: "e2", appliesWhen: ["deploy", "rollback"], source: "t" });
-    awareness.addInsight({ title: "Gamma deploy rollback gamma note", evidence: "e3", appliesWhen: ["deploy", "rollback"], source: "t" });
+  it("requires minTotalConfirm — under-confirmed clusters are dropped", async () => {
+    await awareness.initAwareness("low confirm user");
+    await awareness.addInsight({ title: "Alpha deploy rollback alpha note", evidence: "e1", appliesWhen: ["deploy", "rollback"], source: "t" });
+    await awareness.addInsight({ title: "Beta deploy rollback beta note", evidence: "e2", appliesWhen: ["deploy", "rollback"], source: "t" });
+    await awareness.addInsight({ title: "Gamma deploy rollback gamma note", evidence: "e3", appliesWhen: ["deploy", "rollback"], source: "t" });
     // Each at 1 confirmation → sum = 3 < 5.
     const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
     assert.equal(candidates.length, 0, "sum confirmations < 5 must yield no cluster");
   });
 
-  it("excludes clusters whose insights are already CRYSTALLIZED/CRITICAL", () => {
-    awareness.initAwareness("excluded user");
-    awareness.addInsight({ title: "CRITICAL: deploy rollback gate one", evidence: "e1xx", appliesWhen: ["deploy", "rollback"], source: "t" });
-    awareness.addInsight({ title: "CRYSTALLIZED deploy rollback gate two", evidence: "e2xx", appliesWhen: ["deploy", "rollback"], source: "t" });
-    awareness.addInsight({ title: "CRITICAL deploy rollback gate three", evidence: "e3xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+  it("excludes clusters whose insights are already CRYSTALLIZED/CRITICAL", async () => {
+    await awareness.initAwareness("excluded user");
+    await awareness.addInsight({ title: "CRITICAL: deploy rollback gate one", evidence: "e1xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+    await awareness.addInsight({ title: "CRYSTALLIZED deploy rollback gate two", evidence: "e2xx", appliesWhen: ["deploy", "rollback"], source: "t" });
+    await awareness.addInsight({ title: "CRITICAL deploy rollback gate three", evidence: "e3xx", appliesWhen: ["deploy", "rollback"], source: "t" });
     const state = awareness.readAwarenessState();
     for (const ins of state.topInsights) ins.confirmations = 3;
-    awareness.writeAwarenessState(state);
+    await awareness.writeAwarenessState(state);
 
     const candidates = awareness.findCrystallizationCandidates({ minCluster: 3, minTotalConfirm: 5 });
     assert.equal(candidates.length, 0, "already-crystallized/critical insights must be excluded");

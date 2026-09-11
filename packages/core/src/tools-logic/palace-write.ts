@@ -119,10 +119,10 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   // createRoom persisted to _room.json (meta.slug = sanitizeSlug(slug)). Passing the
   // raw input.room here re-sanitizes downstream (no-op for clean slugs) but would
   // surface an inconsistent slug to the agent for slugs containing rewritten chars.
-  updateRoomMeta(slug, safeRoom, { updated: timestamp });
+  await updateRoomMeta(slug, safeRoom, { updated: timestamp });
   // Propagate the real importance of this write into the salience formula so
   // --importance high measurably raises the room's salience (not always medium).
-  recordAccess(slug, safeRoom, importance);
+  await recordAccess(slug, safeRoom, importance);
 
   // Async sync to Supabase (non-blocking). The file on disk is already scrubbed
   // (above), so re-reading it back gives the sync call the SAME scrubbed bytes —
@@ -130,8 +130,8 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   const writtenContent = fs.readFileSync(targetFile, "utf-8");
   syncToSupabase(targetFile, writtenContent, slug, "palace", safeRoom);
 
-  const fanOutResult = fanOut(slug, safeRoom, targetTopic, content, input.connections ?? [], importance);
-  updatePalaceIndex(slug);
+  const fanOutResult = await fanOut(slug, safeRoom, targetTopic, content, input.connections ?? [], importance);
+  await updatePalaceIndex(slug);
 
   // W2-3 (naming-v2 spec §4): regenerate palace/rooms/_index.md — no lock is
   // held at this point (updateRoomMeta/recordAccess above already acquired

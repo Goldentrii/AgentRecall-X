@@ -8,13 +8,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveProject } from "../storage/project.js";
-import { ensureDir, todayISO } from "../storage/fs-utils.js";
+import { ensureDir, todayISO, writeTextAtomic } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
 import { writeCorrection, splitSentences, CJK_REASSURANCE_COMPLETIONS } from "../storage/corrections.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
+import { withLock, LockContentionError } from "../storage/filelock.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
   readAlignmentLog as readLog,
@@ -87,6 +88,14 @@ export interface CheckResult {
    */
   correction_gate_rejected?: string;
   /**
+   * fix6-locks (review LOW-3, same "never silent" doctrine as
+   * correction_gate_rejected): set when this call's alignment record could
+   * NOT be persisted because another live process held the alignment-log
+   * lock past the timeout. The record still informed THIS result's
+   * watch_for/similar_past_deltas; it is absent from future calls' history.
+   */
+  alignment_log_skipped?: true;
+  /**
    * Wave 5 — forward anticipation: does this goal resemble a tendency the user
    * has been corrected on? Pushed as an early prior, not a fact pulled late.
    * Absent when prediction could not run or no blind-spots profile exists.
@@ -121,7 +130,9 @@ function writeAlignmentLog(project: string, records: AlignmentRecord[]): void {
   // human_correction/delta/assumptions are all free-text check() params that
   // previously reached disk completely unscrubbed (this store has never had
   // any scrub, cloud or local).
-  fs.writeFileSync(p, scrubForCloud(JSON.stringify(records, null, 2)), "utf-8");
+  // Atomic: readAlignmentLog callers (session-start briefing, check() itself)
+  // are lock-free — never let them observe a truncated file.
+  writeTextAtomic(p, scrubForCloud(JSON.stringify(records, null, 2)));
 }
 
 export async function check(input: CheckInput): Promise<CheckResult> {
@@ -137,10 +148,39 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     delta: input.delta,
   };
 
-  const log = readLog(slug);
-  log.push(record);
-  const trimmed = log.slice(-50);
-  writeAlignmentLog(slug, trimmed);
+  // fix6-locks: alignment-log.json is PER-PROJECT and appended by every
+  // check() call from every live session on that project — the old unlocked
+  // read→push→write span dropped concurrent sessions' records
+  // (alignment-log-concurrency.test.mjs reproduced 31/40 lost on main HEAD).
+  // Lock name is project-scoped, mirroring `corrections-${project}`.
+  let trimmed: AlignmentRecord[];
+  let alignmentLogSkipped = false;
+  try {
+    trimmed = await withLock(`alignment-${slug}`, () => {
+      const log = readLog(slug);
+      log.push(record);
+      const t = log.slice(-50);
+      writeAlignmentLog(slug, t);
+      return t;
+    });
+  } catch (err) {
+    if (err instanceof LockContentionError) {
+      // Best-effort skip, loudly: one alignment record lost under pathological
+      // live contention beats stealing the lock mid-write (old behavior) or
+      // failing the whole check() call. Downstream analysis still sees the
+      // in-memory record so this call's result is unaffected. The skip is
+      // surfaced BOTH on stderr (host log) and in the result
+      // (alignment_log_skipped — review LOW-3: a success-shaped result must
+      // not hide a persistence failure from the calling agent).
+      console.error(`[agent-recall] check(): ${err.message} — this alignment record was NOT persisted.`);
+      alignmentLogSkipped = true;
+      const log = readLog(slug);
+      log.push(record);
+      trimmed = log.slice(-50);
+    } else {
+      throw err;
+    }
+  }
 
   // Set when the correction quality gate rejects a human_correction (surfaced
   // in the result so the rejection is never silent).
@@ -178,7 +218,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       );
       const severity: "p0" | "p1" = p0Patterns.test(corrText) ? "p0" : "p1";
       const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
-      const writeResult = writeCorrection(slug, {
+      const writeResult = await writeCorrection(slug, {
         id: corrId,
         date: corrDate,
         severity,
@@ -436,6 +476,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     decision_trail_saved: decisionTrailSaved || undefined,
     calibration_note: calibrationNote,
     correction_gate_rejected: gateRejection,
+    ...(alignmentLogSkipped ? { alignment_log_skipped: true as const } : {}),
     ...(prediction ? { prediction } : {}),
     ...(actionCheck ? { action_check: actionCheck } : {}),
   };

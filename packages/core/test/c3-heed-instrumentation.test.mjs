@@ -59,12 +59,12 @@ function makeTestCorrection(overrides = {}) {
 }
 
 /** Write a correction and mark it as retrieved today. */
-function writeAndRetrieveToday(testRoot, correction) {
-  const result = writeCorrection(PROJECT, correction);
+async function writeAndRetrieveToday(testRoot, correction) {
+  const result = await writeCorrection(PROJECT, correction);
   if (!result.written) return null;
   const id = result.id ?? correction.id;
   // Stamp last_retrieved = today by writing a retrieved outcome event
-  recordOutcome({
+  await recordOutcome({
     correction_id: id,
     project: PROJECT,
     kind: "retrieved",
@@ -93,13 +93,13 @@ function writeAndRetrieveToday(testRoot, correction) {
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-c3-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -111,7 +111,7 @@ afterEach(() => {
 describe("C3 default flip: unknown replaces default-heeded", () => {
   it("a correction retrieved today with no trigger evidence gets 'unknown' at session-end", async () => {
     const correction = makeTestCorrection();
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id, "correction should be written");
 
     // Session summary has NO recurrence markers and no check-action was called
@@ -131,7 +131,7 @@ describe("C3 default flip: unknown replaces default-heeded", () => {
 
   it("'unknown' does NOT count toward verdict_coverage numerator", async () => {
     const correction = makeTestCorrection();
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     await sessionEnd({
@@ -159,7 +159,7 @@ describe("C3 triggered evidence: check-action → heeded", () => {
       context: "Publish requires explicit sign-off. Never push to production alone.",
       tags: ["publish", "approval"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Simulate agent calling check-action before acting
@@ -197,7 +197,7 @@ describe("C3 recurrence detection: topical overlap + marker", () => {
       context: "Input validation prevents injection attacks. Always validate first.",
       tags: ["validation", "database", "security"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Summary mentions "validate" (4+ chars, in rule) + "database" (4+ chars, in rule)
@@ -221,7 +221,7 @@ describe("C3 recurrence detection: topical overlap + marker", () => {
       context: "Clerk auth requires proxy.ts. Never use middleware.ts.",
       tags: ["auth", "proxy"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Recurrence marker present but NO topical overlap with the correction
@@ -242,7 +242,7 @@ describe("C3 recurrence detection: topical overlap + marker", () => {
       context: "Input validation prevents injection attacks.",
       tags: ["validation", "database"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Summary has topical overlap (validate, database) but NO recurrence marker
@@ -271,7 +271,7 @@ describe("C3 recurrence detection: topical overlap + marker", () => {
 
 describe("C3 check-action: triggered outcome recording", () => {
   it("matching check-action records triggered for each matched correction", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-03-never-deploy-prod",
       date: "2026-07-03",
       severity: "p0",
@@ -292,7 +292,7 @@ describe("C3 check-action: triggered outcome recording", () => {
   });
 
   it("check-action deduplicates triggered events within the same day", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-03-no-raw-sql",
       date: "2026-07-03",
       severity: "p1",
@@ -321,7 +321,7 @@ describe("C3 check-action: triggered outcome recording", () => {
   });
 
   it("no corrections matched → no triggered events recorded", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-03-unrelated",
       date: "2026-07-03",
       severity: "p1",
@@ -348,10 +348,10 @@ describe("C3 check-action: triggered outcome recording", () => {
 // ---------------------------------------------------------------------------
 
 describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
-  it("verdict_coverage = 0 when no verdicts assigned (all unknown)", () => {
+  it("verdict_coverage = 0 when no verdicts assigned (all unknown)", async () => {
     // Write corrections with retrieved_count > 0 but only unknown outcomes
     const id = "2026-07-03-coverage-test";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id,
       date: "2026-07-03",
       severity: "p1",
@@ -361,8 +361,8 @@ describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
       tags: ["security", "sanitize"],
     });
     // Make it "retrieved" (sets retrieved_count via recordOutcome + file patch)
-    recordOutcome({ correction_id: id, project: PROJECT, kind: "retrieved", at: new Date().toISOString() });
-    recordOutcome({ correction_id: id, project: PROJECT, kind: "unknown", at: new Date().toISOString() });
+    await recordOutcome({ correction_id: id, project: PROJECT, kind: "retrieved", at: new Date().toISOString() });
+    await recordOutcome({ correction_id: id, project: PROJECT, kind: "unknown", at: new Date().toISOString() });
 
     const kpi = getCorrectionKPIs(PROJECT);
     assert.equal(kpi.unknown_count, 1, "unknown_count should be 1");
@@ -378,16 +378,16 @@ describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
     assert.ok(kpi.unknown_count >= 0, "unknown_count should be a non-negative number");
   });
 
-  it("verdict_coverage = 1.0 when all injected corrections have heeded/recurred/not_triggered", () => {
+  it("verdict_coverage = 1.0 when all injected corrections have heeded/recurred/not_triggered", async () => {
     const id1 = "2026-07-03-cov-heeded";
     const id2 = "2026-07-03-cov-recurred";
 
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: id1, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Always write unit tests for new functions added to the codebase",
       context: "Unit tests are required.", tags: ["test"],
     });
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: id2, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Never skip code review before merging to main branch",
       context: "Code review is mandatory. Never merge without review.", tags: ["review"],
@@ -409,10 +409,10 @@ describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
         }
       }
     }
-    recordOutcome({ correction_id: id1, project: PROJECT, kind: "retrieved", at: now });
-    recordOutcome({ correction_id: id1, project: PROJECT, kind: "heeded", at: now });
-    recordOutcome({ correction_id: id2, project: PROJECT, kind: "retrieved", at: now });
-    recordOutcome({ correction_id: id2, project: PROJECT, kind: "recurred", at: now });
+    await recordOutcome({ correction_id: id1, project: PROJECT, kind: "retrieved", at: now });
+    await recordOutcome({ correction_id: id1, project: PROJECT, kind: "heeded", at: now });
+    await recordOutcome({ correction_id: id2, project: PROJECT, kind: "retrieved", at: now });
+    await recordOutcome({ correction_id: id2, project: PROJECT, kind: "recurred", at: now });
 
     const kpi = getCorrectionKPIs(PROJECT);
     assert.equal(kpi.verdict_coverage, 1.0, "verdict_coverage should be 1.0 when all injected have verdicts");
@@ -420,9 +420,9 @@ describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
     assert.equal(kpi.not_triggered_count, 0, "no not_triggered events");
   });
 
-  it("getCorrectionKPIs includes new C3 fields with defaults of 0", () => {
+  it("getCorrectionKPIs includes new C3 fields with defaults of 0", async () => {
     // Project with no outcomes at all
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-03-new-fields-test",
       date: "2026-07-03",
       severity: "p1",
@@ -447,9 +447,9 @@ describe("C3 getCorrectionKPIs: verdict_coverage computation", () => {
 // ---------------------------------------------------------------------------
 
 describe("C3 backward compatibility: old readers skip new outcome kinds", () => {
-  it("_outcomes.jsonl with triggered/unknown/not_triggered parses without error", () => {
+  it("_outcomes.jsonl with triggered/unknown/not_triggered parses without error", async () => {
     const id = "2026-07-03-compat-test";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Always document public API functions with JSDoc comments",
       context: "Documentation is required for all public APIs.", tags: ["docs"],
@@ -461,7 +461,7 @@ describe("C3 backward compatibility: old readers skip new outcome kinds", () => 
     // "dream-audit:" prefix (recordOutcome throws otherwise), so this fixture
     // simulates the dream-audit producer for that kind.
     for (const kind of ["retrieved", "triggered", "unknown", "not_triggered", "heeded", "recurred"]) {
-      recordOutcome({
+      await recordOutcome({
         correction_id: id, project: PROJECT, kind, at: now,
         ...(kind === "not_triggered" ? { evidence: "dream-audit:compat fixture" } : {}),
       });
@@ -494,17 +494,17 @@ describe("C3 backward compatibility: old readers skip new outcome kinds", () => 
     // New kinds (triggered, unknown, not_triggered) are invisible to old reader — correct
   });
 
-  it("activity-feed style reader skips new kinds gracefully", () => {
+  it("activity-feed style reader skips new kinds gracefully", async () => {
     const id = "2026-07-03-activity-compat";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Always format code with prettier before committing",
       context: "Code formatting is mandatory.", tags: ["formatting"],
     });
 
     const now = new Date().toISOString();
-    recordOutcome({ correction_id: id, project: PROJECT, kind: "triggered", at: now });
-    recordOutcome({ correction_id: id, project: PROJECT, kind: "unknown", at: now });
+    await recordOutcome({ correction_id: id, project: PROJECT, kind: "triggered", at: now });
+    await recordOutcome({ correction_id: id, project: PROJECT, kind: "unknown", at: now });
 
     // Simulate activity-feed.ts filter: only "retrieved" | "heeded" | "recurred"
     const outcomesPath = path.join(testRoot, "projects", PROJECT, "corrections", "_outcomes.jsonl");
@@ -534,9 +534,9 @@ describe("C3 backward compatibility: old readers skip new outcome kinds", () => 
 // ---------------------------------------------------------------------------
 
 describe("C3 not_triggered: KPI counts future dream verdicts", () => {
-  it("not_triggered outcomes written manually count in KPI", () => {
+  it("not_triggered outcomes written manually count in KPI", async () => {
     const id = "2026-07-03-not-triggered-test";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Always use TypeScript strict mode in new files",
       context: "Strict mode catches more errors at compile time.", tags: ["typescript"],
@@ -544,7 +544,7 @@ describe("C3 not_triggered: KPI counts future dream verdicts", () => {
 
     // C3b: the dream-audit path is the ONLY not_triggered producer — evidence
     // must carry the "dream-audit:" prefix (recordOutcome enforces this).
-    recordOutcome({
+    await recordOutcome({
       correction_id: id, project: PROJECT, kind: "not_triggered",
       at: new Date().toISOString(),
       evidence: "dream-audit:correction topic (typescript strict mode) not found in yesterday's transcript",
@@ -560,7 +560,7 @@ describe("C3 not_triggered: KPI counts future dream verdicts", () => {
 // ---------------------------------------------------------------------------
 
 describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
-  it("hasGenuineRecurrenceMarker: eval-vocabulary sentence is excluded", () => {
+  it("hasGenuineRecurrenceMarker: eval-vocabulary sentence is excluded", async () => {
     // Marker ("recurred", "violated") present, but sentence carries eval anchors
     assert.equal(
       hasGenuineRecurrenceMarker("the recurred count violated our baseline expectations"),
@@ -579,7 +579,7 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
     );
   });
 
-  it("hasGenuineRecurrenceMarker: genuine first-person admission fires", () => {
+  it("hasGenuineRecurrenceMarker: genuine first-person admission fires", async () => {
     assert.equal(
       hasGenuineRecurrenceMarker("I pushed without asking again"),
       true,
@@ -587,7 +587,7 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
     );
   });
 
-  it("hasGenuineRecurrenceMarker: sentence granularity — genuine sentence fires even next to eval prose", () => {
+  it("hasGenuineRecurrenceMarker: sentence granularity — genuine sentence fires even next to eval prose", async () => {
     assert.equal(
       hasGenuineRecurrenceMarker(
         "Updated the baseline artifact for the recurrence_count metrics. I pushed without asking again.",
@@ -597,7 +597,7 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
     );
   });
 
-  it("hasGenuineRecurrenceMarker: no markers at all → false", () => {
+  it("hasGenuineRecurrenceMarker: no markers at all → false", async () => {
     assert.equal(hasGenuineRecurrenceMarker("Implemented the feature and wrote tests."), false);
   });
 
@@ -607,7 +607,7 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
       context: "Recurred counts must be verified against the baseline before reporting.",
       tags: ["reporting", "verification"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Topical overlap is present (recurred, count, baseline are rule words) AND a
@@ -634,7 +634,7 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
       context: "Pushing requires explicit approval. Never push alone.",
       tags: ["push", "approval"],
     });
-    const id = writeAndRetrieveToday(testRoot, correction);
+    const id = await writeAndRetrieveToday(testRoot, correction);
     assert.ok(id);
 
     // Genuine admission: marker ("again") in a sentence with NO eval vocabulary,
@@ -656,9 +656,9 @@ describe("C3 meta-content guard: eval prose must not fire recurrence", () => {
 // ---------------------------------------------------------------------------
 
 describe("C3 ledger-only outcomes: no record rewrite", () => {
-  it("a 'triggered' outcome appends to jsonl but leaves the correction file byte-identical", () => {
+  it("a 'triggered' outcome appends to jsonl but leaves the correction file byte-identical", async () => {
     const id = "2026-07-03-no-rewrite";
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id, date: "2026-07-03", severity: "p1", project: PROJECT,
       rule: "Always pin dependency versions before release builds",
       context: "Unpinned deps break clean builds.", tags: ["deps"],
@@ -671,7 +671,7 @@ describe("C3 ledger-only outcomes: no record rewrite", () => {
 
     // C3b: not_triggered requires the dream-audit: evidence prefix (single-producer gate).
     for (const kind of ["triggered", "not_triggered", "unknown"]) {
-      recordOutcome({
+      await recordOutcome({
         correction_id: id, project: PROJECT, kind,
         at: new Date().toISOString(),
         evidence: kind === "not_triggered" ? "dream-audit:ledger-only test" : "ledger-only test",
@@ -696,7 +696,7 @@ describe("C3 ledger-only outcomes: no record rewrite", () => {
 // ---------------------------------------------------------------------------
 
 describe("C3 cross-consistency: one verdict_coverage definition in both implementations", () => {
-  it("getCorrectionKPIs and rmr-report produce the same coverage on a seeded store", () => {
+  it("getCorrectionKPIs and rmr-report produce the same coverage on a seeded store", async () => {
     const proj = "xcons";
     const dir = path.join(testRoot, "projects", proj, "corrections");
     fs.mkdirSync(dir, { recursive: true });
