@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getLegacyRoot } from "../types.js";
-import { projectsRootDir } from "./paths.js";
+import { projectsRootDir, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
 import type { ProjectInfo } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +30,14 @@ const BLOCKED_SLUGS = new Set([
 const SLUG_DENY_LIST = new Set([
   "build", "runtime", "palace", "mcp", "default",
   "phase-1", "monitor", "test",
+  // fix5 (2026-09-11): the literal "auto" is the resolve-me API sentinel
+  // (`resolveProject` special-cases it BEFORE this list is consulted), never
+  // a legitimate project name — yet through v3.4.48 it passed this gate, so
+  // card/rescue writers that fell back to a literal "auto" slug materialized
+  // the projects/auto/ dumping ground (422+ journals on the live store).
+  // Same deny-class as "default"; adding the row here closes every gate that
+  // consults isValidProjectSlug at once (class-not-instance).
+  "auto",
 ]);
 
 /**
@@ -275,6 +283,29 @@ export async function detectProject(): Promise<string> {
 }
 
 /**
+ * fix5 (2026-09-11) — record provenance for a staged (failed) resolution.
+ * Fire-and-forget and NEVER throws/rejects: provenance is metadata about a
+ * failure, and it must never turn a working staged write into a broken one.
+ * Uses a dynamic import (the same pattern this file already uses for
+ * cwd-allowlist.js) so the unclaimed module's own static import of
+ * `isValidProjectSlug` from THIS file never forms a static cycle.
+ */
+async function stageFailedResolution(reason: string, candidate: string | null): Promise<void> {
+  try {
+    const { recordUnclaimedProvenance } = await import("./unclaimed.js");
+    const { getSessionId } = await import("./session.js");
+    recordUnclaimedProvenance(getSessionId(), {
+      cwd: process.cwd(),
+      reason,
+      slug_candidates: candidate ? [{ slug: candidate, count: 1 }] : [],
+      slug_confidence: 0,
+    });
+  } catch {
+    // provenance is best-effort — never let it break resolution
+  }
+}
+
+/**
  * Resolve "auto" project to actual slug.
  *
  * When a caller passes an explicit slug we auto-register the current cwd
@@ -289,24 +320,35 @@ export async function detectProject(): Promise<string> {
  * invalid slugs still resolve so reads of legacy data don't break.
  */
 export async function resolveProject(project: string | undefined): Promise<string> {
+  // fix5 (2026-09-11): the staging sentinel round-trips. A caller that
+  // already holds a staged resolution (e.g. `ar saveall` for a session with
+  // no project guess) must be able to pass it back through the normal
+  // resolution seam without tripping the invalid-slug throw below — the
+  // sentinel is deliberately NOT a valid slug so nothing else accepts it.
+  // No allowlist registration, no dir probe: it is not a project.
+  if (isUnclaimedProject(project)) return UNCLAIMED_PROJECT;
+
   if (!project || project === "auto") {
-    const detected = await detectProject();
-    // Gate: block auto-detected slugs from creating new dirs if invalid
+    // fix5 (2026-09-11, eval-standard S5 plan #5): a FAILED auto-detection no
+    // longer throws, and an INVALID auto-detected slug no longer resolves to
+    // a legacy junk dir — both return the staging sentinel instead, so the
+    // caller's write routes to `_unclaimed/<session>/` (projectSubPath's
+    // sentinel seam) and can NEVER materialize `projects/<garbage>`. This
+    // removes the old existing-dir escape hatch FOR AUTO-DETECTION ONLY: it
+    // let new writes keep landing in `default/`-class dumping grounds just
+    // because the dir already existed. Ghost/legacy dirs remain fully
+    // readable when EXPLICITLY scoped (the explicit-slug branch below is
+    // unchanged) — the eval's gq20 relies on exactly that.
+    let detected: string;
+    try {
+      detected = await detectProject();
+    } catch {
+      await stageFailedResolution("detect-failed", null);
+      return UNCLAIMED_PROJECT;
+    }
     if (!isValidProjectSlug(detected)) {
-      // Deliberately NOT routed through projectSubPath()/resolveProjectDirName:
-      // this is a raw existence probe for an ALREADY-INVALID slug (blocks new-dir
-      // creation unless legacy data already exists at this exact name) — running
-      // it through the sanitizing resolver would change what "exists" means for
-      // exactly the malformed inputs this gate exists to catch. Only the literal
-      // "projects" segment is routed through paths.ts (F2 fix, 2026-07-20).
-      const projectDir = path.join(projectsRootDir(), detected);
-      if (!fs.existsSync(projectDir)) {
-        throw new Error(
-          `Auto-detected project slug "${detected}" is invalid (UUID, system dir, or deny-listed). ` +
-          `Set AGENT_RECALL_PROJECT env var or pass project explicitly.`
-        );
-      }
-      // Existing dir — allow read but don't register into allowlist
+      await stageFailedResolution(`invalid-detected:${detected}`, detected);
+      return UNCLAIMED_PROJECT;
     }
     return detected;
   }
@@ -366,7 +408,14 @@ export function listAllProjects(): ProjectInfo[] {
   // New location
   const projectsDir = projectsRootDir();
   if (fs.existsSync(projectsDir)) {
-    const dirs = fs.readdirSync(projectsDir);
+    // fix5 (2026-09-11): exclude the reserved `_` namespace BY NAME (leading
+    // underscore — the same class rule fix4 applies to `_pending/`/`_index.md`
+    // infra files, class-not-instance). `_unclaimed/` lives at the store ROOT
+    // and never appears here in normal operation; this guard is the
+    // belt-and-braces for an external script (registry regen, a manual copy)
+    // dropping an underscore dir INSIDE projects/ — it must never enumerate
+    // as a project.
+    const dirs = fs.readdirSync(projectsDir).filter((d) => !d.startsWith("_"));
     for (const slug of dirs) {
       const jDir = path.join(projectsDir, slug, "journal");
       if (fs.existsSync(jDir)) {

@@ -23,6 +23,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
+import { isValidProjectSlug } from "./project.js";
+import { stageUnclaimedCard } from "./unclaimed.js";
 import { ensureDir, todayISO, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { recordHookFailure } from "./hook-health.js";
@@ -73,6 +75,16 @@ export interface SessionCardResult {
   sid: string;
   slug: string;
   date: string;
+  /**
+   * fix5 (2026-09-11): F1 resolution confidence, passed through from
+   * `SessionCardMeta.slugConfidence` so `writeSessionCard` can apply the
+   * staging gate (confidence 0 ⇒ `_unclaimed/`, never `projects/<slug>/`).
+   * OPTIONAL for backward compatibility: a hand-built card without it is
+   * treated as a trusted legacy write (only an INVALID slug stages then).
+   */
+  slug_confidence?: number;
+  /** fix5: F1's ranked candidates, preserved into staging provenance. */
+  slug_candidates?: Array<{ slug: string; count: number }>;
 }
 
 export interface WriteSessionCardResult {
@@ -272,7 +284,13 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
     const bodyBudget = Math.max(0, CARD_BYTE_CAP - frontmatterBytes);
     const markdown = frontmatter + truncateBytes(body, bodyBudget);
 
-    return { markdown, title, artifacts, linearRefs, decisions, nextStep, sid, slug, date };
+    return {
+      markdown, title, artifacts, linearRefs, decisions, nextStep, sid, slug, date,
+      // fix5: pass resolution confidence + candidates through so the write
+      // gate (and staging provenance) see what the resolver actually knew.
+      slug_confidence: raw?.meta?.slugConfidence ?? 0,
+      slug_candidates: cappedSlugCandidates,
+    };
   } catch (err) {
     // Never throw into the hook-end path — degrade to a minimal, valid card.
     // F5 depth (2026-08-12, followups wave): degrading silently means the
@@ -299,6 +317,10 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
       sid,
       slug,
       date,
+      // fix5: a degraded stub carries zero resolution confidence by
+      // definition — it must stage, never land in projects/<slug>/.
+      slug_confidence: 0,
+      slug_candidates: [],
     };
   }
 }
@@ -314,6 +336,23 @@ export function buildSessionCard(raw: SessionCardInput): SessionCardResult {
  */
 export function writeSessionCard(card: SessionCardResult): WriteSessionCardResult {
   try {
+    // fix5 (2026-09-11, eval-standard S5 plan #5) — the CREATION-INVARIANT
+    // gate for cards. A card whose slug fails validation (the literal
+    // "auto"/deny-listed/UUID class) or whose resolution confidence is ZERO
+    // (every WM rescue card, a hook-end card whose F1 guess failed) stages
+    // into `_unclaimed/<card.sid>/` instead of journalDir(slug) — so a
+    // failed/zero-confidence resolution can never materialize
+    // `projects/<garbage>` (the live store's auto/ 422-journal class), and
+    // never lands unauthenticated content inside a REAL project's journal
+    // either (the red-team CRITICAL-2 hijack wrote a forged rescue card
+    // straight into a real project; quarantine gated the READ side — this
+    // closes the WRITE side). `slug_confidence === undefined` (a legacy/
+    // hand-built card) is deliberately NOT staged: absence of the field is a
+    // trusted direct write, only an explicit 0 means "resolution failed".
+    if (!isValidProjectSlug(card.slug) || card.slug_confidence === 0) {
+      return stageUnclaimedCard(card);
+    }
+
     const slug = sanitizeSlug(card.slug); // slug is caller-controlled; harden before path.join
     const sid = sanitizeSlug(card.sid); // sid is UNTRUSTED (from hook stdin) — sanitize first
     const dir = journalDir(slug);

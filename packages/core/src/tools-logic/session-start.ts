@@ -27,6 +27,7 @@ import { applyScope } from "../retrieval/scope.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
 import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS, rescueOrphanedWorkingMemory } from "../storage/working-memory.js";
+import { archiveExpiredUnclaimed, countUnclaimedSessions } from "../storage/unclaimed.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSupabaseConfig } from "../supabase/config.js";
@@ -435,6 +436,15 @@ export interface SessionStartResult {
    * project adds ZERO bytes to the session_start payload budget.
    */
   mirror_available?: string;
+  /**
+   * fix5 (2026-09-11) — number of `_unclaimed/` staged sessions awaiting an
+   * explicit claim (failed/zero-confidence resolutions, kill-9 rescue
+   * cards). OMITTED (undefined) when zero — the established absent-when-
+   * empty contract shared by predicted_risks / mirror_available / ab_arm —
+   * so a clean store pays zero payload bytes. Renderers surface at most ONE
+   * line for this ("N unclaimed session cards await claim — ar claim --list").
+   */
+  unclaimed_cards?: number;
   empty_state?: string;
   /**
    * C4 A/B experiment — which arm this session ran.
@@ -462,6 +472,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   resetOwnedFiles();
 
   const slug = await resolveProject(input.project);
+  // fix5 (2026-09-11): ensurePalaceInitialized no-ops for the `_unclaimed`
+  // staging sentinel internally (palace/rooms.ts) — a failed resolution must
+  // not scaffold a palace anywhere, and everything below degrades to empty
+  // reads for the sentinel. Call left unconditional so the gate lives in ONE
+  // place (the function itself), not per-caller.
   ensurePalaceInitialized(slug);
 
   // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
@@ -682,6 +697,21 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   } catch {
     // rescueOrphanedWorkingMemory never throws — guard kept so a future
     // change to that contract can never break session_start.
+  }
+
+  // fix5 (2026-09-11) — _unclaimed lifecycle, run at the SAME sweep point as
+  // the orphan rescue above (session_start is the one lifecycle moment every
+  // host reaches — hooks and hook-less alike): (1) the 14-day TTL moves
+  // expired staged sessions to _unclaimed/_archive/ (never deletes), then
+  // (2) the surviving staged sessions are counted for the single claim-prompt
+  // line below. Both are best-effort and never throw by their own contracts;
+  // the guard mirrors the rescue call's.
+  let unclaimedCount = 0;
+  try {
+    archiveExpiredUnclaimed();
+    unclaimedCount = countUnclaimedSessions();
+  } catch {
+    unclaimedCount = 0;
   }
 
   // 4b. Continuity — cross-project recency card (F2, continuity wave 2026-07-31).
@@ -1352,6 +1382,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       ? (({ person: _omitEmptyPerson, ...rest }: RecognitionPayload): RecognitionPayload => rest)(recognition)
       : recognition,
     mirror_available: mirrorAvailable,
+    // fix5: absent-when-zero — see the field's doc comment above.
+    unclaimed_cards: unclaimedCount > 0 ? unclaimedCount : undefined,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
     // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
     ab_arm: abArm ?? undefined,

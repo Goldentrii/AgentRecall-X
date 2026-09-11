@@ -8,7 +8,7 @@ import * as crypto from "node:crypto";
 import type { RoomMeta, Importance } from "../types.js";
 import { DEFAULT_PALACE_ROOMS, VERSION } from "../types.js";
 import { ensureDir } from "../storage/fs-utils.js";
-import { palaceDir, sanitizeSlug } from "../storage/paths.js";
+import { palaceDir, sanitizeSlug, isUnclaimedProject } from "../storage/paths.js";
 import { readJsonSafe, writeJsonAtomic } from "../storage/fs-utils.js";
 import { roomReadmeContent } from "./obsidian.js";
 import { computeSalience } from "./salience.js";
@@ -171,6 +171,12 @@ export function roomExists(project: string, roomSlug: string): boolean {
 
 /** Initialize default palace rooms if palace doesn't exist yet. */
 export function ensurePalaceInitialized(project: string): void {
+  // fix5 (2026-09-11): the `_unclaimed` staging sentinel is not a project —
+  // scaffolding 6 default rooms + identity.md into a staging session dir is
+  // pure noise the TTL sweep would have to cart around, and no staged-write
+  // path reads a palace. No-op, never throw (this runs on session_start's
+  // hot path for a sentinel-resolved session).
+  if (isUnclaimedProject(project)) return;
   const pd = palaceDir(project);
   const indexPath = path.join(pd, "palace-index.json");
 

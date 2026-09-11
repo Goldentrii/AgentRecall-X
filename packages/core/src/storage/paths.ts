@@ -10,6 +10,59 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot, getLegacyRoot } from "../types.js";
 import { sanitizeName } from "./sanitize.js";
+import { getSessionId } from "./session.js";
+
+// ---------------------------------------------------------------------------
+// _unclaimed staging namespace (fix5, 2026-09-11 — eval-standard S5 plan #5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Root-level staging namespace for writes whose project resolution FAILED or
+ * carried zero confidence. Lives at `<AR_ROOT>/_unclaimed/` — deliberately a
+ * SIBLING of `projects/`, never inside it, so every scan that enumerates
+ * `projects/` (recall corpus, listAllProjects, the scoreboard script's
+ * ghost-dir census, ar-sync-status.py's wholesale registry regen) is
+ * structurally blind to it. The leading `_` is the same BY-NAME reserved-
+ * namespace convention the rest of the store already uses for infrastructure
+ * (`_index.md`, `_archive/`, fix4's `_pending/`/`_quarantine/` class):
+ * class-not-instance — one underscore rule, not one branch per known dir.
+ */
+export const UNCLAIMED_DIRNAME = "_unclaimed";
+
+/**
+ * The staging SENTINEL slug `resolveProject()` returns when resolution fails
+ * (blocked cwd, deny-listed detection, zero-confidence guess). It is NOT a
+ * valid project slug on purpose (`isValidProjectSlug` rejects the `_`
+ * prefix), so nothing downstream can register it into a cwd-allowlist or
+ * treat it as a real project — and `projectSubPath()` below routes every
+ * path built for it into `_unclaimed/<session>/` instead of `projects/`,
+ * which is the single choke point that closes ALL ~20 project-dir writers
+ * at once (journal, palace, corrections, digest, handoff, …) without
+ * per-writer gates.
+ */
+export const UNCLAIMED_PROJECT = "_unclaimed";
+
+/** Is this slug the staging sentinel? (Exact match — never a prefix test.) */
+export function isUnclaimedProject(project: string | undefined | null): boolean {
+  return project === UNCLAIMED_PROJECT;
+}
+
+/** `<AR_ROOT>/_unclaimed` — the staging namespace root. */
+export function unclaimedRootDir(): string {
+  return path.join(getRoot(), UNCLAIMED_DIRNAME);
+}
+
+/**
+ * Per-session staging subdir: `<AR_ROOT>/_unclaimed/<sid>`. `sid` is
+ * UNTRUSTED (may arrive from hook stdin) → sanitized with the same
+ * `sanitizeSlug` grammar every other sid-derived path in this package uses.
+ */
+export function unclaimedSessionDir(sid: string): string {
+  const safe = sanitizeSlug(sid);
+  const resolved = path.join(unclaimedRootDir(), safe);
+  assertInsideRoot(resolved, getRoot(), `_unclaimed/${sid}`);
+  return resolved;
+}
 
 /**
  * Sanitize a project name for safe use in path.join().
@@ -213,6 +266,24 @@ export function projectsRootDir(): string {
  * root directory (`projects/<safe>`).
  */
 export function projectSubPath(project: string, ...segments: string[]): string {
+  // fix5 (2026-09-11) — staging-sentinel routing. This is THE creation-
+  // invariant choke point: every project-dir writer in this package builds
+  // its paths here (the F2 projects-literal guard forbids bypassing it), so
+  // routing the sentinel to `_unclaimed/<session>/` at this single seam
+  // means a failed/zero-confidence resolution can never mkdir
+  // `projects/<garbage>` through ANY of them — journal, palace, corrections,
+  // digest, handoff, all covered at once, including writers added later.
+  // Reads route identically, so a staged session's own write→read round trip
+  // (remember → recall within one unresolved session) keeps working.
+  //
+  // Deliberately NOT `sanitizeProject`-first: `sanitizeName` strips the `_`
+  // prefix ("_unclaimed" → "unclaimed"), which would silently mint a
+  // projects/unclaimed/ dir — exactly the class this sentinel exists to kill.
+  if (isUnclaimedProject(project)) {
+    const resolved = path.join(unclaimedSessionDir(getSessionId()), ...segments);
+    assertInsideRoot(resolved, getRoot(), project);
+    return resolved;
+  }
   const root = getRoot();
   const safe = resolveProjectDirName(root, project);
   const resolved = path.join(root, PROJECTS_DIRNAME, safe, ...segments);

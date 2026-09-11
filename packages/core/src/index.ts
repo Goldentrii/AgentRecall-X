@@ -169,8 +169,36 @@ export { classifyStore, classifyPath, isPersonalProject, PERSONAL_STORES } from 
 export type { Tier } from "./storage/classification.js";
 
 // Storage
-export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir } from "./storage/paths.js";
+// fix5: projectSubPath exported so the CLI's few remaining raw
+// `path.join(root, "projects", …)` sites can route through the ONE sanctioned
+// project-path builder (case-fold reuse + path-escape guard + staging-sentinel
+// routing) instead of hand-rolling the literal join.
+export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir, pickProjectDirEntry, projectSubPath } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+
+// Storage — _unclaimed staging namespace (fix5, 2026-09-11): failed/zero-
+// confidence resolutions stage here instead of materializing projects/ dirs.
+export {
+  UNCLAIMED_DIRNAME,
+  UNCLAIMED_PROJECT,
+  isUnclaimedProject,
+  unclaimedRootDir,
+  unclaimedSessionDir,
+} from "./storage/paths.js";
+export {
+  UNCLAIMED_TTL_MS,
+  recordUnclaimedProvenance,
+  listUnclaimedCards,
+  countUnclaimedSessions,
+  findUnclaimedCardForSid,
+  archiveExpiredUnclaimed,
+  claimUnclaimedSession,
+  undoClaimUnclaimedSession,
+  readClaimsLog,
+  type UnclaimedProvenance,
+  type UnclaimedCardInfo,
+  type ClaimResult,
+} from "./storage/unclaimed.js";
 
 // Storage — archive tier (Wave 2, lossless verbatim floor; local-only)
 export { archiveSession } from "./storage/archive-write.js";

@@ -35,6 +35,7 @@ import { isSystemText, parseJsonlLenient } from "./extraction.js";
 import { recordHookFailure } from "./hook-health.js";
 import { sanitizeSlug, projectsRootDir } from "./paths.js";
 import { isValidProjectSlug, listAllProjects } from "./project.js";
+import { findUnclaimedCardForSid } from "./unclaimed.js";
 import { RESCUE_SOURCE_TAG } from "../helpers/journal-filter.js";
 import { scrubForCloud } from "./content-guard.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
@@ -506,7 +507,12 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
   // OR'd flag) — a card that exists with no matching recency entry must NOT
   // be treated as fully rescued. `existingCardSlug` (not just a boolean) is
   // the ACTUAL on-disk slug of that pre-existing card, needed below.
-  const existingCardSlug = findCardSlugForSid(wmFile.sid);
+  // fix5 (2026-09-11): a card may live in a real project's journal (a normal
+  // hook-end card, or a pre-fix5 rescue) OR in the `_unclaimed/<sid>/`
+  // staging area (every post-fix5 rescue card — see the writeSessionCard
+  // call below). Both count as "already rescued" for idempotency, otherwise
+  // a leftover WM file would re-stage a duplicate card on every sweep.
+  const existingCardSlug = findCardSlugForSid(wmFile.sid) ?? findUnclaimedCardForSid(wmFile.sid);
   const hasCard = existingCardSlug !== null;
   const hasRecency = recentSids.has(wmFile.sid);
 
@@ -562,6 +568,16 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       "",
     ].join("\n");
 
+    // fix5 (2026-09-11): every rescue card carries slug_confidence 0 by
+    // construction (the frontmatter above always has) — passing the SAME
+    // zero through the result object makes writeSessionCard's staging gate
+    // route the card to `_unclaimed/<sid>/` instead of journalDir(guess).
+    // The rescue FEATURE is unchanged (crash-safety kept: card + recency
+    // entry + WM cleanup below all still happen) — only the landing zone
+    // moved, because a cwd-majority guess is an unauthenticated, zero-
+    // confidence claim and must never materialize (or write into) a real
+    // projects/ dir. The guess itself survives in the card frontmatter and
+    // in staging provenance as the top claim candidate.
     const written = writeSessionCard({
       markdown: frontmatter + body,
       title,
@@ -572,6 +588,8 @@ function distillOneSession(wmFile: WorkingMemoryFileInfo, recentSids: Set<string
       sid: wmFile.sid,
       slug: guessedSlug,
       date,
+      slug_confidence: 0,
+      slug_candidates: [],
     });
     cardOk = !!written.path;
     if (cardOk) ledgerSlug = written.slug || guessedSlug; // the ACTUAL on-disk slug, per WriteSessionCardResult.slug's contract
