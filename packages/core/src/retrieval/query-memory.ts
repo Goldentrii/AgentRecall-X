@@ -534,12 +534,33 @@ interface QueryIdfModel {
  * RAW query word (a word matches if ANY of its stem/synonym variants
  * matches — same containment semantics as `keywordExactness`), BM25-curved
  * over document frequency, then max-normalized to [0, 1] so the weighted
- * exactness stays on the same scale the unweighted ratio lived on. The
- * degenerate cases reproduce pre-IDF behavior exactly: an empty corpus, or
- * every word equally frequent, yields uniform weights — i.e. the plain
- * matched/total ratio. CJK: `tokenizeWords` already segments Han runs, and
- * DF/matching are substring-based (script-agnostic), so a rare Han token
- * earns exactly the same discriminative weight as a rare ASCII one.
+ * exactness stays on the same scale the unweighted ratio lived on.
+ *
+ * TWO deliberate semantic differences from `keywordExactness`, both
+ * per-word SATURATION (independent review M3, 2026-09-11 — this comment's
+ * first cut overclaimed "degenerate cases reproduce pre-IDF behavior
+ * exactly", which is only true when additionally no word matches via more
+ * than one variant and no raw word repeats):
+ *   1. A raw word contributes its weight AT MOST ONCE, however many of its
+ *      stem/synonym variants match ("push" matching both "deploy" and
+ *      "release" in one text counted twice pre-IDF, capped at min(1, ·)).
+ *   2. Duplicate raw query words collapse to one weighted entry
+ *      (`variantsByRaw` is keyed by word) instead of inflating the
+ *      denominator.
+ * Both are the BM25 saturation stance — evidence for the same query word
+ * repeats, it doesn't multiply — pinned by this tranche's mechanism tests.
+ *
+ * DF and the match predicate use the SAME containment semantics
+ * (independent review M4, same day): each corpus doc is tokenized+stemmed
+ * once into a Set, and a word counts toward df if any variant hits the
+ * doc's stemmed-token set OR its lowercase text — identical to
+ * `weightedExactness`'s own predicate below. (The first cut counted df by
+ * substring only, so a word matching every doc via stemming — "queries" vs
+ * stem "query" — could keep df≈0 and a falsely-maximal weight.)
+ *
+ * CJK: `tokenizeWords` already segments Han runs, and DF/matching include
+ * substring containment (script-agnostic), so a rare Han token earns
+ * exactly the same discriminative weight as a rare ASCII one.
  */
 function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
   const rawWords = tokenizeWords(query);
@@ -551,14 +572,17 @@ function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
     variantsByRaw.set(w, [...variants]);
   }
 
-  const lowered = corpusTexts.map((t) => t.toLowerCase());
-  const n = lowered.length;
+  const n = corpusTexts.length;
+  const docs = corpusTexts.map((t) => {
+    const lower = t.toLowerCase();
+    return { lower, tokenSet: new Set(tokenizeWords(t).map((tok) => stem(tok))) };
+  });
   const idf = new Map<string, number>();
   let maxIdf = 0;
   for (const [w, variants] of variantsByRaw) {
     let df = 0;
-    for (const t of lowered) {
-      if (variants.some((v) => t.includes(v))) df++;
+    for (const d of docs) {
+      if (variants.some((v) => d.tokenSet.has(v) || d.lower.includes(v))) df++;
     }
     const weight = n > 0 ? bm25Idf(df, n) : 1;
     idf.set(w, weight);
@@ -981,7 +1005,10 @@ function scoreJournalTier(
 
   // fix4 S5: IDF over the scanned journal corpus (one doc = one journal
   // file's content) — weights each query word by rarity before the
-  // unchanged recency*0.5 + exactness*0.5 blend below.
+  // unchanged recency*0.5 + exactness*0.5 blend below. Review L2
+  // (2026-09-11): skipped entirely when nothing matched — building the
+  // model tokenizes/lowercases the whole corpus, pure waste at zero hits.
+  if (hits.length === 0) return [];
   const idfModel = buildIdfModel(query, candidates.map((c) => c.content));
 
   const items: QueryMemoryItem[] = hits.map((h) => {
@@ -1362,6 +1389,15 @@ function scoreInsightTier(
  * `recordOutcome`) keys off directly; reusing it here means a caller acting
  * on a surfaced correction never needs a secondary id lookup.
  */
+/** Review L3 (2026-09-11): enumerated severity ladder for the corrections
+ *  scorer — extending coverage is a new ROW here, never a new branch. */
+const SEVERITY_BOOST: Record<string, number> = {
+  p0: 1.0,
+  p1: 0.5,
+  p2: 0.25,
+  p3: 0.1,
+};
+
 function scoreCorrectionsTier(
   project: string,
   query: string,
@@ -1394,7 +1430,12 @@ function scoreCorrectionsTier(
     const exactness = idfModel.weightedExactness(matchText);
     // fix4 S1: severity/proof_count-aware blend — see this function's doc
     // comment for the formula and the annotation-only invariant it preserves.
-    const severityBoost = meta.severity === "p0" ? 1.0 : 0.5;
+    // Review L3 (2026-09-11): the ladder is an enumerated CLASS table —
+    // CorrectionRecord.severity types only p0|p1, but legacy on-disk records
+    // carry p2/p3 (corrections.ts severityRank handles them); a binary
+    // p0-else check silently flattened those onto p1. Unknown values score
+    // as p1 (the type's own default tier).
+    const severityBoost = SEVERITY_BOOST[meta.severity ?? "p1"] ?? SEVERITY_BOOST.p1;
     const proofCount = Math.max(1, parseInt(meta.proof_count ?? "1", 10) || 1);
     const proofBoost = Math.min(1.0, Math.log2(proofCount + 1) / 3);
     const internalScore = exactness * 0.70 + severityBoost * 0.15 + proofBoost * 0.15;

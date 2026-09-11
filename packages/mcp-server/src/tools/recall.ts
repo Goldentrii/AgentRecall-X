@@ -67,14 +67,27 @@ export function register(server: McpServer): void {
         }
       }
 
+      // Feedback IDs — INSIDE the fence (fix4 review M1, 2026-09-11):
+      // correction ids embed up to 30 chars of rule-derived text
+      // (`${date}-${slugified-rule}`, check.ts), so since the corrections
+      // tier joined this surface the id list is memory-DERIVED bytes and
+      // must ride inside fenceMemory() like every other memory-derived
+      // field (TOW2-388 invariant). Pre-fix4 every id here was a
+      // content-free base36 stableId() hash, so outside-the-fence was safe
+      // by accident, not by design.
+      memoryLines.push("");
+      const idList = result.results.map((r, i) => `${i + 1}=${r.id}`).join("  ");
+      memoryLines.push(`IDs: ${idList}`);
+
       const lines: string[] = [fenceMemory(memoryLines.join("\n"))];
 
-      // Feedback nudge — show IDs so agents can easily rate on next call
+      // Feedback nudge — AgentRecall-authored guidance only (no memory-derived
+      // bytes): stays outside the fence; the id placeholder points at the
+      // fenced ID list above instead of echoing a real id out here.
       lines.push("");
       lines.push("— Rate these results on next recall() to improve future ranking:");
-      const idList = result.results.map((r, i) => `${i + 1}=${r.id}`).join("  ");
-      lines.push(`  IDs: ${idList}`);
-      lines.push(`  Example: recall(query='...', feedback=[{id:'${result.results[0].id}', useful:true}])`);
+      lines.push("  Use the IDs listed above (inside the memory block).");
+      lines.push("  Example: recall(query='...', feedback=[{id:'<id-from-list-above>', useful:true}])");
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     } catch (err) {

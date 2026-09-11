@@ -207,10 +207,14 @@ export interface SmartRecallResultItem {
    * fix4 S2 (2026-09-11) — 1-hop graph-linked room slugs attached to the TOP
    * result as metadata (replaces the old synthetic "↳ linked: <room>" stub
    * ROWS, which burned 24/100 top-5 slots at the S2-standard baseline —
-   * see localRecallSearch's graph-walk comment). Present only on the rank-1
-   * item, only when its room has graph edges to rooms not already visible
-   * among the results, capped at 2 — the same signal the stubs carried, in
-   * a slot-free form. Additive: absent everywhere else.
+   * see localRecallSearch's graph-walk comment). Attached to the FUSION-TIME
+   * rank-1 item, only when its room has graph edges to real on-disk rooms
+   * not already visible among the results, capped at 2 — the same signal
+   * the stubs carried, in a slot-free form. Review L5 (same day): the
+   * post-fusion Beta-feedback re-sort in smartRecall() can displace the
+   * carrier from rank 1, so a consumer must key on the FIELD, not on
+   * position — the same displacement class the old 0.6× stub rows had.
+   * Additive: absent everywhere else.
    */
   alsoLinked?: string[];
   /**
@@ -263,7 +267,12 @@ export interface SmartRecallDegraded {
 /** Raw per-source candidate counts, captured BEFORE RRF fusion collapses
  *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5).
  *  fix4 S1 (2026-09-11): `corrections` added — additive field, matching the
- *  tier's promotion to a default competing source. */
+ *  tier's promotion to a default competing source.
+ *  fix4 unit-semantics note (review L4, same day): `palace` now counts
+ *  DOCUMENTS (one-doc-one-vote, post-bestByDoc) and `journal` counts
+ *  post-perSectionDedupe rows on this surface — both smaller than the old
+ *  per-line counts for an identical store. Diagnostic-only field; no
+ *  consumer treats it as a stable cross-version metric. */
 export interface CandidatesBySource {
   palace: number;
   journal: number;
@@ -540,6 +549,21 @@ export async function localRecallSearch(
       const visibleRooms = new Set(deduped.map((r) => r.room).filter(Boolean));
       const linked = getConnectedRooms(pd, topRoom)
         .filter((room) => !visibleRooms.has(room))
+        // Review M2-adjacent fix (2026-09-11): graph edge targets are not
+        // always room slugs — linkToSimilar historically minted edges to
+        // journal/correction item IDS (its `candidate.room ? room/id : id`
+        // target shape), and getConnectedRooms's `split("/")[0]` hands the
+        // bare id back as a pseudo-room. The old stub rows advertised those
+        // hashes verbatim ("↳ linked: k3f9a2"); alsoLinked only names
+        // targets that are REAL rooms on disk (_room.json exists — the same
+        // existence notion listRooms uses).
+        .filter((room) => {
+          try {
+            return fs.existsSync(path.join(pd, "rooms", room, "_room.json"));
+          } catch {
+            return false;
+          }
+        })
         .slice(0, 2);
       if (linked.length > 0) {
         deduped[0] = { ...deduped[0], alsoLinked: linked };

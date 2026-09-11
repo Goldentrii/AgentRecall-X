@@ -143,3 +143,55 @@ describe("fix4 S1 — corrections-tier egress is fenced (destination proof)", ()
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review M1 pin (2026-09-11): correction ids embed rule-derived text
+// (`${date}-${slugified-rule}`), so since the corrections tier joined the
+// default path, NO memory-derived bytes may render after the fence close —
+// the feedback-ID list must live INSIDE the fenced block, and the footer's
+// example must use a placeholder, never a real id.
+// ---------------------------------------------------------------------------
+
+describe("fix4 review M1 — feedback-ID footer carries no memory-derived bytes outside the fence", () => {
+  it("recall (live compiled server): the correction id appears only INSIDE the fence; the footer keeps only AgentRecall-authored text", async () => {
+    const root = isolatedRoot();
+    const proj = "fix4-m1-footer";
+    const RULE_FRAGMENT = "zzfixfourm1footer";
+    writeRawCorrection(root, proj, {
+      id: `2026-08-22-${RULE_FRAGMENT}-rule-probe`,
+      date: "2026-08-22",
+      severity: "p0",
+      project: proj,
+      rule: `${RULE_FRAGMENT} rule probe content`,
+      context: "",
+      tags: [],
+    });
+
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: [ENTRY],
+      env: { AGENT_RECALL_ROOT: root },
+    });
+    const client = new Client({ name: "fix4-m1-client", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(transport);
+    try {
+      const result = await client.callTool({ name: "recall", arguments: { query: `${RULE_FRAGMENT} rule`, project: proj } });
+      assert.ok(!result.isError, `recall unexpectedly errored: ${JSON.stringify(result)}`);
+      const text = textOf(result);
+      const closeIdx = text.lastIndexOf("⟦/");
+      assert.ok(closeIdx > 0, "fence close marker must exist");
+      const afterFence = text.slice(closeIdx);
+      assert.ok(
+        !afterFence.includes(RULE_FRAGMENT),
+        `no memory-derived bytes (rule text embedded in the correction id) may appear after the fence ` +
+        `close; got footer: ${afterFence}`,
+      );
+      const insideFence = text.slice(0, closeIdx);
+      assert.ok(insideFence.includes(`IDs: 1=2026-08-22-${RULE_FRAGMENT}-rule-probe`), `the real id list must render INSIDE the fence; got: ${insideFence.slice(-400)}`);
+      assert.ok(afterFence.includes("Rate these results on next recall() to improve future ranking"), "the AgentRecall-authored footer text stays outside the fence");
+      assert.ok(afterFence.includes("<id-from-list-above>"), "the footer example must use a placeholder id, never a real one");
+    } finally {
+      await client.close();
+    }
+  });
+});

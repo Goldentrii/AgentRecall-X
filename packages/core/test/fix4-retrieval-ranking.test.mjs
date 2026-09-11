@@ -961,3 +961,102 @@ describe("fix4 S1-refinement — corrections win exact RRF ties (authority order
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review-fix pins (independent review 2026-09-11: M3, M4, L3)
+// ---------------------------------------------------------------------------
+
+describe("fix4 review pins — IDF saturation, DF predicate, severity ladder", () => {
+  const SAVED_ENV = {};
+  let TMP;
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-rf-"));
+    setRoot(TMP);
+    resetRecallBackend();
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("RF-M3 (saturation characterization): one raw query word matching via TWO synonym variants counts once — a real two-word match outranks it", async () => {
+    const PROJECT = "fix4-rf-m3";
+    const T = "zzrfmthree9931";
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    // Doc A (NEWER, favored on a tie): contains the raw word "deploy" (so
+    // it passes the raw-word line-match gate) PLUS two more synonym
+    // variants of the SAME query word (ship, release) — pre-IDF
+    // keywordExactness counted 3 matched VARIANTS over 2 raw words,
+    // capping at 1.0 and tying the genuine full match below.
+    fs.writeFileSync(path.join(jdir, `${daysAgo(5)}--card--syn.md`), `# a\n\ndeploy ship release pipeline\n`);
+    // Doc B (older): genuinely matches BOTH raw words.
+    fs.writeFileSync(path.join(jdir, `${daysAgo(9)}--card--full.md`), `# b\n\ndeploy ${T} noted\n`);
+
+    const result = await queryMemory({ query: `deploy ${T}`, project: PROJECT, tiers: ["journal"] });
+    assert.ok(result.items.length >= 2, `both docs must match; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      result.items[0].excerpt.includes(T),
+      `the doc matching both RAW words must outrank the doc matching one word twice via synonyms ` +
+      `(per-word saturation, review M3); got ${JSON.stringify(result.items.map((i) => [i.excerpt, i.score]))}`,
+    );
+  });
+
+  it("RF-M4 (DF predicate parity): a word matching docs only through STEMMING still accrues df — no falsely-maximal weight", async () => {
+    const PROJECT = "fix4-rf-m4";
+    const RARE = "zzrfmfour8841";
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    // 4 CORPUS docs carry the query word "query" ONLY as the surface form
+    // "queries" ("queries" does NOT substring-contain "query" — q-u-e-r-i-e-s),
+    // so they are invisible to a substring-only DF (df stays 1) while the
+    // stemmed-token DF correctly counts them (df 5/6 -> low weight). They
+    // never pass the raw-word line gate, so they stay corpus-only — exactly
+    // the class the review named.
+    for (let i = 0; i < 4; i++) {
+      fs.writeFileSync(path.join(jdir, `${daysAgo(4 + i)}--card--pl-${i}.md`), `# p${i}\n\nwe log queries daily ${i}\n`);
+    }
+    // Doc B (NEWER, favored on tie): matches "query" literally.
+    fs.writeFileSync(path.join(jdir, `${daysAgo(3)}--card--singular.md`), `# b\n\nquery dashboard refreshed\n`);
+    // Doc A (older): the genuinely rare token only.
+    fs.writeFileSync(path.join(jdir, `${daysAgo(9)}--card--rare.md`), `# a\n\n${RARE} incident writeup\n`);
+
+    const result = await queryMemory({ query: `query ${RARE}`, project: PROJECT, tiers: ["journal"] });
+    assert.ok(result.items.length >= 2, `both hit classes must match; got ${JSON.stringify(result.items)}`);
+    assert.ok(
+      result.items[0].excerpt.includes(RARE),
+      `df("query") must count the 4 stem-matched corpus docs (5/6 ubiquitous -> low weight), so the truly ` +
+      `rare token's doc wins; a substring-only df saw df("query")=1 (tied with the rare word) and let the ` +
+      `newer literal-match doc tie-win; got ${JSON.stringify(result.items.map((i) => [i.excerpt, i.score]))}`,
+    );
+  });
+
+  it("RF-L3 (severity ladder): a legacy p2 record ranks below p1 at equal relevance/proof", async () => {
+    const PROJECT = "fix4-rf-l3";
+    const T = "zzrflthree7751";
+    const dir = correctionsDirFor(PROJECT);
+    fs.mkdirSync(dir, { recursive: true });
+    // p2 record NEWER (date-desc favored on a tie).
+    fs.writeFileSync(path.join(dir, `${daysAgo(4)}-l3-p2.json`), JSON.stringify({
+      id: `${daysAgo(4)}-l3-p2`, date: daysAgo(4), severity: "p2", project: PROJECT,
+      rule: `Check ${T} exports twice`, context: "", tags: [],
+    }));
+    fs.writeFileSync(path.join(dir, `${daysAgo(8)}-l3-p1.json`), JSON.stringify({
+      id: `${daysAgo(8)}-l3-p1`, date: daysAgo(8), severity: "p1", project: PROJECT,
+      rule: `Check ${T} imports twice`, context: "", tags: [],
+    }));
+
+    const result = await queryMemory({ query: `${T} twice`, project: PROJECT, tiers: ["corrections"] });
+    assert.equal(result.items.length, 2, `both must match; got ${JSON.stringify(result.items)}`);
+    assert.equal(
+      result.items[0].id,
+      `${daysAgo(8)}-l3-p1`,
+      `p1 must outrank a legacy p2 at equal relevance (enumerated severity ladder, review L3); got ` +
+      `${JSON.stringify(result.items.map((i) => [i.id, i.score]))}`,
+    );
+  });
+});
