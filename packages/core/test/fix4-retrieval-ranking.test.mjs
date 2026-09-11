@@ -448,11 +448,15 @@ describe("fix4 S3 — journal score-then-truncate (no recency pre-truncation)", 
 
     const jdir = journalDir(PROJECT);
     fs.mkdirSync(jdir, { recursive: true });
-    // 26 RECENT entries, each matching exactly ONE of the three query
+    // 26 NEWER entries, each matching exactly ONE of the three query
     // keywords — enough hits to exhaust perTierLimit=25 during a
     // date-descending pre-truncation scan before any older file is reached.
+    // Dated 4-6 days back: newer than the golden entry (so pre-truncation
+    // still consumes the limit before reaching it) but OUTSIDE the <72h
+    // hot-window boost, which is a separate, pre-existing RANK/FUSE
+    // mechanism deliberately not under test here.
     for (let i = 0; i < 26; i++) {
-      const d = daysAgo(1 + Math.floor(i / 9)); // spread over a few recent days
+      const d = daysAgo(4 + Math.floor(i / 9)); // spread over a few near days
       fs.writeFileSync(
         path.join(jdir, `${d}--card--recent-${String(i).padStart(2, "0")}.md`),
         `# recent filler ${i}\n\nnote ${i} mentions ${T1} only, in passing\n`,

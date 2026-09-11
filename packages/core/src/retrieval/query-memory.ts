@@ -839,8 +839,22 @@ function scoreJournalTier(
   interface Hit { title: string; excerpt: string; date: string; line: number }
   const hits: Hit[] = [];
 
+  // fix4 S3 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+  // SCORE-THEN-TRUNCATE. The pre-fix4 loop broke out at `hits.length >=
+  // limit` while iterating candidates in date-DESCENDING order — i.e. it
+  // truncated by RECENCY before any hit was ever scored, so an old entry
+  // matching the query strongly was dropped UNSCORED whenever `limit`
+  // weaker-but-newer line matches existed (the S2-standard eval's latent
+  // "journal recency pre-truncation" defect; the W2 sort-before-truncate
+  // work made the pre-truncation deterministic, not correct). Now every
+  // matching line across every candidate is collected and SCORED
+  // (recency×0.5 + exactness×0.5, unchanged formula), and `limit` is
+  // applied to the score-sorted list at the end — one truncation criterion,
+  // the same one RRF ranking uses. Cost: the full line scan always runs
+  // (previously it stopped early once `limit` hits were found) — bounded by
+  // the same already-read candidate set, and measured within the S11
+  // latency budget by this tranche's eval runs.
   for (const candidate of candidates) {
-    if (hits.length >= limit) break;
     if (sinceCutoff && candidate.date) {
       const fileDate = new Date(candidate.date);
       if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
@@ -848,7 +862,6 @@ function scoreJournalTier(
     const lines = candidate.content.split("\n");
     let currentSection = "top";
     for (let i = 0; i < lines.length; i++) {
-      if (hits.length >= limit) break;
       const line = lines[i];
       if (line.startsWith("## ")) {
         currentSection = line.slice(3).trim().toLowerCase().replace(/\s+/g, "_");
@@ -890,7 +903,8 @@ function scoreJournalTier(
     return { id, source: "journal", title: h.title, excerpt: h.excerpt, score: internalScore, date: h.date, line: h.line };
   });
   items.sort((a, b) => b.score - a.score);
-  return items;
+  // fix4 S3: truncate AFTER scoring+sorting — see the loop comment above.
+  return items.slice(0, limit);
 }
 
 /** Palace tier: ported from palace-search.ts's tagBonus + per-line matching +
