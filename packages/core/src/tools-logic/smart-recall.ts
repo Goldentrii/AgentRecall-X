@@ -204,6 +204,16 @@ export interface SmartRecallResultItem {
    */
   conflictsWith?: string[];
   /**
+   * fix4 S2 (2026-09-11) — 1-hop graph-linked room slugs attached to the TOP
+   * result as metadata (replaces the old synthetic "↳ linked: <room>" stub
+   * ROWS, which burned 24/100 top-5 slots at the S2-standard baseline —
+   * see localRecallSearch's graph-walk comment). Present only on the rank-1
+   * item, only when its room has graph edges to rooms not already visible
+   * among the results, capped at 2 — the same signal the stubs carried, in
+   * a slot-free form. Additive: absent everywhere else.
+   */
+  alsoLinked?: string[];
+  /**
    * remote-fusion wave #24 (2026-09-09) — the raw `deriveSlug()`-shaped
    * identity string (`sync.ts`'s `journal--${fileName}` /
    * `palace--${room}--${fileName}`). Present on remote-origin items (passed
@@ -488,7 +498,17 @@ export async function localRecallSearch(
     ...(item.conflictsWith && item.conflictsWith.length > 0 ? { conflictsWith: item.conflictsWith } : {}),
   }));
 
-  // Graph walk — surface 1-hop linked memories not already in results.
+  // Graph walk — fix4 S2 (2026-09-11): the 1-hop graph signal is now
+  // METADATA on its parent result (`alsoLinked` on the top hit), never a
+  // competing result row. The old form pushed synthetic "↳ linked: <room>"
+  // stub items at 0.6× the top score, which the global re-sort landed at
+  // ranks 2-4 — the S2-standard golden eval measured them burning 24/100
+  // top-5 slots (a pure precision loss: a stub carries no retrievable
+  // content, no verbatimKey, no excerpt beyond a template line). The graph
+  // SIGNAL is preserved verbatim — same source (getConnectedRooms on the
+  // top result's room), same 2-room cap — an agent that wants the linked
+  // rooms' content follows up with a room-scoped query, exactly what it had
+  // to do with the stub rows anyway.
   // Uses the RESOLVED project (a characterized fix over the original, which
   // used the raw, possibly-unresolved `project` parameter here — a latent
   // H1-class inconsistency for the "auto"-literal edge case; every existing
@@ -496,25 +516,20 @@ export async function localRecallSearch(
   // difference for the common case and a strict improvement otherwise).
   if (deduped.length > 0 && resolvedProject) {
     const pd = palaceDir(resolvedProject);
-    const resultIds = new Set(deduped.map((r) => r.id));
     const topRoom = deduped[0].room;
     if (topRoom) {
-      const linked = getConnectedRooms(pd, topRoom);
-      for (const linkedRoom of linked.slice(0, 2)) {
-        if (!resultIds.has(linkedRoom)) {
-          // Graph-walk items have NO verbatimKey → skipped by the bridge by design.
-          const linkedScore = deduped[0].score * 0.6;
-          deduped.push({
-            id: linkedRoom,
-            source: "palace" as const,
-            title: `↳ linked: ${linkedRoom}`,
-            excerpt: `Connected to ${topRoom} via memory graph`,
-            score: linkedScore,
-            ...label(linkedScore, "rrf-local"),
-            room: linkedRoom,
-          });
-          resultIds.add(linkedRoom);
-        }
+      // Rooms already visible among the substantive results carry their own
+      // slot — advertising them again as a link is redundant. (The OLD stub
+      // code's `resultIds.has(linkedRoom)` check compared room slugs against
+      // stableId hashes and so never excluded anything but its own earlier
+      // stubs; matching on the items' real `room` field is the check that
+      // comment always described.)
+      const visibleRooms = new Set(deduped.map((r) => r.room).filter(Boolean));
+      const linked = getConnectedRooms(pd, topRoom)
+        .filter((room) => !visibleRooms.has(room))
+        .slice(0, 2);
+      if (linked.length > 0) {
+        deduped[0] = { ...deduped[0], alsoLinked: linked };
       }
     }
   }

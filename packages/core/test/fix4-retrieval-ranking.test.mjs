@@ -32,8 +32,11 @@ import {
   retractCorrection,
   readCorrections,
   journalDir,
+  palaceDir,
 } from "../dist/index.js";
 import { localRecallSearch } from "../dist/tools-logic/smart-recall.js";
+import { addEdge } from "../dist/palace/graph.js";
+import { ensurePalaceInitialized } from "../dist/palace/rooms.js";
 
 /** Force the deterministic local keyword backend regardless of ambient env. */
 function stashBackendEnv(saved) {
@@ -318,6 +321,187 @@ describe("fix4 S1 — corrections tier wired into default smart_recall", () => {
       Math.abs(s1 - 1 / 61) < 1e-9 && Math.abs(s2 - 1 / 62) < 1e-9,
       `corrections must not time-decay: expected pure positional RRF scores (1/61, 1/62) for two ` +
       `equal-relevance records regardless of an 8-month age gap; got ${s1}, ${s2}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S2 — graph-link stubs become alsoLinked metadata
+// ---------------------------------------------------------------------------
+
+describe("fix4 S2 — graph-link stubs move out of result slots into alsoLinked", () => {
+  const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-s2-"));
+  const SAVED_ENV = {};
+  const PROJECT = "fix4-s2-graph-meta";
+  const TERM = "zzfixfourfoxtrot8806";
+  const TERM2 = "zzfixfourhotel1108";
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    setRoot(TMP);
+    resetRecallBackend();
+
+    // A palace room with a matching file, graph-connected to two other rooms.
+    // Initialize the palace FIRST: ensurePalaceInitialized (invoked by the
+    // palace tier on every search) full-inits any palace missing
+    // palace-index.json — including unconditionally rewriting graph.json to
+    // {edges: []} — so edges added to a hand-planted, index-less palace
+    // would be silently wiped by the first query (pre-existing init
+    // behavior, observed while writing this test).
+    ensurePalaceInitialized(PROJECT);
+    const roomDirPath = path.join(palaceDir(PROJECT), "rooms", "architecture");
+    fs.mkdirSync(roomDirPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(roomDirPath, "graph-meta-probe.md"),
+      `---\ntopic: graph-meta-probe\n---\n\n${TERM} ${TERM2} decision recorded here\n`,
+    );
+    const pd = palaceDir(PROJECT);
+    addEdge(pd, "architecture", "knowledge", "semantic_similar", 0.5);
+    addEdge(pd, "architecture", "decisions", "semantic_similar", 0.5);
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("S2a: no '↳ linked:' stub items occupy result slots; the parent (top) result carries alsoLinked instead", async () => {
+    const results = await localRecallSearch(TERM, PROJECT, 10);
+    assert.ok(results.length >= 1, `expected the substantive palace hit; got ${JSON.stringify(results)}`);
+
+    const stubs = results.filter(
+      (r) => r.title.startsWith("↳ linked:") || (r.excerpt ?? "").includes("via memory graph"),
+    );
+    assert.equal(
+      stubs.length,
+      0,
+      `graph-link stubs must no longer burn result slots (24/100 top-5 slots at baseline); got ` +
+      `${JSON.stringify(stubs.map((s) => s.title))}`,
+    );
+
+    const top = results[0];
+    assert.ok(Array.isArray(top.alsoLinked), `top result must carry the graph signal as alsoLinked metadata; got ${JSON.stringify(top)}`);
+    assert.deepEqual(
+      [...top.alsoLinked].sort(),
+      ["decisions", "knowledge"],
+      `alsoLinked must name the 1-hop connected rooms; got ${JSON.stringify(top.alsoLinked)}`,
+    );
+  });
+
+  it("S2b: alsoLinked is absent when the top result's room has no graph edges", async () => {
+    const LONE_PROJECT = "fix4-s2-lone";
+    const LONE_TERM = "zzfixfourgolf9907";
+    const roomDirPath = path.join(palaceDir(LONE_PROJECT), "rooms", "architecture");
+    fs.mkdirSync(roomDirPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(roomDirPath, "lone-probe.md"),
+      `---\ntopic: lone-probe\n---\n\n${LONE_TERM} standalone fact\n`,
+    );
+    const results = await localRecallSearch(LONE_TERM, LONE_PROJECT, 10);
+    assert.ok(results.length >= 1, "expected the substantive palace hit");
+    assert.equal(results[0].alsoLinked, undefined, "no edges -> no alsoLinked field at all (additive-absent, not empty)");
+  });
+
+  it("S2c: a linked room already visible among the results is not re-advertised in alsoLinked", async () => {
+    // Second matching file lives in "knowledge" (one of the linked rooms) —
+    // knowledge already surfaces as a result, so alsoLinked must only carry
+    // the room NOT already visible.
+    const roomDirPath = path.join(palaceDir(PROJECT), "rooms", "knowledge");
+    fs.mkdirSync(roomDirPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(roomDirPath, "kn-probe.md"),
+      `---\ntopic: kn-probe\n---\n\n${TERM} knowledge runbook entry\n`,
+    );
+    // Two-token query: the architecture probe matches both tokens
+    // (exactness 1.0), the knowledge probe only one (0.5) — pins
+    // architecture as the deterministic top result.
+    const results = await localRecallSearch(`${TERM} ${TERM2}`, PROJECT, 10);
+    const top = results[0];
+    assert.equal(top.room, "architecture", `precondition: architecture must be the top result; got ${JSON.stringify(results.map((r) => [r.title, r.score]))}`);
+    assert.ok(results.some((r) => r.room === "knowledge"), "precondition: knowledge must surface as a substantive result");
+    assert.ok(top.alsoLinked, "top result must still carry alsoLinked for the remaining unlinked room");
+    assert.ok(
+      !top.alsoLinked.includes("knowledge"),
+      `alsoLinked must not re-advertise a room already visible in the results; got ${JSON.stringify(top.alsoLinked)}`,
+    );
+    assert.deepEqual(top.alsoLinked, ["decisions"], `only the not-yet-visible room remains; got ${JSON.stringify(top.alsoLinked)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S3 — journal tier: score ALL candidates, then truncate
+// ---------------------------------------------------------------------------
+
+describe("fix4 S3 — journal score-then-truncate (no recency pre-truncation)", () => {
+  const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-s3-"));
+  const SAVED_ENV = {};
+  const PROJECT = "fix4-s3-journal";
+  const T1 = "zzfixfourindia2209";
+  const T2 = "zzfixfourjuliet3310";
+  const T3 = "zzfixfourkilo4411";
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    setRoot(TMP);
+    resetRecallBackend();
+
+    const jdir = journalDir(PROJECT);
+    fs.mkdirSync(jdir, { recursive: true });
+    // 26 RECENT entries, each matching exactly ONE of the three query
+    // keywords — enough hits to exhaust perTierLimit=25 during a
+    // date-descending pre-truncation scan before any older file is reached.
+    for (let i = 0; i < 26; i++) {
+      const d = daysAgo(1 + Math.floor(i / 9)); // spread over a few recent days
+      fs.writeFileSync(
+        path.join(jdir, `${d}--card--recent-${String(i).padStart(2, "0")}.md`),
+        `# recent filler ${i}\n\nnote ${i} mentions ${T1} only, in passing\n`,
+      );
+    }
+    // ONE 60-day-old entry matching ALL THREE keywords — the golden fact.
+    fs.writeFileSync(
+      path.join(jdir, `${daysAgo(60)}--card--golden-old.md`),
+      `# old golden entry\n\ndecision: ${T1} ${T2} ${T3} full rule lives here\n`,
+    );
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("S3a: an old, strongly-matching journal entry survives perTierLimit — all candidates are scored BEFORE truncation", async () => {
+    const result = await queryMemory({
+      query: `${T1} ${T2} ${T3}`,
+      project: PROJECT,
+      tiers: ["journal"],
+      journal: { perTierLimit: 25 },
+    });
+    const golden = result.items.find((i) => i.excerpt.includes(T3));
+    assert.ok(
+      golden,
+      `the 60-day-old entry matching ALL query keywords must be scored and surface — recency ` +
+      `pre-truncation at perTierLimit must not drop it unscored; got ${JSON.stringify(result.items.map((i) => i.title))}`,
+    );
+    assert.equal(
+      result.items[0].excerpt.includes(T3),
+      true,
+      `the full-match entry must outrank single-keyword recent filler (exactness 1.0 vs ~0.33); got top ` +
+      `${JSON.stringify(result.items[0])}`,
+    );
+  });
+
+  it("S3b: perTierLimit still caps the RETURNED item count (truncation happens, after scoring)", async () => {
+    const result = await queryMemory({
+      query: `${T1} ${T2} ${T3}`,
+      project: PROJECT,
+      tiers: ["journal"],
+      journal: { perTierLimit: 25 },
+    });
+    assert.ok(
+      result.candidatesBySource.journal <= 25,
+      `perTierLimit must still bound the tier's candidate count; got ${result.candidatesBySource.journal}`,
     );
   });
 });

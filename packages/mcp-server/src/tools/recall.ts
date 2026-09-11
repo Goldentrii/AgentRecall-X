@@ -15,6 +15,13 @@ function formatResults(items: SmartRecallResultItem[]): string {
     const date = item.date ? `  (${item.date})` : "";
     const room = item.room ? `/${item.room}` : "";
     lines.push(`[${i + 1}][${item.source}${room}][${conf}] ${trunc(item.title, 60)} — ${trunc(item.excerpt, 80)}${date}`);
+    // fix4 S2 (2026-09-11): the 1-hop graph signal is metadata on its parent
+    // result now (formerly synthetic "↳ linked:" result ROWS burning slots) —
+    // rendered as a sub-line so the signal stays agent-visible on this
+    // text surface too.
+    if (item.alsoLinked && item.alsoLinked.length > 0) {
+      lines.push(`    ↳ linked rooms: ${item.alsoLinked.join(", ")}`);
+    }
   }
   return lines.join("\n");
 }
