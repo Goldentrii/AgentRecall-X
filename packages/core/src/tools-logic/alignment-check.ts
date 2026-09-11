@@ -84,7 +84,7 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
           fs.writeFileSync(alignFile, `# alignment / ${category}\n${palaceEntry}`, "utf-8");
         }
       }
-      updatePalaceIndex(slug);
+      await updatePalaceIndex(slug);
     }
   } catch {
     // Palace integration is optional

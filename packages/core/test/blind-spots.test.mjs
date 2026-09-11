@@ -29,18 +29,18 @@ function correction(id, rule, severity = "p1") {
 }
 
 describe("Wave 5 — deriveBlindSpots", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-blindspots-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("3 corrections sharing >=2 keywords cluster into 1 blind spot", () => {
+  it("3 corrections sharing >=2 keywords cluster into 1 blind spot", async () => {
     const corrections = [
       { ...correction("2026-06-01-infra-revenue", "Never build infrastructure over revenue features", "p1"), recurrence_count: 1 },
       { ...correction("2026-06-02-infra-revenue", "Avoid infrastructure detours, prioritize revenue", "p1"), recurrence_count: 2 },
@@ -54,14 +54,14 @@ describe("Wave 5 — deriveBlindSpots", () => {
     assert.ok(top.trigger_keywords.includes("infrastructure") || top.trigger_keywords.includes("revenue"));
   });
 
-  it("a single P0 correction still yields a blind spot (>=1-if-P0 rule)", () => {
+  it("a single P0 correction still yields a blind spot (>=1-if-P0 rule)", async () => {
     const corrections = [correction("2026-06-01-no-push", "Never push without explicit approval", "p0")];
     const profile = deriveBlindSpots(corrections, []);
     assert.ok(profile.blind_spots.length >= 1, "single P0 must still produce a blind spot");
     assert.equal(profile.blind_spots[0].severity, "p0");
   });
 
-  it("two unrelated single P1 corrections produce no cluster", () => {
+  it("two unrelated single P1 corrections produce no cluster", async () => {
     const corrections = [
       correction("2026-06-01-blue", "Use the blue button on the login page", "p1"),
       correction("2026-06-02-cache", "Clear the redis cache after deploy", "p1"),
@@ -71,7 +71,7 @@ describe("Wave 5 — deriveBlindSpots", () => {
     assert.equal(profile.blind_spots.length, 0);
   });
 
-  it("normalizes alignment-log entries (corrections[]/delta) alongside records (.rule)", () => {
+  it("normalizes alignment-log entries (corrections[]/delta) alongside records (.rule)", async () => {
     const alignmentLog = [
       { date: "2026-06-01", goal: "x", confidence: "high", assumptions: [], corrections: ["Never build infrastructure over revenue"] },
       { date: "2026-06-02", goal: "y", confidence: "high", assumptions: [], delta: "infrastructure detour again, revenue ignored" },
@@ -81,7 +81,7 @@ describe("Wave 5 — deriveBlindSpots", () => {
     assert.ok(profile.blind_spots.length >= 1, "alignment-log + records should combine into a cluster");
   });
 
-  it("writeBlindSpots persists ONLY to personalDir/blind-spots.json (0600), classifyPath===personal", () => {
+  it("writeBlindSpots persists ONLY to personalDir/blind-spots.json (0600), classifyPath===personal", async () => {
     const profile = deriveBlindSpots(
       [
         { ...correction("2026-06-01-infra", "Never build infrastructure over revenue"), recurrence_count: 1 },
@@ -107,14 +107,14 @@ describe("Wave 5 — deriveBlindSpots", () => {
     assert.equal(read.blind_spots.length, profile.blind_spots.length);
   });
 
-  it("readBlindSpots returns null when absent", () => {
+  it("readBlindSpots returns null when absent", async () => {
     assert.equal(readBlindSpots("never-written"), null);
   });
 
-  it("recomputeBlindSpots derives from stored corrections and writes the profile", () => {
-    writeCorrection("bs-proj", correction("2026-06-01-infra-one", "Never build infrastructure over revenue features", "p1"));
-    writeCorrection("bs-proj", correction("2026-06-02-infra-two", "Avoid infrastructure detours, ship revenue", "p1"));
-    writeCorrection("bs-proj", correction("2026-06-03-infra-three", "Infrastructure must serve revenue first", "p1"));
+  it("recomputeBlindSpots derives from stored corrections and writes the profile", async () => {
+    await writeCorrection("bs-proj", correction("2026-06-01-infra-one", "Never build infrastructure over revenue features", "p1"));
+    await writeCorrection("bs-proj", correction("2026-06-02-infra-two", "Avoid infrastructure detours, ship revenue", "p1"));
+    await writeCorrection("bs-proj", correction("2026-06-03-infra-three", "Infrastructure must serve revenue first", "p1"));
     const profile = recomputeBlindSpots("bs-proj");
     assert.ok(profile.blind_spots.length >= 1);
     assert.ok(readBlindSpots("bs-proj"));

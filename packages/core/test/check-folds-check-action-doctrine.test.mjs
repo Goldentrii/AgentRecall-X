@@ -45,13 +45,13 @@ import { writeCorrection } from "../dist/storage/corrections.js";
 let testRoot;
 
 describe("C3 doctrine — default `check` surface blocks on an authoritative P0 correction", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-doctrine-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
@@ -59,7 +59,7 @@ describe("C3 doctrine — default `check` surface blocks on an authoritative P0 
   it("English P0 authoritative correction blocks a high-risk action via check() alone", async () => {
     const PROJECT = "doctrine-en-proj";
 
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-01-no-push-without-approval",
       date: "2026-07-01",
       severity: "p0",
@@ -98,7 +98,7 @@ describe("C3 doctrine — default `check` surface blocks on an authoritative P0 
     // "要求" clears corrections.ts's CJK actionable-signal gate (out of scope
     // for this task — see audit-cjk-check-action.test.mjs's file-header note).
     // The rule below is the exact rule text named in the task brief.
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-01-cjk-publish-gate",
       date: "2026-07-01",
       severity: "p0",

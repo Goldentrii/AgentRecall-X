@@ -29,7 +29,7 @@ function clearRoot() {
 }
 
 /** Seed a fully-populated project so every recognition field is non-trivial. */
-function seedRichProject(slug) {
+async function seedRichProject(slug) {
   // WHO — identity card with name + intention + source/owner.
   // writeIdentity does not create the palace dir; create it first.
   fs.mkdirSync(palaceDir(slug), { recursive: true });
@@ -61,7 +61,7 @@ function seedRichProject(slug) {
   );
 
   // CAN_DO — permission-bearing corrections (also feed PERSON via blind spots).
-  writeCorrection(slug, {
+  await writeCorrection(slug, {
     id: "2026-06-01-no-push",
     date: "2026-06-01",
     severity: "p0",
@@ -70,7 +70,7 @@ function seedRichProject(slug) {
     context: "Never push without explicit approval",
     tags: [],
   });
-  writeCorrection(slug, {
+  await writeCorrection(slug, {
     id: "2026-06-02-no-deploy",
     date: "2026-06-02",
     severity: "p0",
@@ -99,8 +99,8 @@ describe("Loop 4 — buildRecognition", () => {
   afterEach(clearRoot);
 
   // (1) DETERMINISM — same input ⇒ byte-identical payload across repeated runs.
-  it("is deterministic — repeated runs yield byte-identical JSON", () => {
-    seedRichProject("recog-det");
+  it("is deterministic — repeated runs yield byte-identical JSON", async () => {
+    await seedRichProject("recog-det");
     const runs = [];
     for (let i = 0; i < 5; i++) {
       runs.push(JSON.stringify(buildRecognition("recog-det")));
@@ -136,8 +136,8 @@ describe("Loop 4 — buildRecognition", () => {
     assert.equal(payload.person.caveat, PERSON_LOW_CONFIDENCE_CAVEAT);
   });
 
-  it("parses **Intention:** role cleanly (no leaked bold/colon markers)", () => {
-    seedRichProject("recog-role");
+  it("parses **Intention:** role cleanly (no leaked bold/colon markers)", async () => {
+    await seedRichProject("recog-role");
     const who = buildRecognition("recog-role").who;
     assert.equal(who.unknown, false);
     assert.equal(who.name, "recog-role");
@@ -148,7 +148,7 @@ describe("Loop 4 — buildRecognition", () => {
     assert.equal(who.owner, "/Users/test/Projects/recog-role");
   });
 
-  it("a template-stub-only identity card is still reported as unknown (no fabrication)", () => {
+  it("a template-stub-only identity card is still reported as unknown (no fabrication)", async () => {
     const slug = "stub-project";
     // Exactly what palace bootstrap writes: frontmatter + stub heading + stub quote.
     const idPath = path.join(palaceDir(slug), "identity.md");
@@ -170,7 +170,7 @@ describe("Loop 4 — buildRecognition", () => {
   // name), so WHO must be `unknown`. Loop 4's test used `# \n` (empty heading),
   // an APPROXIMATION that masked this bug — `# <slug>` parses as a real name and
   // wrongly returns unknown:false. This test exercises the ACTUAL bootstrap.
-  it("a freshly-bootstrapped identity card (real ensurePalaceInitialized output) is unknown", () => {
+  it("a freshly-bootstrapped identity card (real ensurePalaceInitialized output) is unknown", async () => {
     const slug = "bootstrap-project";
     ensurePalaceInitialized(slug);
 
@@ -189,7 +189,7 @@ describe("Loop 4 — buildRecognition", () => {
 
   // The flip-side guard: a slug heading WITH real authored body (intention/owner)
   // is a known identity — the fix must not over-correct and erase real cards.
-  it("a slug heading WITH real authored intention is known (no over-correction)", () => {
+  it("a slug heading WITH real authored intention is known (no over-correction)", async () => {
     const slug = "filled-project";
     ensurePalaceInitialized(slug);
     // Human fills in the card: keeps the `# <slug>` heading, adds a real intention.
@@ -205,8 +205,8 @@ describe("Loop 4 — buildRecognition", () => {
   });
 
   // (3) NO NETWORK on the hot path — stub global fetch and assert it is never called.
-  it("makes no network call — global fetch is never invoked", () => {
-    seedRichProject("recog-net");
+  it("makes no network call — global fetch is never invoked", async () => {
+    await seedRichProject("recog-net");
 
     const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
@@ -224,7 +224,7 @@ describe("Loop 4 — buildRecognition", () => {
     }
   });
 
-  it("recognition-builder.ts source references no Supabase / fetch / OpenAI in its call surface", () => {
+  it("recognition-builder.ts source references no Supabase / fetch / OpenAI in its call surface", async () => {
     // Static guard: the assembler module itself imports no network client.
     const src = fs.readFileSync(
       new URL("../src/tools-logic/recognition-builder.ts", import.meta.url),
@@ -242,8 +242,8 @@ describe("Loop 4 — buildRecognition", () => {
   });
 
   // (4) PERSON profile carries the explicit low-confidence caveat.
-  it("person profile always carries the low-confidence caveat", () => {
-    seedRichProject("recog-caveat");
+  it("person profile always carries the low-confidence caveat", async () => {
+    await seedRichProject("recog-caveat");
     const payload = buildRecognition("recog-caveat");
     assert.ok(payload.person.tendencies.length >= 1, "expected at least one tendency from seeded P0s");
     assert.equal(payload.person.caveat, PERSON_LOW_CONFIDENCE_CAVEAT);
@@ -252,8 +252,8 @@ describe("Loop 4 — buildRecognition", () => {
     assert.match(payload.person.caveat, /not validated/i);
   });
 
-  it("permissions are deterministically ordered P0-before-P1 then by id", () => {
-    seedRichProject("recog-order");
+  it("permissions are deterministically ordered P0-before-P1 then by id", async () => {
+    await seedRichProject("recog-order");
     const { permissions } = buildRecognition("recog-order").can_do;
     for (let i = 1; i < permissions.length; i++) {
       const prev = permissions[i - 1];

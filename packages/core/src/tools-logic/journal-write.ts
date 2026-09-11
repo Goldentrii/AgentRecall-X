@@ -90,7 +90,7 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
   // "agentrecall" resolve to the same on-disk dir (resolveProjectDirName
   // reuse rule), so they must also share one lock — a raw-slug key would
   // let two case-variant callers race each other into the same day file.
-  const { filePath, updated } = withLock(`journal-day-${sanitizeProject(slug)}`, () => {
+  const { filePath, updated } = await withLock(`journal-day-${sanitizeProject(slug)}`, () => {
     // Intelligent naming (v3.4.1+): {date}--{saveType}--{sig}--{theme}--{slug}.md
     // Falls back to legacy {date}.md when no saveType provided.
     const basePath = path.join(dir, `${date}.md`);
@@ -160,8 +160,8 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
       fs.writeFileSync(targetPath, `${fm}# ${input.palace_room} / ${topicFile}\n${entry}`, "utf-8");
     }
 
-    const fanOutResult = fanOut(slug, input.palace_room, topicFile, input.content, [], "medium");
-    updatePalaceIndex(slug);
+    const fanOutResult = await fanOut(slug, input.palace_room, topicFile, input.content, [], "medium");
+    await updatePalaceIndex(slug);
 
     palaceResult = { room: input.palace_room, topic: topicFile, fan_out: fanOutResult.updatedRooms };
   }

@@ -173,7 +173,7 @@ export async function predictCorrection(
   for (const r of topRisks) {
     if (!r.correction_id) continue;
     try {
-      recordOutcome({ correction_id: r.correction_id, project: slug, kind: "predicted", at });
+      await recordOutcome({ correction_id: r.correction_id, project: slug, kind: "predicted", at });
     } catch {
       // instrumentation must never break prediction
     }

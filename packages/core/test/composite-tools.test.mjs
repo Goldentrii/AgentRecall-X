@@ -18,7 +18,7 @@ describe("Composite tools — session_start", () => {
     await core.palaceWrite({ room: "architecture", topic: "auth", content: "JWT-based authentication", project: "test-composite" });
   });
 
-  after(() => {
+  after(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
@@ -66,7 +66,7 @@ describe("Composite tools — session_end", () => {
     core.setRoot(TEST_ROOT_END);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_END, { recursive: true, force: true });
@@ -109,7 +109,7 @@ describe("Composite tools — check", () => {
     core.setRoot(TEST_ROOT_CHECK);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_CHECK, { recursive: true, force: true });
@@ -147,16 +147,16 @@ describe("Awareness archive", () => {
     process.env.AGENT_RECALL_ROOT = TEST_ROOT_ARCHIVE;
     core = await import("../dist/index.js");
     core.setRoot(TEST_ROOT_ARCHIVE);
-    core.initAwareness("archive test");
+    await core.initAwareness("archive test");
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_ARCHIVE, { recursive: true, force: true });
   });
 
-  it("demoted insights go to archive, not deleted", () => {
+  it("demoted insights go to archive, not deleted", async () => {
     // Fill 20 insights (cap is 20) — all titles must be 3+ words to pass quality gate
     const topics = [
       "PostgreSQL indexing strategies", "Kubernetes pod autoscaling", "WebSocket connection pooling",
@@ -168,17 +168,17 @@ describe("Awareness archive", () => {
       "NATS JetStream delivery", "Wasm component types",
     ];
     for (const topic of topics) {
-      core.addInsight({ title: topic, evidence: `Evidence for ${topic}`, appliesWhen: [topic.split(" ")[0].toLowerCase()], source: "test" });
+      await core.addInsight({ title: topic, evidence: `Evidence for ${topic}`, appliesWhen: [topic.split(" ")[0].toLowerCase()], source: "test" });
     }
 
     // Add 21st — should demote the lowest
-    core.addInsight({ title: "Terraform state locking", evidence: "Lost state once", appliesWhen: ["terraform"], source: "test" });
+    await core.addInsight({ title: "Terraform state locking", evidence: "Lost state once", appliesWhen: ["terraform"], source: "test" });
 
     const archive = core.readAwarenessArchive();
     assert.ok(archive.length >= 1, "Demoted insight should be in archive");
   });
 
-  it("archive is capped at 50", () => {
+  it("archive is capped at 50", async () => {
     const archive = core.readAwarenessArchive();
     assert.ok(archive.length <= 50);
   });
@@ -196,7 +196,7 @@ describe("Relevance feedback", () => {
     await core.palaceWrite({ room: "goals", topic: "auth", content: "Build auth system", project: "test-fb" });
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_FB, { recursive: true, force: true });
@@ -256,7 +256,7 @@ describe("Stable IDs and query-aware feedback", () => {
     await core.palaceWrite({ room: "goals", topic: "auth", content: "Build auth system with JWT", project: "test-ids" });
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_IDS, { recursive: true, force: true });
@@ -312,7 +312,7 @@ describe("session_start watch_for", () => {
     core.setRoot(TEST_ROOT_WF);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_WF, { recursive: true, force: true });
@@ -339,7 +339,7 @@ describe("Correction capture via check", () => {
     core.setRoot(TEST_ROOT_CORR);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT_CORR, { recursive: true, force: true });

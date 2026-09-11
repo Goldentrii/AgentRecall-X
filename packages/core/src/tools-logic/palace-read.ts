@@ -45,7 +45,7 @@ export async function palaceRead(input: PalaceReadInput): Promise<PalaceReadResu
     return { project: slug, error: `Room '${input.room}' not found in project '${slug}'` };
   }
 
-  recordAccess(slug, input.room);
+  await recordAccess(slug, input.room);
 
   const pd = palaceDir(slug);
   const safeRoom = sanitizeSlug(input.room);

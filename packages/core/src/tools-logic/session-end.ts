@@ -373,7 +373,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
           if (firedToday && (firedToday.has("heeded") || firedToday.has("recurred"))) {
             // Close the predict-the-correction loop (unchanged from pre-C3).
             if (firedToday.has("recurred") && !firedToday.has("predict_hit") && predictedOnEarlierDay(c.id)) {
-              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
+              await recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
             }
             continue;
           }
@@ -395,7 +395,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
           // Verdict determination (strongest evidence wins):
           if (hasRecurrenceMarker && (hasTriggerEvidence || hasTopicalOverlap)) {
             // Violated: recurrence evidence + at least weak trigger/topical evidence
-            recordOutcome({
+            await recordOutcome({
               correction_id: c.id,
               project: slug,
               kind: "recurred",
@@ -407,12 +407,12 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
             });
             // Predict-the-correction cross-day hit (unchanged logic).
             if (!firedToday?.has("predict_hit") && predictedOnEarlierDay(c.id)) {
-              recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
+              await recordOutcome({ correction_id: c.id, project: slug, kind: "predict_hit", at: nowISO, evidence: "earlier-day prediction recurred today", session_id: sessionId });
             }
           } else if (hasTriggerEvidence && !hasRecurrenceMarker) {
             // Triggered via check-action, no recurrence detected → heeded
             // This is the ONLY path to heeded at session-end (C3 semantic break).
-            recordOutcome({
+            await recordOutcome({
               correction_id: c.id,
               project: slug,
               kind: "heeded",
@@ -429,7 +429,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
             // "heeded", but no longer default-bucketed into "unknown" either.
             // A SEPARATE, weaker signal (own counter `not_violated_count`),
             // deliberately excluded from heed_rate/precision/proof_confidence.
-            recordOutcome({
+            await recordOutcome({
               correction_id: c.id,
               project: slug,
               kind: "not_violated",
@@ -444,7 +444,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
             // (A recurrence marker present but with neither trigger nor topical
             // evidence to attribute it to THIS correction also lands here —
             // unchanged from before this Option A split.)
-            recordOutcome({
+            await recordOutcome({
               correction_id: c.id,
               project: slug,
               kind: "unknown",
@@ -577,7 +577,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
                     continue;
                   }
                   const shared = overlap(seedMatch.sig, candSig);
-                  recordOutcome({
+                  await recordOutcome({
                     correction_id: cand.id,
                     project: proj, // originating correction's own slug (owner decision 3)
                     kind: "recurred",
@@ -673,7 +673,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   if (input.deferConsolidation) {
     try {
       ensurePalaceInitialized(slug);
-      enqueueConsolidation({
+      await enqueueConsolidation({
         project: slug,
         sessionId: getSessionId(),
         reason: "session_end deferred (hook-end)",
@@ -707,7 +707,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   } else {
     try {
       ensurePalaceInitialized(slug);
-      consolidateJournalToPalace(slug);
+      await consolidateJournalToPalace(slug);
       palaceConsolidated = true;
     } catch (err) {
       palaceError = err instanceof Error ? err.message : String(err);
@@ -907,7 +907,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   const qualityWarnings = checkInsightQuality(input.insights ?? []);
 
   // Auto-promote confirmed cross-session insights into awareness
-  promoteConfirmedInsights(3);
+  await promoteConfirmedInsights(3);
 
   // Pipeline integration: caller can close the current phase and/or open a
   // new one as part of this save. No LLM, no auto-detect — explicit only.

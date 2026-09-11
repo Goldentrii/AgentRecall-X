@@ -47,8 +47,8 @@ describe("W2-1 — corrections/_index.md", () => {
   beforeEach(setRoot);
   afterEach(teardownRoot);
 
-  it("is regenerated on writeCorrection with a severity-first, status, date-desc sorted table", () => {
-    writeCorrection("w2-corr-proj", {
+  it("is regenerated on writeCorrection with a severity-first, status, date-desc sorted table", async () => {
+    await writeCorrection("w2-corr-proj", {
       id: "p1-old",
       date: "2026-07-01",
       severity: "p1",
@@ -57,7 +57,7 @@ describe("W2-1 — corrections/_index.md", () => {
       context: "Always do X before Y.",
       tags: [],
     });
-    writeCorrection("w2-corr-proj", {
+    await writeCorrection("w2-corr-proj", {
       id: "p0-new",
       date: "2026-07-20",
       severity: "p0",
@@ -85,8 +85,8 @@ describe("W2-1 — corrections/_index.md", () => {
     assert.deepEqual(leftover, [], "no .tmp- files should remain after atomic write");
   });
 
-  it("flips a record's status to 'retracted' in the index on retractCorrection", () => {
-    writeCorrection("w2-corr-proj2", {
+  it("flips a record's status to 'retracted' in the index on retractCorrection", async () => {
+    await writeCorrection("w2-corr-proj2", {
       id: "to-retract",
       date: "2026-07-10",
       severity: "p1",
@@ -95,7 +95,7 @@ describe("W2-1 — corrections/_index.md", () => {
       context: "Always retract this one.",
       tags: [],
     });
-    retractCorrection("w2-corr-proj2", "to-retract", "test");
+    await retractCorrection("w2-corr-proj2", "to-retract", "test");
 
     const indexPath = path.join(correctionsDir("w2-corr-proj2"), "_index.md");
     const content = fs.readFileSync(indexPath, "utf-8");
@@ -103,7 +103,7 @@ describe("W2-1 — corrections/_index.md", () => {
     assert.match(content, /\| p1 \| other \| retracted \|/);
   });
 
-  it("regenerateCorrectionsIndex never throws even with no corrections dir yet", () => {
+  it("regenerateCorrectionsIndex never throws even with no corrections dir yet", async () => {
     assert.doesNotThrow(() => regenerateCorrectionsIndex("brand-new-empty-proj"));
     const indexPath = path.join(correctionsDir("brand-new-empty-proj"), "_index.md");
     assert.ok(fs.existsSync(indexPath));
@@ -115,7 +115,7 @@ describe("W2-2 — journal/_index.md + underscore-prefix reader-exclusion guard"
   beforeEach(setRoot);
   afterEach(teardownRoot);
 
-  it("isJournalFile excludes _index.md (and any underscore-prefixed .md file)", () => {
+  it("isJournalFile excludes _index.md (and any underscore-prefixed .md file)", async () => {
     assert.equal(isJournalFile("_index.md"), false);
     assert.equal(isJournalFile("_anything-else.md"), false);
     assert.equal(isJournalFile("2026-07-20--arsave--some-slug.md"), true);
@@ -229,22 +229,23 @@ describe("W2-4 — filelock TOCTOU fix (journal same-day decide+write)", () => {
   beforeEach(setRoot);
   afterEach(teardownRoot);
 
-  it("withLock releases the lock dir after normal completion", () => {
-    withLock("w2-lock-normal", () => 42);
+  it("withLock releases the lock dir after normal completion", async () => {
+    await withLock("w2-lock-normal", () => 42);
     assert.equal(fs.existsSync(path.join(testRoot, ".lock-w2-lock-normal")), false, "lock dir must not leak after a normal run");
   });
 
-  it("withLock releases the lock dir even when the critical section throws", () => {
-    assert.throws(() => {
+  it("withLock releases the lock dir even when the critical section throws", async () => {
+    await assert.rejects(
       withLock("w2-lock-throw", () => {
         throw new Error("boom");
-      });
-    }, /boom/);
+      }),
+      /boom/,
+    );
     assert.equal(fs.existsSync(path.join(testRoot, ".lock-w2-lock-throw")), false, "lock dir must not leak after a thrown write");
   });
 
-  it("a lock held by acquireLock blocks a second immediate acquire attempt (mutual exclusion smoke test)", () => {
-    const release = acquireLock("w2-lock-mutex");
+  it("a lock held by acquireLock blocks a second immediate acquire attempt (mutual exclusion smoke test)", async () => {
+    const release = await acquireLock("w2-lock-mutex");
     assert.ok(fs.existsSync(path.join(testRoot, ".lock-w2-lock-mutex")), "lock dir must exist while held");
     release();
     assert.equal(fs.existsSync(path.join(testRoot, ".lock-w2-lock-mutex")), false, "lock dir must be gone after release");

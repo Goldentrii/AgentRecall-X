@@ -55,13 +55,13 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     core.setRoot(TEST_ROOT);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot?.();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fs.rmSync(path.join(TEST_ROOT, "projects"), { recursive: true, force: true });
   });
 
@@ -782,7 +782,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     // wave adds (date-tie -> order fallback, higher order = current)
     // without either confound.
     describe("E7 — detectContradictions() exercised directly (unit-level, avoids the two confounds above)", () => {
-      it("resolves by date when dates differ (journal-style)", () => {
+      it("resolves by date when dates differ (journal-style)", async () => {
         const items = [
           { text: "AgentRecall version 3.5.0", date: "2026-01-01" },
           { text: "AgentRecall version 3.4.41", date: "2026-08-04" },
@@ -803,7 +803,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       // resolveDirection's order-fallback/ambiguous-tie/no-shared-key logic
       // (which is orthogonal to which extractor supplied the shared key),
       // not vacuous passes against a defunct code path.
-      it("falls back to order when dates tie (palace-style same-day tie-break, higher order = current)", () => {
+      it("falls back to order when dates tie (palace-style same-day tie-break, higher order = current)", async () => {
         const itemsSameDate = [
           { text: "Widget version 1.0.0", date: "2026-05-05", order: 3 },
           { text: "Widget version 2.0.0", date: "2026-05-05", order: 9 },
@@ -819,7 +819,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
         assert.equal(r2.supersededBy.get(0), 1, "with no date at all, order alone must resolve the direction");
       });
 
-      it("is fully ambiguous with no date AND no order signal — annotates both, resolves neither", () => {
+      it("is fully ambiguous with no date AND no order signal — annotates both, resolves neither", async () => {
         const items = [{ text: "Widget version 1.0.0" }, { text: "Widget version 2.0.0" }];
         const { supersededBy, conflictsWith } = core.detectContradictions(items);
         assert.equal(supersededBy.size, 0, "no signal at all must never guess a direction");
@@ -827,7 +827,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
         assert.deepEqual(conflictsWith.get(1), [0]);
       });
 
-      it("is grammar-negative when no key is shared — no conflict, regardless of date", () => {
+      it("is grammar-negative when no key is shared — no conflict, regardless of date", async () => {
         const items = [
           { text: "alpha 1.0.0", date: "2026-01-01" },
           { text: "beta 2.0.0", date: "2026-08-01" },
@@ -994,7 +994,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     let origHome;
     let legacyJournalDir;
 
-    before(() => {
+    before(async () => {
       origHome = process.env.HOME;
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "ar-legacy-root-fixture-"));
       process.env.HOME = tmpHome;
@@ -1002,7 +1002,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       fs.mkdirSync(legacyJournalDir, { recursive: true });
     });
 
-    after(() => {
+    after(async () => {
       process.env.HOME = origHome;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
@@ -1076,7 +1076,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     it("G1: tiers:['corrections'] returns a matching correction annotated with confidence/decayClass/severity(P0-ness)", async () => {
       const PROJECT = "qmp-corrections-basic-demo";
       const TERM = "QMP_CORRECTIONS_BASIC_UNIQUE_TERM";
-      const write = core.writeCorrection(PROJECT, {
+      const write = await core.writeCorrection(PROJECT, {
         id: "2026-09-01-g1-basic",
         date: "2026-09-01",
         severity: "p0",
@@ -1154,7 +1154,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       // Now add a correction that WOULD match the same combined query, in
       // the SAME project — proving its mere existence does not change a
       // journal+palace-only call's output at all.
-      core.writeCorrection(PROJECT, {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-g3-mixed",
         date: "2026-09-01",
         severity: "p1",
@@ -1192,7 +1192,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
       const CORR_TERM = "QMP_DEFAULT_SURFACE_CORRECTIONS_UNIQUE_TERM";
       const JOURNAL_TERM = "QMP_DEFAULT_SURFACE_JOURNAL_UNIQUE_TERM";
 
-      core.writeCorrection(PROJECT, {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-g4-default",
         date: "2026-09-01",
         severity: "p1",
@@ -1234,7 +1234,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     it("G5: a retracted (active:false/superseded) correction NEVER surfaces — RED-by-revert (surfaces before retraction, absent after, proving the absence is a real trust decision, not an already-empty query)", async () => {
       const PROJECT = "qmp-corrections-retracted-demo";
       const TERM = "QMP_CORRECTIONS_RETRACTED_UNIQUE_TERM";
-      const write = core.writeCorrection(PROJECT, {
+      const write = await core.writeCorrection(PROJECT, {
         id: "2026-09-01-g5-retract",
         date: "2026-09-01",
         severity: "p1",
@@ -1251,7 +1251,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
         `precondition: the correction must surface BEFORE retraction — otherwise the absence below would be vacuous; got ${JSON.stringify(beforeRetract.items)}`,
       );
 
-      const retract = core.retractCorrection(PROJECT, "2026-09-01-g5-retract", "test retraction", "2026-09-01-some-replacement");
+      const retract = await core.retractCorrection(PROJECT, "2026-09-01-g5-retract", "test retraction", "2026-09-01-some-replacement");
       assert.ok(retract.success, `precondition: retraction itself must succeed; got ${JSON.stringify(retract)}`);
 
       const afterRetract = await core.queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections"] });
@@ -1277,7 +1277,7 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
     // scoreInsightTier), made explicit here for the corrections tier too.
     it("G6: an empty-string query against tiers:['corrections'] returns zero items, never throws (even with a real correction present)", async () => {
       const PROJECT = "qmp-corrections-empty-query-demo";
-      core.writeCorrection(PROJECT, {
+      await core.writeCorrection(PROJECT, {
         id: "2026-09-01-g6-empty-query",
         date: "2026-09-01",
         severity: "p1",

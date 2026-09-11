@@ -29,7 +29,7 @@ import { tokenize } from "../dist/tools-logic/check-action.js";
 // 1. Unit: clusterConvergence on hand-built token sets.
 // ───────────────────────────────────────────────────────────────────────────
 describe("Loop 10 — clusterConvergence instrument (synthetic token sets)", () => {
-  it("DETECTS convergence: members increasingly share a stable core", () => {
+  it("DETECTS convergence: members increasingly share a stable core", async () => {
     // A converging cluster — every member repeats a shared core
     // {alpha, beta, gamma} and adds a SHRINKING tail of unique noise. As N grows
     // the core dominates: novelty falls, the majority-consensus locks onto the
@@ -73,7 +73,7 @@ describe("Loop 10 — clusterConvergence instrument (synthetic token sets)", () 
     );
   });
 
-  it("does NOT detect convergence: a diverse / noise cluster (no stable core)", () => {
+  it("does NOT detect convergence: a diverse / noise cluster (no stable core)", async () => {
     // Each member is fresh vocabulary with NO shared core. Novelty stays high,
     // the majority-consensus stays (near) empty, SNR does not rise.
     const sets = [
@@ -100,7 +100,7 @@ describe("Loop 10 — clusterConvergence instrument (synthetic token sets)", () 
     );
   });
 
-  it("is symmetric to the instrument used on real corpus (tokenize path)", () => {
+  it("is symmetric to the instrument used on real corpus (tokenize path)", async () => {
     // Same convergence shape, but built through the PRODUCTION tokenizer from raw
     // rule strings — proves the metric behaves identically on real text input.
     const rules = [
@@ -120,7 +120,7 @@ describe("Loop 10 — clusterConvergence instrument (synthetic token sets)", () 
 //    Verifies the verdict machinery (untestable vs supported) and the
 //    cluster-size distribution honestly.
 // ───────────────────────────────────────────────────────────────────────────
-function writeCorrection(root, project, rec) {
+async function writeCorrection(root, project, rec) {
   const dir = path.join(root, "projects", project, "corrections");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${rec.date}-${rec.id}.json`), JSON.stringify(rec, null, 2), "utf-8");
@@ -128,17 +128,17 @@ function writeCorrection(root, project, rec) {
 
 describe("Loop 10 — runIntentConvergence end-to-end (synthetic corpus)", () => {
   let root;
-  beforeEach(() => {
+  beforeEach(async () => {
     root = path.join(tmpdir(), `ar-intent-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(root, { recursive: true });
   });
-  afterEach(() => {
+  afterEach(async () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("UNTESTABLE when there are too few multi-member clusters", () => {
+  it("UNTESTABLE when there are too few multi-member clusters", async () => {
     // A single isolated correction → no N>=3 cluster anywhere.
-    writeCorrection(root, "lonely", {
+    await writeCorrection(root, "lonely", {
       id: "solo", date: "2026-01-01", severity: "p1", project: "lonely",
       rule: "Prefer tabs over spaces in this one repo", tags: ["formatting"],
       active: true, kind: "correction", weight: 1,
@@ -148,12 +148,12 @@ describe("Loop 10 — runIntentConvergence end-to-end (synthetic corpus)", () =>
     assert.equal(r.views.headline.testable_clusters, 0, "zero testable clusters");
   });
 
-  it("SUPPORTED when enough engineered converging clusters exist", () => {
+  it("SUPPORTED when enough engineered converging clusters exist", async () => {
     // Build MIN_CLUSTERS_TO_DECIDE (3) separate projects, each with a 4-member
     // cluster that shares a stable core and adds shrinking noise → all converge.
-    const makeCluster = (proj, core, noises) => {
-      noises.forEach((noise, i) => {
-        writeCorrection(root, proj, {
+    const makeCluster = async (proj, core, noises) => {
+      noises.forEach(async (noise, i) => {
+        await writeCorrection(root, proj, {
           id: `${proj}-${i}`,
           date: `2026-0${i + 1}-01`,
           severity: "p0",
@@ -167,13 +167,13 @@ describe("Loop 10 — runIntentConvergence end-to-end (synthetic corpus)", () =>
       });
     };
     // core repeated; trailing noise shrinks to empty so novelty → 0, SNR ↑.
-    makeCluster("deploy", "always deploy staging before production", [
+    await makeCluster("deploy", "always deploy staging before production", [
       "extraneousalpha morenoiseword", "extraneousbeta", "", "",
     ]);
-    makeCluster("secrets", "never commit secret api credentials anywhere", [
+    await makeCluster("secrets", "never commit secret api credentials anywhere", [
       "loosephraseone anothernoise", "loosephrasetwo", "", "",
     ]);
-    makeCluster("naming", "rename everything to novada proxy consistently", [
+    await makeCluster("naming", "rename everything to novada proxy consistently", [
       "spuriouswordone trailingnoise", "spuriouswordtwo", "", "",
     ]);
 
@@ -189,7 +189,7 @@ describe("Loop 10 — runIntentConvergence end-to-end (synthetic corpus)", () =>
     );
   });
 
-  it("REFUTED when enough multi-member clusters exist but they do NOT converge", () => {
+  it("REFUTED when enough multi-member clusters exist but they do NOT converge", async () => {
     // 3 clusters whose members are joined ONLY by a shared anchor pair (so they
     // cluster), but every member then piles on FRESH non-overlapping vocabulary
     // — novelty does not shrink, no majority core forms beyond the anchor.
@@ -202,8 +202,8 @@ describe("Loop 10 — runIntentConvergence end-to-end (synthetic corpus)", () =>
         "mike november oscar papa quebec romeo",
         "sierra tango uniform victor whiskey xray",
       ];
-      tails.forEach((tail, i) => {
-        writeCorrection(root, proj, {
+      tails.forEach(async (tail, i) => {
+        await writeCorrection(root, proj, {
           id: `${proj}-${i}`,
           date: `2026-0${i + 1}-01`,
           severity: "p1",

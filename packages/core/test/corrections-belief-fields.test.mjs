@@ -45,20 +45,20 @@ function readRawCorrection(project, filename) {
   return JSON.parse(fs.readFileSync(path.join(correctionsDir(project), filename), "utf-8"));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-belief-fields-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
 
 describe("v4 W1 — confidence/provenance round-trip", () => {
-  it("(a) new fields round-trip write -> read unchanged", () => {
-    const res = writeCorrection("belief-proj", {
+  it("(a) new fields round-trip write -> read unchanged", async () => {
+    const res = await writeCorrection("belief-proj", {
       id: "2026-09-08-round-trip",
       date: "2026-09-08",
       severity: "p1",
@@ -78,7 +78,7 @@ describe("v4 W1 — confidence/provenance round-trip", () => {
     assert.equal(rec.decay_class_override, "volatile");
   });
 
-  it("(b) OLD-shape record (no new fields) reads with safe defaults; byte-identical elsewhere", () => {
+  it("(b) OLD-shape record (no new fields) reads with safe defaults; byte-identical elsewhere", async () => {
     // p0 -> defaultWeight 1.0 -> confidence "high"
     writeRawCorrection("belief-proj", "2026-09-01--old-p0.json", {
       id: "2026-09-01-old-p0",
@@ -133,8 +133,8 @@ describe("v4 W1 — confidence/provenance round-trip", () => {
     assert.equal("decay_class_override" in rawP0, false);
   });
 
-  it("explicit confidence/provenance on write are never overwritten by defaults", () => {
-    writeCorrection("belief-proj", {
+  it("explicit confidence/provenance on write are never overwritten by defaults", async () => {
+    await writeCorrection("belief-proj", {
       id: "2026-09-08-explicit",
       date: "2026-09-08",
       severity: "p0", // would default confidence to "high" if not explicit
@@ -152,7 +152,7 @@ describe("v4 W1 — confidence/provenance round-trip", () => {
 });
 
 describe("v4 W1 — decayClassOf (computed, never stored)", () => {
-  it("(c) computes correctly across every DecayClass boundary", () => {
+  it("(c) computes correctly across every DecayClass boundary", async () => {
     // No override -> corrections' class default ("slow" — §A.1: corrections
     // carry no MemoryCategory, behavioral rules "persist forever").
     assert.equal(decayClassOf({}), "slow");
@@ -165,7 +165,7 @@ describe("v4 W1 — decayClassOf (computed, never stored)", () => {
     assert.equal(decayClassOf({ decay_class_override: "volatile" }), "volatile");
   });
 
-  it("decayClassOf is pure and never touches disk or mutates its argument", () => {
+  it("decayClassOf is pure and never touches disk or mutates its argument", async () => {
     const rec = { decay_class_override: "static", id: "untouched" };
     const before = JSON.stringify(rec);
     decayClassOf(rec);
@@ -173,8 +173,8 @@ describe("v4 W1 — decayClassOf (computed, never stored)", () => {
     assert.equal(JSON.stringify(rec), before);
   });
 
-  it("decay_class is never persisted to disk — only decay_class_override is", () => {
-    const res = writeCorrection("belief-proj", {
+  it("decay_class is never persisted to disk — only decay_class_override is", async () => {
+    const res = await writeCorrection("belief-proj", {
       id: "2026-09-08-decay",
       date: "2026-09-08",
       severity: "p1",
@@ -195,11 +195,11 @@ describe("v4 W1 — decayClassOf (computed, never stored)", () => {
 });
 
 describe("v4 W1 — rebuild preserves the new fields", () => {
-  it("(d) runOutcomesRebuild repairs counters WITHOUT dropping confidence/provenance/decay_class_override", () => {
+  it("(d) runOutcomesRebuild repairs counters WITHOUT dropping confidence/provenance/decay_class_override", async () => {
     const project = "belief-rebuild";
     const now = () => new Date().toISOString();
 
-    writeCorrection(project, {
+    await writeCorrection(project, {
       id: "2026-09-08-rebuild-me",
       date: "2026-09-08",
       severity: "p1",
@@ -214,7 +214,7 @@ describe("v4 W1 — rebuild preserves the new fields", () => {
 
     // Establish a lossless ledger entry (this ALSO correctly updates the
     // on-disk counter via the normal locked path).
-    recordOutcome({ correction_id: "2026-09-08-rebuild-me", project, kind: "retrieved", at: now() });
+    await recordOutcome({ correction_id: "2026-09-08-rebuild-me", project, kind: "retrieved", at: now() });
 
     const filename = fs
       .readdirSync(correctionsDir(project))
@@ -229,7 +229,7 @@ describe("v4 W1 — rebuild preserves the new fields", () => {
     corrupted.retrieved_count = 0;
     writeRawCorrection(project, filename, corrupted);
 
-    const result = runOutcomesRebuild(project, { apply: true });
+    const result = await runOutcomesRebuild(project, { apply: true });
     assert.equal(result.apply, true);
     assert.equal(result.summary.changed, 1, "rebuild should have repaired exactly one divergent record");
 

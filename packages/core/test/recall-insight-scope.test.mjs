@@ -39,13 +39,13 @@ describe("recallInsight() + queryMemory() — Wave 3b SCOPE stage", () => {
     core.setRoot(TEST_ROOT);
   });
 
-  after(() => {
+  after(async () => {
     core.resetRoot?.();
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fs.rmSync(path.join(TEST_ROOT, "insights-index.json"), { force: true });
     fs.rmSync(path.join(TEST_ROOT, "projects"), { recursive: true, force: true });
   });
@@ -53,7 +53,7 @@ describe("recallInsight() + queryMemory() — Wave 3b SCOPE stage", () => {
   // ── PART A — additive-parameter equivalence ──────────────────────────────
   describe("PART A — recallInsight() default behavior is byte-identical when project/scope are omitted", () => {
     it("a caller that never passes project/scope sees no change: same matching_insights, same relevance values", async () => {
-      core.addIndexedInsight({
+      await core.addIndexedInsight({
         title: "EQUIVPROBE unrelated-to-scope insight",
         source: "test-seed",
         applies_when: ["equivprobe", "unrelated"],
@@ -73,22 +73,22 @@ describe("recallInsight() + queryMemory() — Wave 3b SCOPE stage", () => {
     const PROJECT_A = "scope-proj-a";
     const PROJECT_B = "scope-proj-b";
 
-    beforeEach(() => {
-      core.addIndexedInsight({
+    beforeEach(async () => {
+      await core.addIndexedInsight({
         title: "ZZZSCOPEALPHA deployment pipeline caching pattern",
         source: "test-seed",
         applies_when: ["scopeprobe"],
         severity: "important",
         projects: [PROJECT_A],
       });
-      core.addIndexedInsight({
+      await core.addIndexedInsight({
         title: "ZZZSCOPEBRAVO database migration rollback strategy",
         source: "test-seed",
         applies_when: ["scopeprobe"],
         severity: "important",
         projects: [PROJECT_B],
       });
-      core.addIndexedInsight({
+      await core.addIndexedInsight({
         title: "ZZZSCOPECHARLIE authentication token refresh logic",
         source: "test-seed",
         applies_when: ["scopeprobe"],
@@ -144,22 +144,22 @@ describe("recallInsight() + queryMemory() — Wave 3b SCOPE stage", () => {
     const PROJECT_A = "qm-scope-proj-a";
     const PROJECT_B = "qm-scope-proj-b";
 
-    beforeEach(() => {
-      core.addIndexedInsight({
+    beforeEach(async () => {
+      await core.addIndexedInsight({
         title: "QMZZZSCOPEALPHA deployment pipeline caching pattern",
         source: "test-seed",
         applies_when: ["qmscopeprobe"],
         severity: "important",
         projects: [PROJECT_A],
       });
-      core.addIndexedInsight({
+      await core.addIndexedInsight({
         title: "QMZZZSCOPEBRAVO database migration rollback strategy",
         source: "test-seed",
         applies_when: ["qmscopeprobe"],
         severity: "important",
         projects: [PROJECT_B],
       });
-      core.addIndexedInsight({
+      await core.addIndexedInsight({
         title: "QMZZZSCOPECHARLIE authentication token refresh logic",
         source: "test-seed",
         applies_when: ["qmscopeprobe"],

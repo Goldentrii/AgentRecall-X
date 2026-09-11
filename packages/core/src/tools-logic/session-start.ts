@@ -957,7 +957,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     for (const c of rawCorrections) {
       if (c.last_retrieved && new Date(c.last_retrieved).toLocaleDateString("sv") === todayStr) continue; // already counted today
       try {
-        recordOutcome({
+        await recordOutcome({
           correction_id: c.id,
           project: slug,
           kind: "retrieved",

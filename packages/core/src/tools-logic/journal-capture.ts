@@ -59,7 +59,7 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
   // can't each decide "no log yet" and create two divergent log files.
   // Lock key case-normalized via sanitizeProject — same rationale as
   // journal-write.ts: case-variant slugs share one dir, so one lock.
-  const { logPath, entryNum } = withLock(`journal-capture-day-${sanitizeProject(slug)}`, () => {
+  const { logPath, entryNum } = await withLock(`journal-capture-day-${sanitizeProject(slug)}`, () => {
     const combined = `${input.question} ${input.answer}`;
     const baseLogPath = path.join(dir, `${date}-log.md`);
     const logFileName = captureLogFileName(date, fs.existsSync(baseLogPath), {
@@ -126,8 +126,8 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
         fs.writeFileSync(targetPath, `# ${input.palace_room} / captures\n${captureEntry}`, "utf-8");
       }
 
-      fanOut(slug, input.palace_room, "captures", `${input.question} ${input.answer}`, [], "medium");
-      updatePalaceIndex(slug);
+      await fanOut(slug, input.palace_room, "captures", `${input.question} ${input.answer}`, [], "medium");
+      await updatePalaceIndex(slug);
       palaceResult = { room: input.palace_room };
     } catch {
       // Palace integration is optional

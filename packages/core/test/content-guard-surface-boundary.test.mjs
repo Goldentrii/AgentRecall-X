@@ -47,12 +47,12 @@ describe("P0-a rework — surfacing-boundary scrub (archive/raw stays byte-ident
     core = await import("agent-recall-core");
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ar-p0-surface-"));
     core.setRoot(TEST_ROOT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     core.resetRoot();
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
@@ -145,7 +145,7 @@ describe("P0-a rework — surfacing-boundary scrub (archive/raw stays byte-ident
   // -------------------------------------------------------------------------
   // 4. palace/skills.ts writeSkill() — content AND filename scrubbed
   // -------------------------------------------------------------------------
-  it("writeSkill: neither the file CONTENT nor the on-disk FILENAME carries the raw secret/injection tag", () => {
+  it("writeSkill: neither the file CONTENT nor the on-disk FILENAME carries the raw secret/injection tag", async () => {
     const project = "surface-skills";
     const now = new Date().toISOString();
     const filePath = core.writeSkill(
@@ -188,7 +188,7 @@ describe("P0-a rework — surfacing-boundary scrub (archive/raw stays byte-ident
   //    same lossless tier, not named in the original review but required by
   //    "resurrect() output" being part of the destination-proof).
   // -------------------------------------------------------------------------
-  it("resurrect(): title/goalExcerpt/nextSteps built from an archive-only session (no card) are scrubbed; raw file on disk stays byte-identical", () => {
+  it("resurrect(): title/goalExcerpt/nextSteps built from an archive-only session (no card) are scrubbed; raw file on disk stays byte-identical", async () => {
     const project = "surface-resurrect";
     const rawTranscript = [
       JSON.stringify({ type: "user", message: { content: `RESURRECT_HOSTILE_MARKER investigating leaked key ${SECRET} ${INJECTION_TAG}` } }),
@@ -256,12 +256,12 @@ describe("P0-a rework — injection-regex narrowing (structural tokens only)", (
     core = await import("agent-recall-core");
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ar-p0-narrowing-"));
     core.setRoot(TEST_ROOT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     core.resetRoot();
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
@@ -324,12 +324,12 @@ describe("P0-a rework — check_action matching preserved (no placeholder pollut
     ({ writeCorrection } = await import("../dist/storage/corrections.js"));
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ar-p0-checkaction-"));
     process.env.AGENT_RECALL_ROOT = TEST_ROOT;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
@@ -352,7 +352,7 @@ describe("P0-a rework — check_action matching preserved (no placeholder pollut
     // attempt]" at write time (action_description is never scrubbed), so
     // overlap would drop to ZERO and this correction would silently stop
     // matching forever — exactly the bug this narrowing fixes.
-    const write = writeCorrection(PROJECT, {
+    const write = await writeCorrection(PROJECT, {
       id: "2026-08-18-no-injection-compliance",
       date: "2026-08-18",
       severity: "p0",
@@ -384,7 +384,7 @@ describe("P0-a rework — check_action matching preserved (no placeholder pollut
   // from the pre-fix mangling ever leaks into today's matching behavior.
   // -------------------------------------------------------------------------
   it("an unrelated action does not spuriously match on old placeholder vocabulary", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-08-18-unrelated-rule",
       date: "2026-08-18",
       severity: "p1",

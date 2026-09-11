@@ -16,13 +16,13 @@ import {
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-consol-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -30,8 +30,8 @@ afterEach(() => {
 describe("P1 on-write consolidation", () => {
   const RULE = "Never push to the main branch without explicit human approval";
 
-  it("a re-stated rule merges into the existing record (proof_count++, one file)", () => {
-    const a = writeCorrection("proj", {
+  it("a re-stated rule merges into the existing record (proof_count++, one file)", async () => {
+    const a = await writeCorrection("proj", {
       id: "2026-05-19-push", date: "2026-05-19", severity: "p0",
       project: "proj", rule: RULE, context: "First time the human said this.", tags: ["git"],
     });
@@ -39,7 +39,7 @@ describe("P1 on-write consolidation", () => {
     assert.equal(a.merged, false);
 
     // Same rule, different day → without merge this would be a second file.
-    const b = writeCorrection("proj", {
+    const b = await writeCorrection("proj", {
       id: "2026-05-20-push", date: "2026-05-20", severity: "p0",
       project: "proj", rule: RULE, context: "Human repeated it.", tags: ["safety"],
     });
@@ -54,12 +54,12 @@ describe("P1 on-write consolidation", () => {
     assert.deepEqual([...all[0].tags].sort(), ["git", "safety"]);
   });
 
-  it("keeps the stronger severity and authority on merge", () => {
-    writeCorrection("proj", {
+  it("keeps the stronger severity and authority on merge", async () => {
+    await writeCorrection("proj", {
       id: "2026-05-19-x", date: "2026-05-19", severity: "p1",
       project: "proj", rule: RULE, context: "stated mildly", tags: [], authoritative: false,
     });
-    writeCorrection("proj", {
+    await writeCorrection("proj", {
       id: "2026-05-20-x", date: "2026-05-20", severity: "p0",
       project: "proj", rule: RULE, context: "stated as a hard rule", tags: [], authoritative: true,
     });
@@ -69,12 +69,12 @@ describe("P1 on-write consolidation", () => {
     assert.equal(rec.weight, 1.0, "weight takes the max (p0 default 1.0)");
   });
 
-  it("unrelated rules do NOT merge — distinct files preserved", () => {
-    writeCorrection("proj", {
+  it("unrelated rules do NOT merge — distinct files preserved", async () => {
+    await writeCorrection("proj", {
       id: "2026-05-19-push", date: "2026-05-19", severity: "p0",
       project: "proj", rule: RULE, context: "git rule", tags: [],
     });
-    const d = writeCorrection("proj", {
+    const d = await writeCorrection("proj", {
       id: "2026-05-20-react", date: "2026-05-20", severity: "p1",
       project: "proj", rule: "Prefer functional components over class components in React",
       context: "frontend style preference", tags: [],
@@ -83,8 +83,8 @@ describe("P1 on-write consolidation", () => {
     assert.equal(readCorrections("proj").length, 2);
   });
 
-  it("backward-compat: a freshly written record defaults proof_count=1", () => {
-    writeCorrection("proj", {
+  it("backward-compat: a freshly written record defaults proof_count=1", async () => {
+    await writeCorrection("proj", {
       id: "2026-05-19-solo", date: "2026-05-19", severity: "p0",
       project: "proj", rule: "Always run the test suite before declaring done", context: "", tags: [],
     });

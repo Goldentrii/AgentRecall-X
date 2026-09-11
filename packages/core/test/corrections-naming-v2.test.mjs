@@ -37,19 +37,19 @@ function writeRawCorrection(project, filename, record) {
 }
 
 describe("corrections naming v2", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-corrections-naming-v2-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("new writes use the v2 double-dash delimiter", () => {
-    writeCorrection("v2-proj", {
+  it("new writes use the v2 double-dash delimiter", async () => {
+    await writeCorrection("v2-proj", {
       id: "2026-07-20-never-publish-without-approval",
       date: "2026-07-20",
       severity: "p0",
@@ -66,8 +66,8 @@ describe("corrections naming v2", () => {
     assert.ok(files[0].startsWith("2026-07-20--"));
   });
 
-  it("strips a leading interjection before slugging the rule", () => {
-    writeCorrection("v2-proj", {
+  it("strips a leading interjection before slugging the rule", async () => {
+    await writeCorrection("v2-proj", {
       id: "x",
       date: "2026-07-20",
       severity: "p0",
@@ -87,7 +87,7 @@ describe("corrections naming v2", () => {
     assert.ok(files[0].includes("never-publish-without-approval"), `expected rule text in filename: ${files[0]}`);
   });
 
-  it("readCorrections still reads legacy single-dash fixture files", () => {
+  it("readCorrections still reads legacy single-dash fixture files", async () => {
     writeRawCorrection("legacy-proj", "2026-06-01-legacy-rule.json", {
       id: "2026-06-01-legacy-rule",
       date: "2026-06-01",
@@ -102,7 +102,7 @@ describe("corrections naming v2", () => {
     assert.equal(all[0].id, "2026-06-01-legacy-rule");
   });
 
-  it("retractCorrection REUSES the existing legacy filename (no orphan duplicate)", () => {
+  it("retractCorrection REUSES the existing legacy filename (no orphan duplicate)", async () => {
     writeRawCorrection("legacy-proj", "2026-06-01-legacy-rule.json", {
       id: "2026-06-01-legacy-rule",
       date: "2026-06-01",
@@ -114,7 +114,7 @@ describe("corrections naming v2", () => {
       active: true,
     });
 
-    const result = retractCorrection("legacy-proj", "2026-06-01-legacy-rule", "test retract");
+    const result = await retractCorrection("legacy-proj", "2026-06-01-legacy-rule", "test retract");
     assert.equal(result.success, true);
 
     // .json-only: retractCorrection also regenerates the _index.md sibling
@@ -135,11 +135,11 @@ describe("corrections naming v2", () => {
   // actionable-signal marker and would reject pure-CJK fixtures for reasons
   // unrelated to F4, obscuring the thing under test.
   describe("stripInterjections — full-width CJK punctuation (F4)", () => {
-    it("strips a CJK interjection followed by a full-width comma （，）", () => {
+    it("strips a CJK interjection followed by a full-width comma （，）", async () => {
       assert.equal(stripInterjections("你错了，应该用novada-search"), "应该用novada-search");
     });
 
-    it("strips a CJK interjection followed by a full-width period （。）", () => {
+    it("strips a CJK interjection followed by a full-width period （。）", async () => {
       assert.equal(stripInterjections("不对。用 proxy 版本"), "用 proxy 版本");
     });
 
@@ -152,18 +152,18 @@ describe("corrections naming v2", () => {
       assert.equal(stripInterjections(text), text);
     });
 
-    it("still strips ASCII interjections followed by ASCII punctuation (regression guard)", () => {
+    it("still strips ASCII interjections followed by ASCII punctuation (regression guard)", async () => {
       assert.equal(
         stripInterjections("No, that's wrong. Never publish without approval"),
         "that's wrong. Never publish without approval",
       );
     });
 
-    it("end-to-end: writeCorrection slugs a mixed CJK+actionable correction with the interjection stripped", () => {
+    it("end-to-end: writeCorrection slugs a mixed CJK+actionable correction with the interjection stripped", async () => {
       // Include an English STRONG_IMPERATIVE marker ("always") so the text
       // clears the capture-quality gate, while still exercising the CJK
       // interjection-stripping path end-to-end through the real write path.
-      writeCorrection("v2-cjk-proj", {
+      await writeCorrection("v2-cjk-proj", {
         id: "cjk-1",
         date: "2026-07-20",
         severity: "p0",
@@ -180,7 +180,7 @@ describe("corrections naming v2", () => {
     });
   });
 
-  it("recordOutcome REUSES the existing legacy filename (no orphan duplicate)", () => {
+  it("recordOutcome REUSES the existing legacy filename (no orphan duplicate)", async () => {
     writeRawCorrection("legacy-proj2", "2026-06-01-legacy-rule.json", {
       id: "2026-06-01-legacy-rule",
       date: "2026-06-01",
@@ -192,7 +192,7 @@ describe("corrections naming v2", () => {
       active: true,
     });
 
-    recordOutcome({
+    await recordOutcome({
       correction_id: "2026-06-01-legacy-rule",
       project: "legacy-proj2",
       kind: "heeded",

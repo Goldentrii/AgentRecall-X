@@ -24,14 +24,14 @@ export interface FanOutResult {
   newEdges: number;
 }
 
-export function fanOut(
+export async function fanOut(
   project: string,
   sourceRoom: string,
   sourceTopic: string,
   content: string,
   explicitConnections: string[] = [],
   importance: Importance = "medium"
-): FanOutResult {
+): Promise<FanOutResult> {
   const pd = palaceDir(project);
   const result: FanOutResult = { updatedRooms: [], newEdges: 0 };
 
@@ -62,7 +62,7 @@ export function fanOut(
     // Update target room's connections list
     const targetMeta = getRoomMeta(project, targetRoom);
     if (targetMeta && !targetMeta.connections.includes(sourceRoom)) {
-      updateRoomMeta(project, targetRoom, {
+      await updateRoomMeta(project, targetRoom, {
         connections: [...targetMeta.connections, sourceRoom],
       });
     }
@@ -109,7 +109,7 @@ export function fanOut(
         // Update target room's connections
         const targetMeta = getRoomMeta(project, room.slug);
         if (targetMeta && !targetMeta.connections.includes(sourceRoom)) {
-          updateRoomMeta(project, room.slug, {
+          await updateRoomMeta(project, room.slug, {
             connections: [...targetMeta.connections, sourceRoom],
           });
           result.updatedRooms.push(room.slug);
@@ -126,7 +126,7 @@ export function fanOut(
       const targetRoom = sanitizeSlug(target.split("/")[0]);
       if (targetRoom !== sourceRoom) newConns.add(targetRoom);
     }
-    updateRoomMeta(project, sourceRoom, {
+    await updateRoomMeta(project, sourceRoom, {
       connections: Array.from(newConns),
     });
   }
@@ -146,7 +146,7 @@ export function fanOut(
       keystone: meta.keystone,
     });
 
-    updateRoomMeta(project, room, { salience: newSalience });
+    await updateRoomMeta(project, room, { salience: newSalience });
   }
 
   return result;

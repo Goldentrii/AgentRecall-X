@@ -29,7 +29,7 @@ process.env.AGENT_RECALL_ROOT = TEST_ROOT;
 const { sanitizeName } = await import("../dist/storage/sanitize.js");
 const { writeCorrection, readCorrections, retractCorrection, recordOutcome } = await import("../dist/storage/corrections.js");
 
-after(() => {
+after(async () => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
 });
 
@@ -40,7 +40,7 @@ function correctionFiles(project) {
 }
 
 describe("sanitizeName — degenerate (CJK-only) inputs no longer collide", () => {
-  it("two distinct pure-CJK inputs get distinct names", () => {
+  it("two distinct pure-CJK inputs get distinct names", async () => {
     const a = sanitizeName("用户偏好深色主题而不是浅色主题", 48);
     const b = sanitizeName("用户偏好使用简体中文而不是繁体中文", 48);
     assert.notEqual(a, b, "distinct CJK inputs must not share a slug");
@@ -48,14 +48,14 @@ describe("sanitizeName — degenerate (CJK-only) inputs no longer collide", () =
     assert.match(b, /^unnamed-[0-9a-f]{8}$/);
   });
 
-  it("the same input is deterministic across calls (rewrite paths stay stable)", () => {
+  it("the same input is deterministic across calls (rewrite paths stay stable)", async () => {
     assert.equal(
       sanitizeName("用户偏好深色主题而不是浅色主题", 48),
       sanitizeName("用户偏好深色主题而不是浅色主题", 48),
     );
   });
 
-  it("hash input is NFC+lowercase normalized — visually-identical variants agree", () => {
+  it("hash input is NFC+lowercase normalized — visually-identical variants agree", async () => {
     // NFD vs NFC of the same accented string must land on the same hash.
     const nfc = "café主题".normalize("NFC");
     const nfd = "café主题".normalize("NFD");
@@ -66,7 +66,7 @@ describe("sanitizeName — degenerate (CJK-only) inputs no longer collide", () =
     assert.equal(sanitizeName(""), "unnamed");
   });
 
-  it("Latin inputs are byte-identical to the pre-fix pipeline", () => {
+  it("Latin inputs are byte-identical to the pre-fix pipeline", async () => {
     assert.equal(sanitizeName("Never push to Main!", 48), "never-push-to-main");
     assert.equal(sanitizeName("hello--world"), "hello-world");
   });
@@ -79,16 +79,16 @@ describe("sanitizeName — degenerate (CJK-only) inputs no longer collide", () =
 });
 
 describe("writeCorrection — same-day slug collisions no longer destroy records", () => {
-  it("two distinct pure-CJK rules both survive on disk (the original repro)", () => {
+  it("two distinct pure-CJK rules both survive on disk (the original repro)", async () => {
     const project = "cjk-two-rules";
-    const r1 = writeCorrection(project, {
+    const r1 = await writeCorrection(project, {
       id: "c-cjk-aaa",
       rule: "用户偏好深色主题而不是浅色主题",
       context: "你搞错了，用户偏好深色主题而不是浅色主题，永远默认深色",
       severity: "p1",
       date: "2026-07-27",
     });
-    const r2 = writeCorrection(project, {
+    const r2 = await writeCorrection(project, {
       id: "c-cjk-bbb",
       rule: "用户偏好使用简体中文而不是繁体中文",
       context: "你搞错了，用户偏好使用简体中文而不是繁体中文，永远用简体",
@@ -108,17 +108,17 @@ describe("writeCorrection — same-day slug collisions no longer destroy records
     ]);
   });
 
-  it("distinct rules sharing one surviving Latin word both survive (id-hash suffix)", () => {
+  it("distinct rules sharing one surviving Latin word both survive (id-hash suffix)", async () => {
     const project = "latin-collision";
     // Both rules sanitize to the slug "push" — CJK stripped, one Latin word left.
-    const r1 = writeCorrection(project, {
+    const r1 = await writeCorrection(project, {
       id: "c-latin-aaa",
       rule: "用户偏好在push之前先运行完整的测试套件",
       context: "你搞错了，用户偏好在push之前先运行完整的测试套件",
       severity: "p1",
       date: "2026-07-27",
     });
-    const r2 = writeCorrection(project, {
+    const r2 = await writeCorrection(project, {
       id: "c-latin-bbb",
       rule: "用户偏好把push安排在工作日的早晨进行",
       context: "你搞错了，用户偏好把push安排在工作日的早晨进行",
@@ -143,11 +143,11 @@ describe("writeCorrection — same-day slug collisions no longer destroy records
     assert.equal(readCorrections(project).length, 2);
   });
 
-  it("a RETRACTED record with a colliding slug survives, and later mutations target the right file", () => {
+  it("a RETRACTED record with a colliding slug survives, and later mutations target the right file", async () => {
     const project = "retracted-collision";
     // Record A: pure-CJK rule, gets written then retracted (leaves the file on
     // disk with status retracted — the active-only merge scan skips it).
-    const rA = writeCorrection(project, {
+    const rA = await writeCorrection(project, {
       id: "c-retract-aaa",
       rule: "用户偏好深色主题而不是浅色主题",
       context: "你搞错了，用户偏好深色主题而不是浅色主题",
@@ -155,13 +155,13 @@ describe("writeCorrection — same-day slug collisions no longer destroy records
       date: "2026-07-27",
     });
     assert.equal(rA.written, true);
-    retractCorrection(project, "c-retract-aaa", "superseded in test");
+    await retractCorrection(project, "c-retract-aaa", "superseded in test");
 
     // Record B: SAME rule text as retracted A — merge loop skips retracted
     // records, so this lands in the brand-new branch and its computed filename
     // collides with A's file. Pre-fix, B would silently overwrite A's
     // retraction history.
-    const rB = writeCorrection(project, {
+    const rB = await writeCorrection(project, {
       id: "c-retract-bbb",
       rule: "用户偏好深色主题而不是浅色主题",
       context: "你又搞错了，用户偏好深色主题而不是浅色主题",
@@ -183,7 +183,7 @@ describe("writeCorrection — same-day slug collisions no longer destroy records
     assert.ok(b, "new record B must exist");
 
     // Later mutation on B targets B's own (hash-suffixed) file, not A's.
-    recordOutcome({
+    await recordOutcome({
       correction_id: "c-retract-bbb",
       project,
       kind: "heeded",
@@ -197,16 +197,16 @@ describe("writeCorrection — same-day slug collisions no longer destroy records
     assert.ok((b2.heeded_count ?? 0) >= 1 || b2.last_outcome, "outcome must land on B");
   });
 
-  it("writing the SAME rule twice still merges into one record (dedup preserved)", () => {
+  it("writing the SAME rule twice still merges into one record (dedup preserved)", async () => {
     const project = "same-rule-merge";
-    const r1 = writeCorrection(project, {
+    const r1 = await writeCorrection(project, {
       id: "c-merge-aaa",
       rule: "用户偏好深色主题而不是浅色主题",
       context: "你搞错了，用户偏好深色主题而不是浅色主题",
       severity: "p1",
       date: "2026-07-27",
     });
-    const r2 = writeCorrection(project, {
+    const r2 = await writeCorrection(project, {
       id: "c-merge-bbb",
       rule: "用户偏好深色主题而不是浅色主题",
       context: "你又搞错了，用户偏好深色主题而不是浅色主题",

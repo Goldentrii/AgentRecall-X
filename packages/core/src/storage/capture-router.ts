@@ -30,6 +30,7 @@ import { archiveSession, type ArchiveSessionInput } from "./archive-write.js";
 import { dropHardNoise } from "./corrections.js";
 import { saveTriggerKind } from "./durable-intent.js";
 import { withLock } from "./filelock.js";
+import { writeTextAtomic } from "./fs-utils.js";
 import { getRoot } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -69,19 +70,34 @@ function isDuplicate(hash: string, entries: DedupEntry[]): boolean {
   return entries.some((e) => e.hash === hash);
 }
 
-function writeDedupEntry(entry: DedupEntry): void {
+/**
+ * Atomically CHECK-and-RECORD a dedup entry — the check and the append run
+ * inside the SAME "capture-dedup" critical section (fix6-locks review: an
+ * unlocked check followed by a locked append is check-then-act — two hooks
+ * firing on the same message could both pass the check and double-fire,
+ * which is the exact race this arbiter exists to stop).
+ *
+ * Returns true when the entry is a duplicate (caller must drop).
+ * Best-effort on ANY failure (incl. lock contention): returns false so a
+ * dedup outage degrades to "maybe double-captured", never "capture blocked".
+ */
+async function checkAndRecordDedup(entry: DedupEntry): Promise<boolean> {
   try {
     const file = dedupFilePath();
     const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    withLock("capture-dedup", () => {
+    return await withLock("capture-dedup", () => {
       let entries = readDedupEntries();
+      if (isDuplicate(entry.hash, entries)) return true;
       entries.push(entry);
       if (entries.length > DEDUP_MAX_ENTRIES) entries = entries.slice(-DEDUP_MAX_ENTRIES);
-      fs.writeFileSync(file, JSON.stringify(entries), "utf-8");
+      // Atomic: concurrent lock-free readers must never see a truncated file.
+      writeTextAtomic(file, JSON.stringify(entries));
+      return false;
     });
   } catch {
     // Best-effort — dedup failure must never block the capture path.
+    return false;
   }
 }
 
@@ -136,7 +152,7 @@ export interface CaptureRouteInput {
  *   5. LANE 2 (correction-signal) → return correctionText for caller to capture
  *   6. none → 'dropped-no-intent'
  */
-export function routeCapture(input: CaptureRouteInput): CaptureRouteResult {
+export async function routeCapture(input: CaptureRouteInput): Promise<CaptureRouteResult> {
   const text = (typeof input.text === "string" ? input.text : "").trim();
 
   // Step 1: hard noise gate (both lanes share this pre-filter)
@@ -150,15 +166,14 @@ export function routeCapture(input: CaptureRouteInput): CaptureRouteResult {
     return { kind: "dropped-no-intent" };
   }
 
-  // Step 3: cross-process dedup
+  // Step 3: cross-process dedup — check AND record in one locked critical
+  // section, BEFORE doing any I/O, so a concurrent hook sees it and the
+  // check-then-act double-fire window is closed.
   const hash = quickHash(text);
-  const seen = readDedupEntries();
-  if (isDuplicate(hash, seen)) {
+  const duplicate = await checkAndRecordDedup({ hash, kind: intent, ts: new Date().toISOString() });
+  if (duplicate) {
     return { kind: "dropped-duplicate" };
   }
-
-  // Record this entry BEFORE doing any I/O so a concurrent hook sees it.
-  writeDedupEntry({ hash, kind: intent, ts: new Date().toISOString() });
 
   // Step 4 — LANE 1: explicit-save → local archive ONLY
   if (intent === "explicit-save") {

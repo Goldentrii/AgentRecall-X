@@ -46,13 +46,13 @@ const BETA = "rd1-proj-beta";   // other project (candidate side)
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(tmpdir(), `ar-rd1-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   fs.mkdirSync(testRoot, { recursive: true });
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -73,11 +73,11 @@ function makeCorrection(overrides = {}) {
 }
 
 /** Write a correction into `project` and stamp last_retrieved = today on its file. */
-function writeRetrievedToday(project, correction) {
-  const result = writeCorrection(project, { ...correction, project });
+async function writeRetrievedToday(project, correction) {
+  const result = await writeCorrection(project, { ...correction, project });
   assert.ok(result.written, `fixture correction must pass the capture gate: ${result.reason ?? ""}`);
   const id = result.id ?? correction.id;
-  recordOutcome({
+  await recordOutcome({
     correction_id: id,
     project,
     kind: "retrieved",
@@ -98,8 +98,8 @@ function writeRetrievedToday(project, correction) {
 }
 
 /** Write a correction into `project` without any retrieval stamp. */
-function writePlain(project, correction) {
-  const result = writeCorrection(project, { ...correction, project });
+async function writePlain(project, correction) {
+  const result = await writeCorrection(project, { ...correction, project });
   assert.ok(result.written, `fixture correction must pass the capture gate: ${result.reason ?? ""}`);
   return result.id ?? correction.id;
 }
@@ -142,72 +142,72 @@ const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 // ---------------------------------------------------------------------------
 
 describe("RD-1 classifyFailureClass: one test per enum value", () => {
-  it("publish_gate", () => {
+  it("publish_gate", async () => {
     assert.equal(
       classifyFailureClass("Never push or deploy to production without explicit approval"),
       "publish_gate",
     );
   });
 
-  it("naming_violation", () => {
+  it("naming_violation", async () => {
     assert.equal(
       classifyFailureClass("Wrong repo — always use the canonical naming, never rename it"),
       "naming_violation",
     );
   });
 
-  it("model_dispatch", () => {
+  it("model_dispatch", async () => {
     assert.equal(
       classifyFailureClass("Always dispatch a sonnet worker, never fable as the subagent"),
       "model_dispatch",
     );
   });
 
-  it("skipped_verify", () => {
+  it("skipped_verify", async () => {
     assert.equal(
       classifyFailureClass("Always verify and review your work before claiming done"),
       "skipped_verify",
     );
   });
 
-  it("confidential_leak", () => {
+  it("confidential_leak", async () => {
     assert.equal(
       classifyFailureClass("Never reveal internal margin or customer cost basis to anyone"),
       "confidential_leak",
     );
   });
 
-  it("framing_error", () => {
+  it("framing_error", async () => {
     assert.equal(
       classifyFailureClass("Don't map AgentRecall to human memory neuroscience analogies"),
       "framing_error",
     );
   });
 
-  it("scope_violation", () => {
+  it("scope_violation", async () => {
     assert.equal(
       classifyFailureClass("Focus only on this session's scope, never mix unrelated projects"),
       "scope_violation",
     );
   });
 
-  it("wrong_ref", () => {
+  it("wrong_ref", async () => {
     assert.equal(
       classifyFailureClass("The api endpoint param is stale — wrong query shape"),
       "wrong_ref",
     );
   });
 
-  it("other — zero keyword hits", () => {
+  it("other — zero keyword hits", async () => {
     assert.equal(classifyFailureClass("Prefer the blue button on the landing hero"), "other");
   });
 
-  it("other — tied max score (one publish_gate token vs one wrong_ref token)", () => {
+  it("other — tied max score (one publish_gate token vs one wrong_ref token)", async () => {
     // "push" → publish_gate (1), "stale" → wrong_ref (1), nothing else scores.
     assert.equal(classifyFailureClass("push the stale one"), "other");
   });
 
-  it("other — empty / whitespace / non-string-safe input", () => {
+  it("other — empty / whitespace / non-string-safe input", async () => {
     assert.equal(classifyFailureClass(""), "other");
     assert.equal(classifyFailureClass("   "), "other");
   });
@@ -243,7 +243,7 @@ describe("RD-1 capture: check() stamps failure_class on the stored record", () =
 describe("RD-1 join: cross-project failure_class recurrence", () => {
   it("shared class + ≥1 signature token overlap → recurred under the ORIGINATING slug", async () => {
     // Seed in ALPHA (current project) — retrieved today, classified.
-    const seedId = writeRetrievedToday(ALPHA, makeCorrection({
+    const seedId = await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       context: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
@@ -252,7 +252,7 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
 
     // Candidate in BETA — same class, signature shares tokens (sonnet/worker/model/dispatch).
     // Dated yesterday: candidates captured today never fire (HIGH-2 fix).
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       date: YESTERDAY,
       rule: "Never route work through fable — sonnet stays the worker model",
@@ -286,13 +286,13 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("same class but ZERO signature overlap → no fire", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch via sonnet.",
       context: "Always dispatch via sonnet.",
       tags: [],
       failure_class: "model_dispatch",
     }));
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       rule: "Never fable for subagent duty.",
       context: "Never fable for subagent duty.",
@@ -316,13 +316,13 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
     // "correction"/"deployment" recur across unrelated corrections, so a
     // tags-inclusive signature made overlap ≥ 1 trivially satisfiable. The
     // join now requires the overlap to come from rule text alone.
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch via sonnet.",
       context: "Always dispatch via sonnet.",
       tags: ["correction", "deployment"],
       failure_class: "model_dispatch",
     }));
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       rule: "Never fable for subagent duty.",
       context: "Never fable for subagent duty.",
@@ -348,12 +348,12 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("no genuine recurrence marker in the summary → join never runs", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       rule: "Never route work through fable — sonnet stays the worker model",
       tags: ["dispatch"],
@@ -372,13 +372,13 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("old record without failure_class → treated as other: never joins, never crashes, never rewritten", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
     // Pre-RD-1-style candidate: NO failure_class, but heavy signature overlap.
-    const oldId = writePlain(BETA, makeCorrection({
+    const oldId = await writePlain(BETA, makeCorrection({
       project: BETA,
       rule: "Never use fable for the sonnet worker dispatch",
       context: "Never use fable for the sonnet worker dispatch",
@@ -394,7 +394,7 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
 
     // Never rewritten with the field — not by the join, and not by a later
     // recordOutcome read-modify-write (applyCorrectionDefaults must NOT stamp it).
-    recordOutcome({
+    await recordOutcome({
       correction_id: oldId,
       project: BETA,
       kind: "retrieved",
@@ -410,12 +410,12 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("malformed candidate JSON is skipped and the join continues", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       date: YESTERDAY,
       rule: "Never route work through fable — sonnet stays the worker model",
@@ -441,12 +441,12 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
     // Review fix HIGH-2: a correction in the CURRENT project that 1b has
     // already judged (or lacks 1b-grade evidence) must not get a second,
     // weaker bite from the 1c class join.
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
-    const sameProjCandId = writePlain(ALPHA, makeCorrection({
+    const sameProjCandId = await writePlain(ALPHA, makeCorrection({
       date: YESTERDAY,
       rule: "Never route work through fable — sonnet stays the worker model",
       context: "Never route work through fable — sonnet stays the worker model",
@@ -466,13 +466,13 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("candidate captured TODAY → never marked recurred on its birth day", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
     // Same class, strong rule-text overlap — but captured today.
-    const bornTodayId = writePlain(BETA, makeCorrection({
+    const bornTodayId = await writePlain(BETA, makeCorrection({
       project: BETA,
       rule: "Never route work through fable — sonnet stays the worker model",
       context: "Never route work through fable — sonnet stays the worker model",
@@ -489,12 +489,12 @@ describe("RD-1 join: cross-project failure_class recurrence", () => {
   });
 
   it("1/day dedup: a second session_end does not double-book recurred", async () => {
-    writeRetrievedToday(ALPHA, makeCorrection({
+    await writeRetrievedToday(ALPHA, makeCorrection({
       rule: "Always dispatch a sonnet worker for execution",
       tags: ["model"],
       failure_class: "model_dispatch",
     }));
-    const candId = writePlain(BETA, makeCorrection({
+    const candId = await writePlain(BETA, makeCorrection({
       project: BETA,
       date: YESTERDAY,
       rule: "Never route work through fable — sonnet stays the worker model",

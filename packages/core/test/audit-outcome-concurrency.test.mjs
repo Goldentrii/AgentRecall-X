@@ -81,7 +81,7 @@ const WORKER_CODE = `
   const iters = parseInt(itersStr, 10);
   const { recordOutcome } = await import(moduleUrl);
   for (let i = 0; i < iters; i++) {
-    recordOutcome({
+    await recordOutcome({
       correction_id: correctionId,
       project,
       kind: "retrieved",
@@ -117,7 +117,7 @@ function spawnWorker(testRoot, project, correctionId, iters) {
 
 let testRoot;
 
-beforeEach(() => {
+beforeEach(async () => {
   testRoot = path.join(
     tmpdir(),
     `ar-audit-outcome-race-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -126,7 +126,7 @@ beforeEach(() => {
   process.env.AGENT_RECALL_ROOT = testRoot;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.AGENT_RECALL_ROOT;
   fs.rmSync(testRoot, { recursive: true, force: true });
 });
@@ -138,7 +138,7 @@ describe("audit: recordOutcome concurrent-process race on hot-path counters", ()
     const EXPECTED_TOTAL = N * M; // 480
 
     const correction = makeTestCorrection();
-    const seedResult = writeCorrection(PROJECT, correction);
+    const seedResult = await writeCorrection(PROJECT, correction);
     assert.ok(seedResult.written, "seed correction must be written before stress run");
     const correctionId = seedResult.id ?? correction.id;
 

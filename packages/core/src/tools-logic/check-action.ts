@@ -418,7 +418,7 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
         const firedToday = todayOut.get(c.id);
         // Skip if a triggered (or stronger) outcome already exists today
         if (firedToday && firedToday.has("triggered")) continue;
-        recordOutcome({
+        await recordOutcome({
           correction_id: c.id,
           project: slug,
           kind: "triggered",

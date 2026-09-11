@@ -61,18 +61,18 @@ let testRoot;
 const PROJECT = "audit-cjk-proj";
 
 describe("audit regression — CJK check_action text matching", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-audit-cjk-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("diagnostic: tokenize() on pure-Chinese text returns a non-empty, word-segmented token set", () => {
+  it("diagnostic: tokenize() on pure-Chinese text returns a non-empty, word-segmented token set", async () => {
     // Direct evidence the fix works, independent of storage/matching: Han-script
     // runs are now segmented (Intl.Segmenter, granularity:"word") instead of
     // being stripped by the old a-z0-9-only character class.
@@ -96,7 +96,7 @@ describe("audit regression — CJK check_action text matching", () => {
     // NOTE: rule/context include "要求" solely to clear the UNRELATED
     // corrections.ts capture-quality gate (see the file-header finding above)
     // — it is not itself part of the tokenize/overlap claim under test.
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-01-cjk-publish-gate",
       date: "2026-07-01",
       severity: "p1",
@@ -136,7 +136,7 @@ describe("audit regression — CJK check_action text matching", () => {
   // that floor does NOT apply to CJK tokens.
   // -------------------------------------------------------------------------
 
-  it("tokenize() keeps short (1-2 character) CJK words — the length>=3 floor must be Latin-only", () => {
+  it("tokenize() keeps short (1-2 character) CJK words — the length>=3 floor must be Latin-only", async () => {
     // "删除" (delete) is exactly 2 characters — under the old uniform floor
     // this would be silently dropped (length 2 < 3), the same way "ok"/"no"
     // are dropped from English text.
@@ -164,7 +164,7 @@ describe("audit regression — CJK check_action text matching", () => {
     );
   });
 
-  it("overlap() finds a shared short 2-character CJK word between two independently-worded Chinese phrases", () => {
+  it("overlap() finds a shared short 2-character CJK word between two independently-worded Chinese phrases", async () => {
     // These two phrases share NO long compound word — the only thing binding
     // them topically is the 2-character verb "删除" (delete). This isolates
     // the Layer-2 claim from Layer-1: both phrases already tokenize fine
@@ -186,7 +186,7 @@ describe("audit regression — CJK check_action text matching", () => {
     // the pure tokenize()/overlap() functions above. "要求" clears the
     // unrelated corrections.ts gate (see file-header finding); the actual
     // action text below shares nothing with the correction except "删除".
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-07-02-cjk-delete-gate",
       date: "2026-07-02",
       severity: "p1",

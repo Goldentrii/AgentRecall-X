@@ -101,7 +101,7 @@ export async function palaceLint(input: PalaceLintInput): Promise<PalaceLintResu
   }
 
   if (fix && fixed > 0) {
-    updatePalaceIndex(slug);
+    await updatePalaceIndex(slug);
   }
 
   const indexPath = path.join(pd, "palace-index.json");

@@ -25,19 +25,19 @@ function writeRawCorrection(project, filename, record) {
 }
 
 describe("corrections storage", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-corrections-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
-  it("writeCorrection persists structured fields to JSON", () => {
-    writeCorrection("test-proj", {
+  it("writeCorrection persists structured fields to JSON", async () => {
+    await writeCorrection("test-proj", {
       id: "2026-05-18-use-structured-corrections",
       date: "2026-05-18",
       severity: "p1",
@@ -63,7 +63,7 @@ describe("corrections storage", () => {
     assert.equal(stored.active, false);
   });
 
-  it("readCorrections applies defaults to old-format records", () => {
+  it("readCorrections applies defaults to old-format records", async () => {
     writeRawCorrection("test-proj", "2026-05-18-old-p0.json", {
       id: "2026-05-18-old-p0",
       date: "2026-05-18",
@@ -98,7 +98,7 @@ describe("corrections storage", () => {
     assert.equal(p1.holder, "2026-05-17");
   });
 
-  it("readActiveCorrections excludes inactive records", () => {
+  it("readActiveCorrections excludes inactive records", async () => {
     writeRawCorrection("test-proj", "2026-05-18-active.json", {
       id: "2026-05-18-active",
       date: "2026-05-18",
@@ -126,8 +126,8 @@ describe("corrections storage", () => {
     assert.equal(records[0].id, "2026-05-18-active");
   });
 
-  it("writeCorrection derives weight from severity when omitted", () => {
-    writeCorrection("test-proj", {
+  it("writeCorrection derives weight from severity when omitted", async () => {
+    await writeCorrection("test-proj", {
       id: "2026-05-18-derived-p0",
       date: "2026-05-18",
       severity: "p0",
@@ -136,7 +136,7 @@ describe("corrections storage", () => {
       context: "P0 corrections default to full weight.",
       tags: ["weight"],
     });
-    writeCorrection("test-proj", {
+    await writeCorrection("test-proj", {
       id: "2026-05-17-derived-p1",
       date: "2026-05-17",
       severity: "p1",
@@ -155,8 +155,8 @@ describe("corrections storage", () => {
   });
 
   // ── Wave 5: prediction outcome instrumentation ──────────────────────────
-  it("authoritative defaults true for kind 'correction', and respects explicit kind", () => {
-    writeCorrection("test-proj", {
+  it("authoritative defaults true for kind 'correction', and respects explicit kind", async () => {
+    await writeCorrection("test-proj", {
       id: "2026-06-01-auth-default",
       date: "2026-06-01",
       severity: "p0",
@@ -183,8 +183,8 @@ describe("corrections storage", () => {
     assert.equal(ins.authoritative, false, "non-correction kind defaults authoritative false");
   });
 
-  it("recordOutcome('predicted'|'predict_hit') updates predict_precision, leaves precision untouched", () => {
-    writeCorrection("test-proj", {
+  it("recordOutcome('predicted'|'predict_hit') updates predict_precision, leaves precision untouched", async () => {
+    await writeCorrection("test-proj", {
       id: "2026-06-01-predict",
       date: "2026-06-01",
       severity: "p0",
@@ -196,9 +196,9 @@ describe("corrections storage", () => {
     const at = new Date().toISOString();
 
     // Two predictions fired, one hit → predict_precision = 0.5
-    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
-    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
-    recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predict_hit", at });
+    await recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
+    await recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predicted", at });
+    await recordOutcome({ correction_id: "2026-06-01-predict", project: "test-proj", kind: "predict_hit", at });
 
     const rec = readCorrections("test-proj").find((r) => r.id === "2026-06-01-predict");
     assert.equal(rec.predicted_count, 2);
@@ -210,8 +210,8 @@ describe("corrections storage", () => {
     assert.equal(rec.retrieved_count ?? 0, 0);
   });
 
-  it("readOutcomesForToday returns a Map<id, Set<kind>> of today's events", () => {
-    writeCorrection("test-proj", {
+  it("readOutcomesForToday returns a Map<id, Set<kind>> of today's events", async () => {
+    await writeCorrection("test-proj", {
       id: "2026-06-01-today",
       date: "2026-06-01",
       severity: "p0",
@@ -221,8 +221,8 @@ describe("corrections storage", () => {
       tags: [],
     });
     const at = new Date().toISOString();
-    recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "retrieved", at });
-    recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "heeded", at });
+    await recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "retrieved", at });
+    await recordOutcome({ correction_id: "2026-06-01-today", project: "test-proj", kind: "heeded", at });
 
     const map = readOutcomesForToday("test-proj");
     const kinds = map.get("2026-06-01-today");

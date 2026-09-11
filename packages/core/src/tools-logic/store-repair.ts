@@ -214,7 +214,7 @@ export async function runStoreRepair(
   try {
     reindexed.projects = findDriftedProjects();
     if (apply) {
-      for (const slug of reindexed.projects) updatePalaceIndex(slug);
+      for (const slug of reindexed.projects) await updatePalaceIndex(slug);
     }
   } catch (err) {
     reindexed.error = err instanceof Error ? err.message : String(err);

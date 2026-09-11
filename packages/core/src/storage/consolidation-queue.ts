@@ -8,12 +8,20 @@
  *
  * Storage: JSONL, one job per line, under ~/.agent-recall/.consolidation-queue/.
  * Append-only; drain marks lines done by rewriting the file with done:true.
+ *
+ * fix6-locks (review finding): enqueue's append and drain's rewrite share the
+ * "consolidation-queue" lock, and the drain re-reads the file INSIDE the lock
+ * before rewriting — a Stop hook enqueueing while a drain is mid-flight can no
+ * longer have its job silently deleted by the drain's stale-snapshot rewrite
+ * (async handlers made that read→rewrite window seconds wide). Jobs are
+ * processed OUTSIDE the lock; only the append and the final rewrite hold it.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { ensureDir, todayISO } from "./fs-utils.js";
+import { withLock } from "./filelock.js";
 import { recordHookFailure } from "./hook-health.js";
 
 export interface ConsolidationJob {
@@ -43,8 +51,10 @@ function queueFileForToday(): string {
 
 /**
  * Append a consolidation job to today's queue file. Best-effort: never throws.
+ * Locked (shared with the drain's rewrite) so an append can never straddle the
+ * drain's read→rename window and get deleted.
  */
-export function enqueueConsolidation(job: ConsolidationJob): void {
+export async function enqueueConsolidation(job: ConsolidationJob): Promise<void> {
   try {
     const dir = queueDir();
     ensureDir(dir);
@@ -55,7 +65,9 @@ export function enqueueConsolidation(job: ConsolidationJob): void {
       at: job.at ?? new Date().toISOString(),
       done: false,
     };
-    fs.appendFileSync(queueFileForToday(), JSON.stringify(record) + "\n", "utf-8");
+    await withLock("consolidation-queue", () => {
+      fs.appendFileSync(queueFileForToday(), JSON.stringify(record) + "\n", "utf-8");
+    });
   } catch (err) {
     // Enqueue is fire-and-forget — never break the caller (the Stop hook).
     // F5 depth (2026-08-12, followups wave): this is the SOP-named
@@ -73,9 +85,9 @@ export function enqueueConsolidation(job: ConsolidationJob): void {
  *
  * Best-effort: never throws to the caller.
  */
-export function drainConsolidationQueue(
-  handler: (job: ConsolidationJob) => void,
-): DrainReport {
+export async function drainConsolidationQueue(
+  handler: (job: ConsolidationJob) => void | Promise<void>,
+): Promise<DrainReport> {
   const report: DrainReport = { processed: 0, failed: 0 };
   let dir: string;
   try {
@@ -115,8 +127,11 @@ export function drainConsolidationQueue(
       continue; // unreadable file → skip, don't block the rest
     }
 
-    const rewritten: string[] = [];
-    let mutated = false;
+    // Successfully-processed lines only: original trimmed line → done-marked
+    // replacement. Everything NOT in this map (done lines, malformed lines,
+    // failed jobs, and — crucially — jobs appended by a concurrent enqueue
+    // AFTER our read above) is preserved verbatim by the locked re-read below.
+    const transformed = new Map<string, string>();
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -133,20 +148,17 @@ export function drainConsolidationQueue(
         // verbatim) forever. Consistent with the sibling "consolidation-drain-job"
         // wire below at the same per-line granularity.
         recordHookFailure("consolidation-drain-parse", err);
-        rewritten.push(line); // malformed line — preserve verbatim, don't drop
-        continue;
+        continue; // malformed line — preserved verbatim by the re-read below
       }
 
       if (job.done) {
-        rewritten.push(trimmed);
         continue;
       }
 
       try {
-        handler(job);
+        await handler(job);
         report.processed++;
-        rewritten.push(JSON.stringify({ ...job, done: true }));
-        mutated = true;
+        transformed.set(trimmed, JSON.stringify({ ...job, done: true }));
       } catch (err) {
         // One bad job never blocks the rest — leave it pending for a retry.
         // F5 depth (2026-08-12, followups wave): the CLI's own outer catch
@@ -159,16 +171,31 @@ export function drainConsolidationQueue(
         // prints it to stdout) is not the same as a persisted, queryable
         // trace `ar health` can surface.
         report.failed++;
-        rewritten.push(trimmed);
         recordHookFailure("consolidation-drain-job", err);
       }
     }
 
-    if (mutated) {
+    if (transformed.size > 0) {
       try {
-        const tmp = full + ".tmp." + process.pid;
-        fs.writeFileSync(tmp, rewritten.join("\n") + "\n", "utf-8");
-        fs.renameSync(tmp, full); // atomic on POSIX
+        // Re-read INSIDE the lock and substitute only the lines we processed —
+        // lines appended since our unlocked read survive verbatim.
+        await withLock("consolidation-queue", () => {
+          let current: string[];
+          try {
+            current = fs.readFileSync(full, "utf-8").split("\n");
+          } catch {
+            current = lines; // vanished/unreadable — fall back to our snapshot
+          }
+          const out: string[] = [];
+          for (const line of current) {
+            const t = line.trim();
+            if (!t) continue;
+            out.push(transformed.get(t) ?? line);
+          }
+          const tmp = full + ".tmp." + process.pid;
+          fs.writeFileSync(tmp, out.join("\n") + "\n", "utf-8");
+          fs.renameSync(tmp, full); // atomic on POSIX
+        });
       } catch (err) {
         // If we can't persist the done-marks, the worst case is a re-run of
         // already-processed jobs next drain — acceptable, never fatal.

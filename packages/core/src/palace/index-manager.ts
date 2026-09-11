@@ -18,7 +18,7 @@ export function readPalaceIndex(project: string): PalaceIndex | null {
   return readJsonSafe<PalaceIndex>(indexPath(project));
 }
 
-export function updatePalaceIndex(project: string): PalaceIndex {
+export async function updatePalaceIndex(project: string): Promise<PalaceIndex> {
   // Lock the read-compute-write so two concurrent palace writes to the same
   // project can't lose each other's memory_count update (last-writer-wins on
   // the index cache). The room .md files are the source of truth and are

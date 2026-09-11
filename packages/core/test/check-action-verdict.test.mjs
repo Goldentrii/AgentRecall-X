@@ -23,19 +23,19 @@ function bumpCorrection(id, patch) {
 }
 
 describe("Wave 5 — check_action verdict (authoritative override gated against noise)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = path.join(tmpdir(), `ar-verdict-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     fs.mkdirSync(testRoot, { recursive: true });
     process.env.AGENT_RECALL_ROOT = testRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.AGENT_RECALL_ROOT;
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
   it("authoritative P0 (not noise) → verdict 'blocked' + CONFLICT line", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-06-01-no-publish",
       date: "2026-06-01",
       severity: "p0",
@@ -57,7 +57,7 @@ describe("Wave 5 — check_action verdict (authoritative override gated against 
   });
 
   it("noise-candidate P0 (precision<0.3, retrieved>=3) → verdict 'advisory'", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-06-01-noisy-publish",
       date: "2026-06-01",
       severity: "p0",
@@ -94,7 +94,7 @@ describe("Wave 5 — check_action verdict (authoritative override gated against 
   });
 
   it("authoritative:false explicit P0 → not blocked (advisory)", async () => {
-    writeCorrection(PROJECT, {
+    await writeCorrection(PROJECT, {
       id: "2026-06-01-soft-p0",
       date: "2026-06-01",
       severity: "p0",

@@ -64,12 +64,12 @@ describe("content-guard: every local write path scrubs before touching disk", ()
     core = await import("../dist/index.js");
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "ar-p0-scrub-"));
     core.setRoot(TEST_ROOT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     core.resetRoot();
     fs.rmSync(TEST_ROOT, { recursive: true, force: true });
   });
@@ -104,7 +104,7 @@ describe("content-guard: every local write path scrubs before touching disk", ()
   // 3. palace/awareness.ts — highest exposure (global, session_start top-3)
   // -------------------------------------------------------------------------
   it("addInsight: awareness-state.json AND awareness.md are clean, session_start-facing readers see clean text", async () => {
-    core.addInsight({
+    await core.addInsight({
       title: "Some real behavioral pattern worth remembering",
       evidence: PAYLOAD,
       appliesWhen: ["some-context"],
@@ -127,8 +127,8 @@ describe("content-guard: every local write path scrubs before touching disk", ()
   // -------------------------------------------------------------------------
   // 4. digest/store.ts
   // -------------------------------------------------------------------------
-  it("createDigest: on-disk digest file is clean, readDigest returns clean content", () => {
-    const r = core.createDigest({ title: "test digest", scope: "test", content: PAYLOAD, project: "p4" });
+  it("createDigest: on-disk digest file is clean, readDigest returns clean content", async () => {
+    const r = await core.createDigest({ title: "test digest", scope: "test", content: PAYLOAD, project: "p4" });
     assert.ok(r.success);
     const { content } = core.readDigest("p4", r.id);
     assertClean(content, "readDigest() content");
@@ -137,8 +137,8 @@ describe("content-guard: every local write path scrubs before touching disk", ()
   // -------------------------------------------------------------------------
   // 5. palace/insights-index.ts
   // -------------------------------------------------------------------------
-  it("addIndexedInsight: insights-index.json is clean, recallInsights() output is clean", () => {
-    core.addIndexedInsight({
+  it("addIndexedInsight: insights-index.json is clean, recallInsights() output is clean", async () => {
+    await core.addIndexedInsight({
       title: `Injection payload test ${SECRET} ${INJECTION}`,
       source: "test",
       applies_when: ["testing"],
@@ -268,7 +268,7 @@ describe("content-guard: every local write path scrubs before touching disk", ()
   // -------------------------------------------------------------------------
   // 14. storage/behavior-policies.ts
   // -------------------------------------------------------------------------
-  it("registerBehaviorRule: behavior-policies.json is clean, readBehaviorPolicies() output is clean", () => {
+  it("registerBehaviorRule: behavior-policies.json is clean, readBehaviorPolicies() output is clean", async () => {
     core.registerBehaviorRule({
       project: "p14",
       name: "test rule",

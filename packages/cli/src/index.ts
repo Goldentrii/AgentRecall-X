@@ -503,7 +503,7 @@ async function main(): Promise<void> {
           process.exit(1);
         }
         try {
-          const { promoted, skipped } = core.promoteConfirmedInsights(threshold);
+          const { promoted, skipped } = await core.promoteConfirmedInsights(threshold);
           if (promoted.length === 0) {
             process.stdout.write(`No new insights to promote (threshold: ${threshold}).\n`);
           } else {
@@ -602,7 +602,7 @@ async function main(): Promise<void> {
       const dryRun = !hasFlag("--apply", rest);
       let decay = null;
       try {
-        decay = core.runDecayPass(slug, { dryRun });
+        decay = await core.runDecayPass(slug, { dryRun });
       } catch {
         decay = null;
       }
@@ -804,7 +804,7 @@ async function main(): Promise<void> {
             break;
           }
           const slug = await core.resolveProject(project);
-          const result = core.retractCorrection(
+          const result = await core.retractCorrection(
             slug,
             id,
             `human-confirmed retract via \`ar corrections retract\` (superseded by ${supersededBy})`,
@@ -1445,7 +1445,7 @@ async function main(): Promise<void> {
             rawTranscript: src.rawTail,
             summary: src.firstUserMessage ?? undefined,
           });
-          core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+          await core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
 
           // ---- F3 unconditional session card + F2 recency append ----
           // The raw archive above has ALREADY succeeded by this point — it is
@@ -1611,10 +1611,10 @@ async function main(): Promise<void> {
       // pure-regex consolidateJournalToPalace (headless-safe, no LLM). One bad
       // job never blocks the rest. Invocable only — NO cron/scheduler created.
       try {
-        const report = core.drainConsolidationQueue((job) => {
+        const report = await core.drainConsolidationQueue(async (job) => {
           try {
             core.ensurePalaceInitialized(job.project);
-            core.consolidateJournalToPalace(job.project);
+            await core.consolidateJournalToPalace(job.project);
           } catch (e) {
             // rethrow so the queue marks this job failed (not done) for retry
             throw e instanceof Error ? e : new Error(String(e));
@@ -2352,7 +2352,7 @@ async function main(): Promise<void> {
         const scope = getFlag("--scope", digRest) ?? "";
         const content = getFlag("--content", digRest) ?? "";
         const ttl = getFlag("--ttl", digRest);
-        const result = core.createDigest({
+        const result = await core.createDigest({
           title, scope, content,
           source_agent: getFlag("--agent", digRest),
           source_query: getFlag("--query", digRest),
@@ -2382,7 +2382,10 @@ async function main(): Promise<void> {
       } else if (sub === "invalidate") {
         const id = digRest.find((a) => !a.startsWith("--")) ?? "";
         const reason = getFlag("--reason", digRest) ?? "manually invalidated";
-        core.markStale(project ?? "auto", id, reason, hasFlag("--global", digRest));
+        // review MEDIUM-2 (fix6-locks): async variant — never park the event
+        // loop on digest-lock contention (sync markStale exists only as the
+        // SDK digestInvalidate signature pin).
+        await core.markStaleAsync(project ?? "auto", id, reason, hasFlag("--global", digRest));
         output({ success: true, id });
       } else {
         process.stderr.write(`Usage: ar digest store|recall|list|invalidate [...opts]\n`);
@@ -3157,7 +3160,7 @@ agent_instruction: use "audit-candidates" to list unknown-verdict corrections fo
         const apply = hasFlag("--apply", outRest);
         try {
           const slug = await core.resolveProject(rebuildProject);
-          const result = core.runOutcomesRebuild(slug, { apply });
+          const result = await core.runOutcomesRebuild(slug, { apply });
 
           if (hasFlag("--json", outRest)) {
             output(result);
@@ -3345,7 +3348,7 @@ agent_instruction: use "audit-candidates" to list unknown-verdict corrections fo
             break;
           }
 
-          core.recordOutcome({
+          await core.recordOutcome({
             correction_id: recId!,
             project: slug,
             kind: recKind,

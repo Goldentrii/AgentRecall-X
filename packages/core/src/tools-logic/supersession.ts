@@ -241,17 +241,17 @@ export function listCorrectionConflicts(
  * SUGGEST-ONLY by default. With auto (or AR_CONSOLIDATE_AUTO=1) the contradicted
  * older corrections are retracted with superseded_by = the new correction's id.
  */
-export function reviewSupersessions(
+export async function reviewSupersessions(
   project: string,
   newCorrection: { id: string; rule: string; context?: string },
   opts?: { auto?: boolean },
-): SupersessionReview {
+): Promise<SupersessionReview> {
   const auto = opts?.auto ?? process.env.AR_CONSOLIDATE_AUTO === "1";
   const suggestions = detectCorrectionConflicts(project, newCorrection);
   const superseded: string[] = [];
   if (auto) {
     for (const m of suggestions) {
-      const res = retractCorrection(
+      const res = await retractCorrection(
         project,
         m.existingId,
         `superseded by ${newCorrection.id}`,

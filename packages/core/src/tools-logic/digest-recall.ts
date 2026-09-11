@@ -23,7 +23,7 @@ export async function digestRecall(input: DigestRecallInput): Promise<DigestReca
   for (const d of digests) {
     if (!d.stale) {
       const isGlobal = d.project === "__global__";
-      recordAccess(isGlobal ? "__global__" : d.project, d.id, isGlobal);
+      await recordAccess(isGlobal ? "__global__" : d.project, d.id, isGlobal);
     }
   }
 

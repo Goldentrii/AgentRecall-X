@@ -142,7 +142,7 @@ describe("Audit Finding 1 (FIXED) — canonical-excerpt fusion vs total_searched
     });
   });
 
-  after(() => {
+  after(async () => {
     resetRoot();
     resetRecallBackend();
     for (const [k, v] of Object.entries(SAVED_ENV)) {
@@ -264,12 +264,12 @@ describe("Audit Finding 2 — hot-window recency boost vs date-only journal date
     globalThis.Date = RealDate;
   }
 
-  before(() => {
+  before(async () => {
     TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-audit-recency-"));
     setRoot(TMP);
   });
 
-  after(() => {
+  after(async () => {
     restoreRealClock();
     resetRoot();
     fs.rmSync(TMP, { recursive: true, force: true });
@@ -398,13 +398,13 @@ describe("Audit Finding 3 — insight excerpt collision fuses UNRELATED same-sev
     // write path (addIndexedInsight), which runs findSimilarInsight's
     // containment-based confirm-first check before admitting a new entry —
     // exactly the write-time path the reproduction must go through.
-    addIndexedInsight({
+    await addIndexedInsight({
       title: TITLE_A,
       source: "test-seed",
       applies_when: [...SHARED_TAGS],
       severity: SHARED_SEVERITY,
     });
-    addIndexedInsight({
+    await addIndexedInsight({
       title: TITLE_B,
       source: "test-seed",
       applies_when: [...SHARED_TAGS],
@@ -412,7 +412,7 @@ describe("Audit Finding 3 — insight excerpt collision fuses UNRELATED same-sev
     });
   });
 
-  after(() => {
+  after(async () => {
     resetRoot();
     resetRecallBackend();
     for (const [k, v] of Object.entries(SAVED_ENV)) {

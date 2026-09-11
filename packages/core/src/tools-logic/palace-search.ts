@@ -174,7 +174,7 @@ export async function palaceSearch(input: PalaceSearchInput): Promise<PalaceSear
     }
 
     if (results.some((r) => r.room === roomMeta.slug)) {
-      recordAccess(slug, roomMeta.slug);
+      await recordAccess(slug, roomMeta.slug);
     }
   }
 

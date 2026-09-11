@@ -111,7 +111,7 @@ export function countRoomEntries(project: string, roomSlug: string): number {
   }
 }
 
-export function updateRoomMeta(project: string, roomSlug: string, updates: Partial<RoomMeta>): RoomMeta | null {
+export async function updateRoomMeta(project: string, roomSlug: string, updates: Partial<RoomMeta>): Promise<RoomMeta | null> {
   return withLock(`room-${project}-${roomSlug}`, () => {
     const pd = palaceDir(project);
     const metaPath = roomMetaPath(pd, roomSlug);
@@ -234,7 +234,7 @@ export function ensurePalaceInitialized(project: string): void {
  * just written (e.g. --importance high) into the salience formula instead of
  * always assuming "medium". Defaults to "medium" for plain reads/walks.
  */
-export function recordAccess(project: string, roomSlug: string, importance: Importance = "medium"): void {
+export async function recordAccess(project: string, roomSlug: string, importance: Importance = "medium"): Promise<void> {
   const meta = getRoomMeta(project, roomSlug);
   if (!meta) return;
   const pd = palaceDir(project);
@@ -249,7 +249,7 @@ export function recordAccess(project: string, roomSlug: string, importance: Impo
         connectionCount: connCount,
         keystone: meta.keystone,
       });
-  updateRoomMeta(project, roomSlug, {
+  await updateRoomMeta(project, roomSlug, {
     access_count: meta.access_count + 1,
     last_accessed: new Date().toISOString(),
     salience: newSalience,
@@ -257,10 +257,10 @@ export function recordAccess(project: string, roomSlug: string, importance: Impo
 }
 
 /** Touch the room's updated timestamp. Call after writing any markdown file in the room. */
-export function touchRoom(project: string, roomSlug: string): void {
+export async function touchRoom(project: string, roomSlug: string): Promise<void> {
   const meta = getRoomMeta(project, roomSlug);
   if (!meta) return;
-  updateRoomMeta(project, roomSlug, { updated: new Date().toISOString() });
+  await updateRoomMeta(project, roomSlug, { updated: new Date().toISOString() });
 }
 
 /** Returns true if the room has not been updated in the last `daysThreshold` days. */
