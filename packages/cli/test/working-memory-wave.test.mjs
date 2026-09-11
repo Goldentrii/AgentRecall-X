@@ -183,9 +183,16 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
+    // fix5 retarget (2026-09-11): a rescue card is a zero-confidence cwd
+    // guess — it now stages under _unclaimed/<sid>/ instead of MINTING
+    // projects/wm-orphan-target (no such project dir existed; that mint is
+    // exactly the creation-invariant violation fix5 closes). Rescue feature
+    // assertions (card written with rescue provenance + both prompts,
+    // recency entry present, WM deleted) unchanged — landing zone only.
     const today = new Date().toISOString().slice(0, 10);
-    const cardPath = path.join(TEST_ROOT, "projects", slug, "journal", `${today}--card--${sid}.md`);
-    assert.ok(fs.existsSync(cardPath), `expected a rescued session card under the guessed slug; stderr=${stderr}`);
+    assert.ok(!fs.existsSync(path.join(TEST_ROOT, "projects", slug)), "a zero-confidence guess must not mint a new projects/ dir");
+    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${today}--card--${sid}.md`);
+    assert.ok(fs.existsSync(cardPath), `expected a rescued session card staged under _unclaimed/<sid>/; stderr=${stderr}`);
     const cardBody = fs.readFileSync(cardPath, "utf-8");
     assert.ok(cardBody.includes("working-memory-rescue"), "rescued card frontmatter must carry source: working-memory-rescue");
     assert.ok(cardBody.includes("WM_ORPHAN_UNIQUE_TERM"), "rescued card title should come from the first recorded prompt");
@@ -194,7 +201,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     const recencyPath = path.join(TEST_ROOT, "recent-sessions.jsonl");
     assert.ok(fs.existsSync(recencyPath), "recency index should have a new entry from the rescue");
     const recencyLines = fs.readFileSync(recencyPath, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-    assert.ok(recencyLines.some((e) => e.sid === sid && e.slug === slug), "recency entry must exist for the rescued sid under the guessed slug");
+    assert.ok(recencyLines.some((e) => e.sid === sid && e.slug === "_unclaimed"), "recency entry must exist for the rescued sid, pointing at the staging area the card actually lives in");
 
     assert.ok(!fs.existsSync(wmFilePath), "the working-memory file must be deleted once rescued");
   });
@@ -242,8 +249,11 @@ describe("working-memory wave — hook-start orphan rescue", () => {
       assert.equal(first.code, 0, `first (faulted) hook-start should still exit 0; stderr=${first.stderr}`);
 
       const today = new Date().toISOString().slice(0, 10);
-      const cardPathA = path.join(TEST_ROOT, "projects", slugA, "journal", `${today}--card--${sidA}.md`);
-      const cardPathB = path.join(TEST_ROOT, "projects", slugB, "journal", `${today}--card--${sidB}.md`);
+      // fix5 retarget (2026-09-11): rescue cards stage under _unclaimed/<sid>/
+      // (zero-confidence guesses; the projects/<guess> dirs never existed).
+      // The M1 fault-isolation property under test is landing-zone independent.
+      const cardPathA = path.join(TEST_ROOT, "_unclaimed", sidA, `${today}--card--${sidA}.md`);
+      const cardPathB = path.join(TEST_ROOT, "_unclaimed", sidB, `${today}--card--${sidB}.md`);
       // Cards are written by BOTH orphans in the SAME faulted sweep — card
       // writing is per-project and independent of the (globally faulted)
       // recency file, so sidA hitting the fault must never prevent sidB
@@ -299,7 +309,12 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
     const today = new Date().toISOString().slice(0, 10);
-    const cardPath = path.join(TEST_ROOT, "projects", slug, "journal", `${today}--card--${sid}.md`);
+    // fix5 retarget (2026-09-11): the rescue card stages under
+    // _unclaimed/<sid>/ (zero-confidence guess; no projects/ mint). The C1
+    // scrub property under test is unchanged — staged records pass the SAME
+    // scrub-on-write (the scrub happens at wmAppend capture, upstream of the
+    // landing zone).
+    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${today}--card--${sid}.md`);
     assert.ok(fs.existsSync(cardPath), "rescued card should have been written");
     const cardBody = fs.readFileSync(cardPath, "utf-8");
     assert.ok(!cardBody.includes(secret), `raw secret must never appear verbatim in a rescued card; card body: ${cardBody}`);
@@ -329,7 +344,11 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     assert.equal(first.code, 0, `first hook-start should exit 0; stderr=${first.stderr}`);
 
     const today = new Date().toISOString().slice(0, 10);
-    const journalDir = path.join(TEST_ROOT, "projects", slug, "journal");
+    // fix5 retarget (2026-09-11): rescue cards stage under _unclaimed/<sid>/
+    // (zero-confidence guess). The idempotency GUARD under test — a card-
+    // exists check, not mere WM-file absence — is unchanged; it now also
+    // covers the staging area (findUnclaimedCardForSid).
+    const journalDir = path.join(TEST_ROOT, "_unclaimed", sid);
     const cardsAfterFirst = fs.readdirSync(journalDir).filter((f) => f.endsWith(`--card--${sid}.md`));
     assert.equal(cardsAfterFirst.length, 1, "exactly one card should exist after the first rescue");
 

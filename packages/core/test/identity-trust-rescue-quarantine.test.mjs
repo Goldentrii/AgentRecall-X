@@ -109,12 +109,23 @@ describe("resurrect() — working-memory-rescue cards can never outrank genuine 
 
     core.rescueOrphanedWorkingMemory();
 
-    // Sanity: the rescue mechanism DID fire and DID plant a card somewhere
-    // under the real project (this is the part of the mechanism we are NOT
-    // trying to disable — see the "genuine crash rescue" test below).
+    // Sanity: the rescue mechanism DID fire and DID plant a card (this is
+    // the part of the mechanism we are NOT trying to disable — see the
+    // "genuine crash rescue" test below).
+    //
+    // fix5 retarget (2026-09-11) — STRENGTHENED, not weakened: pre-fix5 the
+    // spoofed card landed INSIDE the real project's journal and this suite
+    // proved the READ side quarantined it. Post-fix5 the zero-confidence
+    // rescue card stages into _unclaimed/ — the forged WRITE never enters
+    // the real project's journal at all, closing the write half of the same
+    // CRITICAL-2 vector. Every read-side quarantine assertion below
+    // (discoverable, ranks below genuine, tagged untrusted) is unchanged.
     const journalDir = path.join(TEST_ROOT, "projects", REAL_SLUG, "journal");
-    const rescuedFile = fs.readdirSync(journalDir).find((f) => f.includes("evil-hijack-001"));
-    assert.ok(rescuedFile, "precondition: the rescue sweep must still plant a card (rescue itself is not disabled)");
+    const hijackInProject = fs.readdirSync(journalDir).find((f) => f.includes("evil-hijack-001"));
+    assert.equal(hijackInProject, undefined, "a spoofed rescue card must NEVER be written into the real project's journal (fix5 write-side closure)");
+    const stagedDir = path.join(TEST_ROOT, "_unclaimed", "evil-hijack-001");
+    const rescuedFile = fs.existsSync(stagedDir) && fs.readdirSync(stagedDir).find((f) => f.includes("evil-hijack-001"));
+    assert.ok(rescuedFile, "precondition: the rescue sweep must still plant a card (rescue itself is not disabled) — staged under _unclaimed/");
 
     const briefs = core.resurrect({ query: QUERY, days: 1 });
     assert.ok(briefs.length >= 2, "expected both the genuine and the rescued/hijacked entries");
@@ -148,8 +159,20 @@ describe("resurrect() — working-memory-rescue cards can never outrank genuine 
     core.rescueOrphanedWorkingMemory();
 
     assert.ok(!fs.existsSync(filePath), "the orphaned WM file must be deleted once rescued");
-    const journalDir = path.join(TEST_ROOT, "projects", "never-seen-before-project", "journal");
-    assert.ok(fs.existsSync(journalDir), "a genuinely crashed session must still land a card under its guessed project");
+    // fix5 retarget (2026-09-11): was "a card under its guessed project"
+    // (projects/never-seen-before-project) — a zero-confidence cwd guess
+    // MINTING a brand-new projects/ dir is exactly the creation-invariant
+    // violation fix5 closes (the live store's mega-slug/junk-dir class). The
+    // rescue itself is KEPT: the card stages under _unclaimed/<sid>/, the
+    // guess survives in provenance for a later explicit claim, and the
+    // resurrect-discoverability + untrusted-tag assertions below are
+    // unchanged.
+    assert.ok(!fs.existsSync(path.join(TEST_ROOT, "projects", "never-seen-before-project")), "a zero-confidence guess must never mint a new projects/ dir");
+    const stagedDir = path.join(TEST_ROOT, "_unclaimed", "genuine-crash-001");
+    assert.ok(
+      fs.existsSync(stagedDir) && fs.readdirSync(stagedDir).some((f) => f.includes("--card--")),
+      "a genuinely crashed session must still land a card — staged under _unclaimed/<sid>/",
+    );
 
     const briefs = core.resurrect({ query: "checkout flow race condition", days: 1 });
     const rescued = briefs.find((b) => b.sid === "genuine-crash-001");

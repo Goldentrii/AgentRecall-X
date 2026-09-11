@@ -165,18 +165,30 @@ describe("kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only ses
 
     // 4. Assert the orphan was rescued: WM gone, a card exists carrying the
     // captured content, and a recency entry exists.
+    //
+    // fix5 retarget (2026-09-11): the victim's WM lines carry a /tmp cwd, so
+    // the slug guess fails at confidence 0 — pre-fix5 this card landed in
+    // the projects/auto dumping ground (the exact 422-journal class the
+    // eval-standard S5 finding names); post-fix5 it stages under
+    // `_unclaimed/<sid>/` awaiting an explicit claim. The rescue FEATURE
+    // assertions (WM deleted, card exists with rescue provenance, recency
+    // entry present) are unchanged — only the landing zone moved.
     assert.ok(!fs.existsSync(wmFilePath), "the orphaned WM file must be deleted once rescued");
 
-    const projectsDir = path.join(root, "projects");
-    assert.ok(fs.existsSync(projectsDir), "a project dir should exist after rescue");
+    const projectsAuto = path.join(root, "projects", "auto");
+    assert.ok(!fs.existsSync(projectsAuto), "the projects/auto rescue landing zone must be dead (creation invariant)");
+
+    const unclaimedDir = path.join(root, "_unclaimed");
+    assert.ok(fs.existsSync(unclaimedDir), "_unclaimed staging must exist after a guess-failed rescue");
     let rescuedCard = null;
-    for (const slug of fs.readdirSync(projectsDir)) {
-      const journalDir = path.join(projectsDir, slug, "journal");
-      if (!fs.existsSync(journalDir)) continue;
-      for (const f of fs.readdirSync(journalDir)) {
+    for (const sid of fs.readdirSync(unclaimedDir)) {
+      if (sid.startsWith("_") || sid.startsWith(".")) continue;
+      const sessionDir = path.join(unclaimedDir, sid);
+      if (!fs.statSync(sessionDir).isDirectory()) continue;
+      for (const f of fs.readdirSync(sessionDir)) {
         if (!f.endsWith(".md")) continue;
-        const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
-        if (body.includes("KILL9_E2E_UNIQUE_TERM")) rescuedCard = { slug, file: f, body };
+        const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
+        if (body.includes("KILL9_E2E_UNIQUE_TERM")) rescuedCard = { slug: "_unclaimed", file: f, body };
       }
     }
     assert.ok(rescuedCard, "expected a rescued session card carrying the killed session's gist content");

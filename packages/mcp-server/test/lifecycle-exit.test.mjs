@@ -62,14 +62,34 @@ after(() => {
 
 function findCardFor(root, uniqueTerm) {
   const projectsDir = path.join(root, "projects");
-  if (!fs.existsSync(projectsDir)) return null;
-  for (const slug of fs.readdirSync(projectsDir)) {
-    const journalDir = path.join(projectsDir, slug, "journal");
-    if (!fs.existsSync(journalDir)) continue;
-    for (const f of fs.readdirSync(journalDir)) {
-      if (!f.endsWith(".md")) continue;
-      const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
-      if (body.includes(uniqueTerm)) return { slug, file: f, body };
+  if (fs.existsSync(projectsDir)) {
+    for (const slug of fs.readdirSync(projectsDir)) {
+      const journalDir = path.join(projectsDir, slug, "journal");
+      if (!fs.existsSync(journalDir)) continue;
+      for (const f of fs.readdirSync(journalDir)) {
+        if (!f.endsWith(".md")) continue;
+        const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
+        if (body.includes(uniqueTerm)) return { slug, file: f, body };
+      }
+    }
+  }
+  // fix5 retarget (2026-09-11): a distilled card whose slug guess failed at
+  // confidence 0 (this suite's servers run from a /tmp worktree, so the cwd
+  // guess never matches ~/Projects/<name>) now stages under
+  // `_unclaimed/<sid>/` instead of minting projects/auto — the creation
+  // invariant. The property under test here (the gist SURVIVES into a card
+  // on graceful exit) is landing-zone independent, so the finder covers both.
+  const unclaimedDir = path.join(root, "_unclaimed");
+  if (fs.existsSync(unclaimedDir)) {
+    for (const sid of fs.readdirSync(unclaimedDir)) {
+      if (sid.startsWith("_") || sid.startsWith(".")) continue;
+      const sessionDir = path.join(unclaimedDir, sid);
+      if (!fs.statSync(sessionDir).isDirectory()) continue;
+      for (const f of fs.readdirSync(sessionDir)) {
+        if (!f.endsWith(".md")) continue;
+        const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
+        if (body.includes(uniqueTerm)) return { slug: "_unclaimed", file: f, body };
+      }
     }
   }
   return null;
@@ -185,14 +205,31 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
     }
     await exitPromise;
 
-    const projectsDir = path.join(root, "projects");
+    // fix5 retarget (2026-09-11): count cards in BOTH landing zones — the
+    // confidence-0 distill now stages under _unclaimed/ (see findCardFor's
+    // comment above). The idempotency property (exactly ONE card under a
+    // signal race) is landing-zone independent.
     let cardCount = 0;
+    const projectsDir = path.join(root, "projects");
     if (fs.existsSync(projectsDir)) {
       for (const slug of fs.readdirSync(projectsDir)) {
         const journalDir = path.join(projectsDir, slug, "journal");
         if (!fs.existsSync(journalDir)) continue;
         for (const f of fs.readdirSync(journalDir)) {
           if (f.endsWith(".md") && fs.readFileSync(path.join(journalDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
+            cardCount++;
+          }
+        }
+      }
+    }
+    const unclaimedDir = path.join(root, "_unclaimed");
+    if (fs.existsSync(unclaimedDir)) {
+      for (const sid of fs.readdirSync(unclaimedDir)) {
+        if (sid.startsWith("_") || sid.startsWith(".")) continue;
+        const sessionDir = path.join(unclaimedDir, sid);
+        if (!fs.statSync(sessionDir).isDirectory()) continue;
+        for (const f of fs.readdirSync(sessionDir)) {
+          if (f.endsWith(".md") && fs.readFileSync(path.join(sessionDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
             cardCount++;
           }
         }
