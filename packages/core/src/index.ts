@@ -251,7 +251,37 @@ export {
   // v4 W2 — effective confidence (post-defaults), shared by rankCorrections
   // and getCorrectionKPIs' annotation output (annotate-only; never stored).
   effectiveConfidenceOf,
+  // Fix #2 (dual-channel capture gate, 2026-09-11) — CJK-aware consolidation
+  // identity + the severity classifier (shared with the pending staging path).
+  distillRuleIdentity,
+  detectSeverity,
 } from "./storage/corrections.js";
+
+// Storage — pending-corrections staging area (Fix #2, dual-channel capture
+// gate, 2026-09-11): low-trust captures await review here; the active ledger
+// is reachable only through check()'s validated structured form or an
+// explicit promote.
+export {
+  PENDING_CAP,
+  PENDING_TTL_DAYS,
+  pendingDir,
+  stagePendingCorrection,
+  listPendingCorrections,
+  resolvePendingCorrection,
+  validateStructuredCorrection,
+  validateInsightCompleteness,
+  isRealAppliesWhenToken,
+} from "./storage/pending.js";
+export type {
+  PendingRecord,
+  PendingKind,
+  PendingChannel,
+  StagePendingInput,
+  StagePendingResult,
+  ResolvePendingResult,
+  CompletenessResult,
+  CompletenessFailure,
+} from "./storage/pending.js";
 export type {
   CorrectionRecord,
   WriteCorrectionResult,
@@ -439,7 +469,7 @@ export {
 } from "./tools-logic/recognition-builder.js";
 export { sessionEnd, checkInsightQuality, type SessionEndInput, type SessionEndResult, type InsightQualityWarning, type MergeSuggestion } from "./tools-logic/session-end.js";
 export { promoteConfirmedInsights, type PromotionResult } from "./tools-logic/insight-promotion.js";
-export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta } from "./tools-logic/check.js";
+export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)
 export {

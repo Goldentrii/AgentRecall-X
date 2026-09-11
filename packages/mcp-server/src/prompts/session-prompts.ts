@@ -112,7 +112,7 @@ export function register(server: McpServer): void {
               `Save this session to AgentRecall.${summaryHint}`,
               "",
               "1. Review what happened: decisions made, work completed, corrections received, blockers identified.",
-              "2. If any corrections happened (human said 'no not that', 'I meant X'), call `check()` with `human_correction` and `delta` to record them.",
+              "2. If any corrections happened (human said 'no not that', 'I meant X'), call `check()` with `human_correction` as a STRUCTURED object {rule, why, applies_when} (one imperative rule sentence + evidence + context keywords) plus `delta` — a plain string is only staged for review, never activated.",
               "3. Call `session_end()` with:",
               "   - `summary`: 2-3 sentence session summary",
               "   - `insights`: 1-3 reusable learnings (not 'fixed a bug' but 'API returns null when session expires — always null-check')",

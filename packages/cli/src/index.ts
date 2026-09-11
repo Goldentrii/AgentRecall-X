@@ -1176,6 +1176,12 @@ async function main(): Promise<void> {
           }
         }
 
+        // Pending review (Fix #2, dual-channel capture gate) — ONE line,
+        // count only; staged content is untrusted and never rendered here.
+        if (result.pending_corrections && result.pending_corrections.count > 0) {
+          lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
+        }
+
         // Top 3 insights (sorted by confirmations — most proven patterns first)
         if (result.insights.length > 0) {
           lines.push("💡 Awareness insights:");
@@ -1757,12 +1763,17 @@ async function main(): Promise<void> {
             goal: lastGoal || "Unknown — see correction",
             confidence: "high",
             human_correction: scopedText.slice(0, 200),
+            // Fix #2 (dual-channel capture gate, 2026-09-11): string-form
+            // human_correction is STAGED to corrections/_pending/ — this
+            // marker stamps hook-channel provenance on the staged row.
+            correction_source: "hook-correction",
             // Delta describes the gap using actual content so keyword grouping
             // produces meaningful topics (e.g. "deploy-vercel") not "human-corrected"
             delta: `${lastGoal ? `Was: "${lastGoal.slice(0, 60)}"` : "Unknown context"} | Correction: "${scopedText.slice(0, 80)}"${agentContext ? ` | Agent was: ${agentContext.slice(0, 120)}` : ""}`,
             project,
           });
-          // Silent — no stdout output, correction captured in alignment-log
+          // Silent — no stdout output, capture staged in corrections/_pending/
+          // (and the alignment-log records goal/delta as before)
         }
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-correction] ${String(e)}\n`);

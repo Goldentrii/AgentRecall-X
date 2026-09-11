@@ -5,13 +5,22 @@ import { check, fenceMemory } from "agent-recall-core";
 export function register(server: McpServer): void {
   server.registerTool("check", {
     title: "Check Understanding",
-    description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent. Also call BEFORE a high-risk action — publish, deploy, delete, credential exposure, external send/message, or any other irreversible write — passing `action_description` (one sentence, what you're about to do). Returns matching corrections/rules/insights plus a `verdict`: `blocked` means an authoritative correction OVERRIDES the plan — read it before proceeding.",
+    description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent. Also call BEFORE a high-risk action — publish, deploy, delete, credential exposure, external send/message, or any other irreversible write — passing `action_description` (one sentence, what you're about to do). Returns matching corrections/rules/insights plus a `verdict`: `blocked` means an authoritative correction OVERRIDES the plan — read it before proceeding. To RECORD a durable human correction, pass `human_correction` as the STRUCTURED object {rule, why, applies_when} — a plain string is only STAGED for later review, never activated.",
     inputSchema: {
       goal: z.string().optional().describe("The goal or decision question you're checking alignment on. Required for alignment checks; optional when recording a pure decision trail (prior/posterior/evidence)."),
       understanding: z.string().optional().describe("Alias for goal — use when saying 'check my understanding: X'. Provide either goal or understanding."),
       confidence: z.enum(["high", "medium", "low"]).default("medium").describe("How confident you are. Defaults to medium."),
       assumptions: z.array(z.string()).optional().describe("Key assumptions you're making."),
-      human_correction: z.string().optional().describe("After human responds: what they actually wanted (or 'confirmed')."),
+      human_correction: z.union([
+        z.string().describe("LEGACY string form — STAGED to the pending-review store, NOT activated. Prefer the object form."),
+        z.object({
+          rule: z.string().optional().describe("ONE imperative, self-contained sentence stating the durable behavior (e.g. \"Never publish without explicit owner approval\"). Questions/status statements are rejected."),
+          why: z.string().optional().describe("Concrete evidence behind the rule — what happened or what the human said. Required for activation."),
+          applies_when: z.array(z.string()).optional().describe("1-5 REAL context keywords (topics/domains, e.g. [\"git\",\"deploy\"]) — sentence fragments are rejected."),
+          pending_id: z.string().optional().describe("Id of a staged pending correction (from session_start's pending_corrections or a prior check result) — resolves it: promoted with a valid {rule,why,applies_when}, or discarded with resolution:'reject'."),
+          resolution: z.enum(["promote", "reject"]).optional().describe("With pending_id: 'promote' (default; requires valid rule/why/applies_when) or 'reject' (discards the staged item; `why` doubles as the reject reason)."),
+        }).describe("STRUCTURED correction — the ONLY form that reaches the active corrections ledger. Incomplete input is rejected with an agent_instruction explaining the fix."),
+      ]).optional().describe("After human responds: what they actually wanted. Pass the OBJECT form {rule, why, applies_when} to activate a durable correction; a plain string is only staged for review."),
       delta: z.string().optional().describe("The gap between your understanding and reality (or 'none')."),
       project: z.string().default("auto"),
       prior: z.number().min(0).max(1).optional().describe("Initial probability estimate (0-1). Start of Bayesian decision trail."),

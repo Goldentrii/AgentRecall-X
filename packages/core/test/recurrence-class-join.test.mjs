@@ -218,11 +218,19 @@ describe("RD-1 classifyFailureClass: one test per enum value", () => {
 // ---------------------------------------------------------------------------
 
 describe("RD-1 capture: check() stamps failure_class on the stored record", () => {
+  // Fix #2 retarget (2026-09-11, dual-channel capture gate): the ACTIVE-ledger
+  // write path is the STRUCTURED human_correction form; the string form stages
+  // to _pending/ (pinned below). The failure_class stamping assertion is
+  // unchanged — it now rides the structured activation path.
   it("human_correction with publish-gate language stores failure_class publish_gate", async () => {
     await check({
       goal: "Ship the release",
       confidence: "high",
-      human_correction: "Never push or deploy without explicit approval from the owner.",
+      human_correction: {
+        rule: "Never push or deploy without explicit approval from the owner.",
+        why: "the owner had to intervene during the last release",
+        applies_when: ["release", "deploy"],
+      },
       project: ALPHA,
     });
 
@@ -233,6 +241,24 @@ describe("RD-1 capture: check() stamps failure_class on the stored record", () =
     const onDisk = findRecordFile(ALPHA, records[0].id);
     assert.ok(onDisk, "record file should exist");
     assert.equal(onDisk.record.failure_class, "publish_gate");
+  });
+
+  // R1 companion pin (rider, 2026-09-11): the string form stamps NOTHING into
+  // the active ledger — the capture is staged pending instead.
+  it("R1 pin: string human_correction stamps no failure_class anywhere in the active ledger", async () => {
+    const PIN_PROJECT = "rd1-string-pin-proj";
+    await check({
+      goal: "Ship the release",
+      confidence: "high",
+      human_correction: "Never push or deploy without explicit approval from the owner.",
+      project: PIN_PROJECT,
+    });
+    assert.equal(readCorrections(PIN_PROJECT).length, 0, "string form must not reach the active ledger");
+    const pendingDir = path.join(testRoot, "projects", PIN_PROJECT, "corrections", "_pending");
+    const staged = fs.existsSync(pendingDir)
+      ? fs.readdirSync(pendingDir).filter((f) => f.endsWith(".json") && !f.startsWith("_"))
+      : [];
+    assert.equal(staged.length, 1, "the capture must be staged in _pending/, never dropped");
   });
 });
 

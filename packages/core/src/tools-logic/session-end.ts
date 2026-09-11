@@ -33,6 +33,7 @@ import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
 import { writeHandoff } from "../helpers/handoff.js";
 import { recordHookFailure } from "../storage/hook-health.js";
+import { stagePendingCorrection, validateInsightCompleteness } from "../storage/pending.js";
 
 export interface SessionEndInput {
   summary: string;
@@ -110,6 +111,14 @@ export interface SessionEndResult {
   insights_added: number;
   /** Existing insights confirmed (near-duplicate title matched, count++). */
   insights_confirmed: number;
+  /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — insights that failed
+   * completeness validation (validateInsightCompleteness: full-sentence
+   * title, non-empty evidence, real applies_when tokens) and were STAGED to
+   * corrections/_pending/ instead of entering awareness. Never silently
+   * dropped, never active. Present only when > 0.
+   */
+  insights_pending?: number;
   awareness_updated: boolean;
   awareness_error?: string;
   palace_consolidated: boolean;
@@ -625,11 +634,46 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   // Pre-classify each insight against the current index BEFORE passing to
   // awarenessUpdate. This ensures the count tallies are accurate even if
   // awarenessUpdate itself also performs its own similarity check.
+  //
+  // Fix #2 (dual-channel capture gate, 2026-09-11): insights pass the SAME
+  // completeness validation as check()'s structured human_correction first.
+  // A failing insight (fragment applies_when like ["good,","then","don't"],
+  // fragment title, empty evidence) is STAGED to corrections/_pending/ —
+  // never silently dropped, never admitted to awareness (and therefore never
+  // the recall corpus). Only the validated remainder proceeds below.
+  const validInsights: NonNullable<SessionEndInput["insights"]> = [];
+  let insightsPending = 0;
   if (input.insights && input.insights.length > 0) {
+    for (const insight of input.insights) {
+      const completeness = validateInsightCompleteness(insight);
+      if (completeness.ok) {
+        validInsights.push(insight);
+        continue;
+      }
+      insightsPending++;
+      try {
+        stagePendingCorrection(slug, {
+          kind: "insight",
+          channel: "session_end_insight",
+          text: `${insight.title}\n\nEvidence: ${insight.evidence ?? ""}`,
+          rule: insight.title,
+          applies_when: insight.applies_when,
+          reason: completeness.failures.map((f) => `${f.field}: ${f.reason}`).join("; "),
+          source: getSessionId(),
+        });
+      } catch (err) {
+        // Staging is best-effort and must never break session_end; the drop
+        // still surfaces via insights_pending + quality_warnings.
+        recordHookFailure("session-end-insight-staging", err);
+      }
+    }
+  }
+
+  if (validInsights.length > 0) {
     try {
       // Read the current index once for confirm-first classification
       const currentIndex = readInsightsIndex();
-      for (const insight of input.insights) {
+      for (const insight of validInsights) {
         const match = findSimilarInsight(insight.title, currentIndex.insights);
         if (match) {
           insightsConfirmed++;
@@ -642,7 +686,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         ? `${slug}: ${input.trajectory}`
         : undefined;
       const result = await awarenessUpdate({
-        insights: input.insights.map((i) => ({
+        insights: validInsights.map((i) => ({
           title: i.title,
           evidence: i.evidence,
           applies_when: i.applies_when,
@@ -653,7 +697,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         project: slug,
         trajectory: scopedTrajectory,
       });
-      insightsProcessed = result.insights_processed?.length ?? input.insights.length;
+      insightsProcessed = result.insights_processed?.length ?? validInsights.length;
       awarenessUpdated = true;
     } catch (err) {
       awarenessError = err instanceof Error ? err.message : String(err);
@@ -871,6 +915,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     `                └─ ${date}.md                    ${journalWritten ? "[written]" : journalWriteError ? `[FAILED: ${journalWriteError}]` : "[skipped]"}`,
     "",
     `  Awareness     ${insightsAdded} added, ${insightsConfirmed} confirmed  (${totalInsights} total)`,
+    ...(insightsPending > 0 ? [`  ⏳ Pending      ${insightsPending} insight(s) staged for review (incomplete — see quality_warnings)`] : []),
     ...(awarenessError ? [`  [WARN: awareness update failed: ${awarenessError}]`] : []),
     ...(palaceError ? [`  [WARN: palace consolidation failed: ${palaceError}]`] : []),
     "",
@@ -966,6 +1011,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     insights_processed: insightsProcessed,
     insights_added: insightsAdded,
     insights_confirmed: insightsConfirmed,
+    ...(insightsPending > 0 ? { insights_pending: insightsPending } : {}),
     awareness_updated: awarenessUpdated,
     ...(awarenessError ? { awareness_error: awarenessError } : {}),
     palace_consolidated: palaceConsolidated,
