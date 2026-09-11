@@ -28,3 +28,8 @@ scripts/eval/fixtures/loop8-labeled-rejects.json
 # agent-loop runner artifacts (repo-root runs): transcript/scratch state + kill switch
 /state/
 /STOP
+
+# golden-eval fixture: owner rules + live-store excerpts — private until the
+# repo goes private (fix4 review H1: a `git add -A` once committed it onto a
+# public-repo branch; explicit ignore so the class can never recur)
+scripts/eval/golden-queries/
