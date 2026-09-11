@@ -8,6 +8,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -18,9 +20,20 @@ const ENTRY = path.join(__dirname, "..", "dist", "index.js");
 
 describe("check_action MCP smoke (surviving --full tool)", () => {
   it("check_action with a safe command returns a result without isError=true", async () => {
+    // fix5 (2026-09-11) — LIVE-STORE ISOLATION: this was the ONE spawn in
+    // this suite with no AGENT_RECALL_ROOT. The SDK's default child env does
+    // NOT inherit CLAUDECODE/CLAUDE_CODE_*, so the spawned server resolved
+    // to a hook-less host, installed ambient capture, recorded this
+    // check_action call into the OWNER'S REAL ~/.agent-recall working
+    // memory, and distilled it into a junk "auto" card on graceful close —
+    // one junk card per `npm test` run, feeding the exact projects/auto
+    // dumping ground the S5 finding counted (verified live 2026-09-11:
+    // one-line "check_action: git status" rescue cards in the real store).
+    const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ar-board-smoke-"));
     const transport = new StdioClientTransport({
       command: "node",
       args: [ENTRY, "--full"],
+      env: { AGENT_RECALL_ROOT: isolatedRoot },
     });
 
     const client = new Client(
@@ -46,5 +59,7 @@ describe("check_action MCP smoke (surviving --full tool)", () => {
     assert.ok(typeof result.content[0].text === "string", "result.content[0].text is not a string");
     // A safe command should not trigger isError
     assert.ok(!result.isError, `check_action flagged safe command as error: ${result.content[0]?.text}`);
+
+    fs.rmSync(isolatedRoot, { recursive: true, force: true });
   });
 });
