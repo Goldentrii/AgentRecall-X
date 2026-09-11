@@ -178,6 +178,17 @@ export function formatTerse(result: SessionStartResult): string {
     lines.push(`🪞 ${result.mirror_available}`);
   }
 
+  // ── Unclaimed staging pointer (fix5, 2026-09-11) ──────────────────────
+  // EXACTLY ONE line, only when `_unclaimed/` holds staged sessions
+  // (failed/zero-confidence resolutions, kill-9 rescue cards) awaiting an
+  // explicit claim. Counts only — no staged CONTENT is ever rendered here,
+  // so this line adds nothing new to the fence's threat surface (it sits
+  // inside the fence anyway, same as the mirror pointer above).
+  if (result.unclaimed_cards && result.unclaimed_cards > 0) {
+    lines.push("");
+    lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\` to review and file them.`);
+  }
+
   // ── Empty state guidance ──────────────────────────────────────────────
   if (result.empty_state) {
     lines.push("");
