@@ -1074,7 +1074,19 @@ function scorePalaceTier(
     // silently fixed or silently left undocumented.
     const id = stableId("palace", title);
     const salience = Math.max(0.4, salienceByRoom.get(h.room) ?? 0.5);
-    const internalScore = h.keywordScore * 0.65 + salience * 0.35;
+    // fix4 S4 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+    // relevance-over-salience rebalance, 0.65/0.35 -> 0.90/0.10. Under the
+    // old weights the maximum salience differential (0.35 × (1.0 − 0.4
+    // floor) = 0.21) exceeded typical keyword-score deltas between a
+    // topically-right room and a high-traffic catch-all room — the
+    // S2-standard eval measured the goals/evolution mega-room taking rank 1
+    // in 15/20 golden queries across 8 projects on salience alone. At
+    // 0.10 the salience spread caps at 0.06: enough to break genuine
+    // relevance ties (its documented role — see the S4b mechanism test),
+    // never enough to overturn a >=0.07 keyword advantage. Query relevance
+    // now dominates the palace tier's internal ordering the same way it
+    // already dominates every other tier's.
+    const internalScore = h.keywordScore * 0.90 + salience * 0.10;
     const datePattern = h.excerpt.match(/(\d{4}-\d{2}-\d{2})/);
     return {
       id,

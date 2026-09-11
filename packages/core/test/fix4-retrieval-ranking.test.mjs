@@ -509,3 +509,89 @@ describe("fix4 S3 — journal score-then-truncate (no recency pre-truncation)", 
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// S4 — palace tier: relevance dominates, salience is tiebreaker-scale
+// ---------------------------------------------------------------------------
+
+describe("fix4 S4 — palace relevance-over-salience", () => {
+  const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix4-s4-"));
+  const SAVED_ENV = {};
+  const PROJECT = "fix4-s4-palace";
+  const Q = ["zzfixfourlima5512", "zzfixfourmike6613", "zzfixfournovember7714", "zzfixfouroscar8815"];
+
+  function setSalience(project, room, value) {
+    const metaPath = path.join(palaceDir(project), "rooms", room, "_room.json");
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+    meta.salience = value;
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  }
+
+  before(() => {
+    stashBackendEnv(SAVED_ENV);
+    setRoot(TMP);
+    resetRecallBackend();
+    ensurePalaceInitialized(PROJECT);
+
+    // "knowledge" plays the mega-room: MAX salience, but its line matches
+    // only 3 of the 4 query tokens (a realistic mega-room partial match).
+    fs.writeFileSync(
+      path.join(palaceDir(PROJECT), "rooms", "knowledge", "mega-note.md"),
+      `---\ntopic: mega-note\n---\n\n${Q[0]} ${Q[1]} ${Q[2]} broad catch-all note\n`,
+    );
+    setSalience(PROJECT, "knowledge", 1.0);
+
+    // "decisions" plays the topical room: MIN salience, full 4/4 match.
+    fs.writeFileSync(
+      path.join(palaceDir(PROJECT), "rooms", "decisions", "exact-note.md"),
+      `---\ntopic: exact-note\n---\n\n${Q[0]} ${Q[1]} ${Q[2]} ${Q[3]} the actual answer\n`,
+    );
+    setSalience(PROJECT, "decisions", 0.35); // floored to 0.4 by the scorer
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    restoreBackendEnv(SAVED_ENV);
+    fs.rmSync(TMP, { recursive: true, force: true });
+  });
+
+  it("S4a: a stronger keyword match in a low-salience room outranks a weaker match in a max-salience room", async () => {
+    const result = await queryMemory({ query: Q.join(" "), project: PROJECT, tiers: ["palace"] });
+    const first = result.items[0];
+    assert.ok(first, "expected palace results");
+    assert.equal(
+      first.room,
+      "decisions",
+      `the 4/4-match room must outrank the 3/4-match mega-room regardless of the salience gap ` +
+      `(relevance dominates; salience is tiebreaker-scale); got order ` +
+      `${JSON.stringify(result.items.map((i) => [i.room, i.title, i.keywordScore, i.score]))}`,
+    );
+  });
+
+  it("S4b: at EQUAL keyword relevance, higher salience still breaks the tie", async () => {
+    const P2 = "fix4-s4b-tie";
+    const T = "zzfixfourpapa9916";
+    ensurePalaceInitialized(P2);
+    fs.writeFileSync(
+      path.join(palaceDir(P2), "rooms", "knowledge", "tie-a.md"),
+      `---\ntopic: tie-a\n---\n\n${T} candidate approach alpha\n`,
+    );
+    fs.writeFileSync(
+      path.join(palaceDir(P2), "rooms", "decisions", "tie-b.md"),
+      `---\ntopic: tie-b\n---\n\n${T} candidate approach beta\n`,
+    );
+    setSalience(P2, "knowledge", 1.0);
+    setSalience(P2, "decisions", 0.4);
+
+    const result = await queryMemory({ query: T, project: P2, tiers: ["palace"] });
+    const rooms = result.items.map((i) => i.room);
+    const knowledgeIdx = rooms.indexOf("knowledge");
+    const decisionsIdx = rooms.indexOf("decisions");
+    assert.ok(knowledgeIdx !== -1 && decisionsIdx !== -1, `both rooms must surface; got ${JSON.stringify(rooms)}`);
+    assert.ok(
+      knowledgeIdx < decisionsIdx,
+      `at equal keyword relevance the higher-salience room must rank first (salience keeps its ` +
+      `tiebreaker role); got ${JSON.stringify(result.items.map((i) => [i.room, i.score]))}`,
+    );
+  });
+});
