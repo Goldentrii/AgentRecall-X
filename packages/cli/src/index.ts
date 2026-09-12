@@ -114,7 +114,7 @@ META:
 
 DREAM (nightly pipeline — deterministic admission math, fix10):
   ar dream admit --file <candidates.json> [--run-date YYYY-MM-DD] [--journal-files N] [--journal-bytes N] [--corrections-new N]
-      Admit-then-vote: ≥3 distinct observation-days in 7d promotes (same bar as the
+      Admit-then-vote: ≥3 distinct (day, project) incidents in 7d promotes (same bar as the
       online path); 1–2x is admitted as a candidate; every decision carries a reason.
       Writes the night's yield record to <root>/dreams/yield-YYYY-MM-DD.json.
   ar dream health     Uptime + yield health (zero-yield streak, cause classification)
@@ -709,6 +709,14 @@ async function main(): Promise<void> {
           }
           const [y, m, d] = runDateStr.split("-").map(Number);
           runDate = new Date(y, m - 1, d, 2, 0, 0); // the dream's canonical 2 AM
+          // LOW-5 (class-not-instance): observation dates get rollover
+          // validation in core (dayToUtcMs); the run date is the same input
+          // class — reject impossible dates instead of letting Date roll
+          // 2026-02-31 into a 2026-03-03 run.
+          if (runDate.getFullYear() !== y || runDate.getMonth() !== m - 1 || runDate.getDate() !== d) {
+            process.stderr.write(`Error: --run-date is not a real calendar date (got: ${runDateStr})\n`);
+            process.exit(1);
+          }
         }
         const num = (flag: string): number | undefined => {
           const v = getFlag(flag, rest);

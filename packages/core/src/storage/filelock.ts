@@ -45,11 +45,19 @@
  * Cross-process safety does not depend on the fn being sync: the mkdir lock
  * itself excludes concurrent critical sections either way.
  *
- * LOCK ORDERING (deadlock discipline — the only nesting in the codebase):
+ * LOCK ORDERING (deadlock discipline — the complete nesting set):
  *   "awareness-state" → "awareness"
+ *   "dream-admission" → "insights-index"
+ *   "dream-admission" → "awareness-state" → "awareness"
  * awareness.ts acquires "awareness" (awareness.md render) while holding
  * "awareness-state" (awareness-state.json + awareness-archive.json RMW).
- * Never acquire "awareness-state" while holding "awareness". Same-name
+ * fix10: dream-admission.ts wraps its whole nightly run (a long async
+ * critical section) in "dream-admission" and acquires "insights-index"
+ * (addIndexedInsight) and "awareness-state" (addInsight via
+ * promoteConfirmedInsights / the cap fallback) inside it. "dream-admission"
+ * has a SINGLE acquirer and is always the outermost lock — no cycle.
+ * Never acquire "awareness-state" while holding "awareness", and never
+ * acquire "dream-admission" while holding any other lock. Same-name
  * nesting is a deadlock (the lock is NOT reentrant): modules expose
  * *Unlocked internals for use inside their own critical sections instead.
  *
