@@ -117,6 +117,7 @@ import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { queryMemory, queryArchiveFallback, type QueryMemoryItem } from "../retrieval/query-memory.js";
+import type { SemanticLegNote } from "../retrieval/semantic-leg.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -253,6 +254,17 @@ export interface SmartRecallResultItem {
    * flag is off, fusion didn't run, or this item is remote-only.
    */
   foundInRemote?: boolean;
+  /**
+   * fix7 (2026-09-12, opt-in embeddings) — `true` ONLY on an item the
+   * semantic leg ORIGINATED (a candidate no lexical tier surfaced — the
+   * paraphrase class the leg exists for). Mirrors `foundInRemote`'s shape:
+   * a separate additive field, never overloading `alsoFoundIn` (whose
+   * values are competing-TIER names). Structurally absent whenever
+   * AGENT_RECALL_EMBEDDINGS is off (flag-off output stays byte-identical
+   * to fix4b — the same hard equivalence invariant recall_path carries for
+   * the remote-fusion flag).
+   */
+  foundBySemantic?: boolean;
 }
 
 /** A verbatim source attached when a low-confidence top hit was drilled into. */
@@ -338,6 +350,17 @@ export interface SmartRecallResult {
    *     set for.
    */
   recall_path?: "fused" | "remote" | "local" | "local-timeout";
+  /**
+   * fix7 (2026-09-12) — semantic-leg diagnostics (status/model/coverage),
+   * threaded from `QueryMemoryResult.semanticLeg`. ONLY present when the
+   * AGENT_RECALL_EMBEDDINGS opt-in was ON for this call AND the results
+   * came from the local pipeline — flag-off output stays byte-identical to
+   * fix4b (the recall_path/RECALL_FUSION equivalence convention). A
+   * degraded status ("index-missing", "model-unavailable", "index-corrupt",
+   * …) means lexical-only results with the reason carried here, never an
+   * error on the recall path.
+   */
+  semantic_leg?: SemanticLegNote;
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +589,8 @@ export async function localRecallSearch(
     // though they had already, invisibly, changed this item's `score`/rank.
     ...(item.supersededBy ? { supersededBy: item.supersededBy } : {}),
     ...(item.conflictsWith && item.conflictsWith.length > 0 ? { conflictsWith: item.conflictsWith } : {}),
+    // fix7: semantic-origin marker (see SmartRecallResultItem.foundBySemantic).
+    ...(item.semantic ? { foundBySemantic: true } : {}),
   }));
 
   // Graph walk — fix4 S2 (2026-09-11): the 1-hop graph signal is now
@@ -629,6 +654,12 @@ export async function localRecallSearch(
     corrections: result.candidatesBySource.corrections ?? 0,
   };
   (deduped as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS] = rawCandidateCounts;
+  // fix7: semantic-leg diagnostics ride the same hidden-side-channel pattern
+  // (invisible to JSON/Object.keys — flag-off arrays carry NO new symbol
+  // because queryMemory only sets semanticLeg under the opt-in).
+  if (result.semanticLeg) {
+    (deduped as SmartRecallResultItem[] & WithSemanticLegNote)[SEMANTIC_LEG_NOTE] = result.semanticLeg;
+  }
 
   return deduped;
 }
@@ -643,6 +674,17 @@ export async function localRecallSearch(
 const RAW_CANDIDATE_COUNTS: unique symbol = Symbol("rawCandidateCounts");
 interface WithRawCandidateCounts {
   [RAW_CANDIDATE_COUNTS]?: CandidatesBySource;
+}
+
+/**
+ * fix7: second hidden side channel — the semantic-leg note (set by
+ * localRecallSearch ONLY when queryMemory ran under the embeddings opt-in),
+ * surfaced by smartRecall() as `SmartRecallResult.semantic_leg`. Same
+ * pattern and rationale as RAW_CANDIDATE_COUNTS immediately above.
+ */
+const SEMANTIC_LEG_NOTE: unique symbol = Symbol("semanticLegNote");
+interface WithSemanticLegNote {
+  [SEMANTIC_LEG_NOTE]?: SemanticLegNote;
 }
 
 /**
@@ -1080,6 +1122,10 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   const totalSearched = rawCandidateCounts
     ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight + rawCandidateCounts.corrections
     : results.length;
+  // fix7: only ever set when the embeddings opt-in was on (see the side
+  // channel's own doc comment) — absent otherwise, keeping flag-off output
+  // byte-identical.
+  const semanticLegNote = (results as SmartRecallResultItem[] & WithSemanticLegNote)[SEMANTIC_LEG_NOTE];
 
   const sourcesQueried = [...new Set(results.map((r) => r.source))];
   // "archive" is reported whenever the gate ran, regardless of hit count —
@@ -1096,6 +1142,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
     ...(recallPath ? { recall_path: recallPath } : {}),
+    ...(semanticLegNote ? { semantic_leg: semanticLegNote } : {}),
     ...(bridged ? { bridged } : {}),
     ...(finalResults.length === 0
       ? { guidance: "No results found. Try `session_start` to initialize this project, or `bootstrap_scan` to import existing context." }

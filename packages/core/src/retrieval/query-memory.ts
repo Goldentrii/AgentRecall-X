@@ -246,6 +246,8 @@ import { CONFIDENCE_FLOOR } from "../tools-logic/confidence.js";
 import { scrubForCloud, fenceMemory } from "../storage/content-guard.js";
 import { isRescueSourcedContent, extractFrontmatterSource } from "../helpers/journal-filter.js";
 import { getLegacyRoot, type Confidence, type DecayClass } from "../types.js";
+import { embeddingsEnabled } from "../embeddings/config.js";
+import type { SemanticLegNote } from "./semantic-leg.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -391,6 +393,16 @@ export interface QueryMemoryItem {
    * never fed into `internalScore`. Absent on every non-corrections item.
    */
   decayClass?: DecayClass;
+  /**
+   * fix7 (2026-09-12, opt-in embeddings) — set `true` ONLY on an item
+   * ORIGINATED by the semantic leg (retrieval/semantic-leg.ts). A lexical
+   * item whose RRF entry a semantic contribution merely folded INTO (same
+   * `id` — applyRRF keeps the first-inserted item's fields) does NOT carry
+   * it: the flag marks semantic-only discoveries, mirroring how
+   * `foundInRemote` (smart-recall.ts) marks the cross-BACKEND case.
+   * Structurally absent whenever the AGENT_RECALL_EMBEDDINGS flag is off.
+   */
+  semantic?: true;
 }
 
 export interface QueryMemoryInput {
@@ -467,6 +479,16 @@ export interface QueryMemoryResult {
    *  of hit count — matches smart-recall.ts's original `sourcesQueried`
    *  semantics exactly. */
   sourcesQueried: QueryMemoryTier[];
+  /**
+   * fix7 (2026-09-12) — semantic-leg diagnostics. Present IF AND ONLY IF
+   * the AGENT_RECALL_EMBEDDINGS opt-in was ON for this call (the flag-off
+   * result object is byte-identical to fix4b — a hard equivalence
+   * invariant, tested). `status !== "ok"` is the "degrade silently and
+   * safely" contract made diagnosable: the lexical results are unaffected
+   * and the reason (missing model/index, corruption) is carried here
+   * instead of thrown.
+   */
+  semanticLeg?: SemanticLegNote;
   /**
    * FENCE stage (pipeline stage 6) — the pipeline's OWN canonical
    * "wrap retrieved content before it reaches an agent" implementation, for
@@ -1673,12 +1695,57 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     }
   }
 
+  // SEMANTIC LEG (fix7, 2026-09-12) — OPT-IN ONLY (AGENT_RECALL_EMBEDDINGS
+  // / config.json embeddings_enabled; read per-call, the RECALL_FUSION
+  // precedent). Flag OFF: this block is a single boolean check — no module
+  // load, no index read, no model touch; the result is byte-identical to
+  // fix4b (pinned by fix7-embeddings.test.mjs's equivalence test). Flag ON:
+  // one ADDITIONAL ranked list joins the same RRF fusion below. The leg's
+  // items are trust-filtered/scoped through the same chokepoints as every
+  // lexical tier (see retrieval/semantic-leg.ts's header — the security
+  // property, adversarially tested) and carry native tier source labels.
+  // Loaded dynamically so the flag-off path never even parses the
+  // embeddings modules (same lazy-import pattern smartRecall uses for
+  // recall-backend.js).
+  let semanticItems: QueryMemoryItem[] | undefined;
+  let semanticNote: SemanticLegNote | undefined;
+  if (embeddingsEnabled()) {
+    try {
+      const { runSemanticLeg } = await import("./semantic-leg.js");
+      const sem = await runSemanticLeg({
+        query: input.query,
+        project: input.project,
+        scope: input.scope,
+        since: input.since,
+        room: input.palace?.room,
+      });
+      semanticItems = sem.items;
+      semanticNote = sem.note;
+    } catch (err) {
+      // Defense in depth — runSemanticLeg already never throws; this guard
+      // covers the dynamic import itself. The recall must not fail.
+      semanticNote = {
+        status: "error",
+        model: "unknown",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   // RANK/FUSE stage.
   const rrfMap = new Map<string, RRFEntry>();
   for (const tier of input.tiers) {
     const items = byTier[tier];
     if (items) applyRRF(items, rrfMap);
   }
+  // fix7: the semantic leg fuses LAST — a same-id item found both ways
+  // accumulates contributions into its lexical entry (multi-evidence), and
+  // a semantic-only item enters the map after every lexical tier, so at
+  // EXACT fused-score ties the fix4 authority order (corrections → palace →
+  // journal → insight) still outranks it — the leg adds evidence, never
+  // tie-break authority. (Placement measured against the after-corrections
+  // alternative on the golden eval; see the fix7 report.)
+  if (semanticItems && semanticItems.length > 0) applyRRF(semanticItems, rrfMap);
   const fusedMap = fuseCanonical(rrfMap);
   // fix4b (2026-09-12): the legacy multiplicative boost runs ONLY behind the
   // explicit freshnessBias opt-in — see QueryMemoryInput.freshnessBias.
@@ -1703,6 +1770,9 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     items: fused,
     candidatesBySource,
     sourcesQueried,
+    // fix7: present ONLY under the opt-in — flag-off objects are shape-
+    // identical to fix4b's (spread of undefined adds nothing).
+    ...(semanticNote ? { semanticLeg: semanticNote } : {}),
     renderFenced(limit?: number): string {
       const capped = typeof limit === "number" ? fused.slice(0, limit) : fused;
       const lines = capped.map(

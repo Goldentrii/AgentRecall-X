@@ -815,3 +815,44 @@ export type { ContradictionItem, ContradictionResult } from "./retrieval/contrad
 // (see that file's own header). Exported here too, alongside its sibling
 // contradiction-stage exports above, so a test can exercise it directly.
 export { extractHighPrecisionVersionTokens } from "./retrieval/contradiction.js";
+
+// fix7 (2026-09-12, plan-v2 #7) — OPT-IN local embeddings for the semantic-
+// paraphrase retrieval gap. Everything here is inert unless the
+// AGENT_RECALL_EMBEDDINGS opt-in (or config.json embeddings_enabled) is set;
+// the CLI's `ar embeddings setup|rebuild|status` commands consume the build/
+// status APIs, and tests exercise the leg + index directly. See
+// packages/core/src/embeddings/config.ts's header for the design contract
+// (opt-in only, zero-cloud, model never ships in the package, silent-safe
+// degrade).
+export {
+  embeddingsEnabled,
+  resolveEmbeddingModel,
+  embeddingsHome,
+  embeddingsRuntimeDir,
+  embeddingsModelsDir,
+  embeddingsIndexPath,
+  EMBEDDING_MODELS,
+  DEFAULT_EMBEDDING_MODEL,
+} from "./embeddings/config.js";
+export type { EmbeddingModelSpec } from "./embeddings/config.js";
+export {
+  getEmbedder,
+  resetEmbedderCache,
+  runtimeInstalled,
+  modelCached,
+  RUNTIME_PACKAGE,
+  RUNTIME_PACKAGE_RANGE,
+} from "./embeddings/runtime.js";
+export type { Embedder, EmbedderError } from "./embeddings/runtime.js";
+export { chunkProject, chunkGlobalInsights } from "./embeddings/chunker.js";
+export type { EmbeddingChunk } from "./embeddings/chunker.js";
+export {
+  readEmbeddingIndex,
+  writeEmbeddingIndex,
+  resetEmbeddingIndexCache,
+} from "./embeddings/index-store.js";
+export type { EmbeddingIndex, IndexReadError } from "./embeddings/index-store.js";
+export { buildEmbeddingsIndex, embeddingsStatus } from "./embeddings/indexer.js";
+export type { BuildEmbeddingsOptions, BuildEmbeddingsReport, EmbeddingsStatus } from "./embeddings/indexer.js";
+export { runSemanticLeg } from "./retrieval/semantic-leg.js";
+export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./retrieval/semantic-leg.js";

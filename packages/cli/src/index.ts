@@ -142,6 +142,12 @@ DIAGNOSTICS:
   ar corrections retract <id> --superseded-by <newer-id> [--project <slug>]
       Human-confirmed, single-record retract (active:false, superseded_by set). Both <id> and
       --superseded-by must be explicit — no --all/--yes, no bulk mode, never auto-retracts.
+  ar embeddings setup|rebuild|status   OPT-IN local semantic recall (fix7). \`setup\` installs the local ONNX
+      runtime + downloads the model once (nothing ships in this package; zero cloud inference, no telemetry);
+      \`rebuild\` (re)builds the content-hash-keyed vector index incrementally (--project <slug>, --force);
+      \`status\` shows flag/model/index state. Enable with AGENT_RECALL_EMBEDDINGS=1 (or config.json
+      "embeddings_enabled": true). Recall NEVER touches the network and degrades to lexical-only when
+      the model/index is missing.
   ar mirror [--json]   The Mirror: first-person, citation-backed self-model from your real corrections/insights (personal-tier, local-only; omit --project for the cross-project mirror)
   ar doctor [--json]   READ-ONLY store integrity check: index drift, stale locks, stalled consolidation seam
   ar repair [--apply] [--json]  Remediate doctor findings (DRY-RUN unless --apply): reindex drift, remove dead locks, login-free drain
@@ -836,6 +842,135 @@ async function main(): Promise<void> {
         }
         default:
           process.stderr.write(`Unknown corrections subcommand: ${sub ?? "(none)"}\nUsage:\n  ar corrections rejected [--stats] [--json]\n  ar corrections export [--all-projects] [--include-retracted] [--since YYYY-MM-DD] [--to-backend]\n  ar corrections conflicts [--project <slug>]\n  ar corrections retract <id> --superseded-by <newer-id> [--project <slug>]\n`);
+          process.exitCode = 1;
+      }
+      break;
+    }
+    case "embeddings": {
+      // fix7 (2026-09-12) — OPT-IN local semantic embeddings (plan-v2 #7).
+      // Three subcommands; nothing here runs unless the user invokes it, and
+      // recall only uses any of it behind AGENT_RECALL_EMBEDDINGS=1 (or
+      // config.json `"embeddings_enabled": true`).
+      const sub = rest[0];
+      switch (sub) {
+        case "setup": {
+          // The ONE sanctioned downloader: installs the transformers.js
+          // runtime self-contained under <embeddings-home>/runtime (it is
+          // ~380MB with onnxruntime — deliberately NOT a dependency of this
+          // package) and downloads + caches the model (one-time; cached
+          // models are never re-fetched). Everything lands under
+          // `ar embeddings status`-visible paths; nothing touches the
+          // network afterwards (recall/rebuild load with remote fetch
+          // disabled).
+          const runtimeDir = core.embeddingsRuntimeDir();
+          const spec = core.resolveEmbeddingModel();
+          if (spec.internal) {
+            output(`model "${spec.id}" is an internal test row — unset AGENT_RECALL_EMBEDDINGS_MODEL or pick one of: ${Object.values(core.EMBEDDING_MODELS).filter((m) => !m.internal).map((m) => m.id).join(", ")}`);
+            process.exitCode = 1;
+            break;
+          }
+          if (!core.runtimeInstalled()) {
+            process.stderr.write(`[ar] installing ${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE} into ${runtimeDir} (self-contained, ~380MB — one time)...\n`);
+            const { spawnSync } = await import("node:child_process");
+            const install = spawnSync(
+              "npm",
+              ["install", "--prefix", runtimeDir, "--no-audit", "--no-fund", "--ignore-scripts", `${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE}`],
+              { stdio: ["ignore", "inherit", "inherit"] },
+            );
+            if (install.status !== 0) {
+              output(`runtime install failed (npm exit ${install.status}) — check network/npm config and re-run \`ar embeddings setup\``);
+              process.exitCode = 1;
+              break;
+            }
+          } else {
+            process.stderr.write(`[ar] runtime already installed at ${runtimeDir}\n`);
+          }
+          process.stderr.write(`[ar] downloading/verifying model ${spec.hfRepo} (dtype ${spec.dtype}) into ${core.embeddingsModelsDir()} — cached after the first run...\n`);
+          // allowRemote: true — the ONLY call site in the product allowed to
+          // fetch (embeddings/runtime.ts network contract).
+          const embedder = await core.getEmbedder(spec, { allowRemote: true });
+          if ("error" in embedder) {
+            output(`model setup failed: ${embedder.error.message}`);
+            process.exitCode = 1;
+            break;
+          }
+          const probe = await embedder.embedQueries(["setup verification probe"]);
+          if (!probe[0] || probe[0].length !== spec.dim) {
+            output(`model verification failed: expected dim ${spec.dim}, got ${probe[0]?.length ?? 0}`);
+            process.exitCode = 1;
+            break;
+          }
+          output([
+            `✓ embeddings ready: model ${spec.id} (${spec.hfRepo}, dim ${spec.dim})`,
+            `  runtime: ${runtimeDir}`,
+            `  models:  ${core.embeddingsModelsDir()}`,
+            `Next steps:`,
+            `  1. ar embeddings rebuild            # build the local index (incremental)`,
+            `  2. export AGENT_RECALL_EMBEDDINGS=1 # or set "embeddings_enabled": true in <store>/config.json`,
+          ].join("\n"));
+          break;
+        }
+        case "rebuild": {
+          // Incremental by construction (content-hash keyed): only new/
+          // changed chunks are embedded; a full (unscoped) rebuild also
+          // prunes vectors whose content no longer exists. OFFLINE-STRICT:
+          // never downloads — run `ar embeddings setup` first.
+          const scopedProject = getFlag("--project", rest);
+          const force = hasFlag("--force", rest);
+          let lastLine = 0;
+          const report = await core.buildEmbeddingsIndex({
+            ...(scopedProject ? { projects: [scopedProject] } : {}),
+            force,
+            onProgress: (done: number, total: number) => {
+              const pct = total > 0 ? Math.floor((done / total) * 100) : 100;
+              if (pct >= lastLine + 10 || done === total) {
+                process.stderr.write(`[ar] embedding ${done}/${total} (${pct}%)\n`);
+                lastLine = pct;
+              }
+            },
+          });
+          if (!report.ok) {
+            output(`rebuild failed: ${report.error?.message ?? "unknown error"}`);
+            process.exitCode = 1;
+            break;
+          }
+          if (hasFlag("--json", rest)) {
+            output(report);
+          } else {
+            output([
+              `✓ embedding index ${scopedProject ? `updated for project ${scopedProject}` : "rebuilt"}: ${report.indexPath}`,
+              `  model ${report.model} (dim ${report.dim}) · ${report.totalChunks} chunks enumerated`,
+              `  embedded ${report.embeddedNew} new · reused ${report.reused} cached · pruned ${report.pruned} stale`,
+              `  ${(report.durationMs / 1000).toFixed(1)}s`,
+              ...(scopedProject ? [`  note: project-scoped builds never prune (a full \`ar embeddings rebuild\` does)`] : []),
+            ].join("\n"));
+          }
+          break;
+        }
+        case "status": {
+          const status = await core.embeddingsStatus();
+          if (hasFlag("--json", rest)) {
+            output(status);
+          } else {
+            const lines: string[] = [
+              `embeddings: ${status.enabled ? "ENABLED" : "disabled"} (AGENT_RECALL_EMBEDDINGS / config.json embeddings_enabled)`,
+              `  model:   ${status.model} (dim ${status.dim}) — cached: ${status.modelCached ? "yes" : "NO (run \`ar embeddings setup\`)"}`,
+              `  runtime: ${status.runtimeInstalled ? "installed" : "NOT installed (run \`ar embeddings setup\`)"}`,
+              `  index:   ${status.indexPath}`,
+            ];
+            if (!status.indexExists) {
+              lines.push(`           missing — run \`ar embeddings rebuild\``);
+            } else if (status.indexError) {
+              lines.push(`           UNREADABLE: ${status.indexError}`);
+            } else {
+              lines.push(`           ${status.indexCount} vectors · ${((status.indexBytes ?? 0) / 1024 / 1024).toFixed(1)}MB · built ${status.indexBuiltAt}`);
+            }
+            output(lines.join("\n"));
+          }
+          break;
+        }
+        default:
+          output(`Unknown embeddings subcommand: ${sub ?? "(none)"}\nUsage: ar embeddings setup|rebuild|status`);
           process.exitCode = 1;
       }
       break;
