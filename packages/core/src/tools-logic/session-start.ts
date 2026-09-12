@@ -18,6 +18,7 @@ import { extractSection } from "../helpers/sections.js";
 import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
 import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
+import { listPendingCorrections } from "../storage/pending.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
@@ -357,6 +358,17 @@ export interface SessionStartResult {
   recent_captures: Array<{ date: string; question: string; answer: string }>;
   watch_for: WatchForPattern[];
   corrections: SlimCorrection[];
+  /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — captures awaiting
+   * review in corrections/_pending/ (staged string-form corrections, hook
+   * captures, incomplete structured input, failed insights). COUNT + up to 3
+   * ids ONLY — staged CONTENT is deliberately never rendered at session_start
+   * (pending is an untrusted staging area; review happens through check()'s
+   * structured form, whose output is fenced). OMITTED when empty, matching
+   * the absent-when-empty convention (predicted_risks / mirror_available).
+   * Renderers surface this as ≤2 compact lines.
+   */
+  pending_corrections?: { count: number; ids: string[] };
   resume: {
     last_date: string | null;
     last_trajectory: string | null;
@@ -977,6 +989,24 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   const correctionsSlim = applyCorrectionBudget(rawCorrections.map(toSlimCorrection));
   const corrections: SlimCorrection[] = abArm === "off" ? [] : correctionsSlim;
 
+  // 7b. Fix #2 (dual-channel capture gate, 2026-09-11): pending-review
+  // counter. listPendingCorrections runs the TTL/cap sweep, so an expired
+  // capture never lingers in the count. COUNT + ids only — never staged
+  // content (see the result field's doc comment). Correction-derived, so the
+  // A/B OFF arm suppresses it like every other correction surface.
+  // Best-effort: a pending-store failure must never break orientation.
+  let pendingCorrections: SessionStartResult["pending_corrections"];
+  if (abArm !== "off") {
+    try {
+      const staged = await listPendingCorrections(slug);
+      if (staged.length > 0) {
+        pendingCorrections = { count: staged.length, ids: staged.slice(0, 3).map((p) => p.id) };
+      }
+    } catch {
+      // swallow — orientation must never fail on the staging store
+    }
+  }
+
   // 8. Resume block — structured re-entry briefing for returning sessions
   const sessionsCount = olderCount + (yesterdayBrief ? 1 : 0) + (todayBrief ? 1 : 0);
   let resume: SessionStartResult["resume"] = null;
@@ -1336,6 +1366,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     recent_captures: capturesBudgeted,
     watch_for,
     corrections,
+    ...(pendingCorrections ? { pending_corrections: pendingCorrections } : {}),
     resume,
     behavior_rules: rulesBudgeted,
     dream_health: dreamHealth,

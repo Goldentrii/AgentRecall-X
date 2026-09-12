@@ -237,18 +237,45 @@ describe("C-1 (severity sites): check.ts's p0Patterns stays in lock-step with de
     fs.rmSync(testRoot, { recursive: true, force: true });
   });
 
+  // Fix #2 retarget (2026-09-11, dual-channel capture gate): the ACTIVE-ledger
+  // write path is the STRUCTURED human_correction form (string stages to
+  // _pending/ — pinned below). The severity assertion is unchanged: check.ts's
+  // p0Patterns copy classifies the RULE sentence, and 不要在意 must stay p1.
   it("check() with a 不要在意 reassurance human_correction does NOT classify p0 via check.ts's own p0Patterns copy", async () => {
     const project = "cjk-battery-check-severity-proj";
     await check({
       goal: "discuss rollout plan",
       confidence: "high",
-      human_correction: "不要在意，先试试看这个方案效果如何",
+      human_correction: {
+        rule: "不要在意，先试试看这个方案效果如何",
+        why: "人类在讨论中给出的流程纠正",
+        applies_when: ["方案", "流程"],
+      },
       project,
     });
     const records = readCorrections(project);
     const rec = records.find((r) => r.context.includes("不要在意"));
     assert.ok(rec, `expected a correction record to have been written, got: ${JSON.stringify(records)}`);
     assert.equal(rec.severity, "p1", `不要在意 must not auto-escalate to p0 via check.ts's p0Patterns, got: ${JSON.stringify(rec)}`);
+  });
+
+  // R1 companion pin (rider, 2026-09-11): the SAME text as a string stages to
+  // _pending/ with the SAME p1 severity (the reassurance exclusion applies on
+  // the staging path too) and never reaches the active ledger.
+  it("R1 pin: 不要在意 as a STRING stages pending with severity p1; active ledger stays empty", async () => {
+    const project = "cjk-battery-string-pin-proj";
+    await check({
+      goal: "discuss rollout plan",
+      confidence: "high",
+      human_correction: "不要在意，先试试看这个方案效果如何",
+      project,
+    });
+    assert.equal(readCorrections(project).length, 0, "string form must not reach the active ledger");
+    const pendingDir = path.join(testRoot, "projects", project, "corrections", "_pending");
+    const staged = fs.readdirSync(pendingDir).filter((f) => f.endsWith(".json") && !f.startsWith("_"))
+      .map((f) => JSON.parse(fs.readFileSync(path.join(pendingDir, f), "utf-8")));
+    assert.equal(staged.length, 1, "the capture must be staged, never dropped");
+    assert.equal(staged[0].severity, "p1", `不要在意 must not escalate to p0 on the staging path either, got: ${JSON.stringify(staged[0])}`);
   });
 
   it("REGRESSION GUARD: bug-report-style bare 不能 (no 你 prefix) still never reaches p0 severity because it never captures at all", async () => {

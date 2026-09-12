@@ -60,12 +60,21 @@ describe("check() auto-promote → session_start project-scoped insight slot", (
     // groups by a 2-keyword extraction of the correction text, so 3 identical
     // calls produce ONE pattern with frequency === 3, crossing check()'s own
     // `w.frequency >= 3` auto-promote threshold on the 3rd call.
+    //
+    // Fix #2 retarget (2026-09-11, dual-channel capture gate): the alignment-log
+    // corrections field (which feeds extractWatchPatterns → auto-promote) is
+    // fed by the STRUCTURED human_correction form only; the string form is
+    // staged to _pending/ and can no longer drive auto-promotion (pinned below).
     let lastResult;
     for (let i = 0; i < 3; i++) {
       lastResult = await check({
         goal: `ship feature batch ${i}`,
         confidence: "high",
-        human_correction: CORRECTION,
+        human_correction: {
+          rule: CORRECTION,
+          why: `the human corrected shipping batch ${i} for skipping the checklist`,
+          applies_when: ["deploy", "checklist"],
+        },
         project: PROJECT,
       });
     }
@@ -97,5 +106,33 @@ describe("check() auto-promote → session_start project-scoped insight slot", (
       `session_start must surface the project-scoped auto-promoted insight; got insights=${JSON.stringify(result.insights)}`,
     );
     assert.equal(surfaced.confirmed, 1, "a single auto-promotion confirms once");
+  });
+
+  // R1 companion pin (rider, 2026-09-11): the STRING form can no longer drive
+  // auto-promotion — 3 identical string captures stage to _pending/ and mint
+  // no insight, no watch_for pattern.
+  it("R1 pin: 3× string human_correction does NOT auto-promote (staged pending instead)", async () => {
+    const PROJECT = "check-promote-string-pin";
+    const CORRECTION = "Always verify the deployment checklist before shipping";
+    let lastResult;
+    for (let i = 0; i < 3; i++) {
+      lastResult = await check({
+        goal: `ship feature batch ${i}`,
+        confidence: "high",
+        human_correction: CORRECTION,
+        project: PROJECT,
+      });
+    }
+    assert.equal(lastResult.auto_promoted, undefined, "string form must not auto-promote");
+    assert.equal(lastResult.watch_for.length, 0, "string form must not feed watch_for");
+    const index = readInsightsIndex();
+    assert.ok(
+      !index.insights.some((ins) => ins.title.startsWith("Human preference: Always verify") && (ins.projects ?? []).includes(PROJECT)),
+      "no insight may be minted from string-form captures",
+    );
+    const pendingDir = path.join(testRoot, "projects", PROJECT, "corrections", "_pending");
+    assert.ok(fs.existsSync(pendingDir), "the string captures must be staged in _pending/");
+    const staged = fs.readdirSync(pendingDir).filter((f) => f.endsWith(".json") && !f.startsWith("_"));
+    assert.equal(staged.length, 1, "identical repeats dedupe to one staged row");
   });
 });

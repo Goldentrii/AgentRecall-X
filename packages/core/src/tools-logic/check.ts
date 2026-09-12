@@ -11,7 +11,12 @@ import { resolveProject } from "../storage/project.js";
 import { ensureDir, todayISO, writeTextAtomic } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
-import { writeCorrection, splitSentences, CJK_REASSURANCE_COMPLETIONS } from "../storage/corrections.js";
+import { writeCorrection, splitSentences, detectSeverity } from "../storage/corrections.js";
+import {
+  stagePendingCorrection,
+  resolvePendingCorrection,
+  validateStructuredCorrection,
+} from "../storage/pending.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
@@ -36,11 +41,43 @@ export interface EvidenceFactor {
   weight?: number;
 }
 
+/**
+ * Fix #2 (dual-channel capture gate, 2026-09-11) — the STRUCTURED
+ * human_correction form, the ONLY path into the active corrections ledger.
+ * All fields optional at the type level (the MCP schema mirrors this);
+ * completeness is enforced by validateStructuredCorrection with an
+ * agent_instruction on failure. `pending_id` resolves a staged _pending/
+ * item: with a valid {rule,why,applies_when} it PROMOTES it (default
+ * resolution), with `resolution:"reject"` it discards it to
+ * _pending/_rejected.jsonl (rule/why/applies_when not required for reject;
+ * `why` doubles as the reject reason).
+ */
+export interface HumanCorrectionStructured {
+  rule?: string;
+  why?: string;
+  applies_when?: string[];
+  pending_id?: string;
+  resolution?: "promote" | "reject";
+}
+
 export interface CheckInput {
   goal: string;
   confidence: "high" | "medium" | "low";
   assumptions?: string[];
-  human_correction?: string;
+  /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — additive union.
+   * STRING form: STAGED to corrections/_pending/ for review — it no longer
+   * reaches the active ledger, the alignment-log `corrections` field, or
+   * watch_for. STRUCTURED form: validated {rule, why, applies_when} →
+   * active ledger via writeCorrection (and feeds the alignment log).
+   */
+  human_correction?: string | HumanCorrectionStructured;
+  /**
+   * Fix #2 — capture-channel provenance for the staging path (e.g. the CLI
+   * hook passes "hook-correction" so staged rows carry hook provenance).
+   * Additive + optional; ignored on the structured/active path.
+   */
+  correction_source?: string;
   delta?: string;
   project?: string;
   prior?: number;
@@ -96,6 +133,21 @@ export interface CheckResult {
    */
   alignment_log_skipped?: true;
   /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — outcome of the
+   * human_correction disposition when it did NOT directly become an active
+   * record: "staged" (string form → _pending/), "rejected_junk" (hard noise
+   * → _pending/_rejected.jsonl), "invalid_structured" (structured form
+   * failed completeness → staged + agent_instruction), "promoted" /
+   * "review_rejected" (pending_id resolution), "not_found" (unknown
+   * pending_id). Absent on the plain valid-structured path.
+   */
+  correction_pending?: {
+    id?: string;
+    status: "staged" | "rejected_junk" | "invalid_structured" | "promoted" | "review_rejected" | "not_found" | "staging_failed";
+    reason?: string;
+    agent_instruction?: string;
+  };
+  /**
    * Wave 5 — forward anticipation: does this goal resemble a tendency the user
    * has been corrected on? Pushed as an early prior, not a fact pulled late.
    * Absent when prediction could not run or no blind-spots profile exists.
@@ -135,17 +187,199 @@ function writeAlignmentLog(project: string, records: AlignmentRecord[]): void {
   writeTextAtomic(p, scrubForCloud(JSON.stringify(records, null, 2)));
 }
 
+// Severity classification: Fix #2 review fix (2026-09-11, code-review MEDIUM)
+// — this file used to carry its own inline p0Patterns copy, documented as
+// "kept byte-identical to storage/corrections.ts's detectSeverity" and it had
+// ALREADY drifted twice (see the C-1 history in detectSeverity's doc comment).
+// corrections.ts now EXPORTS detectSeverity precisely so staging and capture
+// share one classifier; this file reuses it (class-not-instance: the
+// classifier exists once). Applied to the structured form's RULE sentence only
+// — the why/evidence must never escalate severity (see the severity-rule-only
+// battery test).
+
+/**
+ * Fix #2 review fix (2026-09-11, code-review MEDIUM — class-not-instance):
+ * capture-channel table for `correction_source` → pending channel. A source
+ * value not in this table stages as "check_string" but its RAW value is still
+ * carried in the staged row's provenance (never silently discarded).
+ */
+const SOURCE_CHANNEL_TABLE: Record<string, "hook"> = {
+  "hook-correction": "hook",
+};
+
 export async function check(input: CheckInput): Promise<CheckResult> {
   const slug = await resolveProject(input.project);
 
-  // 1. Record this alignment check
+  // Set when the correction quality gate rejects a human_correction (surfaced
+  // in the result so the rejection is never silent).
+  let gateRejection: string | undefined;
+  // Fix #2 — staging/promotion outcome for the caller (see CheckResult doc).
+  let correctionPending: CheckResult["correction_pending"];
+  // Fix #2 — set ONLY by the validated structured form; feeds the alignment
+  // record's `corrections` field below (the string form no longer does).
+  let activatedRule: string | undefined;
+
+  // 1a. Fix #2 (dual-channel capture gate): human_correction disposition.
+  const hc = input.human_correction;
+  if (typeof hc === "string") {
+    if (!hc.trim()) {
+      // Review fix (2026-09-11, code-review LOW): a whitespace-only string is
+      // content-free — report it instead of silently no-op'ing (the pre-fix
+      // gate would have rejected it as "too short").
+      correctionPending = { status: "rejected_junk", reason: "empty human_correction — nothing to capture" };
+    } else {
+      // Legacy STRING form → STAGED to corrections/_pending/, never active.
+      const stageRes = await stagePendingCorrection(slug, {
+        kind: "correction",
+        channel: SOURCE_CHANNEL_TABLE[input.correction_source ?? ""] ?? "check_string",
+        text: hc,
+        reason: "string-form human_correction — awaiting structured confirmation via check()",
+        // Provenance carries the raw source when supplied (a source value
+        // missing from SOURCE_CHANNEL_TABLE is preserved here, not discarded).
+        source: input.correction_source ?? getSessionId(),
+      });
+      if (stageRes.staged) {
+        correctionPending = {
+          id: stageRes.id,
+          status: "staged",
+          agent_instruction:
+            `human_correction was STAGED for review, not activated. To activate it, re-call check() with ` +
+            `human_correction as an OBJECT: {rule: "<ONE imperative sentence>", why: "<concrete evidence>", ` +
+            `applies_when: ["<context>", ...], pending_id: "${stageRes.id}"}. ` +
+            `To discard it: {pending_id: "${stageRes.id}", resolution: "reject"}.`,
+        };
+      } else if (stageRes.rejected) {
+        correctionPending = { status: "rejected_junk", reason: stageRes.reason };
+      } else {
+        // Review fix (2026-09-11, code-review LOW): an I/O staging failure is
+        // NOT junk — label it honestly (it is still audit-logged best-effort
+        // by stagePendingCorrection itself).
+        correctionPending = { status: "staging_failed", reason: stageRes.reason };
+      }
+    }
+  } else if (hc && typeof hc === "object") {
+    if (hc.resolution === "reject") {
+      if (!hc.pending_id) {
+        correctionPending = { status: "not_found", reason: "resolution:'reject' requires a pending_id" };
+      } else {
+        const res = await resolvePendingCorrection(slug, hc.pending_id, "reject", { reason: hc.why });
+        correctionPending = res.success
+          ? { id: hc.pending_id, status: "review_rejected" }
+          : { id: hc.pending_id, status: "not_found", reason: res.error };
+      }
+    } else {
+      const validation = validateStructuredCorrection(hc);
+      if (!validation.ok) {
+        // Incomplete structured form: rejected with a restructure instruction,
+        // and STAGED (never silently dropped).
+        const reason = validation.failures.map((f) => `${f.field}: ${f.reason}`).join("; ");
+        gateRejection = reason;
+        const stageRes = await stagePendingCorrection(slug, {
+          kind: "correction",
+          channel: "check_structured_incomplete",
+          text: [hc.rule?.trim(), hc.why?.trim()].filter(Boolean).join("\n\nWhy: ") || "(empty structured correction)",
+          rule: hc.rule,
+          applies_when: hc.applies_when,
+          reason,
+          source: getSessionId(),
+        });
+        correctionPending = {
+          ...(stageRes.id ? { id: stageRes.id } : {}),
+          status: "invalid_structured",
+          reason,
+          agent_instruction: validation.agent_instruction,
+        };
+      } else {
+        // Validated STRUCTURED form → the active corrections ledger.
+        try {
+          const rule = hc.rule!.trim();
+          const why = hc.why!.trim();
+          const appliesWhen = hc.applies_when!;
+          const corrText = `${rule}\n\nWhy: ${why}`;
+          const corrDate = todayISO();
+          // v3 (Loop 8): decimal-safe title slice — the rule is one sentence by
+          // validation, so this is normally the full rule.
+          const corrRule = (splitSentences(rule)[0] ?? rule).slice(0, 100);
+          // Severity from the RULE sentence ONLY — evidence text must never
+          // escalate a p1 preference into a p0 override. Shared classifier
+          // (corrections.ts detectSeverity) — see the module-level note above.
+          const severity: "p0" | "p1" = detectSeverity(rule);
+          // applies_when tokens fold into tags (the existing p1 context-match
+          // mechanism) alongside the auto-generated ones.
+          const corrTags = Array.from(new Set([...generateTags(`${rule} ${why}`), ...appliesWhen]));
+          const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
+          const writeResult = await writeCorrection(slug, {
+            id: corrId,
+            date: corrDate,
+            severity,
+            project: slug,
+            rule: corrRule,
+            context: corrText,
+            tags: corrTags,
+            applies_when: appliesWhen,
+            // RD-1 (owner decision 2026-07-14): failure_class is auto-derived at
+            // capture — keyword classifier over the FULL correction text (rule +
+            // why for the structured form), using only the shared tokenize/
+            // overlap grammar. Zero/tied hits → "other".
+            failure_class: classifyFailureClass(`${rule} ${why}`),
+            // C2 (2026-07-26): stamp the recording session's identity into the
+            // existing `holder` field (documented as "who recorded this — defaults
+            // to date/session proxy") so corrections captured via check() carry a
+            // consistent session identity, same as corrections.ts's own recordOutcome
+            // call sites in session-start.ts/session-end.ts.
+            holder: getSessionId(),
+          });
+          if (!writeResult.written) {
+            // Surface the gate rejection instead of silently dropping the
+            // correction — the agent must know it was NOT stored.
+            gateRejection = writeResult.reason ?? "rejected by correction quality gate";
+          } else {
+            activatedRule = rule;
+            if (hc.pending_id) {
+              const res = await resolvePendingCorrection(slug, hc.pending_id, "promote", {
+                correction_id: writeResult.id,
+              });
+              correctionPending = res.success
+                ? { id: hc.pending_id, status: "promoted" }
+                : { id: hc.pending_id, status: "not_found", reason: res.error };
+            }
+          }
+        } catch (err) {
+          // Review fix (2026-09-11, code-review MEDIUM): a throw on the
+          // validated-structured write path must never be a SILENT loss —
+          // surface it on the same never-silent field the gate uses. (The
+          // string/insight paths already guarantee "lands in _pending/ or the
+          // audit log"; this closes the last silent window.)
+          gateRejection = `correction write failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    }
+  }
+
+  // 1. Record this alignment check. Fix #2: the `corrections` field is fed
+  // ONLY by the validated structured form (activatedRule) — the string form
+  // stages to _pending/ and must not seed watch_for/auto-promote from here.
+  //
+  // DELTA SIDE-DOOR (review fix 2026-09-11, code-review HIGH-1):
+  // extractWatchPatterns treats `past.delta` as a correction too
+  // (helpers/alignment-patterns.ts — `if (past.delta) corrections.push(...)`),
+  // and the two string-form callers this gate exists for (the CLI hook and
+  // `ar correct`) pack the SAME un-reviewed correction text into `delta`.
+  // Recording delta alongside a NON-activated human_correction would therefore
+  // re-open the exact watch_for/auto-promote bypass the corrections-field flip
+  // just closed. Class rule: an alignment record may carry corrective
+  // free-text (corrections OR delta) only from the validated channel — so
+  // delta is recorded when no human_correction was supplied (pure alignment
+  // note) or when the structured form activated; it is suppressed whenever the
+  // accompanying human_correction was merely staged/rejected.
+  const deltaAllowed = input.human_correction === undefined || activatedRule !== undefined;
   const record: AlignmentRecord = {
     date: todayISO(),
     goal: input.goal,
     confidence: input.confidence,
     assumptions: input.assumptions ?? [],
-    corrections: input.human_correction ? [input.human_correction] : undefined,
-    delta: input.delta,
+    corrections: activatedRule ? [activatedRule] : undefined,
+    delta: deltaAllowed ? input.delta : undefined,
   };
 
   // fix6-locks: alignment-log.json is PER-PROJECT and appended by every
@@ -179,71 +413,6 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       trimmed = log.slice(-50);
     } else {
       throw err;
-    }
-  }
-
-  // Set when the correction quality gate rejects a human_correction (surfaced
-  // in the result so the rejection is never silent).
-  let gateRejection: string | undefined;
-
-  // 1b. If there's a human correction, also write to the corrections store
-  if (input.human_correction) {
-    try {
-      const corrText = input.human_correction;
-      const corrTags = generateTags(corrText);
-      const corrDate = todayISO();
-      // v3 (Loop 8): derive the rule TITLE with the decimal-safe splitter so a
-      // version/model token ("Opus 4.7", "v3.4.32") is not chopped mid-token.
-      // This is only the human-readable title; the capture GATE in
-      // writeCorrection now scores the full `context`, not this slice.
-      const corrRule = (splitSentences(corrText)[0] ?? corrText).slice(0, 100);
-      // Auto-detect severity based on correction language.
-      // "no" alone is NOT a P0 trigger — it's too broad ("no, use the blue button" ≠ rule).
-      // P0 requires explicit prohibition/mandate language.
-      // INDEPENDENT-REVIEW FIX (2026-09-09, TOW2-326 class): CJK rows added,
-      // kept byte-identical to the duplicate copy in storage/corrections.ts's
-      // detectSeverity — see that function's doc comment for why this needed
-      // to move in lock-step with the capture gate's own CJK additions.
-      // Round 3: 不能 scoped to 你不能 (bare 不能 collides with capability/
-      // bug-report statements — see the identical fix on STRONG_IMPERATIVE
-      // in corrections.ts).
-      // PRE-SHIP GATE FIX (2026-09-09, C-1): 不要's exclusion now built from
-      // corrections.ts's exported CJK_REASSURANCE_COMPLETIONS (the FULL
-      // widened set, including 慌/害怕/在意) instead of a hand-copied narrow
-      // literal — this copy had drifted out of sync with detectSeverity.
-      const p0Patterns = new RegExp(
-        `\\bnever\\b|\\balways\\b|\\bdon'?t\\b|\\bdo not\\b|\\bmust not\\b|\\bforbid\\b|\\bprohibit\\b|` +
-          `永远不要|绝不|千万不要|总是|一直|始终|不要(?!${CJK_REASSURANCE_COMPLETIONS})|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止`,
-        "i",
-      );
-      const severity: "p0" | "p1" = p0Patterns.test(corrText) ? "p0" : "p1";
-      const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
-      const writeResult = await writeCorrection(slug, {
-        id: corrId,
-        date: corrDate,
-        severity,
-        project: slug,
-        rule: corrRule,
-        context: corrText,
-        tags: corrTags,
-        // RD-1 (owner decision 2026-07-14): failure_class is auto-derived at
-        // capture — keyword classifier over the FULL correction text, using
-        // only the shared tokenize/overlap grammar. Zero/tied hits → "other".
-        failure_class: classifyFailureClass(corrText),
-        // C2 (2026-07-26): stamp the recording session's identity into the
-        // existing `holder` field (documented as "who recorded this — defaults
-        // to date/session proxy") so corrections captured via check() carry a
-        // consistent session identity, same as corrections.ts's own recordOutcome
-        // call sites in session-start.ts/session-end.ts.
-        holder: getSessionId(),
-      });
-      if (!writeResult.written) {
-        // Surface the gate rejection instead of silently dropping the
-        // correction — the agent must know it was NOT stored.
-        gateRejection = writeResult.reason ?? "rejected by correction quality gate";
-      }
-    } catch {
-      // Best effort — never block the check flow
     }
   }
 
@@ -477,6 +646,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
     calibration_note: calibrationNote,
     correction_gate_rejected: gateRejection,
     ...(alignmentLogSkipped ? { alignment_log_skipped: true as const } : {}),
+    ...(correctionPending ? { correction_pending: correctionPending } : {}),
     ...(prediction ? { prediction } : {}),
     ...(actionCheck ? { action_check: actionCheck } : {}),
   };

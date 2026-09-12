@@ -177,11 +177,25 @@ describe("content-guard: every local write path scrubs before touching disk", ()
   // -------------------------------------------------------------------------
   // 7 + 8. helpers/handoff.ts (own defense-in-depth) + storage/corrections.ts
   // -------------------------------------------------------------------------
+  // Fix #2 retarget (2026-09-11, dual-channel capture gate): the ACTIVE-ledger
+  // write path — the one readP0Corrections/handoff.md render — is the
+  // STRUCTURED human_correction form; the string form stages to _pending/
+  // (its own scrub coverage is the two tests added below). Every assertion
+  // here is preserved verbatim; only the driving form changed. NOTE: the
+  // predecessor's plan predicted this test would pass unmodified — it cannot:
+  // with the string form staged, readP0Corrections()/handoff.md would no
+  // longer contain the (scrubbed) payload at all, failing assertClean's
+  // placeholder-presence assertion. Retargeting to the structured form keeps
+  // the assertion purpose (active-ledger surfaces are scrub-clean) intact.
   it("writeHandoff: handoff.md is clean even when sourced from a correction carrying the payload", async () => {
     await core.check({
       goal: "test the handoff surface",
       confidence: "high",
-      human_correction: `never do this: ${SECRET} ${INJECTION}`,
+      human_correction: {
+        rule: `never do this: ${SECRET} ${INJECTION}`,
+        why: "the human flagged this exact payload in review",
+        applies_when: ["handoff", "security"],
+      },
       project: "p7",
     });
 
@@ -195,6 +209,50 @@ describe("content-guard: every local write path scrubs before touching disk", ()
     const handoff = core.writeHandoff("p7");
     const handoffContent = fs.readFileSync(handoff.path, "utf-8");
     assertClean(handoffContent, "handoff.md");
+  });
+
+  // -------------------------------------------------------------------------
+  // 7b + 7c. storage/pending.ts — RIDER R2a (2026-09-11): pending records pass
+  // the SAME scrub-on-write path as corrections, for BOTH forms. readAllFiles
+  // recurses into corrections/_pending/, so the corrDir sweep covers the
+  // staged record's content; filenames are checked per-directory.
+  // -------------------------------------------------------------------------
+  it("R2a (string form): check() staging to _pending/ scrubs content and filenames", async () => {
+    await core.check({
+      goal: "test the pending staging surface",
+      confidence: "high",
+      human_correction: `never do this: ${SECRET} ${INJECTION}`,
+      project: "p7b",
+    });
+
+    const corrDir = path.join(TEST_ROOT, "projects", "p7b", "corrections");
+    const pendingDir = path.join(corrDir, "_pending");
+    assert.ok(fs.existsSync(pendingDir), "the string capture must be staged under corrections/_pending/");
+    // ACTIVE ledger stays empty — the payload exists ONLY in the pending store.
+    assert.equal(fs.readdirSync(corrDir).filter((f) => f.endsWith(".json")).length, 0, "string form must not reach the active ledger");
+    assertClean(readAllFiles(pendingDir), "pending store (on disk)");
+    assertClean(readAllFiles(corrDir), "corrections dir sweep incl. _pending/ (readAllFiles recurses)");
+    assert.ok(!fs.readdirSync(pendingDir).join(" ").includes(SECRET), "secret must not leak into a pending FILENAME");
+  });
+
+  it("R2a (structured form, incomplete): the staged-invalid path scrubs too", async () => {
+    await core.check({
+      goal: "test the pending staging surface",
+      confidence: "high",
+      human_correction: {
+        rule: `never do this: ${SECRET} ${INJECTION}`,
+        why: "",
+        applies_when: ["good,", "then", "don't"],
+      },
+      project: "p7c",
+    });
+
+    const corrDir = path.join(TEST_ROOT, "projects", "p7c", "corrections");
+    const pendingDir = path.join(corrDir, "_pending");
+    assert.ok(fs.existsSync(pendingDir), "the incomplete structured capture must be staged under corrections/_pending/");
+    assert.equal(fs.readdirSync(corrDir).filter((f) => f.endsWith(".json")).length, 0, "an incomplete structured capture must not reach the active ledger");
+    assertClean(readAllFiles(pendingDir), "pending store (structured-incomplete, on disk)");
+    assert.ok(!fs.readdirSync(pendingDir).join(" ").includes(SECRET), "secret must not leak into a pending FILENAME");
   });
 
   // -------------------------------------------------------------------------

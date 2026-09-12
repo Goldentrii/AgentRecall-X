@@ -115,6 +115,13 @@ export function formatTerse(result: SessionStartResult): string {
     }
   }
 
+  // ── Pending review (Fix #2, dual-channel capture gate) — ONE line, count
+  // only. Staged content is untrusted-by-design and never rendered here;
+  // review happens through check()'s structured form.
+  if (result.pending_corrections && result.pending_corrections.count > 0) {
+    lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
+  }
+
   // ── Recent activity ───────────────────────────────────────────────────
   if (result.recent.today || result.recent.yesterday || result.recent.older_count > 0) {
     lines.push("");
