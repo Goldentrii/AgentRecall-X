@@ -101,6 +101,13 @@ export function buildConsolidationPrompt(
       lines.push(
         `### [${c.shared_keywords.join(" + ")}] — ${c.size} insights, ${c.total_confirmations}x confirmed`,
       );
+      if ((c.crystallized_members ?? 0) > 0) {
+        lines.push(
+          `_(extends an existing CRYSTALLIZED principle — ${c.crystallized_members} member(s) ` +
+            `already crystallized: UPDATE that principle with the ${c.fresh_members} fresh ` +
+            `insight(s); do NOT create a duplicate.)_`,
+        );
+      }
       for (const t of c.insight_titles) lines.push(`- ${t}`);
       lines.push("");
     }

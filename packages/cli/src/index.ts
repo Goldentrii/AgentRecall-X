@@ -621,7 +621,8 @@ async function main(): Promise<void> {
       const prompt = core.buildConsolidationPrompt(slug, reflect.bundle);
       let candidates: import("agent-recall-core").CrystallizationCandidate[] = [];
       try {
-        candidates = core.findCrystallizationCandidates();
+        // fix10: LLM-directed surface — crystallized insights count as evidence.
+        candidates = core.findCrystallizationCandidates({ includeCrystallizedEvidence: true });
       } catch {
         candidates = [];
       }
