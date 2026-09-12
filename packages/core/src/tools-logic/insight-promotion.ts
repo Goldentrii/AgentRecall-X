@@ -8,7 +8,7 @@
  * Does NOT import awareness-update.ts (would create circular dependency).
  */
 
-import { addInsight, readAwarenessState } from "../palace/awareness.js";
+import { addInsight, readAwarenessState, readAwarenessArchive, AWARENESS_TOP_INSIGHTS_CAP } from "../palace/awareness.js";
 import { readInsightsIndex } from "../palace/insights-index.js";
 import { tokenizeWords, NON_ASCII_RE } from "../helpers/tokenize.js";
 
@@ -61,11 +61,51 @@ export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATIO
     (state?.topInsights ?? []).map((i: { title: string }) => i.title.toLowerCase())
   );
 
+  // Saturation churn guard (fix12 hygiene, 2026-09-12; churn first observed
+  // during the fix3 backfill): against a SATURATED awareness (cap reached,
+  // every slot outranking the candidate) addInsight resurrects the candidate
+  // from the archive, bumps its confirmations +1, then immediately demotes it
+  // back — so every session_end/`ar awareness rollup` re-attempted the same
+  // doomed promotion forever: two archive writes + a state write per candidate
+  // per run, and an ARTIFICIAL +1 confirmations escalator on the archived
+  // entry with no new real confirmation behind it (the insights-index entry
+  // is unchanged between runs).
+  //
+  // Guard: when awareness is saturated, skip a candidate whose archived twin
+  // already carries >= the candidate's confirmed_count — the archive has
+  // absorbed everything the index can attest, so a re-attempt adds no
+  // information. When confirmed_count GROWS past the archived count (a real
+  // new confirmation arrived), the attempt proceeds and, if demoted again,
+  // archiveInsight re-arms the guard at the higher bar — churn is now bounded
+  // by real confirmations instead of unbounded per-session. Non-saturated
+  // awareness never hits the guard (a resurrected candidate simply stays).
+  //
+  // NOTE deliberately NOT changed here (owner-taste, flagged in the fix12
+  // report): whether a saturated top-20 should ever be displaced by a
+  // lower-confirmation candidate, and whether archived insights should
+  // re-enter spontaneously when slots free up — this guard only removes the
+  // wasted write cycles and the artificial counter inflation.
+  const saturated = (state?.topInsights?.length ?? 0) >= AWARENESS_TOP_INSIGHTS_CAP;
+  const archive = saturated ? readAwarenessArchive() : [];
+
   const promoted: string[] = [];
   const skipped: string[] = [];
 
   for (const insight of index.insights) {
     if (insight.confirmed_count < threshold) continue;
+
+    if (saturated) {
+      let archivedConfirmations = -1;
+      for (const a of archive) {
+        if (titlePresentInAwareness(insight.title, [a.title.toLowerCase()])) {
+          archivedConfirmations = Math.max(archivedConfirmations, a.confirmations ?? 0);
+        }
+      }
+      if (archivedConfirmations >= insight.confirmed_count) {
+        skipped.push(insight.title);
+        continue;
+      }
+    }
 
     // Title-similarity dedup: exact match first, then word overlap.
     // CJK-aware (fix #3, 2026-09-11): the pre-fix grammar was

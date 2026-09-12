@@ -74,6 +74,7 @@ export {
   readAwarenessArchive,
   writeAwarenessArchive,
   resurrectFromArchive,
+  AWARENESS_TOP_INSIGHTS_CAP,
 } from "./palace/awareness.js";
 export type {
   Insight,

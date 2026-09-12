@@ -14,6 +14,7 @@ import {
   topicQuery,
   appendTurn as appendTopicTurn,
   sweepStaleProfiles,
+  sweepStaleAmbientCounters,
 } from "./utils/topic-state.js";
 
 const args = process.argv.slice(2);
@@ -2293,6 +2294,12 @@ async function main(): Promise<void> {
           // 7+ days. Cheap (readdir + stat over a handful of small files) and
           // best-effort — never blocks the hook.
           sweepStaleProfiles(storeRoot);
+          // Same contract for the store-root `.ambient-counter-*` rate-limit
+          // files (fix12 hygiene: they previously accumulated forever — the
+          // hygiene scan's counter-accumulation class). 7d mtime bar, so the
+          // CURRENT session's counter (touched below every invocation) is
+          // never swept.
+          sweepStaleAmbientCounters(core.getRoot());
         } catch { /* non-blocking — profile persistence is best-effort */ }
         // --- END ROLLING TOPIC PROFILE ---
 

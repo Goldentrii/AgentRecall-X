@@ -166,6 +166,13 @@ const AWARENESS_JSON_PATH = () => path.join(getRoot(), "awareness-state.json");
 const AWARENESS_ARCHIVE_PATH = () => path.join(getRoot(), "awareness-archive.json");
 const MAX_ARCHIVE = 50;
 
+/**
+ * Awareness top-insights cap (fix12 hygiene, 2026-09-12: was three bare `20`
+ * literals in addInsight; exported so the saturation churn guard in
+ * insight-promotion.ts reasons about the SAME cap instead of a fork).
+ */
+export const AWARENESS_TOP_INSIGHTS_CAP = 20;
+
 export function readAwarenessState(): AwarenessState | null {
   const p = AWARENESS_JSON_PATH();
   if (!fs.existsSync(p)) return null;
@@ -383,8 +390,8 @@ export async function addInsight(
     }
     resurrected.trend = computeTrend(resurrected);
     state.topInsights.push(resurrected);
-    // Enforce 20-item cap — demote lowest if over limit
-    if (state.topInsights.length > 20) {
+    // Enforce the top-insights cap — demote lowest if over limit
+    if (state.topInsights.length > AWARENESS_TOP_INSIGHTS_CAP) {
       state.topInsights.sort((a, b) => b.confirmations - a.confirmations);
       const demoted = state.topInsights.pop()!;
       archiveInsight(demoted);
@@ -467,12 +474,12 @@ export async function addInsight(
     trend: "stable",
   };
 
-  if (state.topInsights.length < 20) {
+  if (state.topInsights.length < AWARENESS_TOP_INSIGHTS_CAP) {
     state.topInsights.push(insight);
     return { state, result: { action: "added" as const, insight } };
   }
 
-  // Over 20: demote lowest-confirmation insight to archive (not deleted)
+  // Over the cap: demote lowest-confirmation insight to archive (not deleted)
   state.topInsights.sort((a, b) => b.confirmations - a.confirmations);
   const demoted = state.topInsights.pop()!;
   archiveInsight(demoted);

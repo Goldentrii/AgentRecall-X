@@ -258,6 +258,50 @@ export function topicQuery(currentKeywords: string[], priorProfile: Map<string, 
 // which is frequent enough to keep `tmp/` bounded without needing a cron.
 // ---------------------------------------------------------------------------
 
+/**
+ * Sweep stale `.ambient-counter-<sessionId>` rate-limit counter files at the
+ * STORE ROOT (fix12 hygiene, 2026-09-12 — the "counter-accumulation" class
+ * `ar hygiene` check (b) detects but deliberately never cleans).
+ *
+ * These are per-session ambient-injection counters written by hook-ambient
+ * with no cleanup at the write site — they accumulated forever (+~5/day, 240+
+ * observed at the live store root, S8 evaluation finding). A counter untouched
+ * for SWEEP_STALE_MS (7d, same bar as the topic-profile sweep above) belongs
+ * to a session that can no longer be running; deleting it only resets a dead
+ * session's rate limiter, and store-manifest classifies the file class as
+ * regenerable ("safe to delete, rebuilt automatically on next use").
+ *
+ * Same opportunistic contract as sweepStaleProfiles: called once per
+ * hook-ambient invocation, best-effort, never throws, never blocks the hook.
+ * The CURRENT session's counter is naturally exempt — it was just read/written
+ * this invocation, so its mtime is fresh.
+ */
+const AMBIENT_COUNTER_PREFIX = ".ambient-counter-";
+
+export function sweepStaleAmbientCounters(root: string, now: number = Date.now()): number {
+  let removed = 0;
+  try {
+    if (!fs.existsSync(root)) return 0;
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.startsWith(AMBIENT_COUNTER_PREFIX)) continue;
+      const full = path.join(root, entry.name);
+      try {
+        const stat = fs.statSync(full);
+        if (now - stat.mtimeMs > SWEEP_STALE_MS) {
+          fs.unlinkSync(full);
+          removed++;
+        }
+      } catch {
+        /* best-effort per-file — a stat/unlink race is not fatal */
+      }
+    }
+  } catch {
+    /* best-effort — sweep is opportunistic, never blocking */
+  }
+  return removed;
+}
+
 export function sweepStaleProfiles(root: string, now: number = Date.now()): number {
   const dir = topicStateDir(root);
   let removed = 0;
