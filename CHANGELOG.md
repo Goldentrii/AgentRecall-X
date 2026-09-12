@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.50] — 2026-09-12
+
+Dreaming admission math + heed-rate measurement (both independently reviewed with adversarial fix rounds).
+
+### Added
+
+- **`ar dream admit|health|sop`** — nightly dream admission codified as admit-then-vote: ≥3 distinct (day, project) incidents in 7 days promotes through the SAME `promoteConfirmedInsights(3)` bar as the online path (no parallel harsher threshold — the class of bug that produced 22 silent zero-output nights); 1–2 observations accrue in the insights index. Every candidate gets a logged outcome+reason; "already-promoted" is only claimed after verifying the insight actually exists in awareness.
+- **Yield-measuring dream health** — nights classify as productive / empty-corpus / filtered / already-known / errored; zero-yield streaks with filtered/errored/no-data causes banner loudly. A silent zero-output streak is structurally impossible.
+- **Heed-rate eval infrastructure** (`scripts/eval/heed-rate/`) — retrospective ledger audit with symmetric evidence tiers (adjudicated vs loose, both directions), 10-probe forward harness with IFEval-style verifiable predicates and with/without-memory arms, metric definitions README.
+
+### Fixed
+
+- **Self-consuming crystallization clusters** — already-crystallized insights count as cluster evidence (≥1 fresh member required), so recurring themes no longer block their own clusters.
+
 ## [3.4.49] — 2026-09-12
 
 Plan-v2 retrieval/value-chain rollout (fixes #2–#7 from the 2026-09-11 evaluation, each independently reviewed): golden-eval hit-rate 30% → 75% lexical / 90% with opt-in embeddings, real file locking everywhere, capture noise gated at write time.
