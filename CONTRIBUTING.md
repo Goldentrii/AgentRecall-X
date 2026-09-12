@@ -9,6 +9,7 @@ git clone https://github.com/Goldentrii/AgentRecall-MCP.git
 cd AgentRecall-MCP
 npm install
 npm run build
+npm run lint
 npm test
 ```
 
@@ -38,15 +39,17 @@ Most contributions touch `packages/core`. The MCP server is a thin wrapper — i
 1. Fork the repo and create a branch: `git checkout -b feat/your-feature`
 2. Make your changes in the right package
 3. Run `npm run build` to confirm TypeScript compiles
-4. Run `npm test` — all packages must pass (304 tests, 0 failures)
-5. Add tests for new behavior — we use Node's built-in `node:test` runner (`.mjs` files)
-6. Commit with a conventional message: `feat:`, `fix:`, `docs:`, `chore:`, `test:`
+4. Run `npm run lint` to check TypeScript project references
+5. Run `npm test` — all packages must pass (304 tests, 0 failures)
+6. Add tests for new behavior — we use Node's built-in `node:test` runner (`.mjs` files)
+7. Commit with a conventional message: `feat:`, `fix:`, `docs:`, `chore:`, `test:`
 
 ## Testing
 
 ```bash
 npm test                        # all packages
 npm test -w packages/core       # core only
+npm run lint                    # TypeScript checks across packages
 ```
 
 Tests are in `packages/core/test/*.test.mjs`. They use `node:test` and `node:assert/strict` — no Vitest or Jest.
@@ -85,6 +88,7 @@ This is the canonical changelog.
 ## PR Checklist
 
 - [ ] `npm run build` passes
+- [ ] `npm run lint` passes
 - [ ] `npm test` passes (0 failures)
 - [ ] New behavior has tests
 - [ ] `UPDATE-LOG.md` updated if this is a version-bump-worthy change
