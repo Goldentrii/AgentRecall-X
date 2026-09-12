@@ -53,11 +53,12 @@
  * nesting is a deadlock (the lock is NOT reentrant): modules expose
  * *Unlocked internals for use inside their own critical sections instead.
  *
- * `withLockSync` exists ONLY to pin the published SDK surface
- * (AgentRecall.digestInvalidate(): void → markStale): it waits with
- * Atomics.wait (thread sleep — no CPU spin, but it DOES block the event
- * loop, bounded by LOCK_TIMEOUT_MS) and shares protocol items 2-4. New code
- * must use the async `withLock`.
+ * fix9 (2026-09-12): the synchronous twin (`acquireLockSync`/`withLockSync`,
+ * Atomics.wait-based — no CPU spin, but it parked the whole event loop) is
+ * RETIRED. It existed only to pin the published sync SDK signature
+ * `AgentRecall.digestInvalidate(): void`; the owner approved converting that
+ * signature to async, so the last sanctioned caller is gone. The async
+ * `withLock` is the only locking primitive.
  */
 
 import * as fs from "node:fs";
@@ -310,12 +311,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Bounded thread sleep for the sync variant: no CPU spin (Atomics.wait
- * parks the thread), but it DOES block the event loop — sync variant only. */
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /**
  * Acquire a named lock. Retries with async (event-loop-friendly) backoff
  * until LOCK_TIMEOUT_MS; reclaims dead-holder / legacy-stale locks; throws
@@ -359,44 +354,6 @@ export async function withLock<T>(name: string, fn: () => T | Promise<T>): Promi
   const release = await acquireLock(name);
   try {
     return await fn();
-  } finally {
-    release();
-  }
-}
-
-/**
- * Synchronous variant — SDK-surface pin ONLY (see header). Same protocol
- * (owner pid, liveness-gated reclaim, LockContentionError on live-holder
- * timeout), but waits with a thread sleep that blocks the event loop.
- */
-export function acquireLockSync(name: string): () => void {
-  const dir = lockDir(name);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  ensureDir(path.dirname(dir));
-
-  let delay = 5;
-  for (;;) {
-    const release = tryAcquire(dir);
-    if (release) return release;
-
-    // Same bounded-loop ordering as acquireLock above.
-    if (Date.now() >= deadline) {
-      throw contentionError(name, dir);
-    }
-
-    if (tryReclaim(dir)) continue;
-
-    sleepSync(Math.min(delay, Math.max(1, deadline - Date.now())));
-    delay = Math.min(delay * 2, MAX_BACKOFF_MS);
-  }
-}
-
-/** Synchronous withLock — SDK-surface pin ONLY (see acquireLockSync). */
-export function withLockSync<T>(name: string, fn: () => T): T {
-  const release = acquireLockSync(name);
-  try {
-    return fn();
   } finally {
     release();
   }

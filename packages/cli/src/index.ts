@@ -2448,14 +2448,14 @@ async function main(): Promise<void> {
       } else if (sub === "invalidate") {
         const id = digRest.find((a) => !a.startsWith("--")) ?? "";
         const reason = getFlag("--reason", digRest) ?? "manually invalidated";
-        // review MEDIUM-2 (fix6-locks): async variant — never park the event
-        // loop on digest-lock contention (sync markStale exists only as the
-        // SDK digestInvalidate signature pin).
-        // fix5 (2026-09-11): resolve before the write — markStale(Async)
+        // fix9: markStale is async-only — the sync twin (the old SDK
+        // digestInvalidate signature pin, review MEDIUM-2) is retired, so
+        // the event loop is never parked on digest-lock contention.
+        // fix5 (2026-09-11): resolve before the write — markStale
         // rewrites the digest index via writeJsonAtomic (ensureDir on the
         // parent), so the raw literal "auto" here could materialize
         // projects/auto/digest.
-        await core.markStaleAsync(await core.resolveProject(project ?? "auto"), id, reason, hasFlag("--global", digRest));
+        await core.markStale(await core.resolveProject(project ?? "auto"), id, reason, hasFlag("--global", digRest));
         output({ success: true, id });
       } else {
         process.stderr.write(`Usage: ar digest store|recall|list|invalidate [...opts]\n`);

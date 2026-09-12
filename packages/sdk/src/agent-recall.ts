@@ -315,9 +315,19 @@ export class AgentRecall {
     return withFenced(await digestRead({ digest_id: digestId, project: opts?.project ?? this.project }));
   }
 
-  digestInvalidate(project: string, digestId: string, reason?: string, global?: boolean): void {
-    // Not fenced: void return, nothing to fence.
-    digestMarkStale(project, digestId, reason ?? "manually invalidated", global);
+  /**
+   * Invalidate (soft-delete) a digest by marking it stale.
+   *
+   * SEMVER NOTE (fix9, 2026-09-12): this signature changed from the
+   * synchronous `(...): void` to `async (...): Promise<void>` — existing
+   * callers must now `await` it (or handle the returned promise). The old
+   * sync signature was the last consumer of the event-loop-blocking
+   * Atomics.wait lock variant (fix6-locks review MEDIUM-2); the wait is now
+   * async. Lock scope and invalidation semantics are unchanged.
+   */
+  async digestInvalidate(project: string, digestId: string, reason?: string, global?: boolean): Promise<void> {
+    // Not fenced: resolves with no content (Promise<void>), nothing to fence.
+    await digestMarkStale(project, digestId, reason ?? "manually invalidated", global);
   }
 
   // --- Low-level access ---

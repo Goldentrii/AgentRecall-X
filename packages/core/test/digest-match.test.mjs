@@ -34,7 +34,7 @@ describe("Digest matching", () => {
       content: "Old pricing data that is no longer valid.",
       project: "novada-site",
     });
-    core.markStale("novada-site", core.listDigests("novada-site").find(e => e.title.includes("Stale")).id, "outdated");
+    await core.markStale("novada-site", core.listDigests("novada-site").find(e => e.title.includes("Stale")).id, "outdated");
   });
 
   after(async () => {

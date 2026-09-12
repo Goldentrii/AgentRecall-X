@@ -248,7 +248,9 @@ export {
 // C2 — zero-cloud lifecycle telemetry (counters only, no transcript content).
 export { recordLifecycleEvent, lifecycleStats } from "./storage/lifecycle-telemetry.js";
 export type { LifecycleEvent, LifecycleTelemetryRow, LifecycleStats } from "./storage/lifecycle-telemetry.js";
-export { acquireLock, withLock, acquireLockSync, withLockSync, STALE_LOCK_MS, LockContentionError } from "./storage/filelock.js";
+// fix9 (2026-09-12): acquireLockSync/withLockSync retired — the async
+// primitive is the only locking surface (see filelock.ts header).
+export { acquireLock, withLock, STALE_LOCK_MS, LockContentionError } from "./storage/filelock.js";
 
 // Host profile — 3-tier lifecycle-capability model (Tier A hooks / Tier B
 // mcp-instructions / Tier C manual) + the single canonical lifecycle-
@@ -528,7 +530,9 @@ export {
   REFRESH_OVERLAP_THRESHOLD,
   DIGEST_HALF_LIFE_DAYS,
 } from "./digest/types.js";
-export { createDigest, readDigest, listDigests, markStale, markStaleAsync, checkExpiry, pruneStale, recordAccess as recordDigestAccess } from "./digest/store.js";
+// fix9 (2026-09-12): markStale is async-only (Promise<boolean>); the
+// markStaleAsync twin is folded into it.
+export { createDigest, readDigest, listDigests, markStale, checkExpiry, pruneStale, recordAccess as recordDigestAccess } from "./digest/store.js";
 export { findMatchingDigests, keywordOverlap } from "./digest/match.js";
 export { digestDir, digestGlobalDir } from "./storage/paths.js";
 
