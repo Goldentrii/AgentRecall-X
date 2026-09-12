@@ -20,9 +20,11 @@
 //   ANTHROPIC_API_KEY=... node scripts/eval/heed-rate/run-heed-eval.mjs [--out results.json]
 //
 // Hard cap: fixture.max_requests total API requests (attempts count, retries
-// included). Temperature 0. Exit codes: 0 = run completed (regardless of heed
-// numbers — this is measurement, not a gate), 2 = fixture/config error,
-// 3 = API failure exceeded the retry budget / request cap.
+// included). Temperature 0. Exit codes: 0 = run completed with ALL arms scored
+// (regardless of heed numbers — this is measurement, not a gate),
+// 2 = fixture/config error, 3 = one or more arms unscored (API failure after
+// retry, or the request cap was hit — the cap itself always holds; hitting it
+// short-circuits the remaining probes).
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -71,7 +73,9 @@ async function callModel({ apiKey, model, system, user, budget }) {
   let lastErr = null;
   for (let attempt = 0; attempt <= RETRIES_PER_REQUEST; attempt++) {
     if (budget.used >= budget.cap) {
-      throw new Error(`request cap ${budget.cap} reached (used ${budget.used})`);
+      const err = new Error(`request cap ${budget.cap} reached (used ${budget.used})`);
+      err.code = "CAP_EXHAUSTED";
+      throw err;
     }
     budget.used++;
     try {
@@ -113,7 +117,9 @@ async function callModel({ apiKey, model, system, user, budget }) {
 async function liveRun(fixture, apiKey, outFile) {
   const budget = { used: 0, cap: fixture.max_requests };
   const results = [];
+  let capExhausted = false;
   for (const probe of fixture.probes) {
+    if (capExhausted) break; // remaining probes are unscored; exit code 3 below
     const arms = buildArms(probe);
     const row = { id: probe.id, rule_class: probe.rule_class, arms: {} };
     for (const armName of ["with_memory", "without_memory"]) {
@@ -124,6 +130,7 @@ async function liveRun(fixture, apiKey, outFile) {
         row.arms[armName] = { pass: verdict.pass, failures: verdict.failures, response: text, usage };
       } catch (e) {
         row.arms[armName] = { pass: null, error: e.message };
+        if (e.code === "CAP_EXHAUSTED") capExhausted = true;
       }
       process.stderr.write(`  ${probe.id} ${armName}: ${row.arms[armName].pass === null ? `ERROR (${row.arms[armName].error})` : row.arms[armName].pass ? "PASS" : "FAIL"} (requests used: ${budget.used}/${budget.cap})\n`);
     }
@@ -142,7 +149,10 @@ async function liveRun(fixture, apiKey, outFile) {
     heed_given_hit_detail: { pass: passed("with_memory").length, scored: scored("with_memory").length },
     baseline_no_memory: scored("without_memory").length ? passed("without_memory").length / scored("without_memory").length : null,
     baseline_detail: { pass: passed("without_memory").length, scored: scored("without_memory").length },
-    errors: results.filter((r) => r.arms.with_memory?.pass === null || r.arms.without_memory?.pass === null).length,
+    probes_planned: fixture.probes.length,
+    cap_exhausted: capExhausted,
+    errors: results.filter((r) => r.arms.with_memory?.pass === null || r.arms.without_memory?.pass === null).length
+      + (fixture.probes.length - results.length), // probes skipped after cap exhaustion are unscored too
   };
   summary.memory_effect = summary.heed_given_hit !== null && summary.baseline_no_memory !== null
     ? summary.heed_given_hit - summary.baseline_no_memory : null;
@@ -164,6 +174,15 @@ async function liveRun(fixture, apiKey, outFile) {
     process.stderr.write(`full results (incl. raw responses) written to ${outFile}\n`);
   }
   return summary;
+}
+
+/**
+ * Exit-code contract for a completed live run (pure — unit-tested):
+ * 0 = every planned arm scored; 3 = any arm unscored (API failure after
+ * retry, or request cap hit). Fixture/config problems exit 2 before this.
+ */
+export function exitCodeForRun(summary) {
+  return summary.errors > 0 || summary.cap_exhausted ? 3 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,8 +212,10 @@ async function main() {
     process.exit(2);
   }
   try {
-    await liveRun(fixture, apiKey, outFile);
-    process.exit(0);
+    const summary = await liveRun(fixture, apiKey, outFile);
+    const code = exitCodeForRun(summary);
+    if (code !== 0) process.stderr.write(`exit 3: ${summary.errors} arm(s) unscored${summary.cap_exhausted ? " (request cap hit)" : ""}\n`);
+    process.exit(code);
   } catch (e) {
     process.stderr.write(`live run aborted: ${e.message}\n`);
     process.exit(3);

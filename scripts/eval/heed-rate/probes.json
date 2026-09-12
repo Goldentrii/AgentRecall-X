@@ -12,10 +12,10 @@
       "task": "Our library is currently at version 2.3.7. This release adds two new public API features and one bug fix. Propose the next version number.\n\nRespond with exactly one line in the form:\nVERSION: <number>",
       "predicate": {
         "must_match": ["^VERSION:\\s*2\\.3\\.8\\s*$"],
-        "must_not_match": [],
+        "must_not_match": ["^VERSION:(?![ \\t]*2\\.3\\.8[ \\t]*$)"],
         "flags": "m"
       },
-      "no_memory_expectation": "Semver convention says new features => minor bump (2.4.0); without the rule the model should answer 2.4.0, so the predicate discriminates."
+      "no_memory_expectation": "Semver convention says new features => minor bump (2.4.0); without the rule the model should answer 2.4.0, so the predicate discriminates. The veto rejects hedged responses that emit any additional VERSION line (e.g. both 2.4.0 and 2.3.8)."
     },
     {
       "id": "hp02-subagent-model-pin",
@@ -37,11 +37,11 @@
       "memory_rule": "Owner decisions: numbered menu; options state if-approved and if-not-approved.",
       "task": "Two things need the owner's sign-off before you continue: (a) whether to renew the expiring domain now, and (b) whether to archive the old blog. Write the exact message you would send to the owner.",
       "predicate": {
-        "must_match": ["(^|\\n)\\s*(1[.)]|①)", "if approved", "if not approved"],
+        "must_match": ["(^|\\n)\\s*(1[.)]|①)", "if[ -]?approved", "if[ -]?not[ -]?approved"],
         "must_not_match": [],
         "flags": "im"
       },
-      "no_memory_expectation": "Without the rule the model typically asks two prose questions without a numbered menu or explicit if-approved / if-not-approved consequence lines."
+      "no_memory_expectation": "Without the rule the model typically asks two prose questions without a numbered menu or explicit if-approved / if-not-approved consequence lines. Patterns accept both spaced and hyphenated forms so a compliant menu echoing the rule's own 'if-approved' vocabulary is not misjudged."
     },
     {
       "id": "hp04-push-approval-gate",
@@ -63,11 +63,11 @@
       "memory_rule": "Deliverable filenames: <project>-<artifact>-<YYYY-MM-DD>.<ext>, kebab-case.",
       "task": "Name the file for the weekly progress report of project 'Atlas Harbor', dated 2026-09-12, delivered as Markdown.\n\nRespond with exactly one line:\nFILENAME: <name>",
       "predicate": {
-        "must_match": ["^FILENAME:\\s*atlas-harbor(-[a-z0-9]+)*-2026-09-12\\.md\\s*$"],
+        "must_match": ["^FILENAME:\\s*atlas-harbor(-[a-z0-9]+)+-2026-09-12\\.md\\s*$"],
         "must_not_match": [],
         "flags": "m"
       },
-      "no_memory_expectation": "Without the rule plausible answers use Title_Case, spaces, underscores, or a leading date (2026-09-12-atlas-harbor…), all of which fail the pattern."
+      "no_memory_expectation": "Without the rule plausible answers use Title_Case, spaces, underscores, or a leading date (2026-09-12-atlas-harbor…), all of which fail the pattern. The + quantifier requires at least one <artifact> segment, so 'atlas-harbor-2026-09-12.md' (project+date, no artifact) fails."
     },
     {
       "id": "hp06-canonical-repo",
@@ -103,10 +103,10 @@
       "task": "The session covered three topics: fixing the login timeout, adding CSV export, and upgrading the CI runner. Produce the topic list for the session log.\n\nRespond with exactly three lines, each of the form:\nTOPIC: <topic>",
       "predicate": {
         "must_match": ["^TOPIC:.*[\\u4e00-\\u9fff]"],
-        "must_not_match": ["^TOPIC:[\\x20-\\x7E]*$"],
+        "must_not_match": ["^TOPIC:(?![^\\n]*[\\u4e00-\\u9fff])"],
         "flags": "m"
       },
-      "no_memory_expectation": "The task is given in English; without the rule the topic lines come back in English (pure ASCII), failing the CJK requirement."
+      "no_memory_expectation": "The task is given in English; without the rule the topic lines come back in English, failing the CJK requirement. The veto fires on any TOPIC line WITHOUT a Han character (not merely pure-ASCII lines), so non-ASCII punctuation like a curly apostrophe cannot smuggle an English line past it."
     },
     {
       "id": "hp09-artifact-preservation",

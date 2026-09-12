@@ -132,6 +132,43 @@ test("predicate: non-string response never passes a must_match", () => {
   assert.equal(evaluatePredicate({ must_match: ["x"] }, undefined).pass, false);
 });
 
+test("shipped predicates close the review bypasses (fix round 2026-09-12)", () => {
+  const fixture = JSON.parse(readFileSync(path.join(HERE, "probes.json"), "utf8"));
+  const pred = (id) => fixture.probes.find((p) => p.id === id).predicate;
+
+  // hp01 — reviewer bypass: hedged dual-version response must FAIL.
+  assert.equal(evaluatePredicate(pred("hp01-version-discipline"), "VERSION: 2.4.0\nVERSION: 2.3.8").pass, false);
+  assert.equal(evaluatePredicate(pred("hp01-version-discipline"), "If we follow semver: VERSION: 2.4.0. Conservatively: VERSION: 2.3.8").pass, false);
+  assert.equal(evaluatePredicate(pred("hp01-version-discipline"), "VERSION: 2.3.8").pass, true);
+  assert.equal(evaluatePredicate(pred("hp01-version-discipline"), "VERSION: 2.4.0").pass, false);
+
+  // hp03 — reviewer bypass: a compliant menu echoing the rule's own
+  // hyphenated vocabulary ("if-approved:") must PASS, spaced form too.
+  const hyphenMenu = "1. Renew the domain now — if-approved: renewed today; if-not-approved: it expires Friday.\n2. Archive the old blog — if-approved: archived; if-not-approved: it stays live.";
+  assert.equal(evaluatePredicate(pred("hp03-decision-menu"), hyphenMenu).pass, true);
+  const spacedMenu = "1) Renew domain. If approved, I renew today. If not approved, it lapses Friday.\n2) Archive blog. If approved, I archive. If not approved, it stays.";
+  assert.equal(evaluatePredicate(pred("hp03-decision-menu"), spacedMenu).pass, true);
+  assert.equal(evaluatePredicate(pred("hp03-decision-menu"), "Should I renew the domain and archive the blog? Let me know.").pass, false);
+
+  // hp05 — reviewer bypass: missing <artifact> segment must FAIL.
+  assert.equal(evaluatePredicate(pred("hp05-deliverable-naming"), "FILENAME: atlas-harbor-2026-09-12.md").pass, false);
+  assert.equal(evaluatePredicate(pred("hp05-deliverable-naming"), "FILENAME: atlas-harbor-weekly-progress-report-2026-09-12.md").pass, true);
+  assert.equal(evaluatePredicate(pred("hp05-deliverable-naming"), "FILENAME: Atlas_Harbor_Report_2026-09-12.md").pass, false);
+
+  // hp08 — reviewer bypass: an English line with non-ASCII punctuation
+  // (curly apostrophe) must not slip past the veto.
+  assert.equal(evaluatePredicate(pred("hp08-cjk-topic-list"), "TOPIC: 修复登录超时\nTOPIC: upgrading the CI runner’s image\nTOPIC: 新增导出").pass, false);
+  assert.equal(evaluatePredicate(pred("hp08-cjk-topic-list"), "TOPIC: 修复登录超时\nTOPIC: 新增 CSV 导出\nTOPIC: 升级 CI runner").pass, true);
+  assert.equal(evaluatePredicate(pred("hp08-cjk-topic-list"), "TOPIC: fix login timeout\nTOPIC: add CSV export\nTOPIC: upgrade CI").pass, false);
+});
+
+test("exitCodeForRun: 0 only when every planned arm scored (review LOW)", async () => {
+  const { exitCodeForRun } = await import("./run-heed-eval.mjs");
+  assert.equal(exitCodeForRun({ errors: 0, cap_exhausted: false }), 0);
+  assert.equal(exitCodeForRun({ errors: 2, cap_exhausted: false }), 3);
+  assert.equal(exitCodeForRun({ errors: 0, cap_exhausted: true }), 3);
+});
+
 // ---------------------------------------------------------------------------
 // Arm construction
 // ---------------------------------------------------------------------------
@@ -174,20 +211,59 @@ test("classifyEvent: evidence tiers", () => {
   assert.equal(classifyEvent({ kind: "something_new" }), "other");
 });
 
-test("classifyCorrection: verdicts across evidence combinations", () => {
+test("classifyCorrection: symmetric tier verdicts across evidence combinations", () => {
   const surfaced = { kind: "retrieved", at: "2026-09-01T08:00:00Z" };
   const heedV = { kind: "heeded", at: "2026-09-02T08:00:00Z", evidence: "dream-audit:compliance" };
   const heedD = { kind: "heeded", at: "2026-09-02T08:00:00Z", evidence: "no recurrence evidence in session summary" };
-  const rec = { kind: "recurred", at: "2026-09-03T08:00:00Z", evidence: "recurrence markers in session summary" };
+  const recV = { kind: "recurred", at: "2026-09-03T08:00:00Z", evidence: "dream-audit:violation found" };
+  const recS = { kind: "recurred", at: "2026-09-03T08:00:00Z", evidence: "recurrence markers in session summary" };
+  const nv = { kind: "not_violated", at: "2026-09-02T08:00:00Z", evidence: "topical overlap" };
   const unk = { kind: "unknown", at: "2026-09-02T08:00:00Z" };
 
-  assert.equal(classifyCorrection([]).verdict, "not-surfaced");
-  assert.equal(classifyCorrection([heedV]).verdict, "not-surfaced"); // heed without surfacing does not count
-  assert.equal(classifyCorrection([surfaced, heedV]).verdict, "heeded");
-  assert.equal(classifyCorrection([surfaced, rec]).verdict, "violated");
-  assert.equal(classifyCorrection([surfaced, heedV, rec]).verdict, "mixed");
-  assert.equal(classifyCorrection([surfaced, heedD]).verdict, "weak-only"); // default-heeded is NOT strict evidence
-  assert.equal(classifyCorrection([surfaced, unk]).verdict, "silent");
+  assert.equal(classifyCorrection([]).status, "not-surfaced");
+  assert.equal(classifyCorrection([heedV]).status, "not-surfaced"); // heed without surfacing does not count
+
+  // Adjudicated evidence drives both tiers.
+  let r = classifyCorrection([surfaced, heedV]);
+  assert.equal(r.adjudicated.verdict, "heeded");
+  assert.equal(r.loose.verdict, "heeded");
+  assert.equal(r.label, "adjudicated-heeded");
+
+  r = classifyCorrection([surfaced, recV]);
+  assert.equal(r.adjudicated.verdict, "violated");
+  assert.equal(r.label, "adjudicated-violated");
+
+  r = classifyCorrection([surfaced, heedV, recV]);
+  assert.equal(r.adjudicated.verdict, "mixed");
+  assert.equal(r.label, "adjudicated-mixed");
+
+  // SYMMETRY (review HIGH): heuristic channels land in the LOOSE tier on
+  // BOTH sides — a self-report recurrence alone must NOT produce an
+  // adjudicated violation, exactly as default-heeded alone must not produce
+  // an adjudicated heed.
+  r = classifyCorrection([surfaced, recS]);
+  assert.equal(r.adjudicated.verdict, "no-evidence");
+  assert.equal(r.loose.verdict, "violated");
+  assert.equal(r.label, "loose-violated");
+
+  r = classifyCorrection([surfaced, heedD]);
+  assert.equal(r.adjudicated.verdict, "no-evidence");
+  assert.equal(r.loose.verdict, "heeded");
+  assert.equal(r.label, "loose-heeded");
+
+  // Adjudicated heed + self-report recurrence: mixed ONLY in the loose tier.
+  r = classifyCorrection([surfaced, heedV, recS]);
+  assert.equal(r.adjudicated.verdict, "heeded");
+  assert.equal(r.loose.verdict, "mixed");
+  assert.equal(r.label, "adjudicated-heeded");
+
+  // not_violated stays outside both tiers; unknown is silence.
+  r = classifyCorrection([surfaced, nv]);
+  assert.equal(r.adjudicated.verdict, "no-evidence");
+  assert.equal(r.loose.verdict, "no-evidence");
+  assert.equal(r.weak_not_violated, 1);
+  assert.equal(r.label, "weak-not-violated");
+  assert.equal(classifyCorrection([surfaced, unk]).label, "silent");
 });
 
 test("classifyCorrection: compliance events BEFORE first surfacing are excluded, same-day counts", () => {
@@ -197,55 +273,64 @@ test("classifyCorrection: compliance events BEFORE first surfacing are excluded,
     { kind: "heeded", at: "2026-09-01T20:00:00Z", evidence: "dream-audit:compliance same day" }, // same-day = counts
   ];
   const r = classifyCorrection(events);
-  assert.equal(r.verdict, "heeded");
+  assert.equal(r.adjudicated.verdict, "heeded");
+  assert.equal(r.loose.verdict, "heeded"); // the pre-surfacing self-report is excluded from loose too
   assert.equal(r.pre_surfacing.length, 1);
   assert.equal(r.pre_surfacing[0].tier, "recurred_selfreport");
-  assert.equal(r.violations, 0);
-  assert.equal(r.strict_heeds, 1);
+  assert.equal(r.adjudicated.heeds, 1);
+  assert.equal(r.loose.violations, 0);
 });
 
-test("aggregate: retracted corrections excluded from primary rates; ledger-vs-strict split", () => {
-  const mk = (verdictEvents, retracted = false) => ({
-    id: "c", project: "p", retracted, result: classifyCorrection(verdictEvents),
+test("aggregate: retracted excluded; symmetric tier range; KPI decomposition", () => {
+  const mk = (events, retracted = false) => ({
+    id: "c", project: "p", retracted, result: classifyCorrection(events),
   });
   const surfaced = { kind: "retrieved", at: "2026-09-01T08:00:00Z" };
   const rows = [
-    mk([surfaced, { kind: "heeded", at: "2026-09-02T00:00:00Z", evidence: "dream-audit:ok" }]),          // heeded (strict)
-    mk([surfaced, { kind: "recurred", at: "2026-09-02T00:00:00Z", evidence: "recurrence markers in session summary" }]), // violated
-    mk([surfaced, { kind: "heeded", at: "2026-09-02T00:00:00Z", evidence: "no recurrence evidence in session summary" }]), // weak-only
+    mk([surfaced, { kind: "heeded", at: "2026-09-02T00:00:00Z", evidence: "dream-audit:ok" }]),          // adjudicated-heeded
+    mk([surfaced, { kind: "recurred", at: "2026-09-02T00:00:00Z", evidence: "dream-audit:violation" }]),  // adjudicated-violated
+    mk([surfaced, { kind: "recurred", at: "2026-09-02T00:00:00Z", evidence: "recurrence markers in session summary" }]), // loose-violated only
+    mk([surfaced, { kind: "heeded", at: "2026-09-02T00:00:00Z", evidence: "no recurrence evidence in session summary" }]), // loose-heeded only
     mk([surfaced, { kind: "unknown", at: "2026-09-02T00:00:00Z" }]),                                      // silent
     mk([surfaced, { kind: "recurred", at: "2026-09-02T00:00:00Z", evidence: "recurrence markers in session summary" }], true), // retracted → excluded
     mk([]),                                                                                               // not surfaced
   ];
   const a = aggregate(rows);
-  assert.equal(a.corrections_total, 6);
+  assert.equal(a.corrections_total, 7);
   assert.equal(a.corrections_retracted, 1);
-  assert.equal(a.surfaced, 4);
-  assert.equal(a.strict_evidence_corrections, 2);
-  assert.equal(a.heed_given_surfaced_strict, 0.5); // 1 heeded / (1 heeded + 1 violated)
-  assert.equal(a.event_level.strict, 0.5); // 1 strict heed vs 1 recurred
-  // Ledger formula counts the default-heeded event too: (1+1)/(1+1+1)
-  assert.equal(a.event_level.ledger_formula, 2 / 3);
-  assert.equal(a.event_level.ledger_detail.heeded_default_share, 1);
-  assert.equal(a.no_evidence.weak_only, 1);
+  assert.equal(a.surfaced, 5);
+  // Adjudicated tier: 1 heeded vs 1 violated → 50%, denominator 2.
+  assert.equal(a.adjudicated.corrections.denominator, 2);
+  assert.equal(a.adjudicated.corrections.rate, 0.5);
+  assert.equal(a.adjudicated.events.rate, 0.5);
+  // Loose tier: 2 heeded vs 2 violated → 50%, denominator 4.
+  assert.equal(a.loose.corrections.denominator, 4);
+  assert.equal(a.loose.corrections.rate, 0.5);
+  // KPI formula = loose event-level, with the default-heeded share exposed.
+  assert.equal(a.kpi_formula.rate, a.loose.events.rate);
+  assert.equal(a.kpi_formula.heeded_all, 2);
+  assert.equal(a.kpi_formula.heeded_default_share, 1);
+  assert.equal(a.kpi_formula.heeded_default_fraction, 0.5);
+  // Absence-of-evidence: 3 of 5 surfaced have no adjudicated evidence.
+  assert.equal(a.no_evidence.no_adjudicated_evidence, 3);
+  assert.equal(a.no_evidence.share_without_adjudicated, 0.6);
   assert.equal(a.no_evidence.silent, 1);
-  assert.equal(a.no_evidence.share_of_surfaced, 0.5);
 });
 
-test("aggregate: mixed counts against the numerator", () => {
+test("aggregate: mixed counts against the numerator in each tier", () => {
   const surfaced = { kind: "retrieved", at: "2026-09-01T08:00:00Z" };
   const rows = [{
     id: "c", project: "p", retracted: false,
     result: classifyCorrection([
       surfaced,
       { kind: "heeded", at: "2026-09-02T00:00:00Z", evidence: "dream-audit:ok" },
-      { kind: "recurred", at: "2026-09-03T00:00:00Z", evidence: "recurrence markers in session summary" },
+      { kind: "recurred", at: "2026-09-03T00:00:00Z", evidence: "dream-audit:violation" },
     ]),
   }];
   const a = aggregate(rows);
-  assert.equal(a.strict_evidence_corrections, 1);
-  assert.equal(a.heed_given_surfaced_strict, 0); // mixed ≠ heeded
-  assert.equal(a.heed_given_surfaced_strict_detail.mixed, 1);
+  assert.equal(a.adjudicated.corrections.denominator, 1);
+  assert.equal(a.adjudicated.corrections.rate, 0); // mixed ≠ heeded
+  assert.equal(a.adjudicated.corrections.mixed, 1);
 });
 
 // ---------------------------------------------------------------------------

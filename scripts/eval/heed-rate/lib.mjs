@@ -159,6 +159,12 @@ export const HARNESS_SYSTEM_PROMPT =
  * system prompt is byte-identical between arms so the measured delta is
  * attributable to the injected memory alone.
  *
+ * Fidelity scope (review LOW, 2026-09-12): only the P0 BLOCK is byte-faithful
+ * to the product render (renderMemoryBlock above). The outer framing
+ * ("Context from session memory:" + separator) is eval-specific — the product
+ * embeds the block among Project/continuity/insight lines at session start,
+ * which a single-probe arm cannot reproduce.
+ *
  * Returns { with_memory: {system, user}, without_memory: {system, user} }.
  */
 export function buildArms(probe) {
@@ -196,13 +202,16 @@ export function buildArms(probe) {
  *   heeded_default      kind=heeded, anything else — the pre-C3 default-heeded
  *                       bias ("no recurrence evidence in session summary",
  *                       with or without the explicit "(default-heeded …)"
- *                       marker). Credits heed on ABSENCE of evidence; excluded
- *                       from the strict rate, counted in the ledger-formula
- *                       rate for comparability with the shipped KPI.
+ *                       marker). Credits heed on ABSENCE of evidence — loose
+ *                       tier only.
  *   recurred_verified   kind=recurred, dream-audit prefix — audited violation.
  *   recurred_selfreport kind=recurred, otherwise — session-summary recurrence
- *                       markers (self-reported, weaker but still positive
- *                       violation evidence).
+ *                       markers. Loose tier only: primary-evidence review
+ *                       (2026-09-12) showed session_end FANS one summary's
+ *                       marker out onto every correction with ≥2-3 topical
+ *                       content words, so these over-count violations from
+ *                       unrelated sessions (3 of 4 originally-"violated"
+ *                       verdicts were such fan-out artifacts).
  *   not_violated        weak non-violation (topical overlap, no marker) — own
  *                       counter by design, NEVER blended into heed_rate.
  *   surfaced            kind=retrieved — the correction was injected.
@@ -236,8 +245,38 @@ export function classifyEvent(evt) {
   }
 }
 
-const STRICT_HEED = new Set(["heeded_verified", "heeded_checkaction"]);
-const VIOLATION = new Set(["recurred_verified", "recurred_selfreport"]);
+/**
+ * Symmetric evidence tiers (fix round 2026-09-12, review HIGH):
+ *
+ * The original design excluded default-heeded (absence-of-evidence POSITIVES)
+ * from the strict rate but trusted self-report recurrence markers
+ * (keyword-heuristic NEGATIVES) at full weight — asymmetric. Primary-evidence
+ * review proved the self-report channel over-counts: session_end fans one
+ * summary's recurrence marker out onto every correction with ≥2-3 topical
+ * content words, producing violation verdicts from unrelated sessions.
+ *
+ * So both rates are now tiered SYMMETRICALLY and reported as a range:
+ *
+ *   ADJUDICATED — evidence-cited verdicts only, both directions:
+ *     heed:      heeded_verified (dream-audit verbatim) + heeded_checkaction
+ *                (C3 authoritative trigger; zero instances to date)
+ *     violation: recurred_verified (dream-audit verbatim)
+ *
+ *   LOOSE — heuristic channels included, both directions:
+ *     heed:      adjudicated heeds + heeded_default (pre-C3 absence-of-
+ *                evidence credit)
+ *     violation: adjudicated violations + recurred_selfreport (summary
+ *                marker fan-out)
+ *
+ * At event level the LOOSE rate is by construction the shipped KPI formula
+ * heeded/(heeded+recurred). `not_violated` stays outside BOTH tiers (its own
+ * design contract — never blended into heed_rate).
+ */
+const ADJUDICATED_HEED = new Set(["heeded_verified", "heeded_checkaction"]);
+const ADJUDICATED_VIOLATION = new Set(["recurred_verified"]);
+const LOOSE_HEED = new Set([...ADJUDICATED_HEED, "heeded_default"]);
+const LOOSE_VIOLATION = new Set([...ADJUDICATED_VIOLATION, "recurred_selfreport"]);
+const COMPLIANCE_BEARING = new Set([...LOOSE_HEED, ...LOOSE_VIOLATION, "not_violated"]);
 
 /** Local-calendar-day string for an ISO timestamp ("sv" locale = YYYY-MM-DD). */
 export function dayOf(iso) {
@@ -245,26 +284,41 @@ export function dayOf(iso) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("sv");
 }
 
+/** Verdict within one evidence tier from heed/violation counts. */
+function tierVerdict(heeds, violations) {
+  if (heeds > 0 && violations > 0) return "mixed";
+  if (heeds > 0) return "heeded";
+  if (violations > 0) return "violated";
+  return "no-evidence";
+}
+
 /**
- * Classify one correction's full event list into a per-correction verdict.
+ * Classify one correction's full event list into per-correction verdicts,
+ * one per evidence tier (symmetric tiering — see the tier doc above).
  *
  * Only events on/after the first surfacing day count toward compliance —
  * "did SUBSEQUENT behavior comply" (same-day counts as subsequent: retrieval
  * fires at session_start, verdicts at session_end / overnight audit, and the
  * C3b audit backdates `at` to the audited day).
  *
- * Verdicts (strict evidence tier):
- *   "heeded"        ≥1 strict heed, 0 violations
- *   "violated"      0 strict heeds, ≥1 violation
- *   "mixed"         both present (per-correction rate reported)
- *   "weak-only"     surfaced; only heeded_default / not_violated signals
- *   "silent"        surfaced; nothing but no_signal / prediction events
- *   "not-surfaced"  no retrieved event at all (excluded from heed-given-surfaced)
+ * Result:
+ *   status            "surfaced" | "not-surfaced"
+ *   adjudicated       {heeds, violations, verdict}   evidence-cited, both directions
+ *   loose             {heeds, violations, verdict}   heuristic channels included, both directions
+ *   weak_not_violated count of not_violated signals (outside both tiers)
+ *   label             one display bucket for summary tables:
+ *                     adjudicated-heeded/violated/mixed → loose-heeded/violated/mixed
+ *                     → weak-not-violated → silent
  */
 export function classifyCorrection(events) {
+  const empty = { heeds: 0, violations: 0, verdict: "no-evidence" };
   const surfacings = events.filter((e) => e.kind === "retrieved" && dayOf(e.at));
   if (surfacings.length === 0) {
-    return { verdict: "not-surfaced", surfaced_count: 0, first_surfaced: null, tiers: {}, pre_surfacing: [], evidence: [] };
+    return {
+      status: "not-surfaced", label: "not-surfaced", surfaced_count: 0, first_surfaced: null,
+      adjudicated: { ...empty }, loose: { ...empty }, weak_not_violated: 0,
+      tiers: {}, pre_surfacing: [], evidence: [],
+    };
   }
   const firstDay = surfacings.map((e) => dayOf(e.at)).sort()[0];
   const tiers = {};
@@ -275,41 +329,74 @@ export function classifyCorrection(events) {
     const day = dayOf(e.at);
     // Compliance-bearing events strictly BEFORE first surfacing cannot answer
     // "did behavior comply after the rule was surfaced" — flagged, not counted.
-    const complianceBearing = STRICT_HEED.has(tier) || VIOLATION.has(tier) || tier === "heeded_default" || tier === "not_violated";
-    if (complianceBearing && day !== null && firstDay !== null && day < firstDay) {
+    if (COMPLIANCE_BEARING.has(tier) && day !== null && firstDay !== null && day < firstDay) {
       preSurfacing.push({ tier, at: e.at, evidence: e.evidence ?? "" });
       continue;
     }
     tiers[tier] = (tiers[tier] ?? 0) + 1;
-    if (complianceBearing || tier === "no_signal") {
+    if (COMPLIANCE_BEARING.has(tier) || tier === "no_signal") {
       evidence.push({ tier, at: e.at, evidence: e.evidence ?? "" });
     }
   }
-  const strictHeeds = (tiers.heeded_verified ?? 0) + (tiers.heeded_checkaction ?? 0);
-  const violations = (tiers.recurred_verified ?? 0) + (tiers.recurred_selfreport ?? 0);
-  const weak = (tiers.heeded_default ?? 0) + (tiers.not_violated ?? 0);
-  let verdict;
-  if (strictHeeds > 0 && violations > 0) verdict = "mixed";
-  else if (strictHeeds > 0) verdict = "heeded";
-  else if (violations > 0) verdict = "violated";
-  else if (weak > 0) verdict = "weak-only";
-  else verdict = "silent";
+  const count = (set) => [...set].reduce((n, t) => n + (tiers[t] ?? 0), 0);
+  const adjudicated = { heeds: count(ADJUDICATED_HEED), violations: count(ADJUDICATED_VIOLATION) };
+  adjudicated.verdict = tierVerdict(adjudicated.heeds, adjudicated.violations);
+  const loose = { heeds: count(LOOSE_HEED), violations: count(LOOSE_VIOLATION) };
+  loose.verdict = tierVerdict(loose.heeds, loose.violations);
+  const weakNotViolated = tiers.not_violated ?? 0;
+  let label;
+  if (adjudicated.verdict !== "no-evidence") label = `adjudicated-${adjudicated.verdict}`;
+  else if (loose.verdict !== "no-evidence") label = `loose-${loose.verdict}`;
+  else if (weakNotViolated > 0) label = "weak-not-violated";
+  else label = "silent";
   return {
-    verdict,
+    status: "surfaced",
+    label,
     surfaced_count: surfacings.length,
     first_surfaced: firstDay,
-    strict_heeds: strictHeeds,
-    violations,
-    weak_signals: weak,
+    adjudicated,
+    loose,
+    weak_not_violated: weakNotViolated,
     tiers,
     pre_surfacing: preSurfacing,
     evidence,
   };
 }
 
+/** Correction-level + event-level rates for ONE evidence tier. */
+function tierAggregate(surfaced, tierKey) {
+  const byVerdict = { heeded: 0, violated: 0, mixed: 0, "no-evidence": 0 };
+  let evHeeds = 0, evViolations = 0;
+  for (const r of surfaced) {
+    const t = r.result[tierKey];
+    byVerdict[t.verdict] = (byVerdict[t.verdict] ?? 0) + 1;
+    evHeeds += t.heeds;
+    evViolations += t.violations;
+  }
+  const denom = byVerdict.heeded + byVerdict.violated + byVerdict.mixed;
+  return {
+    corrections: {
+      heeded: byVerdict.heeded,
+      violated: byVerdict.violated,
+      mixed: byVerdict.mixed, // counts AGAINST the numerator: a violation after surfacing is a heed failure even if a separate day complied
+      no_evidence: byVerdict["no-evidence"],
+      denominator: denom,
+      rate: denom > 0 ? byVerdict.heeded / denom : null,
+    },
+    events: {
+      heeded: evHeeds,
+      recurred: evViolations,
+      rate: evHeeds + evViolations > 0 ? evHeeds / (evHeeds + evViolations) : null,
+    },
+    coverage_of_surfaced: surfaced.length > 0 ? denom / surfaced.length : null,
+  };
+}
+
 /**
- * Aggregate per-correction results into the retrospective's headline numbers.
- * `rows` = [{id, project, retracted, result}] where result = classifyCorrection().
+ * Aggregate per-correction results into the retrospective's headline numbers,
+ * SYMMETRICALLY tiered (adjudicated / loose — see the tier doc above) and
+ * presented as a range. `rows` = [{id, project, retracted, result}] where
+ * result = classifyCorrection().
  *
  * Retracted corrections are aggregated SEPARATELY: in this store every
  * retraction is a "capture noise" triage (the record was never a real rule),
@@ -318,51 +405,41 @@ export function classifyCorrection(events) {
  */
 export function aggregate(rows) {
   const live = rows.filter((r) => !r.retracted);
-  const surfaced = live.filter((r) => r.result.verdict !== "not-surfaced");
-  const byVerdict = {};
-  for (const r of surfaced) byVerdict[r.result.verdict] = (byVerdict[r.result.verdict] ?? 0) + 1;
+  const surfaced = live.filter((r) => r.result.status === "surfaced");
+  const byLabel = {};
+  for (const r of surfaced) byLabel[r.result.label] = (byLabel[r.result.label] ?? 0) + 1;
 
-  const withStrict = surfaced.filter((r) => ["heeded", "violated", "mixed"].includes(r.result.verdict));
-  const heededOnly = byVerdict.heeded ?? 0;
-  const mixed = byVerdict.mixed ?? 0;
-  const violatedOnly = byVerdict.violated ?? 0;
+  const adjudicated = tierAggregate(surfaced, "adjudicated");
+  const loose = tierAggregate(surfaced, "loose");
 
-  let evHeedStrict = 0, evViolations = 0, evHeedDefault = 0;
-  for (const r of surfaced) {
-    evHeedStrict += r.result.strict_heeds ?? 0;
-    evViolations += r.result.violations ?? 0;
-    evHeedDefault += r.result.tiers?.heeded_default ?? 0;
-  }
-  const evHeedLedger = evHeedStrict + evHeedDefault; // what the shipped heed_rate counts as "heeded"
+  // The shipped KPI formula heeded/(heeded+recurred) equals the LOOSE
+  // event-level rate by construction; annotate its numerator composition.
+  let evHeedDefault = 0;
+  for (const r of surfaced) evHeedDefault += r.result.tiers?.heeded_default ?? 0;
+  const kpi_formula = {
+    rate: loose.events.rate,
+    heeded_all: loose.events.heeded,
+    heeded_default_share: evHeedDefault, // absence-of-evidence credit inside the numerator
+    heeded_default_fraction: loose.events.heeded > 0 ? evHeedDefault / loose.events.heeded : null,
+    recurred: loose.events.recurred,
+  };
 
   return {
     corrections_total: rows.length,
     corrections_retracted: rows.length - live.length,
     corrections_live: live.length,
     surfaced: surfaced.length,
-    by_verdict: byVerdict,
-    strict_evidence_corrections: withStrict.length,
-    // Correction-level heed-given-surfaced, strict evidence only.
-    // Denominator = corrections with ANY strict verdict evidence; "mixed"
-    // counts as not-heeded in the numerator (a violation after surfacing is a
-    // heed failure even if a separate day complied).
-    heed_given_surfaced_strict: withStrict.length > 0 ? heededOnly / withStrict.length : null,
-    heed_given_surfaced_strict_detail: { heeded: heededOnly, mixed, violated: violatedOnly },
-    // Event-level rates.
-    event_level: {
-      strict: evHeedStrict + evViolations > 0 ? evHeedStrict / (evHeedStrict + evViolations) : null,
-      strict_detail: { heeded: evHeedStrict, recurred: evViolations },
-      // North-star formula as shipped (heeded/(heeded+recurred)) — includes
-      // pre-C3 default-heeded events; reported for comparability, with the
-      // contamination share made explicit.
-      ledger_formula: evHeedLedger + evViolations > 0 ? evHeedLedger / (evHeedLedger + evViolations) : null,
-      ledger_detail: { heeded_all: evHeedLedger, heeded_default_share: evHeedDefault, recurred: evViolations },
-    },
+    by_label: byLabel,
+    adjudicated,
+    loose,
+    kpi_formula,
     // Absence-of-evidence classes (the honest denominator problem):
     no_evidence: {
-      weak_only: byVerdict["weak-only"] ?? 0,
-      silent: byVerdict.silent ?? 0,
-      share_of_surfaced: surfaced.length > 0 ? ((byVerdict["weak-only"] ?? 0) + (byVerdict.silent ?? 0)) / surfaced.length : null,
+      no_adjudicated_evidence: surfaced.length - adjudicated.corrections.denominator,
+      no_loose_evidence: surfaced.length - loose.corrections.denominator,
+      weak_not_violated_only: byLabel["weak-not-violated"] ?? 0,
+      silent: byLabel.silent ?? 0,
+      share_without_adjudicated: surfaced.length > 0 ? (surfaced.length - adjudicated.corrections.denominator) / surfaced.length : null,
     },
   };
 }

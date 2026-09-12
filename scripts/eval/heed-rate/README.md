@@ -28,28 +28,36 @@ node scripts/eval/heed-rate/retrospective.mjs --store "$TMP/store" --json out.js
 
 Read-only miner of the store's correction records + `_outcomes.jsonl` ledgers.
 For every live (non-retracted) correction with ≥1 recorded surfacing
-(`kind:"retrieved"`), it classifies all subsequent events into evidence tiers
-(see `lib.mjs` `classifyEvent` for the full rationale):
+(`kind:"retrieved"`), it classifies all subsequent events into evidence
+classes (see `lib.mjs` `classifyEvent`) and scores them under **two SYMMETRIC
+evidence tiers**, reported as a range (fix round 2026-09-12 — the original
+asymmetric design excluded evidence-free positives but trusted heuristic
+negatives; independent review proved the self-report recurrence channel
+over-counts via session_end marker fan-out):
 
-- **strict heed** — `heeded` with `dream-audit:` verbatim evidence (C3b nightly
-  audit) or check-action trigger evidence (C3 path; zero instances exist in the
-  live store to date).
-- **violation** — `recurred` (dream-audit-verified or session-summary self-report).
-- **weak** — pre-C3 `default-heeded` events and `not_violated` (both credit
-  absence-of-evidence; never blended into the strict rate).
-- **no signal** — `unknown` / `not_triggered`.
+- **ADJUDICATED tier** — evidence-cited verdicts, BOTH directions:
+  heed = `heeded` with `dream-audit:` verbatim evidence (C3b nightly audit) or
+  check-action trigger evidence (C3 path; zero instances exist to date);
+  violation = `recurred` with `dream-audit:` verbatim evidence.
+- **LOOSE tier** — heuristic channels included, BOTH directions:
+  heed additionally counts pre-C3 `default-heeded` (absence-of-evidence
+  credit); violation additionally counts session-summary self-report markers
+  (fan-out-contaminated). At event level the loose rate IS the shipped KPI
+  formula `heeded/(heeded+recurred)`.
+- `not_violated` stays outside both tiers (its own design contract);
+  `unknown`/`not_triggered` carry no signal.
 
 Reported:
-- **heed-given-surfaced (strict, correction-level)** — corrections whose post-
-  surfacing record is clean-heed, over corrections with ANY strict evidence.
+- **heed-given-surfaced per tier, correction-level and event-level** —
   `mixed` (heed and violation on different days) counts against the numerator.
-- **event-level strict rate** and the **shipped ledger formula** side by side,
-  with the pre-C3 default-heeded contamination share made explicit.
-- **absence-of-evidence share** — the fraction of surfaced corrections the
-  ledgers simply cannot adjudicate. This is the honest denominator problem.
+- **KPI numerator decomposition** — what share of the shipped formula's
+  heeded count is default-heeded bookkeeping.
+- **absence-of-evidence share** — the fraction of surfaced corrections with
+  no adjudicated evidence at all. This is the honest denominator problem.
 - **C3b cross-check** — dream-audit verdicts per audited day (reproduces the
   2026-09-10 "1 heeded / 9 verdicts" finding from the dreaming research).
-- Per-correction **evidence trail** (`--evidence` / `--json`) for review.
+- Per-correction **evidence trail** (`--evidence` / `--json`) for review,
+  labeling each verdict's tier.
 
 ### What the retrospective does and does not prove
 
@@ -60,18 +68,22 @@ Proves (to the extent the ledgers are trustworthy):
   after it was surfaced.
 
 Does NOT prove:
-- **Silence ≠ heed.** Most surfaced corrections have no strict evidence either
-  way (`weak-only` + `silent` classes). Sessions where the rule bound but
-  nothing was recorded are invisible.
-- **Self-reported recurrence is under-counted.** Session-summary recurrence
-  markers require the agent to admit the violation in its own summary.
+- **Silence ≠ heed.** Most surfaced corrections have no adjudicated evidence
+  either way. Sessions where the rule bound but nothing was recorded are
+  invisible.
+- **Self-reported recurrence mis-counts in BOTH directions.** It under-counts
+  (markers require the agent to admit the violation in its own summary) AND
+  over-counts (session_end fans one summary's marker onto every correction
+  with ≥2-3 topical content words — review-verified on primary evidence).
+  That is why it is loose-tier only.
 - **`retrieved` ≠ read.** Surfacing means the rule was injected into context,
   not that the model attended to it.
 - **Retractions are not violations here.** Every `retracted_at` in this store
   carries a noise-triage `retract_reason` ("capture noise") — the record was
   never a real rule. They are excluded, not counted as violations.
 - **Orphaned ledger events** (record file quarantined/deleted) are excluded;
-  verified 2026-09-12 that no orphan carries strict-tier evidence.
+  verified 2026-09-12 (worker + independent reviewer) that no orphan carries
+  adjudicated-tier evidence.
 
 ## Tool 2 — `run-heed-eval.mjs` + `probes.json` (forward, controlled)
 
@@ -83,11 +95,14 @@ ANTHROPIC_API_KEY=... node scripts/eval/heed-rate/run-heed-eval.mjs --out result
 10 probes × 2 arms on `claude-haiku-4-5-20251001`, hard-capped at
 `max_requests` total API calls, temperature 0:
 
-- **with-memory arm** — the task prompt with a synthetic P0 rule injected
-  exactly as the product renders it (`🚨 P0 rules — follow strictly:` block,
-  including the 80-char rule slice; `packages/cli/src/index.ts`). Retrieval is
-  forced to 1.0 by construction, isolating the heeding step: pass-rate here
-  **is heed-given-hit**.
+- **with-memory arm** — the task prompt with a synthetic P0 rule injected as
+  the product renders the P0 BLOCK (`🚨 P0 rules — follow strictly:` block,
+  byte-faithful including the 80-char rule slice; `packages/cli/src/index.ts`).
+  The outer framing ("Context from session memory:") is eval-specific — the
+  product embeds the block among Project/continuity/insight lines, which a
+  single-probe arm cannot reproduce. Retrieval is forced to 1.0 by
+  construction, isolating the heeding step: pass-rate here **is
+  heed-given-hit**.
 - **without-memory arm** — the identical task with no memory block (system
   prompt byte-identical). Pass-rate is the model's **prior**; the per-probe
   delta is the **memory effect**.
@@ -120,10 +135,11 @@ Does NOT prove:
 ## How S0 maps
 
 `S0 heed_rate = heeded/(heeded+recurred)` from the standard maps to:
-- **retrospective event-level strict rate** — the same formula restricted to
-  evidence-grounded events (what the standard *meant*),
-- **ledger formula** — the same formula as shipped KPIs compute it today
-  (contaminated by pre-C3 default-heeded credit; reported for continuity),
+- **retrospective ADJUDICATED event-level rate** — the same formula restricted
+  to evidence-cited events in both directions (what the standard *meant*),
+- **retrospective LOOSE event-level rate** — the same formula as shipped KPIs
+  compute it today (numerator contaminated by pre-C3 default-heeded credit,
+  denominator by self-report marker fan-out; reported for continuity),
 - **forward heed-given-hit** — the controlled, denominators-known version the
   retrospective can never give you (no absence-of-evidence class).
 

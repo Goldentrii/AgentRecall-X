@@ -145,18 +145,24 @@ function renderSummary(audit, storeRoot, opts) {
   out.push(`corrections: ${a.corrections_total} total = ${a.corrections_live} live + ${a.corrections_retracted} retracted (retractions in this store are noise-triage exclusions, NOT violations — every retract_reason is a capture-noise triage)`);
   out.push(`surfaced (≥1 "retrieved" event): ${a.surfaced} of ${a.corrections_live} live corrections`);
   out.push("");
-  out.push("## Per-correction verdicts (surfaced, live)");
-  for (const [v, n] of Object.entries(a.by_verdict).sort()) out.push(`  ${v.padEnd(12)} ${n}`);
+  out.push("## Per-correction labels (surfaced, live; strongest tier with evidence)");
+  for (const [v, n] of Object.entries(a.by_label).sort()) out.push(`  ${v.padEnd(20)} ${n}`);
   out.push("");
-  out.push("## Heed-given-surfaced");
-  out.push(`  STRICT (correction-level): ${pct(a.heed_given_surfaced_strict)}  — heeded ${a.heed_given_surfaced_strict_detail.heeded} / mixed ${a.heed_given_surfaced_strict_detail.mixed} / violated ${a.heed_given_surfaced_strict_detail.violated}  (denominator: ${a.strict_evidence_corrections} corrections with any strict evidence)`);
-  out.push(`  STRICT (event-level):      ${pct(a.event_level.strict)}  — heeded ${a.event_level.strict_detail.heeded} vs recurred ${a.event_level.strict_detail.recurred}`);
-  out.push(`  LEDGER formula (shipped):  ${pct(a.event_level.ledger_formula)}  — heeded_all ${a.event_level.ledger_detail.heeded_all} (of which ${a.event_level.ledger_detail.heeded_default_share} are pre-C3 default-heeded, i.e. absence-of-evidence credit) vs recurred ${a.event_level.ledger_detail.recurred}`);
+  out.push("## Heed-given-surfaced — symmetric evidence tiers (honest range)");
+  const tierLine = (name, t) => {
+    out.push(`  ${name}`);
+    out.push(`    correction-level: ${pct(t.corrections.rate)}  — heeded ${t.corrections.heeded} / mixed ${t.corrections.mixed} / violated ${t.corrections.violated}  (denominator ${t.corrections.denominator}; mixed counts against)`);
+    out.push(`    event-level:      ${pct(t.events.rate)}  — heeded ${t.events.heeded} vs recurred ${t.events.recurred}`);
+    out.push(`    coverage:         ${pct(t.coverage_of_surfaced)} of surfaced corrections carry any evidence in this tier`);
+  };
+  tierLine("ADJUDICATED (evidence-cited both directions: dream-audit/C3b + check-action):", a.adjudicated);
+  tierLine("LOOSE (heuristic channels both directions: + default-heeded, + self-report markers):", a.loose);
+  out.push(`  Shipped KPI formula heeded/(heeded+recurred) = LOOSE event-level = ${pct(a.kpi_formula.rate)}; its numerator is ${a.kpi_formula.heeded_all} heeded of which ${a.kpi_formula.heeded_default_share} (${pct(a.kpi_formula.heeded_default_fraction)}) are pre-C3 default-heeded, i.e. absence-of-evidence bookkeeping; its denominator's ${a.kpi_formula.recurred} recurred include self-report marker fan-out.`);
   out.push("");
   out.push("## Absence-of-evidence (the honest denominator problem)");
-  out.push(`  weak-only (default-heeded / not_violated signals only): ${a.no_evidence.weak_only}`);
-  out.push(`  silent (surfaced, zero compliance signal of any tier):  ${a.no_evidence.silent}`);
-  out.push(`  → ${pct(a.no_evidence.share_of_surfaced)} of surfaced corrections have NO strict compliance evidence either way; the ledgers cannot say whether they were heeded.`);
+  out.push(`  surfaced without ANY adjudicated evidence: ${a.no_evidence.no_adjudicated_evidence} (${pct(a.no_evidence.share_without_adjudicated)})`);
+  out.push(`  surfaced without even loose evidence:      ${a.no_evidence.no_loose_evidence} (weak-not-violated ${a.no_evidence.weak_not_violated_only} + silent ${a.no_evidence.silent})`);
+  out.push(`  → the adjudicated tier rests on ${a.adjudicated.corrections.denominator} corrections; everything else is unadjudicable from the ledgers.`);
   out.push("");
   out.push("## C3b dream-audit cross-check (verdicts by audited day)");
   const days = Object.entries(audit.dreamAuditByDay);
@@ -179,9 +185,9 @@ function renderSummary(audit, storeRoot, opts) {
     out.push("");
     out.push("## Evidence trail (surfaced live corrections with any compliance-bearing or pre-surfacing events)");
     for (const r of audit.rows) {
-      if (r.retracted || r.result.verdict === "not-surfaced") continue;
+      if (r.retracted || r.result.status !== "surfaced") continue;
       if (r.result.evidence.length === 0 && r.result.pre_surfacing.length === 0) continue;
-      out.push(`- ${r.project}/${r.id} [${r.result.verdict}] surfaced×${r.result.surfaced_count} first=${r.result.first_surfaced}`);
+      out.push(`- ${r.project}/${r.id} [${r.result.label}; adjudicated=${r.result.adjudicated.verdict} loose=${r.result.loose.verdict}] surfaced×${r.result.surfaced_count} first=${r.result.first_surfaced}`);
       out.push(`  rule: ${String(r.rule).slice(0, 90)}`);
       for (const e of r.result.evidence) {
         if (e.tier === "no_signal") continue; // keep the trail readable; counts are in tiers
