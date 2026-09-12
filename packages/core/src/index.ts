@@ -214,6 +214,25 @@ export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
 export { getDreamHealth } from "./storage/dream-health.js";
 export type { DreamHealth } from "./storage/dream-health.js";
+// fix10 (2026-09-12): dream admission math + per-night yield accounting
+export {
+  evaluateDreamCandidate,
+  runDreamAdmission,
+  DREAM_WINDOW_DAYS,
+  DREAM_PROMOTION_THRESHOLD,
+  DREAM_ADMISSION_VERSION,
+  DREAM_STEP3_SOP,
+} from "./tools-logic/dream-admission.js";
+export type {
+  DreamObservation,
+  DreamCandidate,
+  DreamDecision,
+  DreamCandidateResult,
+  DreamAdmissionReport,
+  DreamAdmissionOptions,
+} from "./tools-logic/dream-admission.js";
+export { writeDreamYield, readDreamYield, classifyNight, dreamYieldPath } from "./storage/dream-yield.js";
+export type { DreamYieldRecord, DreamYieldDecision, DreamYieldCorpus, NightYieldClass } from "./storage/dream-yield.js";
 export {
   readBehaviorPolicies,
   registerBehaviorRule,
