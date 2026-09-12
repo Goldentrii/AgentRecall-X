@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [3.4.49] — 2026-09-12
+
+Plan-v2 retrieval/value-chain rollout (fixes #2–#7 from the 2026-09-11 evaluation, each independently reviewed): golden-eval hit-rate 30% → 75% lexical / 90% with opt-in embeddings, real file locking everywhere, capture noise gated at write time.
+
+### Breaking
+
+- **`AgentRecall.digestInvalidate()` (sdk) is now `async` and returns `Promise<void>`** — the last public sync method pinning a sync lock variant alive.
+- **`markStale()` (core digest store) is now `async` and returns `Promise<boolean>`**; the `markStaleAsync` twin is removed (use `markStale`).
+- **`withLockSync`/`acquireLockSync` removed from core** — the event-loop-blocking sync lock path (Atomics.wait) is fully retired; use the async `withLock`/`acquireLock`.
+
+### Added
+
+- **Corrections tier on the default `smart_recall` path** (fix4) — corrections-first authority ordering; 9/10 previously-unreachable correction-homed facts now retrievable.
+- **Opt-in local embeddings** (fix7) — `AGENT_RECALL_EMBEDDINGS=1` adds a semantic candidate leg (local ONNX MiniLM-L12-v2 via transformers.js; `ar embeddings setup|rebuild|status`; nothing ships in the npm package; flag-off behavior byte-identical). Recovers paraphrase-class queries (90% vs 75% hit-rate); trust/scope/fence apply to semantic candidates identically (adversarially tested).
+- **Dual-channel capture gate with `_pending/` staging** (fix2) — session-end insights no longer bypass the correction noise gate.
+- **CJK insight promotion** (fix3) — `normalizeTitle` no longer strips non-ASCII; Chinese insights can pass confirmation counting; 200-entry backfill script included.
+- **`_unclaimed/` resolution staging** (fix5) — failed/zero-confidence project resolution stages instead of dumping into `auto`; `ar claim` CLI.
+- **`freshnessBias` opt-in on `queryMemory`** (fix4b) — explicit freshness for surfaces that want it (CLI ambient hook uses it).
+
+### Changed
+
+- **Retrieval ranking overhaul** (fix4): journal score-then-truncate (no more recency pre-truncation), BM25-lite IDF across tiers, palace relevance-over-salience (0.90/0.10), one-doc-one-vote fusion, graph-stub rows → `alsoLinked` metadata, authority tie-break.
+- **Hot-window recency boost neutralized on the default path** (fix4b) — multiplicative ×3.0/×2.0/×1.3 on fused RRF scores let any <72h item vault relevant results (measured +20pts hit-rate from removal); freshness is now explicit opt-in.
+
+### Fixed
+
+- **Liveness-aware file locking** (fix6, merged in 3.4.48→49 window): async lock waiting, dead-holder-only reclaim (never steal from a live process), whole-span RMW locking for feedback-log/alignment-log/awareness-state — measured lost-update repros (46/120, 31/40, 15/18) all → 0; atomic writes end torn-file reads.
+
 ## [3.4.48] — 2026-09-08
 
 Belief-semantics wave (v4 W1–W5, resuming the 2026-07-02 schema proposal shelved to fix the retrieval pipeline first): corrections now carry assertion-time confidence/provenance and a computed decay class, corrections are queryable as a first-class `queryMemory` tier with retracted records provably excluded at the fetch stage, the Supabase recall path gets the same CJK-aware FTS segmentation the local pipeline already had, and a human-confirmed CLI surface exposes the existing (previously zero-caller) supersession conflict-detector — suggest-only, never auto-retracts. Gated pre-ship by three adversarial/QA passes; their four should-fix findings are folded in below.
