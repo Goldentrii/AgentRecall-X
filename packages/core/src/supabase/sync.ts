@@ -78,7 +78,7 @@ export function deriveSlug(filePath: string): string {
 // Error logging
 // ---------------------------------------------------------------------------
 
-export function logSyncError(message: string): void {
+export function logSyncError(message: string, rootAtCall?: string): void {
   // Root-fix (2026-07-31, continuity wave F5): this used to hardcode
   // os.homedir() directly, bypassing getRoot()'s AGENT_RECALL_ROOT/setRoot()
   // override — the same resolver every other storage module (paths.ts,
@@ -90,7 +90,18 @@ export function logSyncError(message: string): void {
   // fixture paths). getRoot() still falls back to os.homedir() when no
   // override is set, so this is a pure superset fix: same default behavior,
   // now override-aware.
-  const logPath = path.join(getRoot(), "sync-errors.log");
+  //
+  // Root-capture fix (fix12 hygiene, 2026-09-12 — same class, async gap):
+  // the 07-31 fix resolved the root at LOG time, but doSync/backfill are
+  // fire-and-forget async — a test's after() hook can delete
+  // AGENT_RECALL_ROOT while the failing fetch is still in flight, so the
+  // late-landing catch resolved getRoot() back to the REAL store and the
+  // temp-store failure leaked into the live log anyway (23 of the 25
+  // last-7d entries on 2026-09-12 were /var/folders/… test fixture paths,
+  // all timestamped during the 09-11 suite runs). Async producers now
+  // capture the root SYNCHRONOUSLY at entry and pass it here; when omitted
+  // the old resolve-at-log-time behavior is unchanged.
+  const logPath = path.join(rootAtCall ?? getRoot(), "sync-errors.log");
   const timestamp = new Date().toISOString();
   const line = `${timestamp} ${message}\n`;
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -186,6 +197,13 @@ async function doSync(
   store: string,
   room?: string
 ): Promise<void> {
+  // Capture the store root SYNCHRONOUSLY before any await: this function is
+  // fire-and-forget (setImmediate), so by the time a network failure lands in
+  // the catch, a test's after() hook may already have restored/deleted
+  // AGENT_RECALL_ROOT — logging via a late getRoot() would write the failure
+  // into the WRONG store's sync-errors.log (see logSyncError's root-capture
+  // note). The error always belongs to the store that owned the write.
+  const rootAtCall = getRoot();
   try {
     const client = getSupabaseClient();
     if (!client) return;
@@ -252,7 +270,10 @@ async function doSync(
       synced_at: new Date().toISOString(),
     });
   } catch (err) {
-    logSyncError(`doSync failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    logSyncError(
+      `doSync failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      rootAtCall,
+    );
   }
 }
 
@@ -270,6 +291,9 @@ async function syncCorrectionRecord(
   correctionId: string,
   project: string
 ): Promise<void> {
+  // Same synchronous root capture as doSync (fire-and-forget via
+  // setImmediate) — see logSyncError's root-capture note.
+  const rootAtCall = getRoot();
   try {
     // Export the single correction (project + no retracted). If the id doesn't
     // exist in the active set (already retracted or bad id) → empty → skip.
@@ -283,7 +307,10 @@ async function syncCorrectionRecord(
     const scrubbedJson = JSON.stringify(row);
     await doSync(filePath, scrubbedJson, project, "corrections");
   } catch (err) {
-    logSyncError(`syncCorrectionRecord failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    logSyncError(
+      `syncCorrectionRecord failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      rootAtCall,
+    );
   }
 }
 
@@ -339,6 +366,9 @@ export async function backfill(
   project: string,
   files: Array<{ path: string; content: string; store: "journal" | "palace" | "awareness" | "digest"; room?: string }>
 ): Promise<{ synced: number; skipped: number; failed: number }> {
+  // Same synchronous root capture as doSync — backfill is a long async loop,
+  // so late failures must log into the store that owned the files.
+  const rootAtCall = getRoot();
   const client = getSupabaseClient();
   if (!client) return { synced: 0, skipped: 0, failed: 0 };
 
@@ -370,7 +400,10 @@ export async function backfill(
       await doSync(file.path, file.content, project, file.store, file.room);
       synced++;
     } catch (err) {
-      logSyncError(`backfill failed for ${file.path}: ${err instanceof Error ? err.message : String(err)}`);
+      logSyncError(
+        `backfill failed for ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
+        rootAtCall,
+      );
       failed++;
     }
   }

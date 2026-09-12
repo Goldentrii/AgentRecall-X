@@ -70,4 +70,49 @@ describe("logSyncError respects setRoot()/AGENT_RECALL_ROOT (pollution regressio
       );
     }
   });
+
+  // fix12 hygiene (2026-09-12) — the ASYNC gap in the same pollution class:
+  // doSync/backfill are fire-and-forget, so a suite's after() hook can remove
+  // the root override while the failing fetch is still in flight; the
+  // late-landing catch then resolved getRoot() back to the REAL store and
+  // leaked the temp-store failure into the live log (23/25 of the live log's
+  // last-7d entries on 2026-09-12 were /var/folders/… fixture paths from the
+  // 09-11 suite runs). Producers now capture the root synchronously at entry
+  // and pass it as logSyncError's second argument — this test simulates the
+  // capture-then-restore sequence and pins that the captured root wins.
+  it("honors a root captured BEFORE the override was removed (fire-and-forget async gap)", async () => {
+    const { logSyncError, setRoot, resetRoot, getRoot } = await import("agent-recall-core");
+
+    let capturedRoot;
+    setRoot(tmpRoot);
+    try {
+      // What doSync does at entry, synchronously, before any await:
+      capturedRoot = getRoot();
+    } finally {
+      // The suite's after() hook runs while the "network call" is in flight…
+      resetRoot();
+    }
+
+    // …and only now does the failure land in the catch:
+    logSyncError("async-gap regression: must land under the CAPTURED root", capturedRoot);
+
+    const scopedLogPath = path.join(tmpRoot, "sync-errors.log");
+    const content = fs.readFileSync(scopedLogPath, "utf-8");
+    assert.ok(
+      content.includes("async-gap regression"),
+      "the failure must be logged under the root captured at producer entry"
+    );
+
+    // The real user's log must again be untouched.
+    if (realLogExistedBefore) {
+      const statAfter = fs.statSync(realLogPath);
+      assert.equal(
+        statAfter.mtimeMs,
+        realLogStatBefore.mtimeMs,
+        "a late-landing failure with a captured root must not touch the real ~/.agent-recall/sync-errors.log"
+      );
+    } else {
+      assert.ok(!fs.existsSync(realLogPath));
+    }
+  });
 });
