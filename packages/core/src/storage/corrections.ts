@@ -1426,8 +1426,18 @@ export function readCorrections(project: string): CorrectionRecord[] {
   if (!fs.existsSync(dir)) return [];
 
   readCorrectionsScanLog.push(project);
+  // fix4 S1 (2026-09-11): reserved-name exclusion — every `_`-prefixed entry
+  // in a corrections directory is INFRASTRUCTURE, never a correction record:
+  // `_index.md`, `_outcomes.jsonl`, `_rejected.jsonl`, `_ab_arms.jsonl` (all
+  // already extension-excluded), plus the `_pending/`/`_quarantine/` staging
+  // subtrees (fix2's dual-channel capture gate stages raw captures under
+  // `corrections/_pending/` — those records are BY DESIGN not yet active and
+  // must never be parsed as if they were). The class is excluded BY NAME
+  // (leading underscore), not by extension accident, so a future flat
+  // `_staged.json`-style infra file can never leak into the active ledger.
+  // Class-not-instance: one namespace rule, not one branch per known file.
   const files = fs.readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".json") && !f.startsWith("_"))
     .sort()
     .reverse();
 

@@ -107,10 +107,15 @@ confidence rescaler is `RRF_LOCAL_MAX = 0.12`.
 parts):
 
 ```
-palace.internalScore  = keyScore·0.65 + salience·0.35       (salience floored at 0.4)
+palace.internalScore  = keyScore·0.90 + salience·0.10       (salience floored at 0.4;
+                        fix4 S4 2026-09-11 — was 0.65/0.35, rebalanced so query
+                        relevance dominates and salience acts at tiebreaker scale)
 journal.internalScore = recency·0.50  + exactness·0.50      (recency = Ebbinghaus, below)
 insight.internalScore = relevance·0.40 + exactness·0.35 + confirmation·0.25
                         confirmation = min(1, log2(confirmed+1)/3)
+corrections.internalScore = exactness·0.70 + severityBoost·0.15 + proofBoost·0.15
+                        (fix4 S1 2026-09-11; severityBoost: p0→1.0 p1→0.5;
+                        proofBoost = min(1, log2(proof_count+1)/3); no time decay)
 ```
 
 **Post-RRF multipliers** (applied after the merge, *before* final sort):
@@ -121,7 +126,9 @@ Hot-window recency boost (by item.date):
 Beta feedback multiplier (per item, shared across backends):
   E[Beta] = (pos+1)/(pos+neg+2)        // Laplace-smoothed
   multiplier = E[Beta] · 2             // neutral 0.5 → ×1.0
-Graph-walk expansion: linked room gets score = top.score · 0.6
+Graph-walk expansion (fix4 S2 2026-09-11): 1-hop linked rooms are now
+  `alsoLinked` METADATA on the top result — no synthetic result rows, no
+  score (the old form minted stub rows at top.score · 0.6)
 ```
 
 ### Source-specific Ebbinghaus decay
@@ -172,9 +179,9 @@ Free-text query + project; per-source candidate lists; an on-disk
 - **Ebbinghaus decay: GROUNDED form, HAND-TUNED constants.** `R=e^(-t/S)` is the
   cited forgetting curve. The per-source `S` values (`2 / 180 / 9999`) are
   **assigned by category intuition, not fit** to AgentRecall recall outcomes.
-- **The per-source internal weights** (`0.65/0.35`, `0.50/0.50`,
-  `0.40/0.35/0.25`), the **salience floor 0.4**, the **hot-window ×3/×2/×1.3**,
-  the **graph-walk ×0.6**, and the **confidence divisors 0.12 / 0.049**:
+- **The per-source internal weights** (`0.90/0.10`, `0.50/0.50`,
+  `0.40/0.35/0.25`, `0.70/0.15/0.15`), the **salience floor 0.4**, the
+  **hot-window ×3/×2/×1.3**, and the **confidence divisors 0.12 / 0.049**:
   all **HAND-TUNED**. They are reasonable and internally documented, but none is
   fit to a labeled relevance set. The divisors are explicitly called "tunable
   constants — NOT trusted gates" in `confidence.ts`.

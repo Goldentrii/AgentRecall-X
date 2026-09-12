@@ -407,7 +407,19 @@ export interface QueryMemoryInput {
   limit?: number;
   /** journal tier only — matches smart_recall's/journalSearch's `since`. */
   since?: string;
-  journal?: { includeRollupArchive?: boolean; perTierLimit?: number };
+  journal?: {
+    includeRollupArchive?: boolean;
+    perTierLimit?: number;
+    /** fix4 S4-completion (2026-09-11): on the cross-tier COMPETITIVE
+     *  surface (smart_recall's RRF fusion), one journal (date, section)
+     *  contributes at most ONE result slot — its best-scoring line — so a
+     *  verbose section can't flood the top-5 with near-duplicate rows (the
+     *  same one-doc-one-vote class as the palace tier's fix, at the
+     *  journal's own semantic granularity). DEFAULT FALSE: journalSearch's
+     *  per-line grep contract (W3b's deliberate per-hit-unique-id decision)
+     *  is preserved byte-identically for every caller that doesn't opt in. */
+    perSectionDedupe?: boolean;
+  };
   palace?: { room?: string; perTierLimit?: number };
   insight?: { perTierLimit?: number; includeAwareness?: boolean };
   /** corrections tier only (v4 W3, 2026-09-08) — matches every sibling
@@ -489,6 +501,117 @@ function keywordExactness(query: string, text: string): number {
   const textLower = text.toLowerCase();
   const matches = expandedQuery.filter((w) => textSet.has(w) || textLower.includes(w));
   return Math.min(1.0, matches.length / rawWords.length);
+}
+
+// ---------------------------------------------------------------------------
+// fix4 S5 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+// BM25-lite IDF, pure local, computed IN-PASS over the already-scanned
+// candidate corpus. Before this, `keywordExactness` weighted every query
+// token equally, so ubiquitous tokens ("version", "push") matched everything
+// and drowned the rare discriminative ones ("semver") — the S2-standard
+// eval's no-IDF finding. No persistence, no new dependency: DF is counted
+// over the texts the tier scorer has ALREADY read for this query.
+// ---------------------------------------------------------------------------
+
+/** The BM25 IDF curve — the one shared formula every tier's IDF pass uses.
+ *  Always > 0 (the +0.5 smoothing keeps df == n above zero), monotonically
+ *  decreasing in df. */
+function bm25Idf(df: number, n: number): number {
+  return Math.log(1 + (n - df + 0.5) / (df + 0.5));
+}
+
+interface QueryIdfModel {
+  /** IDF-weighted replacement for `keywordExactness`: the fraction of the
+   *  query's total IDF mass whose raw words match `text`, in [0, 1]. Match
+   *  predicate per raw word is identical to `keywordExactness`'s (stemmed
+   *  token-set hit OR lowercase substring, over the word's expandQuery
+   *  variants) — only the WEIGHT each matched word contributes changes. */
+  weightedExactness(text: string): number;
+}
+
+/**
+ * Build the per-query IDF model from the scanned corpus. Weights are per
+ * RAW query word (a word matches if ANY of its stem/synonym variants
+ * matches — same containment semantics as `keywordExactness`), BM25-curved
+ * over document frequency, then max-normalized to [0, 1] so the weighted
+ * exactness stays on the same scale the unweighted ratio lived on.
+ *
+ * TWO deliberate semantic differences from `keywordExactness`, both
+ * per-word SATURATION (independent review M3, 2026-09-11 — this comment's
+ * first cut overclaimed "degenerate cases reproduce pre-IDF behavior
+ * exactly", which is only true when additionally no word matches via more
+ * than one variant and no raw word repeats):
+ *   1. A raw word contributes its weight AT MOST ONCE, however many of its
+ *      stem/synonym variants match ("push" matching both "deploy" and
+ *      "release" in one text counted twice pre-IDF, capped at min(1, ·)).
+ *   2. Duplicate raw query words collapse to one weighted entry
+ *      (`variantsByRaw` is keyed by word) instead of inflating the
+ *      denominator.
+ * Both are the BM25 saturation stance — evidence for the same query word
+ * repeats, it doesn't multiply — pinned by this tranche's mechanism tests.
+ *
+ * DF and the match predicate use the SAME containment semantics
+ * (independent review M4, same day): each corpus doc is tokenized+stemmed
+ * once into a Set, and a word counts toward df if any variant hits the
+ * doc's stemmed-token set OR its lowercase text — identical to
+ * `weightedExactness`'s own predicate below. (The first cut counted df by
+ * substring only, so a word matching every doc via stemming — "queries" vs
+ * stem "query" — could keep df≈0 and a falsely-maximal weight.)
+ *
+ * CJK: `tokenizeWords` already segments Han runs, and DF/matching include
+ * substring containment (script-agnostic), so a rare Han token earns
+ * exactly the same discriminative weight as a rare ASCII one.
+ */
+function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
+  const rawWords = tokenizeWords(query);
+  const variantsByRaw = new Map<string, string[]>();
+  for (const w of rawWords) {
+    if (variantsByRaw.has(w)) continue;
+    const variants = new Set<string>([w]);
+    for (const v of expandQuery([w])) variants.add(v);
+    variantsByRaw.set(w, [...variants]);
+  }
+
+  const n = corpusTexts.length;
+  const docs = corpusTexts.map((t) => {
+    const lower = t.toLowerCase();
+    return { lower, tokenSet: new Set(tokenizeWords(t).map((tok) => stem(tok))) };
+  });
+  const idf = new Map<string, number>();
+  let maxIdf = 0;
+  for (const [w, variants] of variantsByRaw) {
+    let df = 0;
+    for (const d of docs) {
+      if (variants.some((v) => d.tokenSet.has(v) || d.lower.includes(v))) df++;
+    }
+    const weight = n > 0 ? bm25Idf(df, n) : 1;
+    idf.set(w, weight);
+    if (weight > maxIdf) maxIdf = weight;
+  }
+  if (maxIdf > 0) {
+    for (const [w, v] of idf) idf.set(w, v / maxIdf);
+  } else {
+    for (const w of idf.keys()) idf.set(w, 1);
+  }
+  const totalMass = [...idf.values()].reduce((a, b) => a + b, 0);
+
+  return {
+    weightedExactness(text: string): number {
+      if (rawWords.length === 0) return 0;
+      const textSet = new Set(tokenizeWords(text).map((t) => stem(t)));
+      const textLower = text.toLowerCase();
+      let matchedMass = 0;
+      let matchedCount = 0;
+      for (const [w, variants] of variantsByRaw) {
+        if (variants.some((v) => textSet.has(v) || textLower.includes(v))) {
+          matchedMass += idf.get(w) ?? 0;
+          matchedCount++;
+        }
+      }
+      if (totalMass <= 0) return Math.min(1, matchedCount / rawWords.length);
+      return Math.min(1, matchedMass / totalMass);
+    },
+  };
 }
 
 /**
@@ -781,7 +904,9 @@ function readLegacyJournalCandidates(project: string): MemoryCandidate[] {
     if (!fs.existsSync(legacyJournal)) continue;
     let files: string[];
     try {
-      files = fs.readdirSync(legacyJournal).filter((f) => f.endsWith(".md"));
+      // fix4 (2026-09-11): same generated-index / reserved-namespace
+      // exclusion as candidates.ts's journal halves (see that file).
+      files = fs.readdirSync(legacyJournal).filter((f) => f.endsWith(".md") && f !== "index.md" && !f.startsWith("_"));
     } catch {
       continue;
     }
@@ -822,7 +947,7 @@ function readLegacyJournalCandidates(project: string): MemoryCandidate[] {
 function scoreJournalTier(
   project: string,
   query: string,
-  opts: { includeRollupArchive?: boolean; perTierLimit?: number; since?: string },
+  opts: { includeRollupArchive?: boolean; perTierLimit?: number; since?: string; perSectionDedupe?: boolean },
 ): QueryMemoryItem[] {
   const candidates = filterTrusted(
     readTierCandidates("journal", project, {
@@ -839,8 +964,22 @@ function scoreJournalTier(
   interface Hit { title: string; excerpt: string; date: string; line: number }
   const hits: Hit[] = [];
 
+  // fix4 S3 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+  // SCORE-THEN-TRUNCATE. The pre-fix4 loop broke out at `hits.length >=
+  // limit` while iterating candidates in date-DESCENDING order — i.e. it
+  // truncated by RECENCY before any hit was ever scored, so an old entry
+  // matching the query strongly was dropped UNSCORED whenever `limit`
+  // weaker-but-newer line matches existed (the S2-standard eval's latent
+  // "journal recency pre-truncation" defect; the W2 sort-before-truncate
+  // work made the pre-truncation deterministic, not correct). Now every
+  // matching line across every candidate is collected and SCORED
+  // (recency×0.5 + exactness×0.5, unchanged formula), and `limit` is
+  // applied to the score-sorted list at the end — one truncation criterion,
+  // the same one RRF ranking uses. Cost: the full line scan always runs
+  // (previously it stopped early once `limit` hits were found) — bounded by
+  // the same already-read candidate set, and measured within the S11
+  // latency budget by this tranche's eval runs.
   for (const candidate of candidates) {
-    if (hits.length >= limit) break;
     if (sinceCutoff && candidate.date) {
       const fileDate = new Date(candidate.date);
       if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
@@ -848,7 +987,6 @@ function scoreJournalTier(
     const lines = candidate.content.split("\n");
     let currentSection = "top";
     for (let i = 0; i < lines.length; i++) {
-      if (hits.length >= limit) break;
       const line = lines[i];
       if (line.startsWith("## ")) {
         currentSection = line.slice(3).trim().toLowerCase().replace(/\s+/g, "_");
@@ -864,6 +1002,14 @@ function scoreJournalTier(
       hits.push({ title: `${date} / ${currentSection}`, excerpt, date, line: i + 1 });
     }
   }
+
+  // fix4 S5: IDF over the scanned journal corpus (one doc = one journal
+  // file's content) — weights each query word by rarity before the
+  // unchanged recency*0.5 + exactness*0.5 blend below. Review L2
+  // (2026-09-11): skipped entirely when nothing matched — building the
+  // model tokenizes/lowercases the whole corpus, pure waste at zero hits.
+  if (hits.length === 0) return [];
+  const idfModel = buildIdfModel(query, candidates.map((c) => c.content));
 
   const items: QueryMemoryItem[] = hits.map((h) => {
     // Independent review fix (W3b, 2026-08-30): `id` must be unique PER HIT,
@@ -885,12 +1031,25 @@ function scoreJournalTier(
     const id = stableId("journal", `${h.title}::${h.line}::${h.excerpt}`);
     const days = daysSince(h.date);
     const recency = ebbinghaus(days, EBBINGHAUS_S.journal);
-    const exactness = keywordExactness(query, h.excerpt);
+    const exactness = idfModel.weightedExactness(h.excerpt);
     const internalScore = recency * 0.5 + exactness * 0.5;
     return { id, source: "journal", title: h.title, excerpt: h.excerpt, score: internalScore, date: h.date, line: h.line };
   });
   items.sort((a, b) => b.score - a.score);
-  return items;
+  // fix4 S4-completion: one (date, section) -> one competitive slot, best
+  // line wins (items are already score-sorted, so first-seen per title is
+  // the best) — opt-in, see QueryMemoryInput.journal.perSectionDedupe.
+  let deduped = items;
+  if (opts.perSectionDedupe) {
+    const seenSections = new Set<string>();
+    deduped = items.filter((it) => {
+      if (seenSections.has(it.title)) return false;
+      seenSections.add(it.title);
+      return true;
+    });
+  }
+  // fix4 S3: truncate AFTER scoring+sorting — see the loop comment above.
+  return deduped.slice(0, limit);
 }
 
 /** Palace tier: ported from palace-search.ts's tagBonus + per-line matching +
@@ -985,28 +1144,32 @@ async function scorePalaceTier(
     }
   }
 
-  // IDF re-scoring — ported verbatim from palace-search.ts's Fix RC3.
-  if (hits.length > 0) {
-    const totalDocs = new Set(hits.map((h) => `${h.room}/${h.file}`)).size;
-    const docFreq = new Map<string, Set<string>>();
-    for (const h of hits) {
-      const docId = `${h.room}/${h.file}`;
-      const combined = (h.excerpt + " " + h.room + " " + h.file).toLowerCase();
-      for (const w of queryWords) {
-        if (combined.includes(w)) {
-          if (!docFreq.has(w)) docFreq.set(w, new Set());
-          docFreq.get(w)!.add(docId);
-        }
-      }
-    }
+  // IDF re-scoring — structure ported from palace-search.ts's Fix RC3;
+  // fix4 S5 (2026-09-11): DF is now counted over the SCANNED CANDIDATE
+  // CORPUS (every room file this call already read: full content + room +
+  // filename), not over the hit set. Hits-only DF was self-referential —
+  // any doc containing a query word IS a hit for that word, so a word's
+  // rarity was measured against only the documents that matched it (e.g. a
+  // word appearing solely in skipped heading lines contributed nothing),
+  // systematically flattening the very signal IDF exists to provide. The
+  // idf curve itself moves to the shared `bm25Idf` (the one formula every
+  // fix4 tier uses); the 0.70/0.30 idf/raw blend and per-hit matched-word
+  // semantics are unchanged.
+  if (hits.length > 0 && candidates.length > 0) {
+    const corpusDocs = candidates.map((c) =>
+      (c.content + " " + (c.room ?? "") + " " + c.file).toLowerCase(),
+    );
     const idfRaw = new Map<string, number>();
     for (const w of queryWords) {
-      const df = docFreq.get(w)?.size ?? 0;
-      idfRaw.set(w, Math.log(1 + totalDocs / (df + 1)));
+      let df = 0;
+      for (const doc of corpusDocs) {
+        if (doc.includes(w)) df++;
+      }
+      idfRaw.set(w, bm25Idf(df, corpusDocs.length));
     }
-    const maxIdf = Math.max(1, ...Array.from(idfRaw.values()));
+    const maxIdf = Math.max(...Array.from(idfRaw.values()), 0);
     const idf = new Map<string, number>();
-    for (const [w, v] of idfRaw) idf.set(w, v / maxIdf);
+    for (const [w, v] of idfRaw) idf.set(w, maxIdf > 0 ? v / maxIdf : 1);
 
     for (const h of hits) {
       const combined = (h.excerpt + " " + h.room + " " + h.file).toLowerCase();
@@ -1025,6 +1188,34 @@ async function scorePalaceTier(
     } catch { /* best-effort, never block scoring on a bookkeeping write */ }
   }
 
+  // fix4 S4-completion (2026-09-11, diagnosed in-tranche, reports/
+  // agentrecall-fix4-retrieval-2026-09-11.md): ONE DOCUMENT, ONE VOTE.
+  // Palace item ids are stableId("palace", `${room}/${file}`) — identical
+  // for every matching LINE of the same file — so applyRRF's per-id
+  // accumulation summed one 1/(60+rank) contribution PER LINE into a single
+  // entry. A long, frequently-touched catch-all file (goals/evolution)
+  // matching a couple of ubiquitous query words on 30-40 lines reached
+  // fused scores of 0.44-0.71 against 0.0164 for a genuinely-relevant
+  // single-line match — rank 1 in 15/20 golden queries measured at
+  // baseline. Line COUNT tracks document length, not relevance (the signal
+  // class BM25's TF-saturation caps); S4's weight rebalance alone could not
+  // fix this because the design's stated mechanism (salience) was only the
+  // minor leg. Fix: reduce hits to the BEST-scoring line per document
+  // before materializing items, so RRF sees exactly one vote per document
+  // and the surfaced excerpt is always the document's strongest evidence.
+  // This also structurally retires the W3b-documented palace id-collision
+  // (two same-file hits can no longer meet applyRRF) and the accidental
+  // score inflation helpers/associative-link.ts depended on — its
+  // similarity threshold is recalibrated in the same change (see
+  // linkToSimilar's own comment).
+  const bestByDoc = new Map<string, Hit>();
+  for (const h of hits) {
+    const key = `${h.room}/${h.file}`;
+    const cur = bestByDoc.get(key);
+    if (!cur || h.keywordScore > cur.keywordScore) bestByDoc.set(key, h);
+  }
+  const docHits = [...bestByDoc.values()];
+
   const limit = opts.perTierLimit ?? 40; // matches smart-recall's `limit*2` request to palaceSearch
   // Score ALL hits first, sort by the SAME internal score used for RRF
   // ranking, THEN truncate — a single consistent truncation criterion.
@@ -1033,34 +1224,35 @@ async function scorePalaceTier(
   // smart-recall.ts re-scores by keyScore*0.65+salienceFloor*0.35 for its own
   // ranking; this collapses that two-stage, two-criteria truncation into one,
   // a characterized simplification, not a regression — see this file's header.)
-  const items: QueryMemoryItem[] = hits.map((h) => {
+  const items: QueryMemoryItem[] = docHits.map((h) => {
     const title = `${h.room}/${h.file}`;
-    // NOTE (W3b, 2026-08-30 — deliberately NOT fixed this wave, see the
-    // report's resurrect/harness-scope section): `title` alone
-    // (`${room}/${file}`) is not unique per hit, and shares the EXACT SAME
-    // applyRRF-collision class scoreJournalTier's own fix just above closes
-    // (see that comment for the mechanism) — two distinct matching lines in
-    // the SAME room file collide in applyRRF's per-tier id-Map today,
-    // silently discarding one's excerpt while accumulating both hits' RRF
-    // contribution into whichever one survives. Unlike the journal case,
-    // this defect is PRE-EXISTING (live in smart_recall's palace tier since
-    // Wave 2) and OUT OF W3b's scope (journalSearch/recallInsight only) —
-    // and, verified while investigating this wave's own journal fix, giving
-    // palace items the same per-hit-unique id REMOVES an (accidental,
-    // never-intended) score-inflation side effect of this same bug that
-    // helpers/associative-link.ts's `linkToSimilar` — an entirely different
-    // subsystem this wave does not touch — happens to depend on for its
-    // hardcoded `score > 0.03` similarity threshold
-    // (associative-link.test.mjs's "linkToSimilar creates bidirectional
-    // edges..." fails if this is fixed in isolation, because each hit's own
-    // un-inflated RRF contribution, ~0.016, is genuinely below that
-    // threshold). Fixing this properly needs a decision about
-    // linkToSimilar's OWN threshold calibration, not a query-memory.ts-only
-    // change — flagged in the Wave 3b report for the orchestrator, not
-    // silently fixed or silently left undocumented.
+    // W3b HISTORY (2026-08-30) + fix4 RESOLUTION (2026-09-11): `title`
+    // (`${room}/${file}`) was not unique per HIT, so two matching lines of
+    // the same room file collided in applyRRF's per-tier id-Map —
+    // accumulating both hits' RRF contributions into one entry (the
+    // mega-file dominance mechanism the S4-completion comment above
+    // documents) while discarding the loser's excerpt. W3b flagged the fix
+    // as blocked on a linkToSimilar threshold-calibration decision; fix4
+    // resolves it the OTHER way around — items are now one-per-DOCUMENT
+    // (`docHits`, best line as evidence), for which this id is genuinely
+    // unique, and linkToSimilar's threshold is recalibrated to the
+    // un-inflated score scale in the same change (see that function's own
+    // comment).
     const id = stableId("palace", title);
     const salience = Math.max(0.4, salienceByRoom.get(h.room) ?? 0.5);
-    const internalScore = h.keywordScore * 0.65 + salience * 0.35;
+    // fix4 S4 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+    // relevance-over-salience rebalance, 0.65/0.35 -> 0.90/0.10. Under the
+    // old weights the maximum salience differential (0.35 × (1.0 − 0.4
+    // floor) = 0.21) exceeded typical keyword-score deltas between a
+    // topically-right room and a high-traffic catch-all room — the
+    // S2-standard eval measured the goals/evolution mega-room taking rank 1
+    // in 15/20 golden queries across 8 projects on salience alone. At
+    // 0.10 the salience spread caps at 0.06: enough to break genuine
+    // relevance ties (its documented role — see the S4b mechanism test),
+    // never enough to overturn a >=0.07 keyword advantage. Query relevance
+    // now dominates the palace tier's internal ordering the same way it
+    // already dominates every other tier's.
+    const internalScore = h.keywordScore * 0.90 + salience * 0.10;
     const datePattern = h.excerpt.match(/(\d{4}-\d{2}-\d{2})/);
     return {
       id,
@@ -1158,17 +1350,37 @@ function scoreInsightTier(
  * no-op today; matching every sibling tier's own call shape keeps that
  * true structurally, not by omission.
  *
- * SCORING: matches on rule+context text via the shared tokenizer
- * (`keywordExactness` — the SAME helper `scorePalaceTier`/`scoreInsightTier`
- * already use above) and NOTHING else. `confidence`/`decayClass` are
- * ANNOTATION ONLY on the returned item — per the design memo's own repeated
- * finding, rejected TWICE independently (the July 2 proposal's Option 2,
- * and W5fix's removal of `CONTRADICTION_PENALTY`, both for the identical
- * stated reason: blending a confidence/staleness signal into a ranking
- * score hides WHY an item dropped and risks a silent rank inversion) —
- * `internalScore` below reads ONLY `exactness`. P0-ness reuses the
- * EXISTING `severity` field (already populated by `scoreInsightTier` above)
- * rather than inventing a parallel signal.
+ * SCORING (fix4 S1, 2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+ * matches on rule+context text via the shared tokenizer (`keywordExactness`
+ * — the SAME helper `scorePalaceTier`/`scoreInsightTier` already use above),
+ * blended with the record's own IMPORTANCE/EVIDENCE signals, mirroring the
+ * insight tier's shape (`relevance*0.40 + exactness*0.35 + confirmation*0.25`
+ * — see `scoreInsightTier` above):
+ *
+ *   internalScore = exactness*0.70 + severityBoost*0.15 + proofBoost*0.15
+ *     severityBoost: p0 -> 1.0, p1 -> 0.5 (P0-ness reuses the EXISTING
+ *       `severity` field, not a parallel signal)
+ *     proofBoost:    min(1, log2(proof_count+1)/3) — byte-identical to the
+ *       insight tier's `confirmed_count` curve; proof_count is the
+ *       corrections ledger's own on-write consolidation counter.
+ *
+ * Relevance DOMINATES (0.70): severity/proof can reorder near-equal matches
+ * but can never surface a non-matching record (zero-keyword candidates are
+ * skipped before scoring) nor lift a weak match past a strong one by more
+ * than 0.30. NON-TIME-DECAYING like the insight tier: no recency/decay term
+ * — an April rule and a September rule with equal relevance score equally
+ * (a correction is a standing rule, not an episodic memory).
+ *
+ * `confidence`/`decayClass` remain ANNOTATION ONLY on the returned item —
+ * per the design memo's own repeated finding, rejected TWICE independently
+ * (the July 2 proposal's Option 2, and W5fix's removal of
+ * `CONTRADICTION_PENALTY`, both for the identical stated reason: blending a
+ * confidence/STALENESS signal into a ranking score hides WHY an item
+ * dropped and risks a silent rank inversion) — `internalScore` below never
+ * reads either field. severity/proof_count are a DIFFERENT class of signal
+ * (importance/evidence, same class as the insight tier's already-scored
+ * `confirmed_count`), not belief-confidence or staleness — the invariant
+ * those two rejections protect is preserved, not relaxed.
  *
  * `id` is the correction's OWN real, stable `CorrectionRecord.id`
  * (`meta.correction_id`) — deliberately NOT a `stableId()` hash like every
@@ -1177,6 +1389,15 @@ function scoreInsightTier(
  * `recordOutcome`) keys off directly; reusing it here means a caller acting
  * on a surfaced correction never needs a secondary id lookup.
  */
+/** Review L3 (2026-09-11): enumerated severity ladder for the corrections
+ *  scorer — extending coverage is a new ROW here, never a new branch. */
+const SEVERITY_BOOST: Record<string, number> = {
+  p0: 1.0,
+  p1: 0.5,
+  p2: 0.25,
+  p3: 0.1,
+};
+
 function scoreCorrectionsTier(
   project: string,
   query: string,
@@ -1189,15 +1410,35 @@ function scoreCorrectionsTier(
   if (keywords.length === 0) return [];
   const limit = opts.perTierLimit ?? 25;
 
+  // fix4 S5: IDF over the scanned corrections corpus (one doc = one
+  // record's rule+context match text) — materialized once, before the
+  // match/score loop, so DF covers ALL scanned records, not just matches.
+  const matchTexts = candidates.map((candidate) => {
+    const context = candidate.meta?.context ?? "";
+    return context ? `${candidate.content}\n${context}` : candidate.content;
+  });
+  const idfModel = buildIdfModel(query, matchTexts);
+
   const items: QueryMemoryItem[] = [];
-  for (const candidate of candidates) {
+  for (let ci = 0; ci < candidates.length; ci++) {
+    const candidate = candidates[ci];
     const meta = candidate.meta ?? {};
-    const context = meta.context ?? "";
-    const matchText = context ? `${candidate.content}\n${context}` : candidate.content;
+    const matchText = matchTexts[ci];
     const matchTextLower = matchText.toLowerCase();
     if (!keywords.some((kw) => matchTextLower.includes(kw))) continue;
 
-    const exactness = keywordExactness(query, matchText);
+    const exactness = idfModel.weightedExactness(matchText);
+    // fix4 S1: severity/proof_count-aware blend — see this function's doc
+    // comment for the formula and the annotation-only invariant it preserves.
+    // Review L3 (2026-09-11): the ladder is an enumerated CLASS table —
+    // CorrectionRecord.severity types only p0|p1, but legacy on-disk records
+    // carry p2/p3 (corrections.ts severityRank handles them); a binary
+    // p0-else check silently flattened those onto p1. Unknown values score
+    // as p1 (the type's own default tier).
+    const severityBoost = SEVERITY_BOOST[meta.severity ?? "p1"] ?? SEVERITY_BOOST.p1;
+    const proofCount = Math.max(1, parseInt(meta.proof_count ?? "1", 10) || 1);
+    const proofBoost = Math.min(1.0, Math.log2(proofCount + 1) / 3);
+    const internalScore = exactness * 0.70 + severityBoost * 0.15 + proofBoost * 0.15;
     const excerpt = matchText.length > 300 ? matchText.slice(0, 300) + "..." : matchText;
     const title = candidate.content.length > 300 ? candidate.content.slice(0, 300) + "..." : candidate.content;
     // Fallback (candidate.file sans ".json") only covers the defensive case
@@ -1226,7 +1467,7 @@ function scoreCorrectionsTier(
       source: "corrections",
       title,
       excerpt,
-      score: exactness,
+      score: internalScore,
       date: candidate.date || undefined,
       severity: meta.severity,
       confidence: (meta.confidence as Confidence | undefined) || undefined,
@@ -1303,6 +1544,7 @@ const TIER_SCORERS: {
       // Matches smart-recall.ts's original `journalSearch({..., limit: Math.ceil(limit*1.5)})`.
       perTierLimit: input.journal?.perTierLimit ?? Math.ceil((input.limit ?? 10) * 1.5),
       since: input.since,
+      perSectionDedupe: input.journal?.perSectionDedupe,
     }),
   palace: async (input) =>
     scorePalaceTier(input.project, input.query, {

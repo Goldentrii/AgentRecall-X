@@ -116,7 +116,7 @@ import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
-import { queryMemory, queryArchiveFallback, type QueryMemoryItem, type QueryMemorySource } from "../retrieval/query-memory.js";
+import { queryMemory, queryArchiveFallback, type QueryMemoryItem } from "../retrieval/query-memory.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,19 +145,26 @@ export interface SmartRecallInput {
 export interface SmartRecallResultItem {
   id: string;
   /** Primary/display source — whichever source's RRF pass inserted this
-   *  canonical entry first (palace, then journal, then insight). Kept
-   *  singular for backward compatibility with existing consumers.
-   *  "archive" (F4, 2026-07-31) is DIFFERENT from the other three: it never
+   *  canonical entry first (palace, then journal, then insight, then
+   *  corrections). Kept singular for backward compatibility with existing
+   *  consumers.
+   *  "corrections" (fix4 S1, 2026-09-11) is a real competing RRF tier —
+   *  smart_recall now requests it by default (the S2-standard eval found
+   *  9/10 correction-homed golden facts unreachable because this surface
+   *  never asked for the tier queryMemory() already had). ADDITIVE contract
+   *  widening: existing consumers see a new possible string value on an
+   *  already-string field, plus new result rows they previously never got.
+   *  "archive" (F4, 2026-07-31) is DIFFERENT from the other four: it never
    *  competes inside the RRF fusion — it is appended separately by
    *  smartRecall() only when the fused top confidence from
-   *  palace/journal/insight is below medium (see the archive-fallback gate
-   *  below). */
-  source: "palace" | "journal" | "insight" | "archive";
+   *  palace/journal/insight/corrections is below medium (see the
+   *  archive-fallback gate below). */
+  source: "palace" | "journal" | "insight" | "corrections" | "archive";
   /** Other sources that ALSO matched this same canonical memory (same
    *  normalized excerpt) during RRF fusion. Present only when the item was
    *  found in more than one source — see Fix 5 in the file header.
    *  Never set for "archive" items — they are appended post-fusion. */
-  alsoFoundIn?: Array<"palace" | "journal" | "insight" | "archive">;
+  alsoFoundIn?: Array<"palace" | "journal" | "insight" | "corrections" | "archive">;
   title: string;
   excerpt: string;
   score: number;
@@ -197,6 +204,20 @@ export interface SmartRecallResultItem {
    * W5a salvage visibility fix this field shares.
    */
   conflictsWith?: string[];
+  /**
+   * fix4 S2 (2026-09-11) — 1-hop graph-linked room slugs attached to the TOP
+   * result as metadata (replaces the old synthetic "↳ linked: <room>" stub
+   * ROWS, which burned 24/100 top-5 slots at the S2-standard baseline —
+   * see localRecallSearch's graph-walk comment). Attached to the FUSION-TIME
+   * rank-1 item, only when its room has graph edges to real on-disk rooms
+   * not already visible among the results, capped at 2 — the same signal
+   * the stubs carried, in a slot-free form. Review L5 (same day): the
+   * post-fusion Beta-feedback re-sort in smartRecall() can displace the
+   * carrier from rank 1, so a consumer must key on the FIELD, not on
+   * position — the same displacement class the old 0.6× stub rows had.
+   * Additive: absent everywhere else.
+   */
+  alsoLinked?: string[];
   /**
    * remote-fusion wave #24 (2026-09-09) — the raw `deriveSlug()`-shaped
    * identity string (`sync.ts`'s `journal--${fileName}` /
@@ -245,11 +266,19 @@ export interface SmartRecallDegraded {
 }
 
 /** Raw per-source candidate counts, captured BEFORE RRF fusion collapses
- *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5). */
+ *  same-excerpt cross-source duplicates into one canonical entry (Fix 4/5).
+ *  fix4 S1 (2026-09-11): `corrections` added — additive field, matching the
+ *  tier's promotion to a default competing source.
+ *  fix4 unit-semantics note (review L4, same day): `palace` now counts
+ *  DOCUMENTS (one-doc-one-vote, post-bestByDoc) and `journal` counts
+ *  post-perSectionDedupe rows on this surface — both smaller than the old
+ *  per-line counts for an identical store. Diagnostic-only field; no
+ *  consumer treats it as a stable cross-version metric. */
 export interface CandidatesBySource {
   palace: number;
   journal: number;
   insight: number;
+  corrections: number;
 }
 
 export interface SmartRecallResult {
@@ -273,7 +302,7 @@ export interface SmartRecallResult {
   /** Diagnostic: raw per-source candidate counts before RRF fusion (Fix 4/5).
    *  Present only when results came from the local multi-source pipeline
    *  (localRecallSearch); absent for remote/vector-backend results, which
-   *  don't have a "before fusion across 3 sources" notion. */
+   *  don't have a "before fusion across 4 sources" notion. */
   candidates_by_source?: CandidatesBySource;
   /**
    * remote-fusion wave #24 (2026-09-09) — observability: which of the 3
@@ -428,33 +457,6 @@ function verbatimKeyFor(item: QueryMemoryItem): VerbatimKey | undefined {
 }
 
 /**
- * v4 W3 (2026-09-08) type-compat shim, NOT a behavior change: `queryMemory`'s
- * `QueryMemorySource` union grew a `"corrections"` member this wave (a new
- * competing RRF tier — see retrieval/candidates.ts/query-memory.ts), but
- * `SmartRecallResultItem.source`'s own external contract (this file's own
- * header comment, "kept singular for backward compatibility with existing
- * consumers") deliberately stays `"palace" | "journal" | "insight" |
- * "archive"` — smart_recall does NOT opt into the corrections tier this wave
- * (its own `tiers: ["palace", "journal", "insight"]` call below is
- * unchanged), so widening this exported type would be a false, unrequested
- * contract change for every existing consumer. This narrows the (now wider)
- * `QueryMemorySource` back down at the one call site that needs it, and
- * FAILS LOUDLY (never silently mislabels) if a future edit ever adds
- * `"corrections"` to the `tiers` array below without also updating
- * `SmartRecallResultItem.source`'s contract first.
- */
-function excludeCorrectionsSource(source: QueryMemorySource): "palace" | "journal" | "insight" | "archive" {
-  if (source === "corrections") {
-    throw new Error(
-      "localRecallSearch: unexpected 'corrections' source — this file's own " +
-      "tiers list must not request it without first updating " +
-      "SmartRecallResultItem.source's external contract",
-    );
-  }
-  return source;
-}
-
-/**
  * localRecallSearch — the core local search logic (palace + journal + insight).
  *
  * WAVE 2: delegates FETCH/TRUST-FILTER/TOKENIZE+SCORE/RANK-FUSE entirely to
@@ -493,14 +495,35 @@ export async function localRecallSearch(
   const result = await queryMemory({
     query,
     project: resolvedProject,
-    // Order matters: RRF/fuseCanonical's "primary/display source" is
-    // whichever source's items were inserted into the fusion map FIRST (Map
-    // iteration = insertion order). The ORIGINAL localRecallSearch queried
-    // palace, then journal, then insight — this order must be preserved
-    // exactly (audit-retrieval-accounting.test.mjs asserts on it directly).
-    tiers: ["palace", "journal", "insight"],
+    // Order matters TWICE: (a) RRF/fuseCanonical's "primary/display source"
+    // is whichever source's items were inserted into the fusion map FIRST
+    // (Map iteration = insertion order), and (b) the final fused sort is
+    // stable, so EXACT fused-score ties resolve in insertion order too.
+    // The ORIGINAL localRecallSearch queried palace, then journal, then
+    // insight — that relative order is preserved exactly
+    // (audit-retrieval-accounting.test.mjs asserts on it directly).
+    // fix4 S1 (2026-09-11) added "corrections" as the 4th competing tier;
+    // the v4 W3 shim (`excludeCorrectionsSource`) that guarded this exact
+    // wiring was retired in the same change that widened
+    // `SmartRecallResultItem.source`'s contract — the ordering its doc
+    // comment mandated ("update the contract first").
+    // fix4 S1-refinement (same day): corrections moved FIRST. With
+    // one-doc-one-vote scoring, single-source fused scores cluster at
+    // exactly 1/(60+rank), so cross-tier ties are the COMMON case — and a
+    // last-place insertion order systematically ranked the OWNER'S OWN
+    // CAPTURED RULE below every same-evidence derivative mention of it
+    // (palace notes, journal transcript lines). Authority order matches the
+    // product's existing doctrine (session_start P0 always-load, check()'s
+    // authoritative-override gate): at equal rank evidence, ground truth
+    // wins the tie. Fusion SCORES are order-independent (applyRRF sums per
+    // tier); only tie-break order and duplicate display-source change.
+    tiers: ["corrections", "palace", "journal", "insight"],
     limit,
     since,
+    // fix4 S4-completion: on THIS competitive surface one journal
+    // (date, section) gets one slot — see QueryMemoryInput.journal's own
+    // doc comment; journalSearch's per-line contract is unaffected.
+    journal: { perSectionDedupe: true },
   });
 
   // Final materialization: rrf-local confidence label (matches the ORIGINAL
@@ -511,9 +534,9 @@ export async function localRecallSearch(
   // correctly dropped, not a behavior change).
   const deduped: SmartRecallResultItem[] = result.items.map((item) => ({
     id: item.id,
-    source: excludeCorrectionsSource(item.source),
+    source: item.source,
     ...(item.alsoFoundIn && item.alsoFoundIn.length > 0
-      ? { alsoFoundIn: item.alsoFoundIn.map(excludeCorrectionsSource) }
+      ? { alsoFoundIn: item.alsoFoundIn }
       : {}),
     title: item.title,
     excerpt: item.excerpt,
@@ -531,7 +554,17 @@ export async function localRecallSearch(
     ...(item.conflictsWith && item.conflictsWith.length > 0 ? { conflictsWith: item.conflictsWith } : {}),
   }));
 
-  // Graph walk — surface 1-hop linked memories not already in results.
+  // Graph walk — fix4 S2 (2026-09-11): the 1-hop graph signal is now
+  // METADATA on its parent result (`alsoLinked` on the top hit), never a
+  // competing result row. The old form pushed synthetic "↳ linked: <room>"
+  // stub items at 0.6× the top score, which the global re-sort landed at
+  // ranks 2-4 — the S2-standard golden eval measured them burning 24/100
+  // top-5 slots (a pure precision loss: a stub carries no retrievable
+  // content, no verbatimKey, no excerpt beyond a template line). The graph
+  // SIGNAL is preserved verbatim — same source (getConnectedRooms on the
+  // top result's room), same 2-room cap — an agent that wants the linked
+  // rooms' content follows up with a room-scoped query, exactly what it had
+  // to do with the stub rows anyway.
   // Uses the RESOLVED project (a characterized fix over the original, which
   // used the raw, possibly-unresolved `project` parameter here — a latent
   // H1-class inconsistency for the "auto"-literal edge case; every existing
@@ -539,25 +572,35 @@ export async function localRecallSearch(
   // difference for the common case and a strict improvement otherwise).
   if (deduped.length > 0 && resolvedProject) {
     const pd = palaceDir(resolvedProject);
-    const resultIds = new Set(deduped.map((r) => r.id));
     const topRoom = deduped[0].room;
     if (topRoom) {
-      const linked = getConnectedRooms(pd, topRoom);
-      for (const linkedRoom of linked.slice(0, 2)) {
-        if (!resultIds.has(linkedRoom)) {
-          // Graph-walk items have NO verbatimKey → skipped by the bridge by design.
-          const linkedScore = deduped[0].score * 0.6;
-          deduped.push({
-            id: linkedRoom,
-            source: "palace" as const,
-            title: `↳ linked: ${linkedRoom}`,
-            excerpt: `Connected to ${topRoom} via memory graph`,
-            score: linkedScore,
-            ...label(linkedScore, "rrf-local"),
-            room: linkedRoom,
-          });
-          resultIds.add(linkedRoom);
-        }
+      // Rooms already visible among the substantive results carry their own
+      // slot — advertising them again as a link is redundant. (The OLD stub
+      // code's `resultIds.has(linkedRoom)` check compared room slugs against
+      // stableId hashes and so never excluded anything but its own earlier
+      // stubs; matching on the items' real `room` field is the check that
+      // comment always described.)
+      const visibleRooms = new Set(deduped.map((r) => r.room).filter(Boolean));
+      const linked = getConnectedRooms(pd, topRoom)
+        .filter((room) => !visibleRooms.has(room))
+        // Review M2-adjacent fix (2026-09-11): graph edge targets are not
+        // always room slugs — linkToSimilar historically minted edges to
+        // journal/correction item IDS (its `candidate.room ? room/id : id`
+        // target shape), and getConnectedRooms's `split("/")[0]` hands the
+        // bare id back as a pseudo-room. The old stub rows advertised those
+        // hashes verbatim ("↳ linked: k3f9a2"); alsoLinked only names
+        // targets that are REAL rooms on disk (_room.json exists — the same
+        // existence notion listRooms uses).
+        .filter((room) => {
+          try {
+            return fs.existsSync(path.join(pd, "rooms", room, "_room.json"));
+          } catch {
+            return false;
+          }
+        })
+        .slice(0, 2);
+      if (linked.length > 0) {
+        deduped[0] = { ...deduped[0], alsoLinked: linked };
       }
     }
   }
@@ -569,6 +612,7 @@ export async function localRecallSearch(
     palace: result.candidatesBySource.palace ?? 0,
     journal: result.candidatesBySource.journal ?? 0,
     insight: result.candidatesBySource.insight ?? 0,
+    corrections: result.candidatesBySource.corrections ?? 0,
   };
   (deduped as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS] = rawCandidateCounts;
 
@@ -951,7 +995,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // fused top-confidence of palace/journal/insight". This adds brand-new
   // result items sourced from journal/archive/raw/, so it must never compete
   // for rank inside the palace/journal/insight RRF fusion — it only steps in
-  // once those 3 sources have already failed to produce a confident #1
+  // once those 4 competing sources have already failed to produce a confident #1
   // answer. Placed AFTER the Bridge above so the Bridge's own `low` filter
   // (which also matches any verbatimKey-bearing item) only ever considers
   // genuine palace/journal/insight items — an archive item is already a raw
@@ -1002,13 +1046,13 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // survivor count and can legitimately be smaller). The raw counts side
   // channel is only present when `results` came straight from
   // localRecallSearch's local multi-source pipeline; remote/vector-backend
-  // results have no "before fusion across 3 sources" notion, so fall back to
+  // results have no "before fusion across 4 sources" notion, so fall back to
   // results.length for those (unchanged prior behavior). The archive source
   // is intentionally excluded from this count — it is not part of the
-  // 3-source fan-out this diagnostic describes.
+  // 4-source fan-out this diagnostic describes.
   const rawCandidateCounts = (results as SmartRecallResultItem[] & WithRawCandidateCounts)[RAW_CANDIDATE_COUNTS];
   const totalSearched = rawCandidateCounts
-    ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight
+    ? rawCandidateCounts.palace + rawCandidateCounts.journal + rawCandidateCounts.insight + rawCandidateCounts.corrections
     : results.length;
 
   const sourcesQueried = [...new Set(results.map((r) => r.source))];
