@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { digestDir, digestGlobalDir } from "../storage/paths.js";
+import { digestDir, digestGlobalDir, UNCLAIMED_PROJECT } from "../storage/paths.js";
 import { ensureDir, readJsonSafe, writeJsonAtomic } from "../storage/fs-utils.js";
 import { withLock, withLockSync } from "../storage/filelock.js";
 import { extractKeywords } from "../helpers/auto-name.js";
@@ -80,7 +80,13 @@ function estimateTokens(content: string): number {
  * Store a new digest or refresh an existing one if title overlaps.
  */
 export async function createDigest(input: DigestStoreInput): Promise<DigestStoreResult> {
-  const project = input.project ?? "unknown";
+  // fix5 review INFO-11 (2026-09-11): the fallback used to be the literal
+  // "unknown" — a VALID slug, so a future direct caller omitting `project`
+  // would mint `projects/unknown/digest`. Every shipped entry point resolves
+  // before calling this (CLI, tools-logic, MCP, SDK), but the class stays
+  // closed only if the fallback itself cannot create: the staging sentinel
+  // routes an unresolved digest to `_unclaimed/<session>/digest` instead.
+  const project = input.project ?? UNCLAIMED_PROJECT;
   const isGlobal = input.global ?? false;
   const dir = isGlobal ? digestGlobalDir() : digestDir(project);
   ensureDir(dir);

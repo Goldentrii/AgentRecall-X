@@ -239,16 +239,36 @@ describe("C-1 + C-3 pipeline — an ambient-captured gist survives into a sessio
     const wmFiles = fs.existsSync(wmDir) ? fs.readdirSync(wmDir) : [];
     assert.equal(wmFiles.length, 0, "the working-memory file must be gone after a graceful close (distilled, not orphaned)");
 
-    const projectsDir = path.join(root, "projects");
-    assert.ok(fs.existsSync(projectsDir), "a project dir should exist after distillation");
+    // fix5 retarget (2026-09-11): the server runs from a /tmp worktree, so
+    // the distill's slug guess fails at confidence 0 and the card now stages
+    // under `_unclaimed/<sid>/` instead of minting projects/auto (creation
+    // invariant). The pipeline property under test — the ambient-captured
+    // gist SURVIVES into a card on graceful close — is landing-zone
+    // independent; scan both zones.
     let found = false;
-    for (const slug of fs.readdirSync(projectsDir)) {
-      const journalDir = path.join(projectsDir, slug, "journal");
-      if (!fs.existsSync(journalDir)) continue;
-      for (const f of fs.readdirSync(journalDir)) {
-        if (!f.endsWith(".md")) continue;
-        const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
-        if (body.includes("PIPELINE_UNIQUE_TERM_XYZ")) found = true;
+    const projectsDir = path.join(root, "projects");
+    if (fs.existsSync(projectsDir)) {
+      for (const slug of fs.readdirSync(projectsDir)) {
+        const journalDir = path.join(projectsDir, slug, "journal");
+        if (!fs.existsSync(journalDir)) continue;
+        for (const f of fs.readdirSync(journalDir)) {
+          if (!f.endsWith(".md")) continue;
+          const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
+          if (body.includes("PIPELINE_UNIQUE_TERM_XYZ")) found = true;
+        }
+      }
+    }
+    const unclaimedDir = path.join(root, "_unclaimed");
+    if (fs.existsSync(unclaimedDir)) {
+      for (const sid of fs.readdirSync(unclaimedDir)) {
+        if (sid.startsWith("_") || sid.startsWith(".")) continue;
+        const sessionDir = path.join(unclaimedDir, sid);
+        if (!fs.statSync(sessionDir).isDirectory()) continue;
+        for (const f of fs.readdirSync(sessionDir)) {
+          if (!f.endsWith(".md")) continue;
+          const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
+          if (body.includes("PIPELINE_UNIQUE_TERM_XYZ")) found = true;
+        }
       }
     }
     assert.ok(found, "the ambient-captured gist must appear in a session card written on graceful close");

@@ -98,6 +98,10 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "digest", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "sessions", status: "allowlisted", reason: "reads Claude Code's own session transcript files — a different tool's storage, outside fenceMemory's documented scope (AgentRecall's own memory corpus), same reasoning as `saveall`." },
   { channel: "cli_subcommand", id: "saveall", status: "allowlisted", reason: "summaries are synthesized from THIS host's own live Claude Code transcript files (same-turn/live-session scope), not AgentRecall's stored memory corpus — same reasoning as `sessions`." },
+  // fix5 (2026-09-11): `ar claim --list` renders staged _unclaimed card
+  // titles — retrieved (possibly crashed/spoofed-session) content — inside
+  // fenceMemory; claim/undo actions themselves emit only counts + paths.
+  { channel: "cli_subcommand", id: "claim", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "merge", status: "allowlisted", reason: "mergeResult.card is an administrative merge-confirmation (counts, paths), not retrieved content." },
   { channel: "cli_subcommand", id: "stats", status: "allowlisted", reason: "pure counts (corrections/journal entries/graph edges), no prose fields." },
   { channel: "cli_subcommand", id: "sync-memory", status: "fenced", file: "packages/cli/src/index.ts" },

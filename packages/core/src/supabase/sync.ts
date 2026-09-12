@@ -6,6 +6,7 @@ import { getSupabaseClient } from "./client.js";
 import { readSupabaseConfig } from "./config.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
 import { classifyStore } from "../storage/classification.js";
+import { isUnclaimedProject } from "../storage/paths.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { exportCorrections } from "../tools-logic/export-corrections.js";
 import { getRoot } from "../types.js";
@@ -126,6 +127,18 @@ export function syncToSupabase(
   store: "journal" | "palace" | "awareness" | "digest" | "corrections",
   room?: string
 ): void {
+  // STAGING GATE (fix5 review HIGH-1, 2026-09-11): `_unclaimed`-staged content
+  // is a FAILED/zero-confidence resolution awaiting an explicit claim — it is
+  // excluded from the local recall corpus by design, and the cloud corpus is
+  // the same class (ar_insight_search is cross-project). Syncing it pre-claim
+  // would (a) make unverified content durable cloud rows and (b) strand those
+  // rows under the "_unclaimed" slug forever after a claim moves the local
+  // files. Claimed files reach the cloud later via backfill (which walks
+  // projects/ and is structurally blind to staging). Silent skip preserves
+  // the fire-and-forget contract, same as the gates below.
+  if (isUnclaimedProject(project)) {
+    return;
+  }
   // PRIVACY GATE (Wave 1, Decision #6): personal-tier data (awareness behavioral
   // layer, _global palace) does not leave the machine unless sync_personal=true.
   // Silent skip preserves the fire-and-forget contract.

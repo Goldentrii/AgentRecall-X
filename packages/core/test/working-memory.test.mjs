@@ -298,23 +298,28 @@ describe("working-memory (v3.4.42)", () => {
 
       distillSessionToCard(sid);
 
-      // Find the actual on-disk project directory the card landed under —
-      // mirrors kill9-orphan-rescue.test.mjs's own lookup (mcp-server package).
+      // fix5 retarget (2026-09-11): a rescue card is zero-confidence by
+      // construction, so it now stages into _unclaimed/<sid>/ instead of
+      // landing under projects/mixedcase (which this fixture would have
+      // MINTED — exactly the creation-invariant violation fix5 closes). The
+      // PARITY INVARIANT this test protects is unchanged in spirit: the
+      // recency ledger's slug must equal where the card ACTUALLY lives — a
+      // mismatch means continuity lookups keyed on the ledger slug can never
+      // find the card. Post-fix5 that location is the staging namespace.
       const projectsDir = path.join(tmpDir, "projects");
-      assert.ok(fs.existsSync(projectsDir), "a project directory should exist after distillation");
-      const onDiskSlugs = fs.readdirSync(projectsDir).filter((d) => {
-        const journalPath = path.join(projectsDir, d, "journal");
-        return fs.existsSync(journalPath) && fs.readdirSync(journalPath).some((f) => f.endsWith(`--card--${sid}.md`));
-      });
-      assert.equal(onDiskSlugs.length, 1, `expected exactly one project dir carrying this sid's card, got: ${JSON.stringify(onDiskSlugs)}`);
-      const onDiskSlug = onDiskSlugs[0];
+      assert.ok(!fs.existsSync(projectsDir), "a rescue must not materialize any projects/ dir (creation invariant)");
+      const stagedDir = path.join(tmpDir, "_unclaimed", sid);
+      assert.ok(
+        fs.existsSync(stagedDir) && fs.readdirSync(stagedDir).some((f) => f.endsWith(`--card--${sid}.md`)),
+        "the rescue card must live under _unclaimed/<sid>/",
+      );
 
       const recencyEntry = readRecentSessions(50).find((e) => e.sid === sid);
       assert.ok(recencyEntry, "a recency entry must exist for the rescued session");
       assert.equal(
         recencyEntry.slug,
-        onDiskSlug,
-        `recency ledger slug ("${recencyEntry.slug}") must equal the card's actual on-disk project directory ("${onDiskSlug}") — a mismatch means continuity lookups keyed on the ledger slug can never find the card`,
+        "_unclaimed",
+        `recency ledger slug ("${recencyEntry.slug}") must equal the card's actual location (the _unclaimed staging namespace) — the same ledger-vs-disk parity rule as before, retargeted with the landing zone`,
       );
     });
 

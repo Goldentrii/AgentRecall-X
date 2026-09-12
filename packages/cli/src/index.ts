@@ -172,6 +172,11 @@ MULTI-SESSION:
   ar sessions                List all Claude Code sessions active today (diagnostic)
   ar saveall [--dry-run]     Save all today's sessions to AgentRecall automatically
 
+UNCLAIMED STAGING (failed/zero-confidence resolutions land in _unclaimed/):
+  ar claim --list            List staged session cards awaiting claim
+  ar claim <sid> --project <slug>  Move a staged session's cards into a real project (logged, reversible)
+  ar claim <sid> --undo      Reverse the last claim for a session
+
 HOOKS (auto-fired by Claude Code hooks — no agent discipline needed):
   ar hook-start          Session start: load context, show watch_for warnings
   ar hook-end            Session end: auto-save journal if not already saved today
@@ -1220,13 +1225,22 @@ async function main(): Promise<void> {
           }
         }
 
+        // fix5 (2026-09-11): unclaimed staging pointer — EXACTLY ONE line,
+        // count only (never staged content), absent when zero. Mirrors the
+        // MCP formatTerse renderer of the same field.
+        if (result.unclaimed_cards && result.unclaimed_cards > 0) {
+          lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\``);
+        }
+
         // Semantic prefetch from last session
         try {
           // Root-fix (2026-08-12, followups wave): same bypass class as
           // logSyncError — this is AR's own project data, must honor getRoot().
-          const prefetchFile = path.join(
-            core.getRoot(), "projects", project ?? "auto", "semantic-prefetch.json"
-          );
+          // fix5 (2026-09-11): routed through projectSubPath so the READ
+          // resolves the same case-fold-reused path the WRITE (hook-end
+          // prefetch) now uses — the raw literal join was one of the cli
+          // bypass sites of the sanctioned project-path builder.
+          const prefetchFile = core.projectSubPath(project ?? "auto", "semantic-prefetch.json");
           if (fs.existsSync(prefetchFile)) {
             const prefetchData = JSON.parse(fs.readFileSync(prefetchFile, "utf-8")) as {
               generated: string;
@@ -1445,13 +1459,25 @@ async function main(): Promise<void> {
           unifiedProjectSlug = proj;
 
           core.archiveSession({
+            // fix5 (2026-09-11): archiveSession self-gates — an invalid slug
+            // (F1 guess failed at confidence 0 ⇒ the literal "auto", now
+            // deny-listed) routes the verbatim dump to _unclaimed/<sid>/
+            // instead of materializing projects/auto/journal/archive/raw.
             project: proj,
             sessionId: archiveSid,
             transcriptPath: resolvedPath,
             rawTranscript: src.rawTail,
             summary: src.firstUserMessage ?? undefined,
           });
-          await core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+          // fix5: never enqueue a consolidation job for an unresolved slug —
+          // the drain step (consolidate-async below) scaffolds a palace for
+          // job.project, which for "auto"-class slugs re-materializes exactly
+          // the junk dir the archive gate above just refused to create.
+          // (consolidate-async also skips invalid slugs defensively, for
+          // jobs enqueued before this fix.)
+          if (core.isValidProjectSlug(proj)) {
+            await core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+          }
 
           // ---- F3 unconditional session card + F2 recency append ----
           // The raw archive above has ALREADY succeeded by this point — it is
@@ -1477,11 +1503,18 @@ async function main(): Promise<void> {
                 date: endToday,
               },
             });
-            core.writeSessionCard(card);
+            // fix5 (2026-09-11): writeSessionCard self-gates — an invalid
+            // slug or a zero-confidence resolution stages the card into
+            // _unclaimed/<sid>/ and returns slug "_unclaimed". The recency
+            // ledger must record where the card ACTUALLY lives (the same
+            // ledger-vs-disk parity rule Train C fixed for the rescue path),
+            // so the append below keys off the write result, falling back to
+            // `proj` only when the write failed outright (empty slug).
+            const written = core.writeSessionCard(card);
             core.appendRecentSession({
               ts: new Date().toISOString(),
               sid: archiveSid,
-              slug: proj,
+              slug: written.slug || proj,
               slug_confidence: projConfidence,
               title: card.title,
               next_step: card.nextStep[0],
@@ -1582,15 +1615,23 @@ async function main(): Promise<void> {
             const coremod = await import("agent-recall-core") as any;
             const backend = await coremod.getRecallBackend();
             const prefetchProject = project ?? "auto";
-            if (backend.available()) {
+            // fix5 (2026-09-11): never write the prefetch cache for an
+            // unresolved/invalid project — with "auto" now deny-listed this
+            // used to land a new write inside the legacy projects/auto/
+            // dumping ground on every hook-end. A prefetch is a regenerable
+            // convenience cache; skipping it for an unresolvable session
+            // loses nothing.
+            if (backend.available() && core.isValidProjectSlug(prefetchProject)) {
               const prefetchResults = await backend.search(summary.slice(0, 200), prefetchProject, 5);
               if (prefetchResults.length > 0) {
                 // Root-fix (2026-08-12, followups wave): same bypass class as
                 // logSyncError — mirrors hook-start's read of this same file
                 // above (both now resolve via getRoot()).
-                const prefetchFile = path.join(
-                  core.getRoot(), "projects", prefetchProject, "semantic-prefetch.json"
-                );
+                // fix5: routed through projectSubPath (the sanctioned
+                // project-path builder) instead of a raw "projects" join —
+                // the raw join bypassed the case-fold EXISTING-DIR reuse
+                // rule and was one of the cli literal-join bypass sites.
+                const prefetchFile = core.projectSubPath(prefetchProject, "semantic-prefetch.json");
                 fs.writeFileSync(prefetchFile, JSON.stringify({
                   generated: new Date().toISOString(),
                   query: summary.slice(0, 100),
@@ -1619,6 +1660,13 @@ async function main(): Promise<void> {
       try {
         const report = await core.drainConsolidationQueue(async (job) => {
           try {
+            // fix5 (2026-09-11): skip (mark done, don't retry) any job whose
+            // slug is invalid — "auto"-class jobs enqueued before the
+            // hook-end gate existed would otherwise scaffold a palace under
+            // projects/auto/ right here, re-materializing the junk-dir class
+            // this tranche closes. Nothing to consolidate for a slug that
+            // can never be a real project; returning cleanly retires the job.
+            if (!core.isValidProjectSlug(job.project)) return;
             core.ensurePalaceInitialized(job.project);
             await core.consolidateJournalToPalace(job.project);
           } catch (e) {
@@ -2363,13 +2411,20 @@ async function main(): Promise<void> {
         const scope = getFlag("--scope", digRest) ?? "";
         const content = getFlag("--content", digRest) ?? "";
         const ttl = getFlag("--ttl", digRest);
+        // fix5 (2026-09-11): resolve the project BEFORE the write — this was
+        // the one digest entry point that passed the raw `--project` value
+        // (or undefined) straight into createDigest, whose own fallback then
+        // materialized a literal projects/unknown/digest dir. Routing
+        // through resolveProject matches the MCP digest tool's behavior:
+        // explicit slugs validate, unresolvable sessions stage.
+        const digestProject = await core.resolveProject(project ?? "auto");
         const result = await core.createDigest({
           title, scope, content,
           source_agent: getFlag("--agent", digRest),
           source_query: getFlag("--query", digRest),
           ttl_hours: ttl ? parseFloat(ttl) : undefined,
           global: hasFlag("--global", digRest),
-          project,
+          project: digestProject,
         });
         output(result);
       } else if (sub === "recall") {
@@ -2396,7 +2451,11 @@ async function main(): Promise<void> {
         // review MEDIUM-2 (fix6-locks): async variant — never park the event
         // loop on digest-lock contention (sync markStale exists only as the
         // SDK digestInvalidate signature pin).
-        await core.markStaleAsync(project ?? "auto", id, reason, hasFlag("--global", digRest));
+        // fix5 (2026-09-11): resolve before the write — markStale(Async)
+        // rewrites the digest index via writeJsonAtomic (ensureDir on the
+        // parent), so the raw literal "auto" here could materialize
+        // projects/auto/digest.
+        await core.markStaleAsync(await core.resolveProject(project ?? "auto"), id, reason, hasFlag("--global", digRest));
         output({ success: true, id });
       } else {
         process.stderr.write(`Usage: ar digest store|recall|list|invalidate [...opts]\n`);
@@ -2511,7 +2570,14 @@ async function main(): Promise<void> {
         }
 
         try {
-          await core.sessionEnd({ summary, project: proj, insights: [] });
+          // fix5 (2026-09-11): a session with NO project guess used to pass
+          // its dedup key (`unknown:<sid>`) as the project, minting a
+          // `projects/unknown<sid>` junk dir per unguessed session (the
+          // sanitizer strips the colon). A failed guess is exactly the
+          // staging class: route it to `_unclaimed/` via the sentinel — the
+          // save still happens, claimable later.
+          const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
+          await core.sessionEnd({ summary, project: saveProject, insights: [] });
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });
@@ -2527,6 +2593,61 @@ async function main(): Promise<void> {
         output(`\n(dry run — no data written)`);
       } else {
         output(`\nTotal: ${saved.length} saved, ${skipped.length} skipped, ${failed.length} failed`);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // ar claim — review/claim _unclaimed staged sessions (fix5, 2026-09-11)
+    // -----------------------------------------------------------------------
+    case "claim": {
+      // The ONE sanctioned path by which staged content (failed/zero-
+      // confidence resolutions, kill-9 rescue cards) enters a real project.
+      // Manifest-logged (from→to pairs) and reversible via --undo.
+      if (hasFlag("--list", rest)) {
+        const cards = core.listUnclaimedCards();
+        if (cards.length === 0) {
+          output("No unclaimed sessions. (_unclaimed/ staging is empty.)");
+          break;
+        }
+        // Card titles are STAGED memory content (possibly from a crashed or
+        // even spoofed session) — render them through the same fence every
+        // other retrieved-content surface in this file uses.
+        const listLines: string[] = [];
+        for (const c of cards) {
+          let title = "";
+          try {
+            title = fs.readFileSync(c.path, "utf-8").split("\n").find((l) => l.startsWith("# "))?.slice(2, 102) ?? "";
+          } catch { /* unreadable card — list the sid anyway */ }
+          listLines.push(`  ${c.sid}  ${c.file}${title ? `  — ${title}` : ""}`);
+        }
+        output(`Unclaimed sessions (${cards.length} card${cards.length === 1 ? "" : "s"}):`);
+        output(core.fenceMemory(listLines.join("\n")));
+        output(`\nClaim one:  ar claim <sid> --project <slug>\nUndo:       ar claim <sid> --undo`);
+        break;
+      }
+
+      const claimSid = rest.find((a) => !a.startsWith("--"));
+      if (!claimSid) {
+        output("Usage: ar claim --list | ar claim <sid> --project <slug> | ar claim <sid> --undo");
+        process.exit(1);
+      }
+      try {
+        if (hasFlag("--undo", rest)) {
+          const undone = core.undoClaimUnclaimedSession(claimSid);
+          output(`Undid claim of ${claimSid}: ${undone.moved.length} file(s) restored to _unclaimed/${undone.sid}/${undone.skipped.length > 0 ? ` (${undone.skipped.length} skipped)` : ""}`);
+        } else {
+          if (!project) {
+            output("ar claim: --project <slug> is required to claim a session (or use --undo / --list).");
+            process.exit(1);
+          }
+          const claimed = core.claimUnclaimedSession(claimSid, project);
+          output(`Claimed ${claimSid} into ${claimed.project}: ${claimed.moved.length} file(s) moved${claimed.skipped.length > 0 ? `, ${claimed.skipped.length} skipped (destination already existed)` : ""}`);
+          output(`Reversible: ar claim ${claimSid} --undo  (manifest: _unclaimed/_claims.jsonl)`);
+        }
+      } catch (e) {
+        output(`ar claim: ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
       }
       break;
     }
@@ -2777,7 +2898,13 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         output(`Synced to ${syncPath} (${syncContent.split("\n").length} lines)`);
       } else {
         // Fallback: write to AR directory
-        const projectSyncDir = path.join(arRoot, "projects", resolvedSync);
+        // fix5 (2026-09-11): routed through projectSubPath — the raw
+        // "projects" literal join here was the one dir-CREATING bypass of
+        // the sanctioned builder in this package: it skipped BOTH the
+        // case-fold EXISTING-DIR reuse rule (could mint a case-variant twin)
+        // AND the staging-sentinel routing (a sentinel-resolved session
+        // would have minted a junk dir under projects/).
+        const projectSyncDir = core.projectSubPath(resolvedSync);
         core.ensureDir(projectSyncDir);
         const syncPath = path.join(projectSyncDir, "SYNC.md");
         fs.writeFileSync(syncPath, syncContent, "utf-8");

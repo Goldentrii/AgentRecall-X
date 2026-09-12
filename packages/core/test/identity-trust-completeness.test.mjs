@@ -1279,9 +1279,20 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
     core.rescueOrphanedWorkingMemory();
 
     // Precondition: the rescue DID plant a card (mechanism not disabled).
+    // fix5 retarget (2026-09-11) — STRENGTHENED: the zero-confidence rescue
+    // card now stages under _unclaimed/ instead of being written INSIDE the
+    // real project's journal (write-side closure of the same CRITICAL-2
+    // vector this test's read-side destinations quarantine — all five
+    // destination proofs below are unchanged).
     const journalDir = path.join(TEST_ROOT, "projects", REAL_SLUG, "journal");
-    const rescuedFile = fs.readdirSync(journalDir).find((f) => f.includes("evil-hijack-001"));
-    assert.ok(rescuedFile, "precondition: rescue sweep must still plant a card");
+    assert.equal(
+      fs.readdirSync(journalDir).find((f) => f.includes("evil-hijack-001")),
+      undefined,
+      "the spoofed rescue card must never enter the real project's journal",
+    );
+    const stagedHijackDir = path.join(TEST_ROOT, "_unclaimed", "evil-hijack-001");
+    const rescuedFile = fs.existsSync(stagedHijackDir) && fs.readdirSync(stagedHijackDir).find((f) => f.includes("--card--"));
+    assert.ok(rescuedFile, "precondition: rescue sweep must still plant a card — staged under _unclaimed/");
 
     // ── Destination 1: resurrect() ──────────────────────────────────────
     const briefs = core.resurrect({ query: HIJACK_TERM, days: 1 });

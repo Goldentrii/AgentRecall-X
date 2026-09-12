@@ -15,6 +15,20 @@ export function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * fix5 review MEDIUM-2 (2026-09-11): validate a caller-supplied ISO date
+ * before it is interpolated into a FILENAME (session cards, staged cards).
+ * `SessionCardResult.date` can originate from hook-stdin `meta.date` — an
+ * untrusted string — and both card write sites build
+ * `path.join(dir, `${date}--card--${sid}.md`)` with it; a value like
+ * `../../x` would escape the target dir. Strict `YYYY-MM-DD` shape or
+ * today's date — one shared helper so both write sites (and any future
+ * date-in-filename writer) apply the SAME rule (class-not-instance).
+ */
+export function safeIsoDateOrToday(date: string | undefined | null): string {
+  return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayISO();
+}
+
 export function readJsonSafe<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {
