@@ -32,6 +32,14 @@ let filelock;
 let typesMod;
 let corrections;
 
+// fix10 hermeticity (review MEDIUM-3): checkDreamingStale reads the AAM
+// run-log dir, which lives OUTSIDE the AGENT_RECALL_ROOT-controlled root —
+// without this, every suite in this file inherits the HOST machine's real
+// ~/.aam cron/yield state. Point it at a dir that does not exist; suites
+// that need dream state override it locally.
+const HERMETIC_AAM = path.join(os.tmpdir(), "ar-doctor-no-aam-" + Date.now());
+process.env.AGENT_RECALL_AAM_DREAMS_DIR = HERMETIC_AAM;
+
 const PROJECT = "doctor-proj";
 
 let TEST_ROOT;
@@ -374,5 +382,77 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
 
     const after = doctor.runStoreDoctor().checks.find((c) => c.name === "outcomes_ledger_divergence");
     assert.equal(after.level, "ok", after.detail);
+  });
+});
+
+// ── fix10 review MEDIUM-3: the banner_kind severity contract ────────────────
+// "zero-yield / thin-corpus dream banners must NOT red the CI-gating doctor;
+// only an actively-failing cron (banner_kind 'failure') does." Before this
+// suite, reverting the banner_kind filter in checkDreamingStale failed no
+// test.
+describe("store-doctor — dream banner_kind severity routing (fix10)", () => {
+  let AAM_DIR;
+
+  function dayStr(nDaysAgo) {
+    const d = new Date();
+    d.setDate(d.getDate() - nDaysAgo);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  beforeEach(async () => {
+    TEST_ROOT = path.join(os.tmpdir(), "ar-doctor-dream-" + process.pid + "-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+    fs.mkdirSync(TEST_ROOT, { recursive: true });
+    process.env.AGENT_RECALL_ROOT = TEST_ROOT;
+    AAM_DIR = path.join(TEST_ROOT, "aam-dreams");
+    fs.mkdirSync(AAM_DIR, { recursive: true });
+    process.env.AGENT_RECALL_AAM_DREAMS_DIR = AAM_DIR;
+
+    typesMod = await import("../dist/types.js");
+    typesMod.resetRoot();
+    typesMod.setRoot(TEST_ROOT);
+    doctor = await import("../dist/tools-logic/store-doctor.js");
+  });
+
+  afterEach(() => {
+    typesMod.resetRoot();
+    delete process.env.AGENT_RECALL_ROOT;
+    process.env.AGENT_RECALL_AAM_DREAMS_DIR = HERMETIC_AAM; // restore file-wide hermetic default
+    fs.rmSync(TEST_ROOT, { recursive: true, force: true });
+  });
+
+  it("a zero-yield banner (runs green, math filtered everything) must NOT turn the doctor RED", async () => {
+    const dreamHealthMod = await import("../dist/storage/dream-health.js");
+    const yieldMod = await import("../dist/storage/dream-yield.js");
+    for (const n of [1, 2, 3]) {
+      fs.writeFileSync(path.join(AAM_DIR, `run-${dayStr(n)}.log`), "…\nDream complete\n", "utf-8");
+      yieldMod.writeDreamYield({
+        version: 1, date: dayStr(n), generated_at: new Date().toISOString(),
+        candidates_seen: 4, admitted: 0, promoted: 0, already_known: 0, rejected: 4,
+        discarded_by_reason: {}, decisions: [], promoted_titles: [],
+      });
+    }
+    // Precondition: the banner IS firing (otherwise this test tests nothing).
+    const h = dreamHealthMod.getDreamHealth();
+    assert.ok(h.banner, "zero-yield banner must be active for this scenario");
+    assert.equal(h.banner_kind, "zero-yield");
+
+    const r = doctor.runStoreDoctor();
+    const dream = r.checks.find((c) => c.name === "dreaming_stale");
+    assert.equal(dream.level, "ok", `zero-yield must not red CI: ${dream.detail}`);
+  });
+
+  it("a FAILURE banner (cron actively failing) still turns the doctor RED — the original contract", () => {
+    for (const n of [1, 2]) {
+      fs.writeFileSync(path.join(AAM_DIR, `run-${dayStr(n)}.log`), "auth error: OAuth token expired\n", "utf-8");
+    }
+    // Night 3 succeeded — caps the streak at exactly 2.
+    fs.writeFileSync(path.join(AAM_DIR, `run-${dayStr(3)}.log`), "…\nDream complete\n", "utf-8");
+    const r = doctor.runStoreDoctor();
+    const dream = r.checks.find((c) => c.name === "dreaming_stale");
+    assert.equal(dream.level, "red", dream.detail);
+    assert.match(dream.detail, /failed 2 nights/);
   });
 });

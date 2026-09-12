@@ -315,9 +315,15 @@ function checkDreamingStale(): DoctorCheck {
   }
 
   // Independent signal: AAM dream cron failure streak (auth/network expiry).
+  // fix10: getDreamHealth now also banners on zero-YIELD streaks
+  // (banner_kind "zero-yield"/"thin-corpus"). Those surface at session_start;
+  // this check's RED contract stays what it always was — the cron actively
+  // FAILING — so only banner_kind === "failure" reds the doctor (which gates
+  // CI; an unproductive-but-running dream is not a stalled seam).
   let dreamBanner: string | null = null;
   try {
-    dreamBanner = getDreamHealth().banner;
+    const dh = getDreamHealth();
+    dreamBanner = dh.banner_kind === "failure" ? dh.banner : null;
   } catch {
     dreamBanner = null;
   }

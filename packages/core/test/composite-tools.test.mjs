@@ -6,6 +6,13 @@ import * as os from "node:os";
 
 const TEST_ROOT = path.join(os.tmpdir(), "ar-composite-test-" + Date.now());
 
+// fix10 hermeticity: sessionStart embeds getDreamHealth(), whose run-log dir
+// lives OUTSIDE the AGENT_RECALL_ROOT root (~/.aam/dreams). Without this
+// override, the host machine's real cron/yield state leaks a banner into the
+// result and breaks the size-budget assertion on any machine with a
+// zero-yield streak.
+process.env.AGENT_RECALL_AAM_DREAMS_DIR = path.join(TEST_ROOT, "no-aam-dreams");
+
 describe("Composite tools — session_start", () => {
   let core;
 

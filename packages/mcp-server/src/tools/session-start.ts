@@ -22,11 +22,14 @@ function trunc(s: string, n: number): string {
 export function formatTerse(result: SessionStartResult): string {
   const lines: string[] = [];
 
-  // ── Dream cron failure banner (red, top priority) ─────────────────────
+  // ── Dream health banner (top priority) ────────────────────────────────
   // Surfaces broken automation so the user notices before the awareness
-  // backfill stays stale for another week.
+  // backfill stays stale for another week. fix10: severity glyph follows
+  // banner_kind — "failure"/"zero-yield" are red (broken cron / silent
+  // filtering), "thin-corpus" is informational.
   if (result.dream_health?.banner) {
-    lines.push(`🔴 ${result.dream_health.banner}`);
+    const glyph = result.dream_health.banner_kind === "thin-corpus" ? "🟡" : "🔴";
+    lines.push(`${glyph} ${result.dream_health.banner}`);
     lines.push("");
   }
 

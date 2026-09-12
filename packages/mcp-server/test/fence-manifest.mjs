@@ -78,6 +78,11 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "recall", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "synthesize", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "consolidate", status: "fenced", file: "packages/cli/src/index.ts" },
+  // fix10: `ar dream admit` reports carry candidate titles + promoted insight
+  // titles (memory-derived) → outputFenced; `dream health` is numeric/status
+  // counters and `dream sop` is static versioned text, both riding under the
+  // same fenced top-level entry.
+  { channel: "cli_subcommand", id: "dream", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "blind-spots", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "corrections", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "doctor", status: "allowlisted", reason: "structural diagnostic findings (check names, file paths, template-generated detail strings) — not retrieved human-authored prose." },
@@ -136,6 +141,10 @@ export const MANIFEST = [
   { channel: "cli_subaction", id: "digest.recall", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "digest.list", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "digest.invalidate", status: "allowlisted", reason: "echoes this-turn's own submission / success flag only. Parity: MCP `digest` invalidate action." },
+  // fix10: dream sub-actions
+  { channel: "cli_subaction", id: "dream.admit", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subaction", id: "dream.health", status: "allowlisted", reason: "numeric uptime/yield counters, dates, and a banner composed of counts + fixed phrasing — no stored memory prose is read back." },
+  { channel: "cli_subaction", id: "dream.sop", status: "allowlisted", reason: "static, versioned SOP constant (DREAM_STEP3_SOP) — authored text, not retrieved memory content." },
   { channel: "cli_subaction", id: "outcomes.--help", status: "allowlisted", reason: "static, hardcoded help text — not retrieved content." },
   { channel: "cli_subaction", id: "outcomes.-h", status: "allowlisted", reason: "alias of outcomes --help — same static help text." },
   { channel: "cli_subaction", id: "outcomes.rebuild", status: "allowlisted", reason: "before/after counter objects (numeric), not prose." },

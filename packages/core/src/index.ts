@@ -213,7 +213,26 @@ export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } fr
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
 export { getDreamHealth } from "./storage/dream-health.js";
-export type { DreamHealth } from "./storage/dream-health.js";
+export type { DreamHealth, DreamHealthOptions } from "./storage/dream-health.js";
+// fix10 (2026-09-12): dream admission math + per-night yield accounting
+export {
+  evaluateDreamCandidate,
+  runDreamAdmission,
+  DREAM_WINDOW_DAYS,
+  DREAM_PROMOTION_THRESHOLD,
+  DREAM_ADMISSION_VERSION,
+  DREAM_STEP3_SOP,
+} from "./tools-logic/dream-admission.js";
+export type {
+  DreamObservation,
+  DreamCandidate,
+  DreamDecision,
+  DreamCandidateResult,
+  DreamAdmissionReport,
+  DreamAdmissionOptions,
+} from "./tools-logic/dream-admission.js";
+export { writeDreamYield, readDreamYield, classifyNight, dreamYieldPath } from "./storage/dream-yield.js";
+export type { DreamYieldRecord, DreamYieldDecision, DreamYieldCorpus, NightYieldClass } from "./storage/dream-yield.js";
 export {
   readBehaviorPolicies,
   registerBehaviorRule,
@@ -498,7 +517,12 @@ export {
   type BuildRecognitionOptions,
 } from "./tools-logic/recognition-builder.js";
 export { sessionEnd, checkInsightQuality, type SessionEndInput, type SessionEndResult, type InsightQualityWarning, type MergeSuggestion } from "./tools-logic/session-end.js";
-export { promoteConfirmedInsights, type PromotionResult } from "./tools-logic/insight-promotion.js";
+export {
+  promoteConfirmedInsights,
+  titlePresentInAwareness,
+  PROMOTION_CONFIRMATION_THRESHOLD,
+  type PromotionResult,
+} from "./tools-logic/insight-promotion.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)

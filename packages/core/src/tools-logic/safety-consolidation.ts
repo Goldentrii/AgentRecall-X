@@ -221,13 +221,25 @@ function advanceConsumeMarker(
  * ONLY — no LLM-authored summary. Idempotent: findCrystallizationCandidates
  * excludes already-CRYSTALLIZED titles, so a graduated insight never re-graduates.
  */
-async function graduateCandidates(
+/** Exported for tests (fix10 review LOW-10): the crystallized-member skip is
+ *  a belt-and-braces invariant the public API cannot currently reach (the
+ *  default finder never emits such clusters) — pin it directly. Not part of
+ *  the core barrel. */
+export async function graduateCandidates(
   candidates: CrystallizationCandidate[],
   minConfirmations: number,
   dryRun: boolean,
 ): Promise<{ graduated: number; titles: string[] }> {
   const eligible = candidates.filter(
-    (c) => c.total_confirmations >= minConfirmations,
+    (c) =>
+      c.total_confirmations >= minConfirmations &&
+      // fix10: a cluster containing an already-CRYSTALLIZED member has already
+      // graduated — its principle exists; new members merely accrue evidence.
+      // Without this guard, includeCrystallizedEvidence clusters would
+      // re-graduate one fresh member per pass (runaway re-titling). The
+      // default finder never emits such clusters, so this is a belt-and-
+      // braces invariant, not a behavior change.
+      (c.crystallized_members ?? 0) === 0,
   );
   if (eligible.length === 0) return { graduated: 0, titles: [] };
 

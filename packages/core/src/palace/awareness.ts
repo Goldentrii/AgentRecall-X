@@ -544,6 +544,13 @@ export interface CrystallizationCandidate {
   size: number;
   /** Sum of confirmations across the cluster (≥ minTotalConfirm). */
   total_confirmations: number;
+  /** fix10: members already CRYSTALLIZED — they count as cluster EVIDENCE
+   *  (their confirmations contribute) but must never be re-graduated.
+   *  Always 0 unless `includeCrystallizedEvidence` was requested. */
+  crystallized_members: number;
+  /** size − crystallized_members. Guaranteed ≥ 1: a cluster made only of
+   *  already-crystallized insights carries no NEW evidence and is dropped. */
+  fresh_members: number;
 }
 
 /**
@@ -554,20 +561,41 @@ export interface CrystallizationCandidate {
  *
  * Operates on the GLOBAL awareness singleton (no project arg — readAwarenessState
  * takes none). Excludes insights already prefixed CRYSTALLIZED / CRITICAL.
+ *
+ * fix10 (2026-09-12) — the self-consuming seed rule: excluding CRYSTALLIZED
+ * insights entirely meant that once a cluster crystallized, its mass could
+ * never help a NEW related insight reach minCluster again — clusters consumed
+ * themselves and the gate went permanently quiet (09-10 dream report: largest
+ * cluster = 2 insights / 18× confirmed, blocked by the 3-insight minimum
+ * while a related CRYSTALLIZED insight sat excluded). With
+ * `includeCrystallizedEvidence: true`, CRYSTALLIZED insights count as cluster
+ * EVIDENCE (membership + confirmations) but a qualifying cluster must carry
+ * ≥1 fresh (non-crystallized) member, and the deterministic graduation path
+ * (safety-consolidation.ts) skips any cluster with crystallized members so
+ * nothing is ever re-graduated. CRITICAL insights stay excluded in both modes
+ * (they don't crystallize — they stay sharp). Default `false` preserves the
+ * pre-fix behavior exactly.
  */
 export function findCrystallizationCandidates(
-  opts: { minCluster?: number; minTotalConfirm?: number } = {},
+  opts: { minCluster?: number; minTotalConfirm?: number; includeCrystallizedEvidence?: boolean } = {},
 ): CrystallizationCandidate[] {
   const minCluster = opts.minCluster ?? 3;
   const minTotalConfirm = opts.minTotalConfirm ?? 5;
+  const includeCrystallized = opts.includeCrystallizedEvidence === true;
 
   const state = readAwarenessState();
   if (!state || state.topInsights.length < minCluster) return [];
 
+  const isCrystallized = (i: Insight): boolean => /^\s*crystallized\b/i.test(i.title ?? "");
+
   // Exclude insights already crystallized or marked critical (case-insensitive
-  // title prefix — tolerate "CRYSTALLIZED:", "CRITICAL ", etc.).
-  const eligible = state.topInsights.filter(
-    (i) => !/^\s*(crystallized|critical)\b/i.test(i.title ?? ""),
+  // title prefix — tolerate "CRYSTALLIZED:", "CRITICAL ", etc.). When
+  // includeCrystallizedEvidence is set, crystallized insights stay eligible
+  // as evidence; CRITICAL is excluded unconditionally.
+  const eligible = state.topInsights.filter((i) =>
+    includeCrystallized
+      ? !/^\s*critical\b/i.test(i.title ?? "")
+      : !/^\s*(crystallized|critical)\b/i.test(i.title ?? ""),
   );
   if (eligible.length < minCluster) return [];
 
@@ -603,6 +631,12 @@ export function findCrystallizationCandidates(
     const totalConfirm = members.reduce((s, i) => s + i.confirmations, 0);
     if (totalConfirm < minTotalConfirm) continue;
 
+    // fix10: crystallized members are evidence, never the whole cluster — a
+    // cluster with zero fresh members has nothing new to say.
+    const crystallizedMembers = members.filter(isCrystallized).length;
+    const freshMembers = members.length - crystallizedMembers;
+    if (freshMembers < 1) continue;
+
     const ids = members.map((m) => m.id).sort();
     const memberKey = ids.join(",");
     if (seenMemberSets.has(memberKey)) continue; // same cluster via a different pair
@@ -614,6 +648,8 @@ export function findCrystallizationCandidates(
       insight_titles: members.map((m) => m.title),
       size: members.length,
       total_confirmations: totalConfirm,
+      crystallized_members: crystallizedMembers,
+      fresh_members: freshMembers,
     });
   }
 

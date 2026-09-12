@@ -128,9 +128,12 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
   const rawUnconsumed = collectRawUnconsumed(slug);
 
   // Wave 3: surface crystallization candidates (best-effort; never throws).
+  // fix10: this is an LLM-directed surface (synthesis is the reader's job),
+  // so already-CRYSTALLIZED insights count as cluster evidence — the reader
+  // UPDATES the existing principle instead of the cluster never re-forming.
   let crystallizationCandidates: CrystallizationCandidate[] = [];
   try {
-    crystallizationCandidates = findCrystallizationCandidates();
+    crystallizationCandidates = findCrystallizationCandidates({ includeCrystallizedEvidence: true });
   } catch {
     crystallizationCandidates = [];
   }
