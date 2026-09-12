@@ -213,7 +213,7 @@ export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } fr
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
 export { getDreamHealth } from "./storage/dream-health.js";
-export type { DreamHealth } from "./storage/dream-health.js";
+export type { DreamHealth, DreamHealthOptions } from "./storage/dream-health.js";
 // fix10 (2026-09-12): dream admission math + per-night yield accounting
 export {
   evaluateDreamCandidate,
