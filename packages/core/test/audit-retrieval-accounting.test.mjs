@@ -30,17 +30,20 @@
 // FIXED behavior (was previously asserting the bug, to pin it down before a
 // future fix).
 //
-// ── Finding 2 — hot-window recency boost mishandles date-only strings ──────
-// The boost loop (smart-recall.ts:466-478) does
-// `new Date(entry.item.date).getTime()`. journal-search.ts:98-99 populates
-// journal results' `date` field via `file.match(/^(\d{4}-\d{2}-\d{2})/)` — a
-// BARE "YYYY-MM-DD" string with no time-of-day component. Per ECMA-262,
-// `new Date("YYYY-MM-DD")` always parses as 00:00:00.000 **UTC** of that
-// calendar day. So a journal entry's computed "hoursAgo" is really just
-// "how many hours has it been since UTC midnight today" — which has nothing
-// to do with when the entry was actually written. Depending on the real
-// wall-clock UTC time-of-day when smart_recall runs, a just-written entry
-// can land in the 3.0x / 2.0x / 1.3x bucket essentially at random.
+// ── Finding 2 — hot-window recency vs date-only strings — DEFAULT-PATH FIXED ──
+// (fix4b, 2026-09-12): the multiplicative boost this finding measured
+// (×3/×2/×1.3 on fused scores) has been REMOVED from every default surface —
+// freshness no longer influences default ranking at all. The finding's
+// PREMISE is still true: journal results' `date` field is a BARE
+// "YYYY-MM-DD" string, and per ECMA-262 `new Date("YYYY-MM-DD")` always
+// parses as 00:00:00.000 **UTC** of that calendar day, so an item's
+// computed "hoursAgo" is really "hours since UTC midnight of its date".
+// That mis-bucketing now survives ONLY inside the explicit `freshnessBias`
+// legacy opt-in (kept verbatim for the CLI ambient caller — see
+// fix4b-hotwindow.test.mjs), where a just-written entry's multiplier still
+// varies with wall-clock time-of-day exactly as pinned here originally.
+// Case B asserts the fixed DEFAULT invariant: raw RRF scores at any
+// wall-clock time.
 //
 // To make this deterministic (not dependent on the host machine's clock at
 // test-run time), Case B below temporarily replaces the global `Date`
@@ -190,9 +193,10 @@ describe("Audit Finding 1 (FIXED) — canonical-excerpt fusion vs total_searched
       `(proof the journal candidate was actually merged in, not discarded); got ${JSON.stringify(results[0].alsoFoundIn)}`
     );
     // ...and the score must reflect BOTH sources' rank-1 RRF contribution
-    // summed (1/(RRF_K+1) each, RRF_K=60), not just palace's alone. Neither
-    // item has a `date` (no date pattern in the seeded content), so the
-    // hot-window boost does not apply here and the raw RRF sum is exact.
+    // summed (1/(RRF_K+1) each, RRF_K=60), not just palace's alone. The raw
+    // RRF sum is exact — since fix4b (2026-09-12) NOTHING multiplies fused
+    // scores (and neither item has a `date` anyway, so the pre-fix4b boost
+    // never applied to this case either).
     const rrfContribution = 1 / (60 + 1);
     const expectedFusedScore = rrfContribution * 2; // palace rank-1 + journal rank-1
     assert.ok(
@@ -245,7 +249,7 @@ describe("Audit Finding 1 (FIXED) — canonical-excerpt fusion vs total_searched
 // Case B — hot-window boost mis-buckets same-day journal entries
 // ---------------------------------------------------------------------------
 
-describe("Audit Finding 2 — hot-window recency boost vs date-only journal dates", () => {
+describe("Audit Finding 2 — hot-window recency vs date-only journal dates (score half retired by fix4b)", () => {
   const RealDate = globalThis.Date;
   const PROJECT = "audit-recency-test";
   let TMP;
@@ -301,12 +305,22 @@ describe("Audit Finding 2 — hot-window recency boost vs date-only journal date
     }
   });
 
-  it("a same-instant journal write gets the WRONG hot-window bucket at 15:00 UTC", async () => {
-    // "2026-07-25" parses as 00:00 UTC that day. At a fake "now" of 15:00 UTC
-    // on the SAME calendar day, hoursAgo computed by the boost loop = 15h,
-    // landing in the "6h-24h" (2.0x) bucket — even though, under this fake
-    // clock, the entry was written at the SAME INSTANT as "now" (true elapsed
-    // time = 0s). A genuinely-instant write deserves the "<6h" (3.0x) tier.
+  // ── fix4b retarget (2026-09-12, reports/agentrecall-fix4b-hotwindow-2026-09-12.md) ──
+  // The two tests below originally PINNED Finding 2's live bug: the
+  // multiplicative hot-window boost (×3/×2/×1.3 on fused scores) combined
+  // with bare-YYYY-MM-DD date truncation gave a same-instant write a ×2
+  // score at 15:00 UTC but ×3 at 02:00 UTC. fix4b removed the multiplicative
+  // boost from every DEFAULT surface (freshness no longer influences default
+  // ranking; the boost survives verbatim only behind the freshnessBias
+  // legacy opt-in — see fix4b-hotwindow.test.mjs), so the default-path half
+  // of the finding is structurally retired: the retargeted tests assert the
+  // fused score is the RAW RRF sum at BOTH wall-clock times. The
+  // date-truncation PREMISE itself (bare dates parse to 00:00 UTC) is still
+  // true and still documented — it now matters only inside the legacy
+  // opt-in path, where the multiplier still varies with wall-clock
+  // time-of-day exactly as these tests originally measured.
+
+  it("fix4b: a same-instant write at 15:00 UTC scores the RAW RRF sum — no hot-window multiplier on fused scores", async () => {
     installFakeClock("2026-07-25T15:00:00.000Z");
     try {
       await journalCapture({
@@ -315,42 +329,31 @@ describe("Audit Finding 2 — hot-window recency boost vs date-only journal date
         project: PROJECT,
         tags: ["seed"],
       });
-      // Query keywords are fully disjoint from the "correct bucket" test's
-      // entry below (no shared word like "boost"/"bucket") — journalSearch's
-      // `lineMatchesQuery` matches on ANY keyword, so a shared word between
-      // the two seeded entries would let one test's query bleed into the
-      // other's entry (both live under the same PROJECT/root in this file).
+      // Query keywords are fully disjoint from the 02:00 test's entry below
+      // (no shared word) — journalSearch's `lineMatchesQuery` matches on ANY
+      // keyword, so a shared word between the two seeded entries would let
+      // one test's query bleed into the other's entry (both live under the
+      // same PROJECT/root in this file).
       const results = await localRecallSearch("zzzhotwindowalpha7734 uniquetokenalpha", PROJECT, 10);
       assert.equal(results.length, 1, `expected exactly 1 result, got ${results.length}`);
 
       // Sole rank-1 item in its source (no competing journal/palace/insight
       // items for this distinctive query) → RRF contribution = 1/(RRF_K+1),
-      // RRF_K=60 (smart-recall.ts:142).
+      // RRF_K=60.
       const rrfContribution = 1 / (60 + 1);
-      const expectedIfCorrectly3x = rrfContribution * 3.0;
-      const expectedUnderBug2x = rrfContribution * 2.0;
-
-      // eslint-disable-next-line no-console
-      console.log(
-        `[audit-finding-2] item.score=${results[0].score} expected_3x_if_correct=${expectedIfCorrectly3x} ` +
-        `expected_2x_under_bug=${expectedUnderBug2x}`
-      );
+      const oldBoosted2x = rrfContribution * 2.0;
 
       assert.ok(
-        Math.abs(results[0].score - expectedUnderBug2x) < 1e-9,
-        `BUG: expected the mis-bucketed 2.0x score (${expectedUnderBug2x}) for a same-instant write at ` +
-        `15:00 UTC, got ${results[0].score}`
-      );
-      assert.ok(
-        Math.abs(results[0].score - expectedIfCorrectly3x) > 1e-9,
-        `expected this score to NOT equal the deserved 3.0x score (${expectedIfCorrectly3x})`
+        Math.abs(results[0].score - rrfContribution) < 1e-9,
+        `fix4b: fused score must be the RAW RRF sum (${rrfContribution}) — the pre-fix4b code returned ` +
+        `the mis-bucketed ×2 score (${oldBoosted2x}) here; got ${results[0].score}`
       );
     } finally {
       restoreRealClock();
     }
   });
 
-  it("the SAME same-instant write gets the CORRECT bucket at 02:00 UTC — proves it's date-truncation, not a fixed miscalibration", async () => {
+  it("fix4b: the SAME same-instant write at 02:00 UTC scores identically — score is wall-clock-independent now", async () => {
     installFakeClock("2026-07-26T02:00:00.000Z");
     try {
       await journalCapture({
@@ -363,11 +366,12 @@ describe("Audit Finding 2 — hot-window recency boost vs date-only journal date
       assert.equal(results.length, 1, `expected exactly 1 result, got ${results.length}`);
 
       const rrfContribution = 1 / (60 + 1);
-      const expected3x = rrfContribution * 3.0;
+      const oldBoosted3x = rrfContribution * 3.0;
       assert.ok(
-        Math.abs(results[0].score - expected3x) < 1e-9,
-        `expected the "<6h" 3.0x bucket (score=${expected3x}) at 02:00 UTC, got ${results[0].score} — ` +
-        `same relative scenario as the previous test, only the wall-clock time-of-day differs`
+        Math.abs(results[0].score - rrfContribution) < 1e-9,
+        `fix4b: fused score must be the RAW RRF sum (${rrfContribution}) at 02:00 UTC too — the pre-fix4b ` +
+        `code returned the ×3 score (${oldBoosted3x}) here, proving scores depended on wall-clock ` +
+        `time-of-day; got ${results[0].score}`
       );
     } finally {
       restoreRealClock();

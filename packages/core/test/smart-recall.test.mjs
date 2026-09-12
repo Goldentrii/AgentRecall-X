@@ -14,12 +14,21 @@ import {
   CONFIDENCE_FLOOR,
 } from "agent-recall-core";
 
-describe("Smart recall — recency boost logic", () => {
-  // The hot-window multiplier logic is inline in smartRecall, so we test
-  // the multiplier calculation directly to verify correctness.
+describe("Smart recall — hot-window semantics after fix4b (2026-09-12)", () => {
+  // fix4b RETARGET: this block used to hold a local re-implementation of the
+  // multiplicative hot-window boost (×3/×2/×1.3 on fused scores) as the
+  // DEFAULT ranking behavior. fix4b removed that boost from every default
+  // surface (freshness now plays no role in default ranking; measured
+  // 55%→75% golden hit-rate) and kept it VERBATIM behind the explicit
+  // `freshnessBias` opt-in for the one audited caller (the CLI ambient
+  // hook's `score >= 0.03` floor). The local oracle below therefore
+  // documents the LEGACY multiplier — the freshnessBias contract — not the
+  // default path. Real-pipeline pins (default raw scores, authority tie
+  // order, palace scraped-date exemption, opt-in magnitudes) live in
+  // fix4b-hotwindow.test.mjs.
 
-  function recencyMultiplier(dateStr) {
-    if (!dateStr) return 1.0; // palace items (no date) — unaffected
+  function legacyRecencyMultiplier(dateStr) {
+    if (!dateStr) return 1.0; // date-less items — unaffected even under the opt-in
     const hoursAgo = (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60);
     if (hoursAgo < 6) return 3.0;
     if (hoursAgo < 24) return 2.0;
@@ -27,38 +36,23 @@ describe("Smart recall — recency boost logic", () => {
     return 1.0;
   }
 
-  it("boosts items from < 6 hours ago by 3x", () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    assert.equal(recencyMultiplier(twoHoursAgo), 3.0);
+  it("legacy (freshnessBias-only) multiplier shape: ×3 <6h, ×2 <24h, ×1.3 <72h, ×1 otherwise", () => {
+    const hoursAgoIso = (h) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+    assert.equal(legacyRecencyMultiplier(hoursAgoIso(2)), 3.0);
+    assert.equal(legacyRecencyMultiplier(hoursAgoIso(12)), 2.0);
+    assert.equal(legacyRecencyMultiplier(hoursAgoIso(48)), 1.3);
+    assert.equal(legacyRecencyMultiplier(hoursAgoIso(7 * 24)), 1.0);
+    assert.equal(legacyRecencyMultiplier(undefined), 1.0);
+    assert.equal(legacyRecencyMultiplier(null), 1.0);
   });
 
-  it("boosts items from 6-24 hours ago by 2x", () => {
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-    assert.equal(recencyMultiplier(twelveHoursAgo), 2.0);
-  });
-
-  it("boosts items from 24-72 hours ago by 1.3x", () => {
-    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    assert.equal(recencyMultiplier(fortyEightHoursAgo), 1.3);
-  });
-
-  it("does not boost items older than 72 hours", () => {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    assert.equal(recencyMultiplier(sevenDaysAgo), 1.0);
-  });
-
-  it("does not affect palace items (no date)", () => {
-    assert.equal(recencyMultiplier(undefined), 1.0);
-    assert.equal(recencyMultiplier(null), 1.0);
-  });
-
-  it("recent items outscore old items given equal base scores", () => {
-    const baseScore = 0.016; // typical RRF score
-    const recentScore = baseScore * recencyMultiplier(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
-    const oldScore = baseScore * recencyMultiplier(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
-    assert.ok(recentScore > oldScore, `recent ${recentScore} should be > old ${oldScore}`);
-    assert.equal(recentScore, baseScore * 3.0);
-    assert.equal(oldScore, baseScore * 1.0);
+  it("the audited-caller contract the opt-in exists for: a fresh single-source rank-1 item clears the CLI ambient 0.03 floor ONLY via the legacy multiplier", () => {
+    const rank1 = 1 / 61; // ≈ 0.0164 — below the ambient floor raw
+    const fresh = rank1 * legacyRecencyMultiplier(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+    const old = rank1 * legacyRecencyMultiplier(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+    assert.ok(rank1 < 0.03, "raw rank-1 sits below the ambient floor (why the opt-in exists)");
+    assert.ok(fresh >= 0.03, `boosted fresh rank-1 clears the floor; got ${fresh}`);
+    assert.ok(old < 0.03, "an old rank-1 item never cleared the floor, boost or not — the ambient surface's fresh-work semantics");
   });
 });
 
@@ -173,10 +167,18 @@ describe("smartRecall — explicit archive fallback source (F4)", () => {
     // Short line so BOTH palace's ±40/+80 window and journal's ±100/+150
     // window fully contain it without truncation — their excerpts come out
     // byte-identical, which is what lets fuseCanonical() (smart-recall.ts)
-    // merge the two sources' RRF contributions into one high-confidence
-    // canonical entry. Embedding today's date lets BOTH items pick up the
-    // hot-window recency boost regardless of which source "wins" as primary
-    // after fusion.
+    // merge the sources' RRF contributions into one high-confidence
+    // canonical entry.
+    //
+    // fix4b retarget (2026-09-12): this fixture originally reached medium
+    // confidence via the hot-window boost ("embedding today's date lets BOTH
+    // items pick up the hot-window recency boost" — 2/61 × ≥2 ≥ 0.065). The
+    // boost is removed from default ranking (legacy freshnessBias opt-in
+    // only, which this surface does not set), so genuine high confidence
+    // needs genuine multi-evidence: a THIRD tier (corrections, rule text
+    // byte-identical to the shared line) joins the fusion → 3/61 ≈ 0.0492 →
+    // calibrated ≈ 0.41 ≥ medium (0.4) on raw, unmultiplied scores. The
+    // gate under test is unchanged.
     const sharedLine = `${today} zerothorn gateway redesign decision locked`;
 
     createRoom(project, "decisions", "Decisions", "decision trail room");
@@ -187,6 +189,17 @@ describe("smartRecall — explicit archive fallback source (F4)", () => {
     const jdir = journalDir(project);
     fs.mkdirSync(jdir, { recursive: true });
     fs.writeFileSync(path.join(jdir, `${today}.md`), sharedLine + "\n", "utf-8");
+
+    const cdir = path.join(path.dirname(journalDir(project)), "corrections");
+    fs.mkdirSync(cdir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cdir, `${today}-zerothorn.json`),
+      JSON.stringify({
+        id: `${today}-zerothorn`, date: today, severity: "p1", project,
+        rule: sharedLine, context: "", tags: [],
+      }),
+      "utf-8",
+    );
 
     // A raw archive dump containing the SAME query terms — proves the gate
     // correctly SKIPPED the archive source (not that there was simply nothing
