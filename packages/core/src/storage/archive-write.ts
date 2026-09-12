@@ -16,7 +16,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { archiveRawDir, sanitizeSlug } from "./paths.js";
+import { archiveRawDir, sanitizeSlug, unclaimedSessionDir } from "./paths.js";
+import { isValidProjectSlug } from "./project.js";
 import { ensureDir, todayISO, writeJsonAtomic } from "./fs-utils.js";
 import { writeMemoryProtocol } from "./memory-protocol.js";
 import { ensureStoreManifest } from "./store-manifest.js";
@@ -67,10 +68,13 @@ function buildFrontmatter(meta: {
 /**
  * Append a single line to journal/archive/index.md. Best-effort; swallows errors.
  */
-function appendIndexLine(slug: string, line: string): void {
+function appendIndexLine(rawDir: string, line: string): void {
   try {
-    // archiveRawDir = .../journal/archive/raw ; index.md lives one level up.
-    const indexPath = path.join(path.dirname(archiveRawDir(slug)), "index.md");
+    // rawDir = .../journal/archive/raw ; index.md lives one level up.
+    // fix5 (2026-09-11): takes the ALREADY-RESOLVED raw dir (normal or
+    // staged) instead of re-deriving it from the slug, so the index line
+    // always lands next to the dump it describes.
+    const indexPath = path.join(path.dirname(rawDir), "index.md");
     ensureDir(path.dirname(indexPath));
     fs.appendFileSync(indexPath, line + "\n", "utf-8");
   } catch (err) {
@@ -95,7 +99,20 @@ export function archiveSession(input: ArchiveSessionInput): ArchiveSessionResult
 
     const slug = sanitizeSlug(input.project); // also hardens the project name
     const sid = sanitizeSlug(input.sessionId); // UNTRUSTED → sanitize first
-    const dir = archiveRawDir(slug);
+
+    // fix5 (2026-09-11) — creation-invariant gate for the lossless tier. An
+    // invalid project slug (the hook-end literal-"auto" class: F1 guess
+    // failed at confidence 0) must never materialize
+    // projects/<garbage>/journal/archive/raw — the verbatim dump routes to
+    // the SAME relative shape under `_unclaimed/<sessionId>/` instead, so
+    // the lossless "never lost" floor is fully preserved and a later claim
+    // can move the whole staged session wholesale. Keyed on the ARCHIVED
+    // session's own id (this function has it), matching the staging
+    // convention every other _unclaimed writer uses.
+    const staged = !isValidProjectSlug(input.project);
+    const dir = staged
+      ? path.join(unclaimedSessionDir(input.sessionId), "journal", "archive", "raw")
+      : archiveRawDir(slug);
     ensureDir(dir);
 
     const dest = path.join(dir, `${todayISO()}--${sid}.md`);
@@ -119,9 +136,9 @@ export function archiveSession(input: ArchiveSessionInput): ArchiveSessionResult
     fs.writeFileSync(tmp, frontmatter + input.rawTranscript, "utf-8");
     fs.renameSync(tmp, dest);
 
-    // One append-only index line.
+    // One append-only index line (lands next to the dump — normal or staged).
     const summary = (input.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
-    appendIndexLine(slug, `${todayISO()} ${sid} ${summary}`.trimEnd());
+    appendIndexLine(dir, `${todayISO()} ${sid} ${summary}`.trimEnd());
 
     // Seed the consume marker if absent (the dreaming loop advances it).
     const consumed = path.join(dir, ".consumed.json");
@@ -133,7 +150,11 @@ export function archiveSession(input: ArchiveSessionInput): ArchiveSessionResult
     // MEMORY-PROTOCOL.md and its store-root sibling MANIFEST.md. Same
     // lifecycle point, same write-once/best-effort contract — a cold agent
     // dropped into a bare copy of the store needs both to orient itself.
-    writeMemoryProtocol(slug);
+    // fix5: SKIPPED for a staged dump — writeMemoryProtocol(slug) writes
+    // projects/<slug>/MEMORY-PROTOCOL.md, which would re-materialize exactly
+    // the junk dir this gate just refused to create. The root MANIFEST.md is
+    // project-agnostic and still written.
+    if (!staged) writeMemoryProtocol(slug);
     ensureStoreManifest(getRoot());
 
     return { path: dest, bytes: input.rawTranscript.length };

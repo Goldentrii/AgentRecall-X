@@ -341,7 +341,14 @@ describe("writeSessionCard (F3)", () => {
     const card = core.buildSessionCard({
       rawHead: "",
       rawTail: "",
-      meta: { sid: "../../etc/passwd", slug: "demo-app", slugConfidence: 0, slugCandidates: [], date: "2026-07-31" },
+      // fix5 retarget (2026-09-11): slugConfidence 0 → 0.9. A zero-confidence
+      // card now stages into _unclaimed/ by design (creation invariant), which
+      // would silently bypass the journal-path traversal property this test
+      // exists to pin. Raising the fixture's confidence keeps the ORIGINAL
+      // assertions exercising the normal projects/ write path unchanged; the
+      // staged path's own traversal safety is pinned separately in
+      // unclaimed-staging.test.mjs ("staged sid traversal").
+      meta: { sid: "../../etc/passwd", slug: "demo-app", slugConfidence: 0.9, slugCandidates: [], date: "2026-07-31" },
     });
     const res = core.writeSessionCard(card);
     if (res.path) {
@@ -378,7 +385,12 @@ describe("writeSessionCard (F3)", () => {
     const card = core.buildSessionCard({
       rawHead: "",
       rawTail: "",
-      meta: { sid: "write-fail-1", slug: "demo-blocked", slugConfidence: 0, slugCandidates: [], date: "2026-07-31" },
+      // fix5 retarget (2026-09-11): slugConfidence 0 → 0.9 — same rationale as
+      // the traversal test above: a zero-confidence card stages into
+      // _unclaimed/ and would never reach the blocked journalDir this test
+      // deliberately sabotages. 0.9 keeps the original ENOTDIR → F5
+      // fail-loud path under test, byte-identical assertions.
+      meta: { sid: "write-fail-1", slug: "demo-blocked", slugConfidence: 0.9, slugCandidates: [], date: "2026-07-31" },
     });
 
     // Block projects/demo-blocked with a plain FILE so ensureDir(journalDir)

@@ -12,7 +12,12 @@ export interface RecallBackend {
   search(
     query: string,
     project: string | undefined,
-    limit: number
+    limit: number,
+    /** fix4b (2026-09-12): opt-in legacy hot-window boost — meaningful for
+     *  the LOCAL keyword backend only (see SmartRecallInput.freshnessBias);
+     *  remote/vector backends have their own scoring and may ignore it
+     *  (their implementations simply omit the parameter). */
+    opts?: { freshnessBias?: boolean }
   ): Promise<SmartRecallResultItem[]>;
   available(): boolean;
 }
@@ -30,13 +35,16 @@ export class LocalRecallBackend implements RecallBackend {
   async search(
     query: string,
     project: string | undefined,
-    limit: number
+    limit: number,
+    opts?: { freshnessBias?: boolean }
   ): Promise<SmartRecallResultItem[]> {
     // Import lazily to avoid circular dependency.
     // localRecallSearch is added to smart-recall.ts in Task 7.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mod = await import("./smart-recall.js") as any;
-    return mod.localRecallSearch(query, project, limit) as Promise<SmartRecallResultItem[]>;
+    return mod.localRecallSearch(
+      query, project, limit, undefined, opts?.freshnessBias,
+    ) as Promise<SmartRecallResultItem[]>;
   }
 }
 

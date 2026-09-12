@@ -28,3 +28,12 @@ scripts/eval/fixtures/loop8-labeled-rejects.json
 # agent-loop runner artifacts (repo-root runs): transcript/scratch state + kill switch
 /state/
 /STOP
+
+# Golden-query retrieval eval — fixture + lock + baseline runs embed the
+# owner's private memory content near-verbatim (rules, live-store excerpts,
+# client project slugs) and are, BY DESIGN, coupled to the private store
+# (source_check_regex / golden_source_path), so the baselines/local/
+# anonymization convention cannot apply. Never commit any of it (fix4
+# independent review H1, 2026-09-11); the runner + README ride along until
+# an anonymized public variant is deliberately prepared.
+scripts/eval/golden-queries/

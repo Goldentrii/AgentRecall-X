@@ -28,6 +28,25 @@
 export const HAN_CHAR_RE = /\p{Script=Han}/u;
 export const HAN_RUN_RE = /\p{Script=Han}+/gu;
 
+// Any non-ASCII character. CLASS rule (fix #3, 2026-09-11): English-tuned
+// token-length floors (`w.length >= 3`, `w.length > 3`, …) exist to drop
+// low-signal short ENGLISH words — applied to non-Latin scripts they silently
+// drop ordinary content words (most meaningful Chinese/Japanese/Korean words
+// are 1-3 CHARACTERS). Every call site that keeps a length floor on its own
+// token stream must exempt tokens matching this pattern, the same way
+// `tokenizeWords` itself never length-filters Han tokens. Enumerating the
+// class here (rather than testing one script per site) is what keeps
+// hangul/kana/Han all covered by a single row.
+//
+// SCOPE (code-review 2026-09-11): this row covers length FLOORS only. Word-
+// COUNT gates (e.g. awareness addInsight's `< 3 words` title gate) count
+// TOKENS, and `tokenizeWords` segments only Han runs — an unspaced pure-kana
+// or unspaced-hangul run stays ONE token and still fails a >=3-token count.
+// KNOWN LIMITATION, pinned by cjk-insights-promotion.test.mjs; closing it
+// means segmenting kana runs too (a `ja` Intl.Segmenter row here), not
+// another per-site exemption.
+export const NON_ASCII_RE = /[^\x00-\x7F]/;
+
 // Feature-detected once at module load. Node >=18 (this project's engines
 // floor) ships Intl.Segmenter unconditionally, but we still feature-detect
 // defensively rather than assume every runtime that imports this module is

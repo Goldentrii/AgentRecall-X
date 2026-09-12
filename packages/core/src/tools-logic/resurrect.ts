@@ -251,7 +251,15 @@ function enumerateProjectSlugs(): string[] {
   try {
     return fs
       .readdirSync(projectsRootDir(), { withFileTypes: true })
-      .filter((e) => e.isDirectory())
+      // fix5 review LOW-7 (2026-09-11): exclude the reserved `_`/`.`
+      // namespace BY NAME (same class rule as listAllProjects). Without
+      // this, an externally-planted `projects/_unclaimed/` dir would be
+      // enumerated here and its name fed back into journalDir()/
+      // archiveRawDir() below — where projectSubPath's exact-match sentinel
+      // branch RE-ROUTES the read to the CURRENT session's staging dir,
+      // surfacing staged content through resurrect. This module must stay
+      // structurally blind to the reserved namespace.
+      .filter((e) => e.isDirectory() && !e.name.startsWith("_") && !e.name.startsWith("."))
       .map((e) => e.name);
   } catch {
     return [];

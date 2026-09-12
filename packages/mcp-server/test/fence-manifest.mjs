@@ -81,6 +81,7 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "blind-spots", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "corrections", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "doctor", status: "allowlisted", reason: "structural diagnostic findings (check names, file paths, template-generated detail strings) — not retrieved human-authored prose." },
+  { channel: "cli_subcommand", id: "embeddings", status: "allowlisted", reason: "fix7 (2026-09-12) administrative surface only: setup/rebuild/status print paths, model ids, chunk/vector counts, byte sizes, and template-generated progress/next-step strings — never retrieved store content (chunk TEXT never leaves core; the index itself stores hash→vector only). Semantic RESULTS egress rides the already-fenced recall/smart_recall tools (destination proof: fix7-semantic-fence.test.mjs)." },
   { channel: "cli_subcommand", id: "repair", status: "allowlisted", reason: "same diagnostic-finding class as `doctor` — template-generated strings, not retrieved prose." },
   { channel: "cli_subcommand", id: "hygiene", status: "allowlisted", reason: "same diagnostic-finding class as `doctor` — template-generated strings, not retrieved prose." },
   { channel: "cli_subcommand", id: "mirror", status: "fenced", file: "packages/cli/src/index.ts" },
@@ -98,6 +99,10 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "digest", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "sessions", status: "allowlisted", reason: "reads Claude Code's own session transcript files — a different tool's storage, outside fenceMemory's documented scope (AgentRecall's own memory corpus), same reasoning as `saveall`." },
   { channel: "cli_subcommand", id: "saveall", status: "allowlisted", reason: "summaries are synthesized from THIS host's own live Claude Code transcript files (same-turn/live-session scope), not AgentRecall's stored memory corpus — same reasoning as `sessions`." },
+  // fix5 (2026-09-11): `ar claim --list` renders staged _unclaimed card
+  // titles — retrieved (possibly crashed/spoofed-session) content — inside
+  // fenceMemory; claim/undo actions themselves emit only counts + paths.
+  { channel: "cli_subcommand", id: "claim", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "merge", status: "allowlisted", reason: "mergeResult.card is an administrative merge-confirmation (counts, paths), not retrieved content." },
   { channel: "cli_subcommand", id: "stats", status: "allowlisted", reason: "pure counts (corrections/journal entries/graph edges), no prose fields." },
   { channel: "cli_subcommand", id: "sync-memory", status: "fenced", file: "packages/cli/src/index.ts" },
@@ -110,6 +115,9 @@ export const MANIFEST = [
   // ── CLI sub-actions (best-effort second level, text-window heuristic —
   // see fence-ast.mjs's extractSubActions header comment for the documented
   // approximation this represents) ────────────────────────────────────────
+  { channel: "cli_subaction", id: "embeddings.setup", status: "allowlisted", reason: "fix7: runtime-install + model-download progress, paths, dims, and template next-step strings only — the verification probe embeds a hardcoded literal, never store content." },
+  { channel: "cli_subaction", id: "embeddings.rebuild", status: "allowlisted", reason: "fix7: build report only (model id, chunk/vector counts, prune/reuse counts, durations, index path) — chunk TEXT never leaves core and is not printed." },
+  { channel: "cli_subaction", id: "embeddings.status", status: "allowlisted", reason: "fix7: flag state, model id/dim, runtime/model presence booleans, index path/count/bytes/built-at — structural metadata, no prose fields." },
   { channel: "cli_subaction", id: "palace.read", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "palace.write", status: "allowlisted", reason: "write confirmation only. Parity: SDK palaceWrite / MCP (unregistered) palace_write." },
   { channel: "cli_subaction", id: "palace.walk", status: "fenced", file: "packages/cli/src/index.ts" },

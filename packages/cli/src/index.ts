@@ -142,6 +142,12 @@ DIAGNOSTICS:
   ar corrections retract <id> --superseded-by <newer-id> [--project <slug>]
       Human-confirmed, single-record retract (active:false, superseded_by set). Both <id> and
       --superseded-by must be explicit — no --all/--yes, no bulk mode, never auto-retracts.
+  ar embeddings setup|rebuild|status   OPT-IN local semantic recall (fix7). \`setup\` installs the local ONNX
+      runtime + downloads the model once (nothing ships in this package; zero cloud inference, no telemetry);
+      \`rebuild\` (re)builds the content-hash-keyed vector index incrementally (--project <slug>, --force);
+      \`status\` shows flag/model/index state. Enable with AGENT_RECALL_EMBEDDINGS=1 (or config.json
+      "embeddings_enabled": true). Recall NEVER touches the network and degrades to lexical-only when
+      the model/index is missing.
   ar mirror [--json]   The Mirror: first-person, citation-backed self-model from your real corrections/insights (personal-tier, local-only; omit --project for the cross-project mirror)
   ar doctor [--json]   READ-ONLY store integrity check: index drift, stale locks, stalled consolidation seam
   ar repair [--apply] [--json]  Remediate doctor findings (DRY-RUN unless --apply): reindex drift, remove dead locks, login-free drain
@@ -171,6 +177,11 @@ BOOTSTRAP:
 MULTI-SESSION:
   ar sessions                List all Claude Code sessions active today (diagnostic)
   ar saveall [--dry-run]     Save all today's sessions to AgentRecall automatically
+
+UNCLAIMED STAGING (failed/zero-confidence resolutions land in _unclaimed/):
+  ar claim --list            List staged session cards awaiting claim
+  ar claim <sid> --project <slug>  Move a staged session's cards into a real project (logged, reversible)
+  ar claim <sid> --undo      Reverse the last claim for a session
 
 HOOKS (auto-fired by Claude Code hooks — no agent discipline needed):
   ar hook-start          Session start: load context, show watch_for warnings
@@ -835,6 +846,138 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "embeddings": {
+      // fix7 (2026-09-12) — OPT-IN local semantic embeddings (plan-v2 #7).
+      // Three subcommands; nothing here runs unless the user invokes it, and
+      // recall only uses any of it behind AGENT_RECALL_EMBEDDINGS=1 (or
+      // config.json `"embeddings_enabled": true`).
+      const sub = rest[0];
+      switch (sub) {
+        case "setup": {
+          // The ONE sanctioned downloader: installs the transformers.js
+          // runtime self-contained under <embeddings-home>/runtime (it is
+          // ~380MB with onnxruntime — deliberately NOT a dependency of this
+          // package) and downloads + caches the model (one-time; cached
+          // models are never re-fetched). Everything lands under
+          // `ar embeddings status`-visible paths; nothing touches the
+          // network afterwards (recall/rebuild load with remote fetch
+          // disabled).
+          const runtimeDir = core.embeddingsRuntimeDir();
+          const spec = core.resolveEmbeddingModel();
+          if (spec.internal) {
+            output(`model "${spec.id}" is an internal test row — unset AGENT_RECALL_EMBEDDINGS_MODEL or pick one of: ${Object.values(core.EMBEDDING_MODELS).filter((m) => !m.internal).map((m) => m.id).join(", ")}`);
+            process.exitCode = 1;
+            break;
+          }
+          if (!core.runtimeInstalled()) {
+            process.stderr.write(`[ar] installing ${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE} into ${runtimeDir} (self-contained, ~380MB — one time)...\n`);
+            const { spawnSync } = await import("node:child_process");
+            // fix7 review L: npm is `npm.cmd` on Windows and .cmd spawns
+            // need a shell there (Node ≥18.20 EINVAL hardening).
+            const isWin = process.platform === "win32";
+            const install = spawnSync(
+              isWin ? "npm.cmd" : "npm",
+              ["install", "--prefix", runtimeDir, "--no-audit", "--no-fund", "--ignore-scripts", `${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE}`],
+              { stdio: ["ignore", "inherit", "inherit"], ...(isWin ? { shell: true } : {}) },
+            );
+            if (install.status !== 0) {
+              output(`runtime install failed (npm exit ${install.status}) — check network/npm config and re-run \`ar embeddings setup\``);
+              process.exitCode = 1;
+              break;
+            }
+          } else {
+            process.stderr.write(`[ar] runtime already installed at ${runtimeDir}\n`);
+          }
+          process.stderr.write(`[ar] downloading/verifying model ${spec.hfRepo} (dtype ${spec.dtype}) into ${core.embeddingsModelsDir()} — cached after the first run...\n`);
+          // allowRemote: true — the ONLY call site in the product allowed to
+          // fetch (embeddings/runtime.ts network contract).
+          const embedder = await core.getEmbedder(spec, { allowRemote: true });
+          if ("error" in embedder) {
+            output(`model setup failed: ${embedder.error.message}`);
+            process.exitCode = 1;
+            break;
+          }
+          const probe = await embedder.embedQueries(["setup verification probe"]);
+          if (!probe[0] || probe[0].length !== spec.dim) {
+            output(`model verification failed: expected dim ${spec.dim}, got ${probe[0]?.length ?? 0}`);
+            process.exitCode = 1;
+            break;
+          }
+          output([
+            `✓ embeddings ready: model ${spec.id} (${spec.hfRepo}, dim ${spec.dim})`,
+            `  runtime: ${runtimeDir}`,
+            `  models:  ${core.embeddingsModelsDir()}`,
+            `Next steps:`,
+            `  1. ar embeddings rebuild            # build the local index (incremental)`,
+            `  2. export AGENT_RECALL_EMBEDDINGS=1 # or set "embeddings_enabled": true in <store>/config.json`,
+          ].join("\n"));
+          break;
+        }
+        case "rebuild": {
+          // Incremental by construction (content-hash keyed): only new/
+          // changed chunks are embedded; a full (unscoped) rebuild also
+          // prunes vectors whose content no longer exists. OFFLINE-STRICT:
+          // never downloads — run `ar embeddings setup` first.
+          const scopedProject = getFlag("--project", rest);
+          const force = hasFlag("--force", rest);
+          let lastLine = 0;
+          const report = await core.buildEmbeddingsIndex({
+            ...(scopedProject ? { projects: [scopedProject] } : {}),
+            force,
+            onProgress: (done: number, total: number) => {
+              const pct = total > 0 ? Math.floor((done / total) * 100) : 100;
+              if (pct >= lastLine + 10 || done === total) {
+                process.stderr.write(`[ar] embedding ${done}/${total} (${pct}%)\n`);
+                lastLine = pct;
+              }
+            },
+          });
+          if (!report.ok) {
+            output(`rebuild failed: ${report.error?.message ?? "unknown error"}`);
+            process.exitCode = 1;
+            break;
+          }
+          if (hasFlag("--json", rest)) {
+            output(report);
+          } else {
+            output([
+              `✓ embedding index ${scopedProject ? `updated for project ${scopedProject}` : "rebuilt"}: ${report.indexPath}`,
+              `  model ${report.model} (dim ${report.dim}) · ${report.totalChunks} chunks enumerated`,
+              `  embedded ${report.embeddedNew} new · reused ${report.reused} cached · pruned ${report.pruned} stale`,
+              `  ${(report.durationMs / 1000).toFixed(1)}s`,
+              ...(scopedProject ? [`  note: project-scoped builds never prune (a full \`ar embeddings rebuild\` does)`] : []),
+            ].join("\n"));
+          }
+          break;
+        }
+        case "status": {
+          const status = await core.embeddingsStatus();
+          if (hasFlag("--json", rest)) {
+            output(status);
+          } else {
+            const lines: string[] = [
+              `embeddings: ${status.enabled ? "ENABLED" : "disabled"} (AGENT_RECALL_EMBEDDINGS / config.json embeddings_enabled)`,
+              `  model:   ${status.model} (dim ${status.dim}) — cached: ${status.modelCached ? "yes" : "NO (run \`ar embeddings setup\`)"}`,
+              `  runtime: ${status.runtimeInstalled ? "installed" : "NOT installed (run \`ar embeddings setup\`)"}`,
+              `  index:   ${status.indexPath}`,
+            ];
+            if (!status.indexExists) {
+              lines.push(`           missing — run \`ar embeddings rebuild\``);
+            } else if (status.indexError) {
+              lines.push(`           UNREADABLE: ${status.indexError}`);
+            } else {
+              lines.push(`           ${status.indexCount} vectors · ${((status.indexBytes ?? 0) / 1024 / 1024).toFixed(1)}MB · built ${status.indexBuiltAt}`);
+            }
+            output(lines.join("\n"));
+          }
+          break;
+        }
+        default:
+          output(`Unknown embeddings subcommand: ${sub ?? "(none)"}\nUsage: ar embeddings setup|rebuild|status`);
+          process.exitCode = 1;
+      }
+      break;
+    }
     case "doctor": {
       // READ-ONLY store integrity diagnostics (sibling to `palace lint`).
       // Never mutates, never acquires a lock. `--json` for the full payload.
@@ -1176,6 +1319,12 @@ async function main(): Promise<void> {
           }
         }
 
+        // Pending review (Fix #2, dual-channel capture gate) — ONE line,
+        // count only; staged content is untrusted and never rendered here.
+        if (result.pending_corrections && result.pending_corrections.count > 0) {
+          lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
+        }
+
         // Top 3 insights (sorted by confirmations — most proven patterns first)
         if (result.insights.length > 0) {
           lines.push("💡 Awareness insights:");
@@ -1214,13 +1363,22 @@ async function main(): Promise<void> {
           }
         }
 
+        // fix5 (2026-09-11): unclaimed staging pointer — EXACTLY ONE line,
+        // count only (never staged content), absent when zero. Mirrors the
+        // MCP formatTerse renderer of the same field.
+        if (result.unclaimed_cards && result.unclaimed_cards > 0) {
+          lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\``);
+        }
+
         // Semantic prefetch from last session
         try {
           // Root-fix (2026-08-12, followups wave): same bypass class as
           // logSyncError — this is AR's own project data, must honor getRoot().
-          const prefetchFile = path.join(
-            core.getRoot(), "projects", project ?? "auto", "semantic-prefetch.json"
-          );
+          // fix5 (2026-09-11): routed through projectSubPath so the READ
+          // resolves the same case-fold-reused path the WRITE (hook-end
+          // prefetch) now uses — the raw literal join was one of the cli
+          // bypass sites of the sanctioned project-path builder.
+          const prefetchFile = core.projectSubPath(project ?? "auto", "semantic-prefetch.json");
           if (fs.existsSync(prefetchFile)) {
             const prefetchData = JSON.parse(fs.readFileSync(prefetchFile, "utf-8")) as {
               generated: string;
@@ -1439,13 +1597,25 @@ async function main(): Promise<void> {
           unifiedProjectSlug = proj;
 
           core.archiveSession({
+            // fix5 (2026-09-11): archiveSession self-gates — an invalid slug
+            // (F1 guess failed at confidence 0 ⇒ the literal "auto", now
+            // deny-listed) routes the verbatim dump to _unclaimed/<sid>/
+            // instead of materializing projects/auto/journal/archive/raw.
             project: proj,
             sessionId: archiveSid,
             transcriptPath: resolvedPath,
             rawTranscript: src.rawTail,
             summary: src.firstUserMessage ?? undefined,
           });
-          await core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+          // fix5: never enqueue a consolidation job for an unresolved slug —
+          // the drain step (consolidate-async below) scaffolds a palace for
+          // job.project, which for "auto"-class slugs re-materializes exactly
+          // the junk dir the archive gate above just refused to create.
+          // (consolidate-async also skips invalid slugs defensively, for
+          // jobs enqueued before this fix.)
+          if (core.isValidProjectSlug(proj)) {
+            await core.enqueueConsolidation({ project: proj, sessionId: archiveSid, reason: "hook-end archive" });
+          }
 
           // ---- F3 unconditional session card + F2 recency append ----
           // The raw archive above has ALREADY succeeded by this point — it is
@@ -1471,11 +1641,18 @@ async function main(): Promise<void> {
                 date: endToday,
               },
             });
-            core.writeSessionCard(card);
+            // fix5 (2026-09-11): writeSessionCard self-gates — an invalid
+            // slug or a zero-confidence resolution stages the card into
+            // _unclaimed/<sid>/ and returns slug "_unclaimed". The recency
+            // ledger must record where the card ACTUALLY lives (the same
+            // ledger-vs-disk parity rule Train C fixed for the rescue path),
+            // so the append below keys off the write result, falling back to
+            // `proj` only when the write failed outright (empty slug).
+            const written = core.writeSessionCard(card);
             core.appendRecentSession({
               ts: new Date().toISOString(),
               sid: archiveSid,
-              slug: proj,
+              slug: written.slug || proj,
               slug_confidence: projConfidence,
               title: card.title,
               next_step: card.nextStep[0],
@@ -1576,15 +1753,23 @@ async function main(): Promise<void> {
             const coremod = await import("agent-recall-core") as any;
             const backend = await coremod.getRecallBackend();
             const prefetchProject = project ?? "auto";
-            if (backend.available()) {
+            // fix5 (2026-09-11): never write the prefetch cache for an
+            // unresolved/invalid project — with "auto" now deny-listed this
+            // used to land a new write inside the legacy projects/auto/
+            // dumping ground on every hook-end. A prefetch is a regenerable
+            // convenience cache; skipping it for an unresolvable session
+            // loses nothing.
+            if (backend.available() && core.isValidProjectSlug(prefetchProject)) {
               const prefetchResults = await backend.search(summary.slice(0, 200), prefetchProject, 5);
               if (prefetchResults.length > 0) {
                 // Root-fix (2026-08-12, followups wave): same bypass class as
                 // logSyncError — mirrors hook-start's read of this same file
                 // above (both now resolve via getRoot()).
-                const prefetchFile = path.join(
-                  core.getRoot(), "projects", prefetchProject, "semantic-prefetch.json"
-                );
+                // fix5: routed through projectSubPath (the sanctioned
+                // project-path builder) instead of a raw "projects" join —
+                // the raw join bypassed the case-fold EXISTING-DIR reuse
+                // rule and was one of the cli literal-join bypass sites.
+                const prefetchFile = core.projectSubPath(prefetchProject, "semantic-prefetch.json");
                 fs.writeFileSync(prefetchFile, JSON.stringify({
                   generated: new Date().toISOString(),
                   query: summary.slice(0, 100),
@@ -1613,6 +1798,13 @@ async function main(): Promise<void> {
       try {
         const report = await core.drainConsolidationQueue(async (job) => {
           try {
+            // fix5 (2026-09-11): skip (mark done, don't retry) any job whose
+            // slug is invalid — "auto"-class jobs enqueued before the
+            // hook-end gate existed would otherwise scaffold a palace under
+            // projects/auto/ right here, re-materializing the junk-dir class
+            // this tranche closes. Nothing to consolidate for a slug that
+            // can never be a real project; returning cleanly retires the job.
+            if (!core.isValidProjectSlug(job.project)) return;
             core.ensurePalaceInitialized(job.project);
             await core.consolidateJournalToPalace(job.project);
           } catch (e) {
@@ -1757,12 +1949,17 @@ async function main(): Promise<void> {
             goal: lastGoal || "Unknown — see correction",
             confidence: "high",
             human_correction: scopedText.slice(0, 200),
+            // Fix #2 (dual-channel capture gate, 2026-09-11): string-form
+            // human_correction is STAGED to corrections/_pending/ — this
+            // marker stamps hook-channel provenance on the staged row.
+            correction_source: "hook-correction",
             // Delta describes the gap using actual content so keyword grouping
             // produces meaningful topics (e.g. "deploy-vercel") not "human-corrected"
             delta: `${lastGoal ? `Was: "${lastGoal.slice(0, 60)}"` : "Unknown context"} | Correction: "${scopedText.slice(0, 80)}"${agentContext ? ` | Agent was: ${agentContext.slice(0, 120)}` : ""}`,
             project,
           });
-          // Silent — no stdout output, correction captured in alignment-log
+          // Silent — no stdout output, capture staged in corrections/_pending/
+          // (and the alignment-log records goal/delta as before)
         }
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-correction] ${String(e)}\n`);
@@ -2033,7 +2230,17 @@ async function main(): Promise<void> {
         // unchanged from before this feature.
         if (queryKeywords.length === 0) process.exit(0);
 
-        const recalled = await core.smartRecall({ query: queryKeywords.join(" "), project, limit: 3, drilldown: true });
+        // fix4b (2026-09-12): freshnessBias opts THIS surface into the legacy
+        // multiplicative hot-window boost. The ambient injection's own
+        // `score < 0.03` floor below was calibrated against BOOSTED
+        // magnitudes — a lone tier-rank-1 match is 1/61 ≈ 0.0164 raw and only
+        // clears 0.03 via the <24h/<6h ×2/×3 windows, which is exactly this
+        // surface's product semantics ("surface what we just worked on when a
+        // generic prompt arrives"; multi-evidence fusions ≥ 0.0328 pass at
+        // any age). Default surfaces (recall/smart_recall tools, SDK) get the
+        // honest un-multiplied ranking — do not copy this flag elsewhere
+        // without re-auditing the downstream threshold.
+        const recalled = await core.smartRecall({ query: queryKeywords.join(" "), project, limit: 3, drilldown: true, freshnessBias: true });
 
         // Ambient precision floor: require ≥2 overlapping content words (≥4 chars,
         // non-stopwords) between the query tokens and the result title+excerpt.
@@ -2352,13 +2559,20 @@ async function main(): Promise<void> {
         const scope = getFlag("--scope", digRest) ?? "";
         const content = getFlag("--content", digRest) ?? "";
         const ttl = getFlag("--ttl", digRest);
+        // fix5 (2026-09-11): resolve the project BEFORE the write — this was
+        // the one digest entry point that passed the raw `--project` value
+        // (or undefined) straight into createDigest, whose own fallback then
+        // materialized a literal projects/unknown/digest dir. Routing
+        // through resolveProject matches the MCP digest tool's behavior:
+        // explicit slugs validate, unresolvable sessions stage.
+        const digestProject = await core.resolveProject(project ?? "auto");
         const result = await core.createDigest({
           title, scope, content,
           source_agent: getFlag("--agent", digRest),
           source_query: getFlag("--query", digRest),
           ttl_hours: ttl ? parseFloat(ttl) : undefined,
           global: hasFlag("--global", digRest),
-          project,
+          project: digestProject,
         });
         output(result);
       } else if (sub === "recall") {
@@ -2385,7 +2599,11 @@ async function main(): Promise<void> {
         // review MEDIUM-2 (fix6-locks): async variant — never park the event
         // loop on digest-lock contention (sync markStale exists only as the
         // SDK digestInvalidate signature pin).
-        await core.markStaleAsync(project ?? "auto", id, reason, hasFlag("--global", digRest));
+        // fix5 (2026-09-11): resolve before the write — markStale(Async)
+        // rewrites the digest index via writeJsonAtomic (ensureDir on the
+        // parent), so the raw literal "auto" here could materialize
+        // projects/auto/digest.
+        await core.markStaleAsync(await core.resolveProject(project ?? "auto"), id, reason, hasFlag("--global", digRest));
         output({ success: true, id });
       } else {
         process.stderr.write(`Usage: ar digest store|recall|list|invalidate [...opts]\n`);
@@ -2500,7 +2718,14 @@ async function main(): Promise<void> {
         }
 
         try {
-          await core.sessionEnd({ summary, project: proj, insights: [] });
+          // fix5 (2026-09-11): a session with NO project guess used to pass
+          // its dedup key (`unknown:<sid>`) as the project, minting a
+          // `projects/unknown<sid>` junk dir per unguessed session (the
+          // sanitizer strips the colon). A failed guess is exactly the
+          // staging class: route it to `_unclaimed/` via the sentinel — the
+          // save still happens, claimable later.
+          const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
+          await core.sessionEnd({ summary, project: saveProject, insights: [] });
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });
@@ -2516,6 +2741,61 @@ async function main(): Promise<void> {
         output(`\n(dry run — no data written)`);
       } else {
         output(`\nTotal: ${saved.length} saved, ${skipped.length} skipped, ${failed.length} failed`);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // ar claim — review/claim _unclaimed staged sessions (fix5, 2026-09-11)
+    // -----------------------------------------------------------------------
+    case "claim": {
+      // The ONE sanctioned path by which staged content (failed/zero-
+      // confidence resolutions, kill-9 rescue cards) enters a real project.
+      // Manifest-logged (from→to pairs) and reversible via --undo.
+      if (hasFlag("--list", rest)) {
+        const cards = core.listUnclaimedCards();
+        if (cards.length === 0) {
+          output("No unclaimed sessions. (_unclaimed/ staging is empty.)");
+          break;
+        }
+        // Card titles are STAGED memory content (possibly from a crashed or
+        // even spoofed session) — render them through the same fence every
+        // other retrieved-content surface in this file uses.
+        const listLines: string[] = [];
+        for (const c of cards) {
+          let title = "";
+          try {
+            title = fs.readFileSync(c.path, "utf-8").split("\n").find((l) => l.startsWith("# "))?.slice(2, 102) ?? "";
+          } catch { /* unreadable card — list the sid anyway */ }
+          listLines.push(`  ${c.sid}  ${c.file}${title ? `  — ${title}` : ""}`);
+        }
+        output(`Unclaimed sessions (${cards.length} card${cards.length === 1 ? "" : "s"}):`);
+        output(core.fenceMemory(listLines.join("\n")));
+        output(`\nClaim one:  ar claim <sid> --project <slug>\nUndo:       ar claim <sid> --undo`);
+        break;
+      }
+
+      const claimSid = rest.find((a) => !a.startsWith("--"));
+      if (!claimSid) {
+        output("Usage: ar claim --list | ar claim <sid> --project <slug> | ar claim <sid> --undo");
+        process.exit(1);
+      }
+      try {
+        if (hasFlag("--undo", rest)) {
+          const undone = core.undoClaimUnclaimedSession(claimSid);
+          output(`Undid claim of ${claimSid}: ${undone.moved.length} file(s) restored to _unclaimed/${undone.sid}/${undone.skipped.length > 0 ? ` (${undone.skipped.length} skipped)` : ""}`);
+        } else {
+          if (!project) {
+            output("ar claim: --project <slug> is required to claim a session (or use --undo / --list).");
+            process.exit(1);
+          }
+          const claimed = core.claimUnclaimedSession(claimSid, project);
+          output(`Claimed ${claimSid} into ${claimed.project}: ${claimed.moved.length} file(s) moved${claimed.skipped.length > 0 ? `, ${claimed.skipped.length} skipped (destination already existed)` : ""}`);
+          output(`Reversible: ar claim ${claimSid} --undo  (manifest: _unclaimed/_claims.jsonl)`);
+        }
+      } catch (e) {
+        output(`ar claim: ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
       }
       break;
     }
@@ -2766,7 +3046,13 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         output(`Synced to ${syncPath} (${syncContent.split("\n").length} lines)`);
       } else {
         // Fallback: write to AR directory
-        const projectSyncDir = path.join(arRoot, "projects", resolvedSync);
+        // fix5 (2026-09-11): routed through projectSubPath — the raw
+        // "projects" literal join here was the one dir-CREATING bypass of
+        // the sanctioned builder in this package: it skipped BOTH the
+        // case-fold EXISTING-DIR reuse rule (could mint a case-variant twin)
+        // AND the staging-sentinel routing (a sentinel-resolved session
+        // would have minted a junk dir under projects/).
+        const projectSyncDir = core.projectSubPath(resolvedSync);
         core.ensureDir(projectSyncDir);
         const syncPath = path.join(projectSyncDir, "SYNC.md");
         fs.writeFileSync(syncPath, syncContent, "utf-8");

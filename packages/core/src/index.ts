@@ -169,8 +169,36 @@ export { classifyStore, classifyPath, isPersonalProject, PERSONAL_STORES } from 
 export type { Tier } from "./storage/classification.js";
 
 // Storage
-export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir } from "./storage/paths.js";
+// fix5: projectSubPath exported so the CLI's few remaining raw
+// `path.join(root, "projects", …)` sites can route through the ONE sanctioned
+// project-path builder (case-fold reuse + path-escape guard + staging-sentinel
+// routing) instead of hand-rolling the literal join.
+export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir, pickProjectDirEntry, projectSubPath } from "./storage/paths.js";
 export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+
+// Storage — _unclaimed staging namespace (fix5, 2026-09-11): failed/zero-
+// confidence resolutions stage here instead of materializing projects/ dirs.
+export {
+  UNCLAIMED_DIRNAME,
+  UNCLAIMED_PROJECT,
+  isUnclaimedProject,
+  unclaimedRootDir,
+  unclaimedSessionDir,
+} from "./storage/paths.js";
+export {
+  UNCLAIMED_TTL_MS,
+  recordUnclaimedProvenance,
+  listUnclaimedCards,
+  countUnclaimedSessions,
+  findUnclaimedCardForSid,
+  archiveExpiredUnclaimed,
+  claimUnclaimedSession,
+  undoClaimUnclaimedSession,
+  readClaimsLog,
+  type UnclaimedProvenance,
+  type UnclaimedCardInfo,
+  type ClaimResult,
+} from "./storage/unclaimed.js";
 
 // Storage — archive tier (Wave 2, lossless verbatim floor; local-only)
 export { archiveSession } from "./storage/archive-write.js";
@@ -251,7 +279,37 @@ export {
   // v4 W2 — effective confidence (post-defaults), shared by rankCorrections
   // and getCorrectionKPIs' annotation output (annotate-only; never stored).
   effectiveConfidenceOf,
+  // Fix #2 (dual-channel capture gate, 2026-09-11) — CJK-aware consolidation
+  // identity + the severity classifier (shared with the pending staging path).
+  distillRuleIdentity,
+  detectSeverity,
 } from "./storage/corrections.js";
+
+// Storage — pending-corrections staging area (Fix #2, dual-channel capture
+// gate, 2026-09-11): low-trust captures await review here; the active ledger
+// is reachable only through check()'s validated structured form or an
+// explicit promote.
+export {
+  PENDING_CAP,
+  PENDING_TTL_DAYS,
+  pendingDir,
+  stagePendingCorrection,
+  listPendingCorrections,
+  resolvePendingCorrection,
+  validateStructuredCorrection,
+  validateInsightCompleteness,
+  isRealAppliesWhenToken,
+} from "./storage/pending.js";
+export type {
+  PendingRecord,
+  PendingKind,
+  PendingChannel,
+  StagePendingInput,
+  StagePendingResult,
+  ResolvePendingResult,
+  CompletenessResult,
+  CompletenessFailure,
+} from "./storage/pending.js";
 export type {
   CorrectionRecord,
   WriteCorrectionResult,
@@ -439,7 +497,7 @@ export {
 } from "./tools-logic/recognition-builder.js";
 export { sessionEnd, checkInsightQuality, type SessionEndInput, type SessionEndResult, type InsightQualityWarning, type MergeSuggestion } from "./tools-logic/session-end.js";
 export { promoteConfirmedInsights, type PromotionResult } from "./tools-logic/insight-promotion.js";
-export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta } from "./tools-logic/check.js";
+export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)
 export {
@@ -757,3 +815,44 @@ export type { ContradictionItem, ContradictionResult } from "./retrieval/contrad
 // (see that file's own header). Exported here too, alongside its sibling
 // contradiction-stage exports above, so a test can exercise it directly.
 export { extractHighPrecisionVersionTokens } from "./retrieval/contradiction.js";
+
+// fix7 (2026-09-12, plan-v2 #7) — OPT-IN local embeddings for the semantic-
+// paraphrase retrieval gap. Everything here is inert unless the
+// AGENT_RECALL_EMBEDDINGS opt-in (or config.json embeddings_enabled) is set;
+// the CLI's `ar embeddings setup|rebuild|status` commands consume the build/
+// status APIs, and tests exercise the leg + index directly. See
+// packages/core/src/embeddings/config.ts's header for the design contract
+// (opt-in only, zero-cloud, model never ships in the package, silent-safe
+// degrade).
+export {
+  embeddingsEnabled,
+  resolveEmbeddingModel,
+  embeddingsHome,
+  embeddingsRuntimeDir,
+  embeddingsModelsDir,
+  embeddingsIndexPath,
+  EMBEDDING_MODELS,
+  DEFAULT_EMBEDDING_MODEL,
+} from "./embeddings/config.js";
+export type { EmbeddingModelSpec } from "./embeddings/config.js";
+export {
+  getEmbedder,
+  resetEmbedderCache,
+  runtimeInstalled,
+  modelCached,
+  RUNTIME_PACKAGE,
+  RUNTIME_PACKAGE_RANGE,
+} from "./embeddings/runtime.js";
+export type { Embedder, EmbedderError } from "./embeddings/runtime.js";
+export { chunkProject, chunkGlobalInsights } from "./embeddings/chunker.js";
+export type { EmbeddingChunk } from "./embeddings/chunker.js";
+export {
+  readEmbeddingIndex,
+  writeEmbeddingIndex,
+  resetEmbeddingIndexCache,
+} from "./embeddings/index-store.js";
+export type { EmbeddingIndex, IndexReadError } from "./embeddings/index-store.js";
+export { buildEmbeddingsIndex, embeddingsStatus } from "./embeddings/indexer.js";
+export type { BuildEmbeddingsOptions, BuildEmbeddingsReport, EmbeddingsStatus } from "./embeddings/indexer.js";
+export { runSemanticLeg } from "./retrieval/semantic-leg.js";
+export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./retrieval/semantic-leg.js";

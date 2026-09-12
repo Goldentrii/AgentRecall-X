@@ -13,6 +13,7 @@ import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
+import { tokenizeWords, HAN_RUN_RE } from "../helpers/tokenize.js";
 import type { Confidence, DecayClass } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,16 @@ export interface CorrectionRecord {
    * "told" is the safe default per the proposal).
    */
   provenance?: CorrectionProvenance;
+  /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — the structured
+   * human_correction form's `applies_when` context keywords, persisted for
+   * fidelity. ADDITIVE + OPTIONAL: absent on every pre-fix record and on
+   * records captured through non-structured paths; never defaulted at read
+   * time. The same tokens are ALSO folded into `tags` at capture (tags are
+   * the existing p1 context-match mechanism) — this field preserves the
+   * caller's original, unmixed list.
+   */
+  applies_when?: string[];
 }
 
 /**
@@ -369,7 +380,12 @@ const REJECTED_LOG_CAP = 2000;
  * share a package (this file + check.ts), or kept byte-identical by
  * cross-reference where they don't (correction-detector.ts, cli package).
  */
-function detectSeverity(text: string): "p0" | "p1" {
+// Fix #2 (dual-channel capture gate, 2026-09-11): exported so the pending
+// staging path (storage/pending.ts) stamps the SAME severity a direct capture
+// would get — the S-M1 English injection twin pins "should not → p1" on the
+// staged record, so staging and capture must never diverge on this classifier.
+// Same internal-use-export convention as splitSentences/dropHardNoise below.
+export function detectSeverity(text: string): "p0" | "p1" {
   const p0Patterns = new RegExp(
     `\\bnever\\b|\\balways\\b|\\bdon'?t\\b|\\bdo not\\b|\\bmust not\\b|\\bforbid\\b|\\bprohibit\\b|` +
       `永远不要|绝不|千万不要|总是|一直|始终|不要(?!${CJK_REASSURANCE_COMPLETIONS})|不可以|不准|你不能(?!不)|不得(?!不)|不应该|切勿|禁止`,
@@ -483,7 +499,11 @@ function todayDate(): string {
  * retractCorrection / recordOutcome) so every correction writer shares one
  * durable path. Pure side-effect helper; no behavior change vs the originals.
  */
-function writeRecordAtomic(filepath: string, record: unknown): void {
+// Fix #2 (dual-channel capture gate, 2026-09-11): exported so the pending
+// store (storage/pending.ts) writes through the SAME scrub-on-write choke
+// point as corrections — rider R2a's "same scrub path" is a structural fact
+// (one function), not a parallel implementation kept in sync by hand.
+export function writeRecordAtomic(filepath: string, record: unknown): void {
   // Scrub BEFORE the local write — corrections are AgentRecall's most-injected
   // artifact (readP0Corrections is loaded into every session_start briefing,
   // handoff.md's "Binding rules" section, and check()'s/checkAction's
@@ -1144,21 +1164,66 @@ export interface WriteCorrectionResult {
 }
 
 /**
- * P1 consolidation match key. A new correction folds into an existing ACTIVE one
- * only when their rule titles are IDENTICAL after normalization (lowercase, all
- * runs of non-alphanumerics collapsed to a single space, trimmed).
+ * Fix #2 (dual-channel capture gate, 2026-09-11) — DISTILLED rule identity,
+ * the consolidation match key. Replaces the old char-level normalization
+ * (lowercase + collapse non-alphanumerics) with the shared CJK-aware
+ * tokenizer (helpers/tokenize.ts): NFKC-normalize, segment Han runs with
+ * Intl.Segmenter, lowercase + punctuation-strip the Latin remainder, then
+ * join the ORDERED token stream. Same rule REWORDED at the punctuation/
+ * case/whitespace/full-width level now merges — critically including CJK
+ * internal-whitespace variants ("永远不要 跳过测试" vs "永远不要跳过测试"),
+ * which the old char-normalizer treated as two distinct rules because it
+ * had no notion of CJK word boundaries.
  *
- * Deliberately VERBATIM-only. The dominant duplicate source is the SAME correction
- * captured again across sessions, and exact-match is the ONE gate with ZERO risk
- * of folding two DISTINCT rules into one. Fuzzy/semantic matching is unsafe on the
- * zero-LLM storage path because it cannot tell a duplicate from a contradiction:
- * "use proxy.ts" vs "use middleware.ts" and a "P0" vs "P1" variant differ by a
- * short/numeric token that any local matcher either inflates (char-trigram) or
- * drops (sub-3-char token filter) — so it would wrongly merge them. Paraphrase-
- * level consolidation is left to the optional semantic/LLM path, never here.
+ * STILL deliberately conservative — token-level identity, ORDER PRESERVED
+ * INCLUDING cross-script interleaving (review fix 2026-09-11, code-review
+ * MEDIUM: tokenizeWords emits Han tokens first, which would have collapsed
+ * "在 staging 测试 deploy" and "在 staging deploy 测试" into one identity —
+ * the text is therefore segmented at Han-run boundaries first and each
+ * segment tokenized in source order). The old doctrine stands: exact
+ * identity is the one gate with ZERO risk of folding two DISTINCT rules
+ * into one ("use proxy.ts" vs "use middleware.ts" differ by a real token
+ * and never merge; "test before push" vs "push before test" differ by
+ * order and never merge). Paraphrase-level consolidation stays out of the
+ * zero-LLM storage path. `minLength: 1` keeps short discriminating tokens
+ * ("ts", "js", "p0") — dropping them would over-merge.
+ *
+ * NON-HAN/NON-LATIN SCRIPTS (review fix 2026-09-11, code-review HIGH-2): the
+ * strip class is `\p{L}\p{N}` (all letters/numbers, like the old
+ * normalizeRule) — NOT `[a-z0-9]` — so hangul/kana/etc. survive as tokens
+ * instead of every such rule distilling to "" and colliding. An EMPTY
+ * identity must never match anything — both merge loops (writeCorrection
+ * below, pending.ts's dedupe) guard on it.
+ *
+ * Exported: the pending store (storage/pending.ts) dedupes staged captures
+ * by the SAME identity, so a repeat capture can never fan out into N
+ * pending rows (the ×34 verbatim-repeat exemplar dedupes to one).
  */
+const DISTILL_OPTS = {
+  minLength: 1,
+  asciiStripRegex: /[^\p{L}\p{N}\s]+/gu,
+} as const;
+
+export function distillRuleIdentity(rule: string): string {
+  // NFKC up-front so the Han-run boundary scan below sees the same composed
+  // text tokenizeWords normalizes to internally.
+  const s = (rule ?? "").normalize("NFKC");
+  const out: string[] = [];
+  const hanRun = new RegExp(HAN_RUN_RE.source, "gu");
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = hanRun.exec(s)) !== null) {
+    if (m.index > last) out.push(...tokenizeWords(s.slice(last, m.index).toLowerCase(), DISTILL_OPTS));
+    out.push(...tokenizeWords(m[0], DISTILL_OPTS)); // pure Han run — segmented in place
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out.push(...tokenizeWords(s.slice(last).toLowerCase(), DISTILL_OPTS));
+  return out.join(" ");
+}
+
+/** Consolidation match key — see distillRuleIdentity above. */
 function normalizeRule(rule: string): string {
-  return (rule ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return distillRuleIdentity(rule);
 }
 
 /**
@@ -1241,7 +1306,10 @@ export async function writeCorrection(project: string, correction: CorrectionRec
     // higher severity/authority/weight. High-precision LOCAL gate — no key, no
     // network — so this never runs an LLM on the storage hot path.
     const normNew = normalizeRule(record.rule);
-    for (const existing of readActiveCorrections(project)) {
+    // Review fix (2026-09-11, HIGH-2 guard): an empty distilled identity
+    // (rule made entirely of stripped symbols) must never match anything —
+    // without this, every such record would fold into the first one.
+    for (const existing of normNew ? readActiveCorrections(project) : []) {
       if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
       if (normalizeRule(existing.rule) !== normNew) continue;
@@ -1250,6 +1318,12 @@ export async function writeCorrection(project: string, correction: CorrectionRec
         proof_count: (existing.proof_count ?? 1) + 1,
         merged_from: [...(existing.merged_from ?? []), record.id],
         tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),
+        // Fix #2 review fix (2026-09-11, code-review LOW): absorb the incoming
+        // structured form's applies_when like tags — union, and only mint the
+        // field when at least one side carries it (old records stay untouched).
+        ...(existing.applies_when || record.applies_when
+          ? { applies_when: Array.from(new Set([...(existing.applies_when ?? []), ...(record.applies_when ?? [])])) }
+          : {}),
         // keep the STRONGER signal on every axis
         severity: existing.severity === "p0" || record.severity === "p0" ? "p0" : "p1",
         weight: Math.max(existing.weight ?? 0, record.weight ?? 0),
@@ -1352,8 +1426,18 @@ export function readCorrections(project: string): CorrectionRecord[] {
   if (!fs.existsSync(dir)) return [];
 
   readCorrectionsScanLog.push(project);
+  // fix4 S1 (2026-09-11): reserved-name exclusion — every `_`-prefixed entry
+  // in a corrections directory is INFRASTRUCTURE, never a correction record:
+  // `_index.md`, `_outcomes.jsonl`, `_rejected.jsonl`, `_ab_arms.jsonl` (all
+  // already extension-excluded), plus the `_pending/`/`_quarantine/` staging
+  // subtrees (fix2's dual-channel capture gate stages raw captures under
+  // `corrections/_pending/` — those records are BY DESIGN not yet active and
+  // must never be parsed as if they were). The class is excluded BY NAME
+  // (leading underscore), not by extension accident, so a future flat
+  // `_staged.json`-style infra file can never leak into the active ledger.
+  // Class-not-instance: one namespace rule, not one branch per known file.
   const files = fs.readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".json") && !f.startsWith("_"))
     .sort()
     .reverse();
 

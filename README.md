@@ -226,6 +226,31 @@ Dream reports are saved locally to `~/.agent-recall/dreams/YYYY-MM-DD.md`.
 
 ---
 
+## Semantic Recall — opt-in, 100% local embeddings
+
+Keyword recall cannot reach a memory phrased differently from your question ("semver increment" never matches a rule written as "one version bump per release"). The optional semantic leg closes that gap with a **local ONNX embedding model** — zero cloud, zero telemetry, and the recall path never touches the network.
+
+```bash
+ar embeddings setup     # one-time: installs the local runtime (~380MB) + downloads the model (~145MB, cached forever)
+ar embeddings rebuild   # builds the vector index from your store (incremental — only new/changed content embeds)
+export AGENT_RECALL_EMBEDDINGS=1   # or add "embeddings_enabled": true to ~/.agent-recall/config.json
+ar embeddings status    # flag / model / index diagnostics
+```
+
+| Property | Guarantee |
+|---|---|
+| Default | **OFF** — flag off is byte-identical to keyword-only recall |
+| Inference | Local ONNX (transformers.js), CPU, ~5-10ms per query warm |
+| Network | Only `ar embeddings setup` ever downloads (one-time, cached, never re-fetched). Recall and `rebuild` run with remote fetch hard-disabled — offline you get a clean actionable error, never a hang |
+| Packaging | Neither runtime nor model ships in the npm package — installed self-contained under `~/.agent-recall/embeddings/` on opt-in |
+| Degradation | Missing/corrupt index or model → keyword results, unchanged, with the reason in `semantic_leg` metadata — never an error |
+| Security | Semantic candidates pass the same trust/scope/fence stages as keyword ones; the index stores content-hash→vector only (no text), so a stale or tampered index cannot inject content |
+| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report) |
+
+Chinese/English cross-lingual queries work (the model is multilingual — a zh question finds an en rule and vice versa). Re-run `ar embeddings rebuild` occasionally (or after writing a lot); content-hash keying makes it cheap, and un-indexed new content simply stays keyword-searchable until then.
+
+---
+
 ## Experimental: Recurrence & Reflection Harness Kit
 
 **The question this answers: does a correction actually change behavior, or does the same mistake come back?** A logged correction whose error class recurs after the rule was encoded is a *phantom gradient step* — the write cost was paid, the behavior never changed.

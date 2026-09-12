@@ -345,6 +345,11 @@ describe("Correction capture via check", () => {
     fs.rmSync(TEST_ROOT_CORR, { recursive: true, force: true });
   });
 
+  // Fix #2 retarget (2026-09-11, dual-channel capture gate): the alignment-log
+  // `corrections` field — and therefore watch_for — is fed by the STRUCTURED
+  // human_correction form only. The string form is STAGED to _pending/ (see
+  // pending-capture-gate.test.mjs); these tests drive the same assertions
+  // through the structured form, which is now the activation path.
   it("stores human correction and delta", async () => {
     await core.check({
       goal: "Build REST API for users",
@@ -355,7 +360,11 @@ describe("Correction capture via check", () => {
     const result = await core.check({
       goal: "Build REST API for users",
       confidence: "high",
-      human_correction: "Actually wants GraphQL, not REST",
+      human_correction: {
+        rule: "Use GraphQL schema, not REST routes, for the users API",
+        why: "API style preference stated by the human",
+        applies_when: ["api", "graphql"],
+      },
       delta: "API style preference",
       project: "test-corr",
     });
@@ -363,11 +372,15 @@ describe("Correction capture via check", () => {
   });
 
   it("watch_for detects recurring correction patterns", async () => {
-    // Add another similar correction
+    // Add another statement of the same correction (recurrence)
     await core.check({
       goal: "Build API endpoint for products",
       confidence: "medium",
-      human_correction: "Use GraphQL schema, not REST routes",
+      human_correction: {
+        rule: "Use GraphQL schema, not REST routes, for the users API",
+        why: "the human restated the API style preference",
+        applies_when: ["api", "graphql"],
+      },
       delta: "API style preference again",
       project: "test-corr",
     });
@@ -379,5 +392,26 @@ describe("Correction capture via check", () => {
       project: "test-corr",
     });
     assert.ok(result.watch_for.length >= 1, `Expected watch_for, got ${result.watch_for.length}`);
+  });
+
+  // R1 companion pin (rider, 2026-09-11): the string form must NEVER feed the
+  // alignment-log corrections field nor the active ledger — the flip itself,
+  // pinned where the old string-driven test lived.
+  it("R1 pin: string human_correction feeds neither the alignment-log corrections field nor the active ledger", async () => {
+    const project = "test-corr-string-pin";
+    await core.check({
+      goal: "Build REST API for users",
+      confidence: "high",
+      human_correction: "Actually wants GraphQL, not REST",
+      project,
+    });
+    const logPath = path.join(TEST_ROOT_CORR, "projects", project, "alignment-log.json");
+    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    assert.equal(log.length, 1);
+    assert.equal(log[0].corrections, undefined, "alignment-log corrections field must stay untouched by the string form");
+    const corrDir = path.join(TEST_ROOT_CORR, "projects", project, "corrections");
+    const active = fs.existsSync(corrDir) ? fs.readdirSync(corrDir).filter((f) => f.endsWith(".json")) : [];
+    assert.equal(active.length, 0, "string form must not reach the active ledger");
+    assert.ok(fs.existsSync(path.join(corrDir, "_pending")), "the capture must be staged in _pending/, never dropped");
   });
 });

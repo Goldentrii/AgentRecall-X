@@ -15,7 +15,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { withLock } from "../storage/filelock.js";
-import { tokenizeWords } from "../helpers/tokenize.js";
+import { tokenizeWords, NON_ASCII_RE } from "../helpers/tokenize.js";
 
 // ── Stopwords for title normalization ────────────────────────────────────────
 const STOPWORDS = new Set([
@@ -30,22 +30,46 @@ const STOPWORDS = new Set([
   "after", "above", "below", "between", "just", "also", "only", "even",
 ]);
 
+// Punctuation/symbol strip for title identity: everything that is not a
+// letter, number, or whitespace becomes a space. Applied AFTER NFKC (so
+// full-width punctuation like ！？ is caught, and decomposed accents are
+// re-composed first) and BEFORE tokenizeWords (whose own internal NFKC is
+// then a no-op). Deliberately NOT tokenizeWords' `asciiStripRegex` option:
+// that path re-normalizes to NFKD, which splits kana at their dakuten
+// (ビ → ヒ + U+3099) and decomposes hangul syllables into jamo — stripping
+// composed CJK characters into fragments is exactly the identity-mangling
+// this fix removes. `\p{L}\p{N}` (not `[a-z0-9]`) is the fix #2 review
+// precedent (corrections.ts distillRuleIdentity, code-review HIGH-2):
+// hangul/kana/etc. must survive as tokens instead of collapsing to the
+// empty — and therefore match-anything — identity.
+const TITLE_STRIP_RE = /[^\p{L}\p{N}\s]+/gu;
+
 /**
- * Normalize a title for similarity comparison:
- *   - lowercase
- *   - strip punctuation
- *   - split into words
- *   - drop stopwords and words shorter than 3 characters
+ * Normalize a title for similarity comparison, CJK-aware (fix #3, 2026-09-11):
+ *   - NFKC-normalize, strip punctuation/symbols (script-agnostic: `\p{L}\p{N}`)
+ *   - segment Han runs with the shared tokenizer (Intl.Segmenter word path);
+ *     non-Han scripts (Latin, hangul, kana, …) split on whitespace
+ *   - lowercase the non-Han stream, drop English stopwords from it
+ *   - drop ASCII tokens shorter than 3 characters; non-ASCII tokens are NEVER
+ *     length-filtered (the floor is English-tuned — see NON_ASCII_RE)
+ *
+ * Pre-fix, the strip class was `[^a-z0-9\s]`: every CJK title normalized to
+ * the EMPTY set, findSimilarInsight could never match it, and every CJK
+ * insight was stuck at confirmed_count 1 — evicted first by the 200-cap
+ * count-1 policy and never promotion-eligible. ASCII-only titles normalize
+ * byte-identically to the pre-fix algorithm.
+ *
+ * SCRIPT-AWARE identity: Han is segmented, hangul/kana pass through as
+ * whitespace-delimited composed tokens — the three scripts can never collapse
+ * into each other, and a punctuation-only title yields the empty set, which
+ * both findSimilarInsight and tokenOverlap treat as match-NOTHING.
  *
  * Returns a Set of normalized tokens.
  */
 export function normalizeTitle(title: string): Set<string> {
-  const words = title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-  return new Set(words);
+  const cleaned = title.normalize("NFKC").replace(TITLE_STRIP_RE, " ");
+  const tokens = tokenizeWords(cleaned, { minLength: 0, stopwords: STOPWORDS });
+  return new Set(tokens.filter((w) => w.length >= 3 || NON_ASCII_RE.test(w)));
 }
 
 /**

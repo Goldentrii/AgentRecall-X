@@ -94,6 +94,13 @@ describe("session_start — orphan-rescue ordering (M2)", () => {
     assert.ok(Array.isArray(result.continuity), "continuity must be present — the rescue's own recency append must have landed before continuity was read");
     const rescued = result.continuity.find((c) => c.title && c.title.includes("M2_RESCUE_ORDERING_UNIQUE_TERM"));
     assert.ok(rescued, `expected the just-rescued session in THIS call's continuity; got ${JSON.stringify(result.continuity)}`);
-    assert.equal(rescued.slug, "m2-rescue-target", "slug should be guessed from the rescued WM line's cwd");
+    // fix5 retarget (2026-09-11): was `assert.equal(rescued.slug,
+    // "m2-rescue-target", ...)`. A rescue card is a zero-confidence,
+    // unauthenticated cwd guess — it now stages into _unclaimed/ instead of
+    // landing under (or minting) projects/m2-rescue-target, so the ledger
+    // slug truthfully points at where the card actually lives. The M2
+    // acceptance criterion this test protects — the rescue is visible in
+    // THIS same call's continuity — is asserted above, unchanged.
+    assert.equal(rescued.slug, "_unclaimed", "ledger slug must point at the staging area the card actually landed in");
   });
 });

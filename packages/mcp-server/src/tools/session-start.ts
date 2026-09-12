@@ -115,6 +115,13 @@ export function formatTerse(result: SessionStartResult): string {
     }
   }
 
+  // ── Pending review (Fix #2, dual-channel capture gate) — ONE line, count
+  // only. Staged content is untrusted-by-design and never rendered here;
+  // review happens through check()'s structured form.
+  if (result.pending_corrections && result.pending_corrections.count > 0) {
+    lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
+  }
+
   // ── Recent activity ───────────────────────────────────────────────────
   if (result.recent.today || result.recent.yesterday || result.recent.older_count > 0) {
     lines.push("");
@@ -176,6 +183,17 @@ export function formatTerse(result: SessionStartResult): string {
   if (result.mirror_available) {
     lines.push("");
     lines.push(`🪞 ${result.mirror_available}`);
+  }
+
+  // ── Unclaimed staging pointer (fix5, 2026-09-11) ──────────────────────
+  // EXACTLY ONE line, only when `_unclaimed/` holds staged sessions
+  // (failed/zero-confidence resolutions, kill-9 rescue cards) awaiting an
+  // explicit claim. Counts only — no staged CONTENT is ever rendered here,
+  // so this line adds nothing new to the fence's threat surface (it sits
+  // inside the fence anyway, same as the mirror pointer above).
+  if (result.unclaimed_cards && result.unclaimed_cards > 0) {
+    lines.push("");
+    lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\` to review and file them.`);
   }
 
   // ── Empty state guidance ──────────────────────────────────────────────

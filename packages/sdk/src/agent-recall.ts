@@ -280,7 +280,12 @@ export class AgentRecall {
    * "feeding results straight into agent context". Result keeps its
    * original typed shape; use `ctx.fencedText` for the prompt-safe string.
    */
-  async recall(query: string, opts?: Omit<SmartRecallInput, "query" | "project"> & { project?: string }): Promise<SmartRecallResult & { fencedText: string }> {
+  // fix4b review LOW-3 (2026-09-12): `freshnessBias` is Omit-ted from the
+  // public typed surface — the legacy multiplicative hot-window boost is
+  // contracted to exactly ONE audited internal caller (the CLI ambient
+  // hook; see SmartRecallInput.freshnessBias). Exposing it here would
+  // silently widen that contract to every SDK consumer's autocomplete.
+  async recall(query: string, opts?: Omit<SmartRecallInput, "query" | "project" | "freshnessBias"> & { project?: string }): Promise<SmartRecallResult & { fencedText: string }> {
     return withFenced(await smartRecall({ query, project: opts?.project ?? this.project, ...opts }));
   }
 

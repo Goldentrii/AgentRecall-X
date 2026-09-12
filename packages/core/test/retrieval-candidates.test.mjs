@@ -104,11 +104,18 @@ describe("retrieval/candidates.ts — readTierCandidates", () => {
       // reproduced inline (journalDirs(slug, true) + readdirSync + .md
       // filter), since journal-search.ts's real function does its own
       // keyword-matching, not a raw file dump.
+      // RETARGETED (fix4, 2026-09-11): the reproduction now applies the SAME
+      // generated-index / reserved-namespace exclusion (`index.md`, `_*`)
+      // the reader gained — an INTENDED divergence from the historical raw
+      // scan: `journal/archive/index.md` is a generated TOC (appended by
+      // archiveSession), not a journal entry, and matching it floods the
+      // competitive surface. The superset guarantee this test protects
+      // (no real ENTRY the old scanners saw is lost) is unchanged.
       const dirs = core.journalDirs(PROJECT, true);
       const expected2 = new Set();
       for (const dir of dirs) {
         if (!fs.existsSync(dir)) continue;
-        for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".md"))) {
+        for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "index.md" && !f.startsWith("_"))) {
           expected2.add(sha256(fs.readFileSync(path.join(dir, f), "utf-8")));
         }
       }

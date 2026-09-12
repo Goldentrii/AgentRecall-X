@@ -107,22 +107,60 @@ confidence rescaler is `RRF_LOCAL_MAX = 0.12`.
 parts):
 
 ```
-palace.internalScore  = keyScore·0.65 + salience·0.35       (salience floored at 0.4)
+palace.internalScore  = keyScore·0.90 + salience·0.10       (salience floored at 0.4;
+                        fix4 S4 2026-09-11 — was 0.65/0.35, rebalanced so query
+                        relevance dominates and salience acts at tiebreaker scale)
 journal.internalScore = recency·0.50  + exactness·0.50      (recency = Ebbinghaus, below)
 insight.internalScore = relevance·0.40 + exactness·0.35 + confirmation·0.25
                         confirmation = min(1, log2(confirmed+1)/3)
+corrections.internalScore = exactness·0.70 + severityBoost·0.15 + proofBoost·0.15
+                        (fix4 S1 2026-09-11; severityBoost: p0→1.0 p1→0.5;
+                        proofBoost = min(1, log2(proof_count+1)/3); no time decay)
 ```
 
-**Post-RRF multipliers** (applied after the merge, *before* final sort):
+**Post-RRF adjustments** (applied after the merge):
 
 ```
-Hot-window recency boost (by item.date):
-  <6h  → ×3.0     <24h → ×2.0     <72h → ×1.3     else ×1
+Hot-window recency boost — REMOVED from default ranking (fix4b 2026-09-12,
+  PRODUCT-BEHAVIOR CHANGE): the old boost multiplied fused scores
+  ×3.0/×2.0/×1.3 for items dated <6h/<24h/<72h. On the default pipeline
+  there is now NO post-fusion freshness signal: fused scores are never
+  freshness-multiplied and exact ties resolve freshness-blind by the fix4
+  authority/insertion order (corrections first). NOTE the journal tier's
+  INTERNAL recency×0.5 Ebbinghaus blend (above) is a per-tier scoring
+  input, not a post-fusion boost — unchanged by fix4b.
+  LEGACY ESCAPE HATCH: `freshnessBias: true` (queryMemory/smartRecall
+  input, default OFF) re-enables the old multiplicative boost verbatim —
+  all defects included (date-only strings bucket by wall-clock time-of-day;
+  palace regex-scraped excerpt dates trusted as timestamps; recent items
+  vault whole relevance bands). Kept for exactly one audited caller: the
+  CLI ambient-injection hook, whose `score ≥ 0.03` floor was calibrated
+  against boosted magnitudes (a lone tier-rank-1 match is 1/61 ≈ 0.0164
+  raw and only clears 0.03 via the ×2/×3 windows). No default surface
+  sets it.
 Beta feedback multiplier (per item, shared across backends):
   E[Beta] = (pos+1)/(pos+neg+2)        // Laplace-smoothed
   multiplier = E[Beta] · 2             // neutral 0.5 → ×1.0
-Graph-walk expansion: linked room gets score = top.score · 0.6
+  (since fix4b this is the ONLY post-RRF score mutation on default paths)
+Graph-walk expansion (fix4 S2 2026-09-11): 1-hop linked rooms are now
+  `alsoLinked` METADATA on the top result — no synthetic result rows, no
+  score (the old form minted stub rows at top.score · 0.6)
 ```
+
+Why the boost had to go (fix4 Escalation §1 + fix4b, measured): RRF
+compresses adjacent-rank score differences to ~1.6% (`1/(60+r)` vs
+`1/(61+r)`), so ANY multiplier > ~1.02 vaulted an off-topic-but-recent item
+over every un-boosted on-topic result — in a store written to daily, every
+query's top-5 filled with the last 72h of diary sections regardless of
+relevance. Golden-query eval (twin-clone control protocol, 2026-09-12):
+55.0% top-5 hit-rate with the boost, 75.0% neutralized. A gentler
+within-tie-band freshness tie-break (the fix4b brief's primary design D1)
+was implemented and measured first: 65.0% — post one-doc-one-vote,
+cross-tier EXACT ties at 1/(60+r) are the common case, and hotness-over-
+authority handed those bands to <72h diary lines over the owner's own
+captured rules. Neutralization shipped per the brief's fallback clause;
+the freshness *feature* ("what did we just do") survives only on the
+opted-in ambient surface.
 
 ### Source-specific Ebbinghaus decay
 
@@ -151,8 +189,9 @@ label: ≥0.66 high · ≥0.40 medium · ≥0.20 low · else weak     // CONFIDE
 ```
 
 The bridge gate reads the **scoring-time** `calibrated` value, *not* the
-post-boost score, on purpose (the ×3/×2/×1.3 hot-window and ×≤2 Beta multipliers
-would otherwise fool the gate — see Risk #8 in `confidence.ts`).
+post-boost score, on purpose (the ×≤2 Beta multiplier — since fix4b the only
+post-RRF score mutation — would otherwise fool the gate; see Risk #8 in
+`confidence.ts`).
 
 ### Inputs
 
@@ -172,12 +211,18 @@ Free-text query + project; per-source candidate lists; an on-disk
 - **Ebbinghaus decay: GROUNDED form, HAND-TUNED constants.** `R=e^(-t/S)` is the
   cited forgetting curve. The per-source `S` values (`2 / 180 / 9999`) are
   **assigned by category intuition, not fit** to AgentRecall recall outcomes.
-- **The per-source internal weights** (`0.65/0.35`, `0.50/0.50`,
-  `0.40/0.35/0.25`), the **salience floor 0.4**, the **hot-window ×3/×2/×1.3**,
-  the **graph-walk ×0.6**, and the **confidence divisors 0.12 / 0.049**:
+- **The per-source internal weights** (`0.90/0.10`, `0.50/0.50`,
+  `0.40/0.35/0.25`, `0.70/0.15/0.15`), the **salience floor 0.4**, and the
+  **confidence divisors 0.12 / 0.049**:
   all **HAND-TUNED**. They are reasonable and internally documented, but none is
   fit to a labeled relevance set. The divisors are explicitly called "tunable
   constants — NOT trusted gates" in `confidence.ts`.
+- **Hot-window removal: GROUNDED** — the only constant-change in this file
+  backed by a controlled measurement (golden-query eval, twin clones, same
+  pass: control 55.0% hit-rate with the boost, 75.0% neutralized, D1
+  tie-break variant 65.0%; fix4 Escalation §1 + fix4b report 2026-09-12).
+  The `freshnessBias` legacy path keeps the old **HAND-TUNED ×3/×2/×1.3 and
+  6/24/72h window edges** verbatim — labels unchanged there.
 
 ### Hopfield: present as a primitive, **NOT wired into the default recall path**
 
@@ -199,6 +244,49 @@ primitive that nothing on the default recall path calls.** `smartRecall()` →
 with the Loop-1 README correction: **do not describe Hopfield as part of how
 recall ranks today.** It is available for an opt-in re-rank pass that is not
 enabled by default.
+
+### fix7 (2026-09-12): the OPT-IN semantic leg — weighted RRF, one more list
+
+Behind `AGENT_RECALL_EMBEDDINGS=1` (or config.json `"embeddings_enabled":
+true`; default OFF, flag-off byte-identical to the above), a FIFTH ranked
+list joins the same `applyRRF` fusion: the store's trust-filtered chunks
+ranked by cosine against a locally-inferred query embedding
+(`retrieval/semantic-leg.ts`; local ONNX model, zero network on the recall
+path). The generalized contribution is **weighted RRF** — still strictly
+rank-based:
+
+```
+RRF_score(doc) = Σ_legs  w_leg / (k + rank_leg(doc))     // applyRRF(items, map, weight)
+  w_leg = 1.0 for every lexical tier AND (measured) for the semantic leg
+  semantic leg length = SEMANTIC_TOP_K = 8 (one vote per document/section,
+  per-model MIN_COSINE floor)
+```
+
+Same-id items found both ways fold into ONE entry with summed contributions
+(a correction that matches lexically at tier-rank 1 and semantically at leg-
+rank 1 scores `2/61`). Journal semantic items ADOPT the id of the best
+lexical item sharing their exact `"${date} / ${section}"` title before
+fusion (fix7 review H1 — lexical journal ids are per-hit and unreproducible
+from a chunk), so the fold holds for every tier; on any fold the LEXICAL
+item's fields win regardless of insertion order (review H2 — match-anchored
+excerpt, real line, `foundBySemantic` reserved for semantic-ONLY
+discoveries). Cosine is used ONLY to order the leg's own list — never
+summed with any other score (the Fix-1 incompatible-scale rule holds).
+
+Two fusion parameters were set by golden-eval measurement, not design
+(fix7 report, placement/weight matrix):
+- `SEMANTIC_RRF_WEIGHT = 1.0` — weights 1.1/1.3 vault the entire leg above
+  the `1/(60+r)` lexical-single band and FLOOD top-5 (three measured
+  regressions, one protected). Do not raise without re-running the battery.
+- `SEMANTIC_AFTER_CORRECTIONS = true` — the leg's items enter the fusion
+  map right after the corrections tier, so at exact fused-score ties they
+  outrank palace/journal/insight lexical singles while the owner's captured
+  rules keep top tie authority (map insertion order IS the fix4b tie-break).
+
+Measured (twin clones, 2026-09-12, post-review-fix certified pass): flag
+OFF 75.0% top-5 hit-rate (per-query identical to fix4b), flag ON with the
+default model (paraphrase-multilingual-MiniLM-L12-v2) 90.0%, zero
+regressions, all six protected hits hold; warm p95 ≈150 ms.
 
 ---
 

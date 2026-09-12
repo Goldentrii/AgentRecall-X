@@ -62,13 +62,23 @@ function runCli(args, { stdin, env } = {}) {
   });
 }
 
-/** Read every correction record JSON file written for a project under root. */
+/**
+ * Read every captured record JSON file written for a project under root.
+ *
+ * Fix #2 retarget (2026-09-11, dual-channel capture gate): hook-correction
+ * captures are STAGED to corrections/_pending/ — never written to the active
+ * corrections ledger — so this helper now reads the PENDING store. Every
+ * S-M1 security assertion below (injected tail never persisted, severity
+ * computed on the trigger clause alone, no over-truncation, no silent drop)
+ * applies verbatim to the staged records; the "hook never reaches the active
+ * ledger" flip itself is pinned first-class in pending-hook-channel.test.mjs.
+ */
 function readCorrectionRecords(root, project) {
-  const dir = path.join(root, "projects", project, "corrections");
+  const dir = path.join(root, "projects", project, "corrections", "_pending");
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".json") && !f.startsWith("_"))
     .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8")));
 }
 

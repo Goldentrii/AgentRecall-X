@@ -18,6 +18,7 @@ import { extractSection } from "../helpers/sections.js";
 import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
 import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
+import { listPendingCorrections } from "../storage/pending.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { predictCorrection } from "./predict-correction.js";
 import { extractKeywords } from "../helpers/auto-name.js";
@@ -27,6 +28,7 @@ import { applyScope } from "../retrieval/scope.js";
 import { hasCaptureLogs, readRecentCaptures, type CaptureLogEntry } from "../helpers/journal-files.js";
 import { readRecentSessions, formatAgo } from "../storage/recency-index.js";
 import { wmList, wmRead, guessSlugFromWmLines, WM_LIVE_WINDOW_MS, rescueOrphanedWorkingMemory } from "../storage/working-memory.js";
+import { archiveExpiredUnclaimed, countUnclaimedSessions } from "../storage/unclaimed.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readSupabaseConfig } from "../supabase/config.js";
@@ -357,6 +359,17 @@ export interface SessionStartResult {
   recent_captures: Array<{ date: string; question: string; answer: string }>;
   watch_for: WatchForPattern[];
   corrections: SlimCorrection[];
+  /**
+   * Fix #2 (dual-channel capture gate, 2026-09-11) — captures awaiting
+   * review in corrections/_pending/ (staged string-form corrections, hook
+   * captures, incomplete structured input, failed insights). COUNT + up to 3
+   * ids ONLY — staged CONTENT is deliberately never rendered at session_start
+   * (pending is an untrusted staging area; review happens through check()'s
+   * structured form, whose output is fenced). OMITTED when empty, matching
+   * the absent-when-empty convention (predicted_risks / mirror_available).
+   * Renderers surface this as ≤2 compact lines.
+   */
+  pending_corrections?: { count: number; ids: string[] };
   resume: {
     last_date: string | null;
     last_trajectory: string | null;
@@ -435,6 +448,15 @@ export interface SessionStartResult {
    * project adds ZERO bytes to the session_start payload budget.
    */
   mirror_available?: string;
+  /**
+   * fix5 (2026-09-11) — number of `_unclaimed/` staged sessions awaiting an
+   * explicit claim (failed/zero-confidence resolutions, kill-9 rescue
+   * cards). OMITTED (undefined) when zero — the established absent-when-
+   * empty contract shared by predicted_risks / mirror_available / ab_arm —
+   * so a clean store pays zero payload bytes. Renderers surface at most ONE
+   * line for this ("N unclaimed session cards await claim — ar claim --list").
+   */
+  unclaimed_cards?: number;
   empty_state?: string;
   /**
    * C4 A/B experiment — which arm this session ran.
@@ -462,6 +484,11 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   resetOwnedFiles();
 
   const slug = await resolveProject(input.project);
+  // fix5 (2026-09-11): ensurePalaceInitialized no-ops for the `_unclaimed`
+  // staging sentinel internally (palace/rooms.ts) — a failed resolution must
+  // not scaffold a palace anywhere, and everything below degrades to empty
+  // reads for the sentinel. Call left unconditional so the gate lives in ONE
+  // place (the function itself), not per-caller.
   ensurePalaceInitialized(slug);
 
   // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
@@ -682,6 +709,21 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   } catch {
     // rescueOrphanedWorkingMemory never throws — guard kept so a future
     // change to that contract can never break session_start.
+  }
+
+  // fix5 (2026-09-11) — _unclaimed lifecycle, run at the SAME sweep point as
+  // the orphan rescue above (session_start is the one lifecycle moment every
+  // host reaches — hooks and hook-less alike): (1) the 14-day TTL moves
+  // expired staged sessions to _unclaimed/_archive/ (never deletes), then
+  // (2) the surviving staged sessions are counted for the single claim-prompt
+  // line below. Both are best-effort and never throw by their own contracts;
+  // the guard mirrors the rescue call's.
+  let unclaimedCount = 0;
+  try {
+    archiveExpiredUnclaimed();
+    unclaimedCount = countUnclaimedSessions();
+  } catch {
+    unclaimedCount = 0;
   }
 
   // 4b. Continuity — cross-project recency card (F2, continuity wave 2026-07-31).
@@ -976,6 +1018,24 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // A/B OFF arm: corrections is an empty array — the agent never sees them.
   const correctionsSlim = applyCorrectionBudget(rawCorrections.map(toSlimCorrection));
   const corrections: SlimCorrection[] = abArm === "off" ? [] : correctionsSlim;
+
+  // 7b. Fix #2 (dual-channel capture gate, 2026-09-11): pending-review
+  // counter. listPendingCorrections runs the TTL/cap sweep, so an expired
+  // capture never lingers in the count. COUNT + ids only — never staged
+  // content (see the result field's doc comment). Correction-derived, so the
+  // A/B OFF arm suppresses it like every other correction surface.
+  // Best-effort: a pending-store failure must never break orientation.
+  let pendingCorrections: SessionStartResult["pending_corrections"];
+  if (abArm !== "off") {
+    try {
+      const staged = await listPendingCorrections(slug);
+      if (staged.length > 0) {
+        pendingCorrections = { count: staged.length, ids: staged.slice(0, 3).map((p) => p.id) };
+      }
+    } catch {
+      // swallow — orientation must never fail on the staging store
+    }
+  }
 
   // 8. Resume block — structured re-entry briefing for returning sessions
   const sessionsCount = olderCount + (yesterdayBrief ? 1 : 0) + (todayBrief ? 1 : 0);
@@ -1336,6 +1396,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     recent_captures: capturesBudgeted,
     watch_for,
     corrections,
+    ...(pendingCorrections ? { pending_corrections: pendingCorrections } : {}),
     resume,
     behavior_rules: rulesBudgeted,
     dream_health: dreamHealth,
@@ -1352,6 +1413,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
       ? (({ person: _omitEmptyPerson, ...rest }: RecognitionPayload): RecognitionPayload => rest)(recognition)
       : recognition,
     mirror_available: mirrorAvailable,
+    // fix5: absent-when-zero — see the field's doc comment above.
+    unclaimed_cards: unclaimedCount > 0 ? unclaimedCount : undefined,
     empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
     // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
     ab_arm: abArm ?? undefined,

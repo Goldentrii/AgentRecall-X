@@ -172,6 +172,13 @@ def compute_ghost_dirs(canonical_slugs: set):
     for entry in proj_base.iterdir():
         if entry.name.startswith("."):
             continue
+        # fix5 (2026-09-11): the leading-underscore namespace is reserved
+        # infrastructure (`_unclaimed` staging, `_archive`, `_index.md`-class
+        # files) — excluded BY NAME from the ghost census, same class rule
+        # the TypeScript core applies (class-not-instance: one underscore
+        # rule, never one branch per known dir).
+        if entry.name.startswith("_"):
+            continue
         if not entry.is_dir():
             continue
         if entry.name not in canonical_slugs:
