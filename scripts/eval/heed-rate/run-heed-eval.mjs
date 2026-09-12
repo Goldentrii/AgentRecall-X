@@ -114,7 +114,14 @@ async function callModel({ apiKey, model, system, user, budget }) {
   throw lastErr ?? new Error("request failed");
 }
 
-async function liveRun(fixture, apiKey, outFile) {
+/**
+ * Exported for transport variants (run-heed-eval-bedrock.mjs): `callModelImpl`
+ * defaults to the Anthropic-API transport above and must honor the same
+ * contract — count every attempt against `budget`, throw with
+ * code:"CAP_EXHAUSTED" when the cap is hit. Loop/scoring/summary logic is
+ * shared verbatim; only the transport is injectable.
+ */
+export async function liveRun(fixture, apiKey, outFile, callModelImpl = callModel) {
   const budget = { used: 0, cap: fixture.max_requests };
   const results = [];
   let capExhausted = false;
@@ -125,7 +132,7 @@ async function liveRun(fixture, apiKey, outFile) {
     for (const armName of ["with_memory", "without_memory"]) {
       const arm = arms[armName];
       try {
-        const { text, usage } = await callModel({ apiKey, model: fixture.model, system: arm.system, user: arm.user, budget });
+        const { text, usage } = await callModelImpl({ apiKey, model: fixture.model, system: arm.system, user: arm.user, budget });
         const verdict = evaluatePredicate(probe.predicate, text);
         row.arms[armName] = { pass: verdict.pass, failures: verdict.failures, response: text, usage };
       } catch (e) {

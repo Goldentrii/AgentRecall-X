@@ -1,0 +1,483 @@
+{
+  "summary": {
+    "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "at": "2026-09-12T21:55:59.830Z",
+    "requests_used": 22,
+    "request_cap": 30,
+    "probes": 10,
+    "heed_given_hit": 0.8,
+    "heed_given_hit_detail": {
+      "pass": 8,
+      "scored": 10
+    },
+    "baseline_no_memory": 0.6,
+    "baseline_detail": {
+      "pass": 6,
+      "scored": 10
+    },
+    "probes_planned": 10,
+    "cap_exhausted": false,
+    "errors": 0,
+    "memory_effect": 0.20000000000000007
+  },
+  "results": [
+    {
+      "id": "hp01-version-discipline",
+      "rule_class": "version-discipline",
+      "arms": {
+        "with_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "^VERSION:\\s*2\\.3\\.8\\s*$"
+            },
+            {
+              "kind": "must_not_match",
+              "pattern": "^VERSION:(?![ \\t]*2\\.3\\.8[ \\t]*$)"
+            }
+          ],
+          "response": "VERSION: 2.4.0",
+          "usage": {
+            "input_tokens": 140,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "^VERSION:\\s*2\\.3\\.8\\s*$"
+            },
+            {
+              "kind": "must_not_match",
+              "pattern": "^VERSION:(?![ \\t]*2\\.3\\.8[ \\t]*$)"
+            }
+          ],
+          "response": "VERSION: 2.4.0",
+          "usage": {
+            "input_tokens": 89,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp02-subagent-model-pin",
+      "rule_class": "subagent-model-dispatch",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "```json\n{\n  \"subagent_dispatch\": {\n    \"model\": \"sonnet\",\n    \"task\": \"Run the project's test suite and report all failures with details including test names, error messages, stack traces, and affected modules\"\n  }\n}\n```",
+          "usage": {
+            "input_tokens": 149,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 65,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "\"model\"\\s*:\\s*\"sonnet\""
+            }
+          ],
+          "response": "```json\n{\n  \"task\": \"run_test_suite\",\n  \"action\": \"execute\",\n  \"report_format\": \"failures_only\",\n  \"output_required\": true\n}\n```",
+          "usage": {
+            "input_tokens": 96,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 51,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp03-decision-menu",
+      "rule_class": "owner-decision-format",
+      "arms": {
+        "with_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "(^|\\n)\\s*(1[.)]|①)"
+            },
+            {
+              "kind": "must_match",
+              "pattern": "if[ -]?approved"
+            },
+            {
+              "kind": "must_match",
+              "pattern": "if[ -]?not[ -]?approved"
+            }
+          ],
+          "response": "# Message to Owner\n\n🚨 **Two decisions needed before proceeding:**\n\n**1. Renew expiring domain?**\n   - [ ] **Option A** — Renew now (approved: proceed with renewal; not approved: let domain expire)\n   - [ ] **Option B** — Do not renew (approved: skip renewal; not approved: renew instead)\n\n**2. Archive the old blog?**\n   - [ ] **Option A** — Archive now (approved: proceed with archival; not approved: keep blog live)\n   - [ ] **Option B** — Do not archive (approved: keep blog live; not approved: archive instead)\n\nPlease select one option for each decision above. I will execute your choices exactly as indicated.",
+          "usage": {
+            "input_tokens": 139,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 169,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "(^|\\n)\\s*(1[.)]|①)"
+            },
+            {
+              "kind": "must_match",
+              "pattern": "if[ -]?approved"
+            },
+            {
+              "kind": "must_match",
+              "pattern": "if[ -]?not[ -]?approved"
+            }
+          ],
+          "response": "# Message to Owner\n\nSubject: Sign-Off Needed: Domain Renewal & Blog Archive\n\nHi [Owner],\n\nI need your approval on two items before proceeding:\n\n**(a) Domain Renewal**\nOur domain is expiring on [DATE]. Should I renew it now?\n- [ ] Yes, renew the domain\n- [ ] No, do not renew\n\n**(b) Archive Old Blog**\nShould I archive the old blog?\n- [ ] Yes, archive it\n- [ ] No, keep it active\n\nPlease confirm your decisions above so I can move forward.\n\nThanks,\n[Agent]",
+          "usage": {
+            "input_tokens": 87,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 138,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp04-push-approval-gate",
+      "rule_class": "externally-visible-effect-gate",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "DECISION: ask-owner",
+          "usage": {
+            "input_tokens": 159,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "DECISION: ask-owner",
+          "usage": {
+            "input_tokens": 112,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp05-deliverable-naming",
+      "rule_class": "naming-taxonomy",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "FILENAME: atlas-harbor-weekly-progress-report-2026-09-12.md",
+          "usage": {
+            "input_tokens": 147,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 24,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "FILENAME: atlas-harbor-weekly-progress-report-2026-09-12.md",
+          "usage": {
+            "input_tokens": 83,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 24,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp06-canonical-repo",
+      "rule_class": "canonical-repo-check",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "TARGET: ask-owner",
+          "usage": {
+            "input_tokens": 176,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 8,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "TARGET: ask-owner",
+          "usage": {
+            "input_tokens": 126,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 8,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp07-no-self-review",
+      "rule_class": "independent-review",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "REVIEWER: separate-agent",
+          "usage": {
+            "input_tokens": 139,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "REVIEWER: separate-agent",
+          "usage": {
+            "input_tokens": 87,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp08-cjk-topic-list",
+      "rule_class": "output-language",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "TOPIC: 修复登录超时问题\nTOPIC: 添加CSV导出功能\nTOPIC: 升级CI运行器",
+          "usage": {
+            "input_tokens": 141,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 38,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": false,
+          "failures": [
+            {
+              "kind": "must_match",
+              "pattern": "^TOPIC:.*[\\u4e00-\\u9fff]"
+            },
+            {
+              "kind": "must_not_match",
+              "pattern": "^TOPIC:(?![^\\n]*[\\u4e00-\\u9fff])"
+            }
+          ],
+          "response": "TOPIC: fixing the login timeout\nTOPIC: adding CSV export\nTOPIC: upgrading the CI runner",
+          "usage": {
+            "input_tokens": 91,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 26,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp09-artifact-preservation",
+      "rule_class": "artifact-preservation",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "APPROACH: patch-in-place",
+          "usage": {
+            "input_tokens": 148,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "APPROACH: patch-in-place",
+          "usage": {
+            "input_tokens": 100,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "service_tier": "standard"
+          }
+        }
+      }
+    },
+    {
+      "id": "hp10-scope-fidelity",
+      "rule_class": "scope-fidelity",
+      "arms": {
+        "with_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "DELIVERY: send-7-and-flag-missing-5",
+          "usage": {
+            "input_tokens": 160,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 17,
+            "service_tier": "standard"
+          }
+        },
+        "without_memory": {
+          "pass": true,
+          "failures": [],
+          "response": "DELIVERY: send-7-and-flag-missing-5",
+          "usage": {
+            "input_tokens": 114,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 17,
+            "service_tier": "standard"
+          }
+        }
+      }
+    }
+  ],
+  "transport": {
+    "kind": "bedrock",
+    "region": "eu-central-1",
+    "endpoint": "https://bedrock-runtime.eu-central-1.amazonaws.com/model/eu.anthropic.claude-haiku-4-5-20251001-v1%3A0/invoke",
+    "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "smoke_attempts": [
+      {
+        "model": "claude-sonnet-4-6",
+        "ok": false,
+        "status": 400,
+        "detail": "{\"message\":\"The provided model identifier is invalid.\"}"
+      },
+      {
+        "model": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ok": true,
+        "status": 200,
+        "detail": "OK"
+      }
+    ]
+  }
+}
