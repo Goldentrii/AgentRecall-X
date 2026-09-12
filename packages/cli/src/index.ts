@@ -112,6 +112,14 @@ META:
   ar knowledge write --category <cat> --title "t" --what "w" --cause "c" --fix "f" [--severity critical|important|minor]
   ar knowledge read [--category <cat>]
 
+DREAM (nightly pipeline — deterministic admission math, fix10):
+  ar dream admit --file <candidates.json> [--run-date YYYY-MM-DD] [--journal-files N] [--journal-bytes N] [--corrections-new N]
+      Admit-then-vote: ≥3 distinct observation-days in 7d promotes (same bar as the
+      online path); 1–2x is admitted as a candidate; every decision carries a reason.
+      Writes the night's yield record to <root>/dreams/yield-YYYY-MM-DD.json.
+  ar dream health     Uptime + yield health (zero-yield streak, cause classification)
+  ar dream sop        Print the versioned Step-3 SOP text for the dream prompt repoint
+
 OUTCOMES (dream-audit verdicts — C3b):
   ar outcomes audit-candidates [--project <slug>] [--date YYYY-MM-DD]
       List corrections retrieved on that date with no verdict yet (JSON array).
@@ -645,6 +653,94 @@ async function main(): Promise<void> {
         skill_drafts: drafts,
         prompt,
       });
+      break;
+    }
+    case "dream": {
+      // fix10 (2026-09-12): deterministic admission math for the nightly
+      // dreaming pipeline. The SOP extracts candidates (LLM judgment); THIS
+      // command decides admission/promotion (tested code) and writes the
+      // night's yield record so zero-output nights can never run silent.
+      const sub = rest[0];
+      if (sub === "admit") {
+        const file = getFlag("--file", rest);
+        const inlineJson = getFlag("--json", rest);
+        if (!file && !inlineJson) {
+          process.stderr.write(
+            "Usage: ar dream admit --file <candidates.json> | --json '<json>'\n" +
+            "  [--run-date YYYY-MM-DD] [--journal-files N] [--journal-bytes N] [--corrections-new N]\n" +
+            "Input: array of candidates, or {\"candidates\": [...]}.\n" +
+            "Candidate: {\"title\": \"...\", \"observations\": [{\"date\": \"YYYY-MM-DD\", \"project\": \"slug\"}], \"applies_when\": [\"kw\"], \"evidence\": \"...\"}\n",
+          );
+          process.exit(1);
+        }
+        let parsed: unknown;
+        try {
+          const raw = file ? fs.readFileSync(file, "utf-8") : inlineJson!;
+          parsed = JSON.parse(raw);
+        } catch (e: unknown) {
+          process.stderr.write(`Error: could not read/parse candidates JSON: ${e instanceof Error ? e.message : String(e)}\n`);
+          process.exit(1);
+        }
+        const candidates = Array.isArray(parsed)
+          ? parsed
+          : (parsed as { candidates?: unknown[] })?.candidates;
+        if (!Array.isArray(candidates)) {
+          process.stderr.write("Error: input must be a JSON array of candidates or {\"candidates\": [...]}\n");
+          process.exit(1);
+        }
+        // Untrusted-input validation BEFORE any store write: every entry must
+        // carry a string title and an observations array.
+        const shapeErrors: string[] = [];
+        candidates.forEach((c, i) => {
+          const cand = c as { title?: unknown; observations?: unknown };
+          if (typeof cand?.title !== "string" || cand.title.trim() === "") shapeErrors.push(`candidate[${i}]: missing/empty title`);
+          if (!Array.isArray(cand?.observations)) shapeErrors.push(`candidate[${i}]: observations must be an array`);
+        });
+        if (shapeErrors.length > 0) {
+          process.stderr.write(`Error: invalid candidates:\n  ${shapeErrors.join("\n  ")}\n`);
+          process.exit(1);
+        }
+        const runDateStr = getFlag("--run-date", rest);
+        let runDate: Date | undefined;
+        if (runDateStr) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(runDateStr)) {
+            process.stderr.write(`Error: --run-date must be YYYY-MM-DD (got: ${runDateStr})\n`);
+            process.exit(1);
+          }
+          const [y, m, d] = runDateStr.split("-").map(Number);
+          runDate = new Date(y, m - 1, d, 2, 0, 0); // the dream's canonical 2 AM
+        }
+        const num = (flag: string): number | undefined => {
+          const v = getFlag(flag, rest);
+          if (v === undefined) return undefined;
+          const n = parseInt(v, 10);
+          return Number.isNaN(n) ? undefined : n;
+        };
+        const corpus = {
+          ...(num("--journal-files") !== undefined ? { journal_files: num("--journal-files") } : {}),
+          ...(num("--journal-bytes") !== undefined ? { journal_bytes: num("--journal-bytes") } : {}),
+          ...(num("--corrections-new") !== undefined ? { corrections_new: num("--corrections-new") } : {}),
+        };
+        const report = await core.runDreamAdmission(candidates as import("agent-recall-core").DreamCandidate[], {
+          ...(runDate ? { runDate } : {}),
+          ...(Object.keys(corpus).length > 0 ? { corpus } : {}),
+        });
+        // P1 fence: decisions carry candidate titles + promoted insight titles
+        // (memory-derived), same class as `ar consolidate`'s payload.
+        outputFenced(report);
+      } else if (sub === "health") {
+        output(core.getDreamHealth());
+      } else if (sub === "sop") {
+        output(core.DREAM_STEP3_SOP);
+      } else {
+        process.stderr.write(
+          `Unknown dream subcommand: ${sub ?? "(none)"}\nUsage:\n` +
+          "  ar dream admit --file <candidates.json> [--run-date YYYY-MM-DD] [--journal-files N] [--journal-bytes N] [--corrections-new N]\n" +
+          "  ar dream health\n" +
+          "  ar dream sop\n",
+        );
+        process.exit(1);
+      }
       break;
     }
     case "blind-spots": {
