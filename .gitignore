@@ -37,3 +37,9 @@ scripts/eval/fixtures/loop8-labeled-rejects.json
 # independent review H1, 2026-09-11); the runner + README ride along until
 # an anonymized public variant is deliberately prepared.
 scripts/eval/golden-queries/
+
+# H1 class guard (2026-09-12): internal working reports quoting live-store
+# excerpts / private rule paraphrases — never commit to this PUBLIC repo.
+reports/agentrecall-*-2026-09-1*.md
+reports/2026-09-1*-*research.md
+reports/agentrecall-evaluation-standard-*.md
