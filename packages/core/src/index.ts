@@ -714,6 +714,32 @@ export type {
   OutcomesRebuildCorrectionDiff,
   OutcomesRebuildResult,
 } from "./storage/corrections.js";
+export { readOutcomeEventsByCorrection } from "./storage/corrections.js";
+
+// S0 heed-rate evidence tiers (fix12 hygiene, 2026-09-12) — canonical home of
+// the ADJUDICATED/LOOSE classification authored in scripts/eval/heed-rate
+// (fix11). `ar stats`, rmr-report and the eval all consume THIS implementation
+// (lib.mjs re-exports it) — single source of truth, never fork.
+export {
+  classifyEvent,
+  classifyCorrection,
+  aggregate as aggregateHeedTiers,
+  dayOf as heedTierDayOf,
+  ADJUDICATED_HEED,
+  ADJUDICATED_VIOLATION,
+  LOOSE_HEED,
+  LOOSE_VIOLATION,
+} from "./storage/heed-tiers.js";
+export type {
+  HeedTierEvent,
+  HeedEventTier,
+  HeedTierVerdict,
+  HeedTierCounts,
+  HeedCorrectionResult,
+  HeedTierAggregate,
+  HeedAggregateRow,
+  HeedAggregate,
+} from "./storage/heed-tiers.js";
 
 // Wave 5 — corrections-prediction (north-star) + compression remainder
 export { deriveBlindSpots } from "./helpers/blind-spots.js";

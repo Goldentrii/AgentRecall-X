@@ -55,6 +55,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+// Evidence-tiered heed split (fix12 hygiene, 2026-09-12): the ADJUDICATED vs
+// LOOSE classification is the canonical core implementation
+// (packages/core/src/storage/heed-tiers.ts) re-exported through the heed-rate
+// eval's lib.mjs — reuse, never fork. Requires a built core.
+import { classifyCorrection, aggregate as aggregateHeedTiers } from "./heed-rate/lib.mjs";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Config
@@ -625,7 +630,7 @@ function fmtNum(x) {
   return x === null ? "n/a" : String(x);
 }
 
-function renderReport(pooled, perProject, root) {
+function renderReport(pooled, perProject, root, heedTiers) {
   const lines = [];
   lines.push("══════════════════════════════════════════════════════════════");
   lines.push("  AgentRecall — RMR + Heed-Rate Baseline Report");
@@ -650,7 +655,28 @@ function renderReport(pooled, perProject, root) {
   lines.push(`  RMR_proxy (corrections projects)  ${fmtNum(pooled.rmr_proxy_corrections_projects)} per 100 sessions  (${pooled.recurrence_events}/${pooled.sessions_corrections_projects})`);
   lines.push(`  RMR_proxy (ALL sessions)          ${fmtNum(pooled.rmr_proxy_all_sessions)} per 100 sessions  (${pooled.recurrence_events}/${pooled.sessions_all_projects})`);
   lines.push("");
-  lines.push("  ── HEED METRICS: OLD VS NEW (C3 semantic break) ────────────");
+  // Evidence-tiered headline (fix12 hygiene, 2026-09-12): the single
+  // heeded/(heeded+recurred) number is bookkeeping, not evidence — present the
+  // symmetric ADJUDICATED/LOOSE split as the headline; the legacy pre/post-C3
+  // decomposition below is kept as history.
+  if (heedTiers) {
+    const pct = (r) => (r === null || r === undefined ? "n/a" : `${(r * 100).toFixed(1)}%`);
+    const a = heedTiers.adjudicated;
+    const l = heedTiers.loose;
+    const defFrac = heedTiers.kpi_formula.heeded_default_fraction;
+    lines.push("  ── HEED METRICS — EVIDENCE-TIERED (headline) ───────────────");
+    lines.push("  (single-number heed_rate is bookkeeping, not evidence — read the range)");
+    lines.push("  ADJUDICATED (evidence-cited both directions: dream-audit / check-action):");
+    lines.push(`    correction-level         ${pct(a.corrections.rate)}  (${a.corrections.heeded} heeded / ${a.corrections.mixed} mixed / ${a.corrections.violated} violated · n=${a.corrections.denominator})`);
+    lines.push(`    event-level              ${pct(a.events.rate)}  (${a.events.heeded} heeded vs ${a.events.recurred} recurred)`);
+    lines.push("  LOOSE (+ default-heeded credit, + self-report markers — event-level = legacy KPI formula):");
+    lines.push(`    correction-level         ${pct(l.corrections.rate)}  (${l.corrections.heeded} heeded / ${l.corrections.mixed} mixed / ${l.corrections.violated} violated · n=${l.corrections.denominator})`);
+    lines.push(`    event-level              ${pct(l.events.rate)}  (${l.events.heeded} vs ${l.events.recurred}${defFrac !== null && defFrac !== undefined ? ` · ${(defFrac * 100).toFixed(1)}% of heeded is pre-C3 default credit` : ""})`);
+    lines.push(`    surfaced corrections     ${heedTiers.surfaced}  (${heedTiers.no_evidence.no_adjudicated_evidence} without adjudicated evidence either way${heedTiers.no_evidence.share_without_adjudicated !== null ? ` = ${(heedTiers.no_evidence.share_without_adjudicated * 100).toFixed(1)}%` : ""})`);
+    lines.push("    classification: packages/core/src/storage/heed-tiers.ts (via scripts/eval/heed-rate/lib.mjs)");
+    lines.push("");
+  }
+  lines.push("  ── HEED METRICS: OLD VS NEW (C3 semantic break — legacy decomposition, kept for history) ────────────");
   lines.push("  PRE-C3 (instrument-biased, default-heeded — historical data before 2026-07-03):");
   lines.push(`    HEED_RATE [pre-C3]         ${fmtRate(pooled.heed_rate)}  (${pooled.heed_yes}/${pooled.heed_yes + pooled.heed_no})`);
   if (pooled.heed_rate !== null) {
@@ -669,6 +695,12 @@ function renderReport(pooled, perProject, root) {
   }
   lines.push(`    heeded (evidence):         ${pooled.c3_heeded_evidence}  (check-action trigger + no recurrence)`);
   lines.push(`    triggered (consulted):     ${pooled.c3_triggered}  (check-action match, heeded/recurred TBD at session-end)`);
+  if ((pooled.c3_triggered ?? 0) === 0) {
+    lines.push("    ⚠ online heed channel DORMANT: 0 \"triggered\" events ever — check/check-action is not");
+    lines.push("      exercised by the consuming harness, so post-C3 heed verdicts cannot come from the online");
+    lines.push("      path; adjudicated evidence is dream-audit-only (C3b). Do not read the resulting absence");
+    lines.push("      of recurrences as compliance. (emission site: core/tools-logic/check-action.ts)");
+  }
   lines.push(`    unknown:                   ${pooled.c3_unknown}  (retrieved, no trigger/topical evidence)`);
   lines.push(`    not_triggered:             ${pooled.c3_not_triggered}  (confirmed irrelevant this session)`);
   lines.push(`    dream_audit verdicts:      ${pooled.c3_dream_audit ?? 0}  (C3b: corrections with a dream-audit: evidence prefix)`);
@@ -766,6 +798,31 @@ function main() {
   );
 
   const pooled = aggregatePooled(perProject, sessionsAllProjects);
+
+  // Evidence-tiered heed split (headline presentation). Built from the raw
+  // per-correction event lists so both levels (correction + event) carry the
+  // symmetric ADJUDICATED/LOOSE tiering; the LOOSE event-level rate equals the
+  // legacy pooled heed formula by construction (numerator decomposition in
+  // kpi_formula shows how much of it is pre-C3 default-heeded credit).
+  const heedTierRows = [];
+  for (const p of projects) {
+    const eventsById = new Map();
+    for (const evt of readOutcomes(root, p)) {
+      if (!evt || typeof evt.correction_id !== "string") continue;
+      let arr = eventsById.get(evt.correction_id);
+      if (!arr) { arr = []; eventsById.set(evt.correction_id, arr); }
+      arr.push(evt);
+    }
+    for (const rec of readCorrections(root, p)) {
+      heedTierRows.push({
+        id: rec.id,
+        project: p,
+        retracted: rec.active === false,
+        result: classifyCorrection(eventsById.get(rec.id) ?? []),
+      });
+    }
+  }
+  const heedTiers = aggregateHeedTiers(heedTierRows);
 
   // Cross-check: verify heeded_count_sum matches heed_yes from outcomes log.
   // Divergence is flagged but does NOT fail the script — both numbers are reported.
@@ -903,6 +960,14 @@ function main() {
     all_project_dirs_scanned: allProjectDirs.length,
     per_project: perProject,
     pooled,
+    // Evidence-tiered heed split (fix12 hygiene, 2026-09-12) — the headline
+    // presentation. ADJUDICATED = evidence-cited both directions (dream-audit /
+    // check-action); LOOSE = + default-heeded credit + self-report markers
+    // (event-level LOOSE equals the legacy heed_rate formula by construction;
+    // kpi_formula decomposes its numerator). Classification is canonical in
+    // packages/core/src/storage/heed-tiers.ts, consumed via
+    // scripts/eval/heed-rate/lib.mjs — never fork.
+    heed_evidence_tiers: heedTiers,
   };
 
   // The artifact JSON (file AND --json stdout) never carries local absolute
@@ -924,7 +989,7 @@ function main() {
   if (asJson) {
     process.stdout.write(artifactJson + "\n");
   } else {
-    process.stdout.write(renderReport(pooled, perProject, root) + "\n");
+    process.stdout.write(renderReport(pooled, perProject, root, heedTiers) + "\n");
     if (!noArtifact) {
       process.stdout.write(`\n  artifact → ${ARTIFACT_PATH}\n`);
     }

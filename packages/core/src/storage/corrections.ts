@@ -1979,6 +1979,18 @@ function parseOutcomesLedger(project: string): {
   return { malformedRows, eventsByCorrectionId };
 }
 
+/**
+ * Public read-only view of the outcomes ledger, bucketed per correction id
+ * (fix12 hygiene, 2026-09-12). Thin wrapper over parseOutcomesLedger so KPI
+ * surfaces (`ar stats` evidence-tiered heed split via storage/heed-tiers.ts)
+ * can classify full event lists without re-implementing ledger parsing.
+ * Malformed lines are silently dropped here — callers that need the
+ * quarantine trail use runOutcomesRebuild's dry-run instead.
+ */
+export function readOutcomeEventsByCorrection(project: string): Map<string, CorrectionOutcome[]> {
+  return parseOutcomesLedger(project).eventsByCorrectionId;
+}
+
 /** Snapshot of a correction's CURRENT on-disk counter/derived fields (before any rebuild). */
 function currentCountersOf(r: CorrectionRecord): RecomputedCounters {
   return {
