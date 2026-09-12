@@ -280,7 +280,7 @@ console.log("\n=== R10: Prune stale digests + final arsaveall ===");
 const allGlobalDigests = core.listDigests("__global__", { global: true });
 if (allGlobalDigests.length > 0) {
   t = process.hrtime.bigint();
-  core.markStale("__global__", allGlobalDigests[0].id, "superseded", true);
+  await core.markStale("__global__", allGlobalDigests[0].id, "superseded", true);
   rec(10, "digest.invalidate", tok({ done: true }), hrMs(t));
 }
 

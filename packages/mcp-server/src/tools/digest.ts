@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { digestStore, digestRecall, digestRead, markStaleAsync, resolveProject, fenceMemory } from "agent-recall-core";
+import { digestStore, digestRecall, digestRead, markStale, resolveProject, fenceMemory } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool("digest", {
@@ -89,11 +89,10 @@ export function register(server: McpServer): void {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "invalidate requires digest_id" }) }], isError: true };
       }
       const resolvedProject = await resolveProject(params.project);
-      // review MEDIUM-2 (fix6-locks): the sync markStale waits with
-      // Atomics.wait and would freeze every in-flight tool call on this
-      // server under digest-lock contention — long-lived processes must use
-      // the async variant.
-      const found = await markStaleAsync(resolvedProject, params.digest_id, params.reason ?? "manually invalidated", params.global);
+      // fix9: markStale is async-only (the Atomics.wait sync twin that review
+      // MEDIUM-2 warned about — it would have frozen every in-flight tool
+      // call on this server under digest-lock contention — is retired).
+      const found = await markStale(resolvedProject, params.digest_id, params.reason ?? "manually invalidated", params.global);
       if (!found) {
         return { content: [{ type: "text" as const, text: "digest_id not found — nothing invalidated" }], isError: true };
       }

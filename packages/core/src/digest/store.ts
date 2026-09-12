@@ -10,7 +10,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { digestDir, digestGlobalDir, UNCLAIMED_PROJECT } from "../storage/paths.js";
 import { ensureDir, readJsonSafe, writeJsonAtomic } from "../storage/fs-utils.js";
-import { withLock, withLockSync } from "../storage/filelock.js";
+import { withLock } from "../storage/filelock.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
@@ -190,45 +190,29 @@ export function listDigests(
   return entries;
 }
 
-/** Shared critical section for markStale/markStaleAsync — caller holds the
- * `digest-*` lock. */
-function markStaleInSection(dir: string, id: string, reason: string): boolean {
-  const index = readIndex(dir);
-  const entry = index.entries.find((e) => e.id === id);
-  if (!entry) return false;
-  entry.stale = true;
-  entry.stale_reason = reason;
-  writeIndex(dir, index);
-  return true;
-}
-
 /**
- * Mark a digest as stale (soft-delete) — SYNCHRONOUS variant.
+ * Mark a digest as stale (soft-delete). Returns false when the id has no
+ * entry in the index.
  *
- * fix6-locks: stays on withLockSync ONLY because the published SDK signature
- * AgentRecall.digestInvalidate(): void is sync (converting it is an
- * owner-level SDK-surface decision). Same liveness-gated protocol as the
- * async primitive, but the wait BLOCKS the event loop — the SDK pin is the
- * only sanctioned caller (review MEDIUM-2). Server/CLI paths must use
- * markStaleAsync.
+ * fix9 (2026-09-12): async-only. The synchronous twin (withLockSync-based
+ * `markStale`, review MEDIUM-2 pin) existed solely because the published SDK
+ * signature `AgentRecall.digestInvalidate(): void` was sync; the owner
+ * approved converting that signature to `Promise<void>`, so the sync variant
+ * — and the event-loop-blocking Atomics.wait it required — is retired
+ * (`markStaleAsync` is folded into this canonical name). Same lock scope
+ * (`digest-{global|project}`) and same invalidation semantics as before.
  */
-export function markStale(project: string, id: string, reason: string, global?: boolean): boolean {
+export async function markStale(project: string, id: string, reason: string, global?: boolean): Promise<boolean> {
   const dir = global ? digestGlobalDir() : digestDir(project);
-  let found = false;
-  withLockSync(`digest-${global ? "global" : project}`, () => {
-    found = markStaleInSection(dir, id, reason);
+  return withLock(`digest-${global ? "global" : project}`, () => {
+    const index = readIndex(dir);
+    const entry = index.entries.find((e) => e.id === id);
+    if (!entry) return false;
+    entry.stale = true;
+    entry.stale_reason = reason;
+    writeIndex(dir, index);
+    return true;
   });
-  return found;
-}
-
-/**
- * Mark a digest as stale (soft-delete) — async variant (event-loop-friendly
- * waiting). Use this from every long-lived process (MCP server, CLI); see
- * markStale's doc comment for why the sync twin still exists.
- */
-export async function markStaleAsync(project: string, id: string, reason: string, global?: boolean): Promise<boolean> {
-  const dir = global ? digestGlobalDir() : digestDir(project);
-  return withLock(`digest-${global ? "global" : project}`, () => markStaleInSection(dir, id, reason));
 }
 
 /**

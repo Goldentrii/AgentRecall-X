@@ -57,29 +57,30 @@ describe("Digest store — CRUD", () => {
 
   it("lists only non-stale digests when stale=false", async () => {
     const d = await core.createDigest({ title: "Will go stale", scope: "stale test", content: "x", project: "stale-filter" });
-    core.markStale("stale-filter", d.id, "test reason");
+    await core.markStale("stale-filter", d.id, "test reason");
     const fresh = core.listDigests("stale-filter", { stale: false });
     assert.ok(fresh.every(e => !e.stale));
   });
 
   it("marks a digest as stale", async () => {
     const d = await core.createDigest({ title: "Stale candidate", scope: "s", content: "c", project: "stale-test" });
-    core.markStale("stale-test", d.id, "code changed");
+    await core.markStale("stale-test", d.id, "code changed");
     const { meta } = core.readDigest("stale-test", d.id);
     assert.equal(meta.stale, true);
     assert.equal(meta.stale_reason, "code changed");
   });
 
-  it("markStaleAsync (review MEDIUM-2 pin): event-loop-friendly twin marks stale identically; false on missing id", async () => {
-    // Server/CLI paths must use this variant — the sync markStale parks the
-    // whole event loop (Atomics.wait) under digest-lock contention and exists
-    // only to pin the published sync SDK signature (digestInvalidate).
+  it("markStale (fix9, async-only): resolves true on success, false on missing id", async () => {
+    // fix9 retired the sync/async twin pair (the sync markStale parked the
+    // whole event loop via Atomics.wait and existed only to pin the old sync
+    // SDK signature digestInvalidate(): void — now Promise<void>). This
+    // ports the former markStaleAsync coverage to the canonical name.
     const d = await core.createDigest({ title: "Async stale candidate", scope: "s", content: "c", project: "stale-async" });
-    assert.equal(await core.markStaleAsync("stale-async", d.id, "async invalidate"), true);
+    assert.equal(await core.markStale("stale-async", d.id, "async invalidate"), true);
     const { meta } = core.readDigest("stale-async", d.id);
     assert.equal(meta.stale, true);
     assert.equal(meta.stale_reason, "async invalidate");
-    assert.equal(await core.markStaleAsync("stale-async", "digest-nonexistent", "x"), false);
+    assert.equal(await core.markStale("stale-async", "digest-nonexistent", "x"), false);
   });
 
   it("refreshes an existing digest when title overlaps", async () => {
@@ -130,7 +131,7 @@ describe("Digest store — CRUD", () => {
   it("pruneStale removes old stale digests", async () => {
     const proj = "prune-test-" + Date.now();
     const d = await core.createDigest({ title: "Prune target unique entry", scope: "pruning scope", content: "prune content", project: proj });
-    core.markStale(proj, d.id, "old");
+    await core.markStale(proj, d.id, "old");
     // With olderThanDays=0 everything stale gets pruned
     const pruned = await core.pruneStale(proj, 0);
     assert.ok(pruned >= 1, `Expected >=1 pruned, got ${pruned}`);

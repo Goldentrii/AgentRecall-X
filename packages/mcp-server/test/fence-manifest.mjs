@@ -184,7 +184,7 @@ export const MANIFEST = [
   { channel: "sdk_export", id: "AgentRecall.digestStore", status: "allowlisted", reason: "echoes this-turn's own submission / success flag only. Parity: MCP `digest` store action." },
   { channel: "sdk_export", id: "AgentRecall.digestRecall", status: "fenced", wrapper: "withFenced" },
   { channel: "sdk_export", id: "AgentRecall.digestRead", status: "fenced", wrapper: "withFenced" },
-  { channel: "sdk_export", id: "AgentRecall.digestInvalidate", status: "allowlisted", reason: "void return — nothing to fence." },
+  { channel: "sdk_export", id: "AgentRecall.digestInvalidate", status: "allowlisted", reason: "Promise<void> — resolves with no content (fix9: was sync void), nothing to fence." },
   { channel: "sdk_export", id: "AgentRecall.palace.ensureInitialized", status: "allowlisted", reason: "void return — nothing to fence." },
   { channel: "sdk_export", id: "AgentRecall.palace.createRoom", status: "allowlisted", reason: "echoes back THIS call's own just-submitted name/description/tags (same-turn trust) — the RoomMeta returned is the room just created from this call's own arguments." },
   { channel: "sdk_export", id: "AgentRecall.palace.getRoom", status: "fenced", wrapper: "fenceRoomMeta" },
