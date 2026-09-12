@@ -221,7 +221,11 @@ function advanceConsumeMarker(
  * ONLY — no LLM-authored summary. Idempotent: findCrystallizationCandidates
  * excludes already-CRYSTALLIZED titles, so a graduated insight never re-graduates.
  */
-async function graduateCandidates(
+/** Exported for tests (fix10 review LOW-10): the crystallized-member skip is
+ *  a belt-and-braces invariant the public API cannot currently reach (the
+ *  default finder never emits such clusters) — pin it directly. Not part of
+ *  the core barrel. */
+export async function graduateCandidates(
   candidates: CrystallizationCandidate[],
   minConfirmations: number,
   dryRun: boolean,

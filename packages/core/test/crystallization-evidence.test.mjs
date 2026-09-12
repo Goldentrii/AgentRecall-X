@@ -110,4 +110,37 @@ describe("findCrystallizationCandidates — crystallized insights as evidence", 
     // way: nothing graduates, nothing re-titles.
     assert.equal(result.graduated.graduated, 0, "no runaway re-titling");
   });
+
+  it("LOW-10 (review 2026-09-12): the crystallized-member guard is pinned DIRECTLY on graduateCandidates", async () => {
+    // The public API cannot reach this branch today (the default finder never
+    // emits crystallized-member clusters), so pin the internal directly —
+    // deleting the guard must fail THIS test.
+    const safety = await import("../dist/tools-logic/safety-consolidation.js");
+
+    const freshCluster = {
+      shared_keywords: ["supabase", "security"],
+      insight_ids: ["i1", "i2"],
+      insight_titles: ["always check supabase row level security first", "supabase service key must never reach the client"],
+      size: 2,
+      total_confirmations: 18,
+      crystallized_members: 0,
+      fresh_members: 2,
+    };
+    const control = await safety.graduateCandidates([freshCluster], 5, /*dryRun*/ true);
+    assert.equal(control.graduated, 1, "control: a fresh above-threshold cluster graduates");
+
+    const withCrystallized = {
+      ...freshCluster,
+      insight_ids: ["i1", "i2", "i3"],
+      size: 3,
+      total_confirmations: 30,
+      crystallized_members: 1,
+      fresh_members: 2,
+    };
+    const guarded = await safety.graduateCandidates([withCrystallized], 5, /*dryRun*/ true);
+    assert.equal(
+      guarded.graduated, 0,
+      "a cluster containing a CRYSTALLIZED member must never graduate — its principle already exists",
+    );
+  });
 });
