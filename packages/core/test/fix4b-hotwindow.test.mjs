@@ -64,6 +64,30 @@ function restoreBackendEnv(saved) {
   }
 }
 
+// Fake clock (same pattern as audit-retrieval-accounting.test.mjs Case B):
+// the three opt-in MAGNITUDE pins below assert the ≥×2 legacy bucket for a
+// bare `daysAgo(0)` date (parses to 00:00 UTC). Without a fixed clock, a
+// run crossing UTC midnight between seeding and scoring would land in the
+// ×1.3 bucket and flake (review LOW: sub-second window, real). Fixing "now"
+// at 12:00 UTC makes hoursAgo = 12 → ×2.0, deterministically.
+const RealDate = globalThis.Date;
+function installFakeClock(fixedIsoInstant) {
+  const fixedMs = RealDate.parse(fixedIsoInstant);
+  class FakeDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(fixedMs);
+      else super(...args);
+    }
+    static now() {
+      return fixedMs;
+    }
+  }
+  globalThis.Date = FakeDate;
+}
+function restoreRealClock() {
+  globalThis.Date = RealDate;
+}
+
 function correctionsDirFor(project) {
   // Same base resolution as fix4-retrieval-ranking.test.mjs: corrections.ts's
   // private correctionsDir(project) is projectSubPath(project, "corrections")
@@ -225,44 +249,49 @@ describe("fix4b (b) — freshness contributes nothing by default; freshnessBias 
     );
     assert.ok(
       corrIdx < jourIdx,
-      `fix4b fallback: freshness plays NO role in default ranking — the tie resolves by the fix4 ` +
+      `fix4b fallback: no post-fusion freshness signal on default paths — the tie resolves by the fix4 ` +
       `authority order (corrections first), today-dated or not. (The brief's primary D1 design let ` +
       `hotness win this band; it measured 65% vs the fallback's 75% and was not shipped.) got ` +
       `${JSON.stringify(results.map((r) => [r.source, r.date, r.score]))}`,
     );
   });
 
-  it("freshnessBias:true — the SAME store, same query: the fresh journal entry now outranks the old correction (legacy ×2/×3 vaulting, preserved behind the opt-in)", async () => {
-    const PROJECT = "fix4b-b-optin";
-    const TERM = "zzfbhotcharlie6693";
-    seedOldCorrection(PROJECT, TERM);
-    const jdir = journalDir(PROJECT);
-    fs.mkdirSync(jdir, { recursive: true });
-    fs.writeFileSync(
-      path.join(jdir, `${daysAgo(0)}--card--now.md`),
-      `## worklog\n\nwe just rotated the ${TERM} credentials with the owner watching\n`,
-    );
+  it("freshnessBias:true — the SAME store shape, same query: the fresh journal entry now outranks the old correction (legacy ×2/×3 vaulting, preserved behind the opt-in)", async () => {
+    installFakeClock("2026-07-25T12:00:00.000Z"); // same-day bare date → 12h → ×2.0, deterministic
+    try {
+      const PROJECT = "fix4b-b-optin";
+      const TERM = "zzfbhotcharlie6693";
+      seedOldCorrection(PROJECT, TERM);
+      const jdir = journalDir(PROJECT);
+      fs.mkdirSync(jdir, { recursive: true });
+      fs.writeFileSync(
+        path.join(jdir, `${daysAgo(0)}--card--now.md`),
+        `## worklog\n\nwe just rotated the ${TERM} credentials with the owner watching\n`,
+      );
 
-    const results = await localRecallSearch(`${TERM} credentials`, PROJECT, 10, undefined, true);
-    const corrIdx = results.findIndex((r) => r.source === "corrections");
-    const jourIdx = results.findIndex((r) => r.source === "journal");
-    assert.ok(corrIdx !== -1 && jourIdx !== -1, `both must surface; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`);
-    assert.ok(
-      jourIdx < corrIdx,
-      `under the legacy opt-in the today-dated entry (×2/×3) must outrank the >72h correction (×1) — ` +
-      `this IS the preserved "what did we just do" behavior for the audited ambient caller; got ` +
-      `${JSON.stringify(results.map((r) => [r.source, r.date, r.score]))}`,
-    );
-    assert.ok(
-      results[jourIdx].score > RRF_RANK1 * 1.9,
-      `the opt-in must reproduce the legacy multiplied magnitude (≥ ×2 for a today-dated item); ` +
-      `got ${results[jourIdx].score}`,
-    );
-    assert.ok(
-      Math.abs(results[corrIdx].score - RRF_RANK1) < 1e-9,
-      `the >72h correction stays unmultiplied even under the opt-in (legacy semantics, verbatim); ` +
-      `got ${results[corrIdx].score}`,
-    );
+      const results = await localRecallSearch(`${TERM} credentials`, PROJECT, 10, undefined, true);
+      const corrIdx = results.findIndex((r) => r.source === "corrections");
+      const jourIdx = results.findIndex((r) => r.source === "journal");
+      assert.ok(corrIdx !== -1 && jourIdx !== -1, `both must surface; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`);
+      assert.ok(
+        jourIdx < corrIdx,
+        `under the legacy opt-in the today-dated entry (×2/×3) must outrank the >72h correction (×1) — ` +
+        `this IS the preserved "what did we just do" behavior for the audited ambient caller; got ` +
+        `${JSON.stringify(results.map((r) => [r.source, r.date, r.score]))}`,
+      );
+      assert.ok(
+        Math.abs(results[jourIdx].score - RRF_RANK1 * 2.0) < 1e-9,
+        `the opt-in must reproduce the legacy multiplied magnitude (×2.0 at 12h under the fake clock); ` +
+        `got ${results[jourIdx].score}`,
+      );
+      assert.ok(
+        Math.abs(results[corrIdx].score - RRF_RANK1) < 1e-9,
+        `the >72h correction stays unmultiplied even under the opt-in (legacy semantics, verbatim); ` +
+        `got ${results[corrIdx].score}`,
+      );
+    } finally {
+      restoreRealClock();
+    }
   });
 });
 
@@ -326,26 +355,31 @@ describe("fix4b (c) — palace items' scraped excerpt dates earn no ranking adva
   });
 
   it("CHARACTERIZATION: the freshnessBias legacy path still trusts scraped palace dates (defect preserved verbatim inside the opt-in, documented — not an endorsement)", async () => {
-    const PROJECT = "fix4b-c2-legacy";
-    const TERM = "zzfbhotecho8825";
-    seedOldCorrection(PROJECT, TERM);
-    ensurePalaceInitialized(PROJECT);
-    fs.writeFileSync(
-      path.join(palaceDir(PROJECT), "rooms", "knowledge", "mention.md"),
-      `---\ntopic: mention\n---\n\n${TERM} credentials probed on ${daysAgo(0)}\n`,
-    );
+    installFakeClock("2026-07-25T12:00:00.000Z"); // same-day scrape → 12h → ×2.0, deterministic
+    try {
+      const PROJECT = "fix4b-c2-legacy";
+      const TERM = "zzfbhotecho8825";
+      seedOldCorrection(PROJECT, TERM);
+      ensurePalaceInitialized(PROJECT);
+      fs.writeFileSync(
+        path.join(palaceDir(PROJECT), "rooms", "knowledge", "mention.md"),
+        `---\ntopic: mention\n---\n\n${TERM} credentials probed on ${daysAgo(0)}\n`,
+      );
 
-    const results = await localRecallSearch(`${TERM} credentials`, PROJECT, 10, undefined, true);
-    const palIdx = results.findIndex((r) => r.source === "palace");
-    assert.ok(palIdx !== -1, `palace item must surface; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`);
-    assert.ok(
-      results[palIdx].score > RRF_RANK1 * 1.9,
-      `legacy opt-in semantics are the pre-fix4b code VERBATIM — including boosting a palace item on ` +
-      `its regex-scraped excerpt date (≥ ×2 for a today-dated scrape). If this pin ever fails because ` +
-      `palace was exempted inside the legacy path too, that is a deliberate contract change to the ` +
-      `opt-in — update SmartRecallInput.freshnessBias's doc comment in the same change. got ` +
-      `${results[palIdx].score}`,
-    );
+      const results = await localRecallSearch(`${TERM} credentials`, PROJECT, 10, undefined, true);
+      const palIdx = results.findIndex((r) => r.source === "palace");
+      assert.ok(palIdx !== -1, `palace item must surface; got ${JSON.stringify(results.map((r) => [r.source, r.score]))}`);
+      assert.ok(
+        Math.abs(results[palIdx].score - RRF_RANK1 * 2.0) < 1e-9,
+        `legacy opt-in semantics are the pre-fix4b code VERBATIM — including boosting a palace item on ` +
+        `its regex-scraped excerpt date (×2.0 for a same-day scrape at 12h under the fake clock). If ` +
+        `this pin ever fails because palace was exempted inside the legacy path too, that is a ` +
+        `deliberate contract change to the opt-in — update SmartRecallInput.freshnessBias's doc ` +
+        `comment in the same change. got ${results[palIdx].score}`,
+      );
+    } finally {
+      restoreRealClock();
+    }
   });
 });
 
@@ -407,42 +441,47 @@ describe("fix4b (d) — exact cross-tier ties resolve deterministically; the opt
     assert.equal(new Set(runs).size, 1, `tie resolution must be byte-stable across runs; got ${JSON.stringify(runs)}`);
   });
 
-  it("queryMemory freshnessBias contract: default raw 1/61; opted-in ≥ ×2 for a today-dated item, clearing the CLI ambient 0.03 floor", async () => {
-    const PROJECT = "fix4b-d-optin";
-    const TERM = "zzfbhotgolf0047";
-    const jdir = journalDir(PROJECT);
-    fs.mkdirSync(jdir, { recursive: true });
-    fs.writeFileSync(
-      path.join(jdir, `${daysAgo(0)}--card--now.md`),
-      `## worklog\n\ntouched the ${TERM} rollout just now\n`,
-    );
+  it("queryMemory freshnessBias contract: default raw 1/61; opted-in ×2 for a same-day item, clearing the CLI ambient 0.03 floor", async () => {
+    installFakeClock("2026-07-25T12:00:00.000Z"); // same-day bare date → 12h → ×2.0, deterministic
+    try {
+      const PROJECT = "fix4b-d-optin";
+      const TERM = "zzfbhotgolf0047";
+      const jdir = journalDir(PROJECT);
+      fs.mkdirSync(jdir, { recursive: true });
+      fs.writeFileSync(
+        path.join(jdir, `${daysAgo(0)}--card--now.md`),
+        `## worklog\n\ntouched the ${TERM} rollout just now\n`,
+      );
 
-    const raw = await queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections", "palace", "journal", "insight"] });
-    assert.equal(raw.items.length, 1, `expected exactly 1 result, got ${JSON.stringify(raw.items)}`);
-    assert.ok(
-      Math.abs(raw.items[0].score - RRF_RANK1) < 1e-9,
-      `DEFAULT is the honest raw score (${RRF_RANK1}); got ${raw.items[0].score}`,
-    );
+      const raw = await queryMemory({ query: TERM, project: PROJECT, tiers: ["corrections", "palace", "journal", "insight"] });
+      assert.equal(raw.items.length, 1, `expected exactly 1 result, got ${JSON.stringify(raw.items)}`);
+      assert.ok(
+        Math.abs(raw.items[0].score - RRF_RANK1) < 1e-9,
+        `DEFAULT is the honest raw score (${RRF_RANK1}); got ${raw.items[0].score}`,
+      );
 
-    const biased = await queryMemory({
-      query: TERM, project: PROJECT,
-      tiers: ["corrections", "palace", "journal", "insight"],
-      freshnessBias: true,
-    });
-    assert.equal(biased.items.length, 1);
-    // A today-dated bare YYYY-MM-DD parses to 00:00 UTC → hoursAgo ∈ [0,24)
-    // → the legacy boost is ×3 (before 06:00 UTC) or ×2 — either way ≥ ×2,
-    // which is what lets the CLI ambient caller's `score >= 0.03` floor pass
-    // (0.0328 or 0.0492 vs 0.0164 raw).
-    assert.ok(
-      biased.items[0].score > RRF_RANK1 * 1.9,
-      `freshnessBias must reproduce the legacy multiplied magnitude (≥ ×2 for a today-dated item); ` +
-      `got ${biased.items[0].score} vs raw ${RRF_RANK1}`,
-    );
-    assert.ok(
-      biased.items[0].score >= 0.03,
-      `the audited caller contract: a fresh single-source item must clear the CLI ambient 0.03 floor ` +
-      `under the opt-in; got ${biased.items[0].score}`,
-    );
+      const biased = await queryMemory({
+        query: TERM, project: PROJECT,
+        tiers: ["corrections", "palace", "journal", "insight"],
+        freshnessBias: true,
+      });
+      assert.equal(biased.items.length, 1);
+      // A same-day bare YYYY-MM-DD parses to 00:00 UTC → at the fake 12:00
+      // UTC clock, hoursAgo = 12 → the legacy ×2.0 bucket, exactly — which
+      // is what lets the CLI ambient caller's `score >= 0.03` floor pass
+      // (0.0328 vs 0.0164 raw).
+      assert.ok(
+        Math.abs(biased.items[0].score - RRF_RANK1 * 2.0) < 1e-9,
+        `freshnessBias must reproduce the legacy multiplied magnitude (×2.0 at 12h); ` +
+        `got ${biased.items[0].score} vs raw ${RRF_RANK1}`,
+      );
+      assert.ok(
+        biased.items[0].score >= 0.03,
+        `the audited caller contract: a fresh single-source item must clear the CLI ambient 0.03 floor ` +
+        `under the opt-in; got ${biased.items[0].score}`,
+      );
+    } finally {
+      restoreRealClock();
+    }
   });
 });

@@ -18,7 +18,7 @@ describe("Smart recall — hot-window semantics after fix4b (2026-09-12)", () =>
   // fix4b RETARGET: this block used to hold a local re-implementation of the
   // multiplicative hot-window boost (×3/×2/×1.3 on fused scores) as the
   // DEFAULT ranking behavior. fix4b removed that boost from every default
-  // surface (freshness now plays no role in default ranking; measured
+  // surface (no post-fusion freshness signal on default paths; measured
   // 55%→75% golden hit-rate) and kept it VERBATIM behind the explicit
   // `freshnessBias` opt-in for the one audited caller (the CLI ambient
   // hook's `score >= 0.03` floor). The local oracle below therefore

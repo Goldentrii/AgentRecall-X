@@ -308,13 +308,19 @@ export class SupabaseRecallBackend {
   async search(
     query: string,
     project: string | undefined,
-    limit: number
+    limit: number,
+    // fix4b review MEDIUM-1 (2026-09-12): the remote backend's own scoring
+    // ignores freshnessBias, but its two INTERNAL local fallbacks below must
+    // thread it — otherwise an embedding-API outage (or missing client)
+    // silently strips the legacy boost from the one audited opted-in caller
+    // (the CLI ambient hook) while `recordRemoteSuccess()` still fires.
+    opts?: { freshnessBias?: boolean }
   ): Promise<RecallResultItem[]> {
     const client = getSupabaseClient();
     if (!client || !this.embedding || !project) {
       // Fallback to local
       const { localRecallSearch } = await import("../tools-logic/smart-recall.js");
-      return localRecallSearch(query, project, limit);
+      return localRecallSearch(query, project, limit, undefined, opts?.freshnessBias);
     }
 
     let queryEmbedding: number[];
@@ -323,7 +329,7 @@ export class SupabaseRecallBackend {
     } catch {
       // Embedding failed — fallback to local
       const { localRecallSearch } = await import("../tools-logic/smart-recall.js");
-      return localRecallSearch(query, project, limit);
+      return localRecallSearch(query, project, limit, undefined, opts?.freshnessBias);
     }
 
     // FIX 1 (Wave 4 W4b, 2026-09-08): CJK-aware query segmentation — see

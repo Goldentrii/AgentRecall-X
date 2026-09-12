@@ -124,8 +124,11 @@ corrections.internalScore = exactness·0.70 + severityBoost·0.15 + proofBoost·
 Hot-window recency boost — REMOVED from default ranking (fix4b 2026-09-12,
   PRODUCT-BEHAVIOR CHANGE): the old boost multiplied fused scores
   ×3.0/×2.0/×1.3 for items dated <6h/<24h/<72h. On the default pipeline
-  freshness now plays NO ranking role at all; exact fused-score ties
-  resolve by the fix4 authority/insertion order (corrections first).
+  there is now NO post-fusion freshness signal: fused scores are never
+  freshness-multiplied and exact ties resolve freshness-blind by the fix4
+  authority/insertion order (corrections first). NOTE the journal tier's
+  INTERNAL recency×0.5 Ebbinghaus blend (above) is a per-tier scoring
+  input, not a post-fusion boost — unchanged by fix4b.
   LEGACY ESCAPE HATCH: `freshnessBias: true` (queryMemory/smartRecall
   input, default OFF) re-enables the old multiplicative boost verbatim —
   all defects included (date-only strings bucket by wall-clock time-of-day;

@@ -145,8 +145,8 @@ export interface SmartRecallInput {
    *  that field's doc comment for the full contract). Exists for the ONE
    *  audited caller whose downstream score floor was calibrated against
    *  boosted magnitudes (the CLI ambient-injection hook); every default
-   *  surface gets the honest un-multiplied ranking, in which freshness
-   *  plays no role (measured product-behavior change, fix4b report). Local
+   *  surface gets the honest un-multiplied ranking, with no post-fusion
+   *  freshness signal (measured product-behavior change, fix4b report). Local
    *  backend only — the remote (Supabase) backend has its own scoring and
    *  ignores this. */
   freshnessBias?: boolean;
@@ -920,7 +920,14 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
       // Use semantic results if they arrive within the budget; otherwise use
       // local results (already computed — zero extra wait).
       const localPromise = localRecallSearch(input.query, input.project, limit, undefined, input.freshnessBias);
-      const remotePromise = backend.search(input.query, input.project, limit);
+      // fix4b review MEDIUM-1: the remote backend's own scoring ignores the
+      // flag, but its INTERNAL local fallbacks (missing client / embed()
+      // failure return local results AS the "remote" result and record a
+      // remote success) must carry it — see SupabaseRecallBackend.search.
+      const remotePromise = backend.search(
+        input.query, input.project, limit,
+        input.freshnessBias ? { freshnessBias: true } : undefined,
+      );
 
       const [localResults, remoteResults] = await Promise.all([
         localPromise,
