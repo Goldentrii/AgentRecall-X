@@ -2092,7 +2092,17 @@ async function main(): Promise<void> {
         // unchanged from before this feature.
         if (queryKeywords.length === 0) process.exit(0);
 
-        const recalled = await core.smartRecall({ query: queryKeywords.join(" "), project, limit: 3, drilldown: true });
+        // fix4b (2026-09-12): freshnessBias opts THIS surface into the legacy
+        // multiplicative hot-window boost. The ambient injection's own
+        // `score < 0.03` floor below was calibrated against BOOSTED
+        // magnitudes — a lone tier-rank-1 match is 1/61 ≈ 0.0164 raw and only
+        // clears 0.03 via the <24h/<6h ×2/×3 windows, which is exactly this
+        // surface's product semantics ("surface what we just worked on when a
+        // generic prompt arrives"; multi-evidence fusions ≥ 0.0328 pass at
+        // any age). Default surfaces (recall/smart_recall tools, SDK) get the
+        // honest un-multiplied ranking — do not copy this flag elsewhere
+        // without re-auditing the downstream threshold.
+        const recalled = await core.smartRecall({ query: queryKeywords.join(" "), project, limit: 3, drilldown: true, freshnessBias: true });
 
         // Ambient precision floor: require ≥2 overlapping content words (≥4 chars,
         // non-stopwords) between the query tokens and the result title+excerpt.

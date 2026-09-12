@@ -34,9 +34,12 @@
  * change on day one." The five formulas smart-recall.ts documents (RRF k=60,
  * Ebbinghaus, hot-window recency, betaUtility feedback, two-stage fusion) are
  * split by WHERE they belong in a genuinely reusable pipeline, not merged:
- *   - RRF (two-stage: applyRRF + fuseCanonical) + hot-window recency:
- *     pipeline-owned (RANK/FUSE stage below) — generic to any date-bearing,
- *     multi-tier candidate set, not smart_recall-specific.
+ *   - RRF (two-stage: applyRRF + fuseCanonical): pipeline-owned (RANK/FUSE
+ *     stage below) — generic to any multi-tier candidate set, not
+ *     smart_recall-specific. The hot-window recency boost that used to run
+ *     here was REMOVED from default ranking by fix4b (2026-09-12) — it
+ *     survives only behind the explicit `freshnessBias` opt-in; see
+ *     applyLegacyHotWindowBoost's doc block for the measurements.
  *   - Ebbinghaus decay, palace salience/IDF blend, insight confirmation blend:
  *     pipeline-owned (TOKENIZE+SCORE stage, per-tier) — these ARE the
  *     per-tier strategies the review names.
@@ -171,7 +174,10 @@
  * grammar to find, within one tier's own already-scored candidate list,
  * pairs that assert the same fact-key with a different semver value. A
  * candidate detected as the STALE side of such a pair is DOWN-RANKED
- * (multiplicative score penalty, mirroring `applyHotWindowBoost`'s pattern)
+ * (multiplicative score penalty; historically mirrored `applyHotWindowBoost`'s
+ * pattern — fix4b, 2026-09-12, removed that boost from default ranking
+ * [legacy opt-in only, see applyLegacyHotWindowBoost]; the contradiction
+ * penalty here is unchanged)
  * and ANNOTATED (`supersededBy`) — it is NEVER removed from the set. This
  * closes part of the reconciliation gap `reports/2026-08-18-eval-redteam.md`'s
  * HIGH-2 finding named (0% of grammar-detectable contradictions were
@@ -425,12 +431,34 @@ export interface QueryMemoryInput {
   /** corrections tier only (v4 W3, 2026-09-08) — matches every sibling
    *  tier's own per-tier options shape. */
   corrections?: { perTierLimit?: number };
+  /** fix4b (2026-09-12) — LEGACY multiplicative hot-window boost, explicit
+   *  opt-in, default OFF. When true, fused RRF scores are multiplied
+   *  ×3.0/×2.0/×1.3 for items dated <6h/<24h/<72h (the exact pre-fix4b
+   *  behavior, including its known defects: score-scale distortion, palace
+   *  scraped-date trust, cross-band vaulting).
+   *
+   *  Exists for exactly ONE audited caller class: surfaces whose own
+   *  downstream score thresholds were calibrated against BOOSTED score
+   *  magnitudes and whose product semantics depend on fresh single-source
+   *  items clearing them (the CLI ambient-injection floor `score >= 0.03`
+   *  — a lone tier-rank-1 match is 1/61 ≈ 0.0164 raw and only ever passed
+   *  that floor via the ×2/×3 windows; see cli/src/index.ts hook-ambient).
+   *  Every default surface (smart_recall/recall MCP tools, SDK recall,
+   *  journal_search, the golden eval) gets the honest un-multiplied
+   *  ranking, in which freshness plays NO role — a deliberate, measured
+   *  product-behavior change (55%→75% golden hit-rate; see
+   *  applyLegacyHotWindowBoost's doc block). Do NOT reach for this flag to
+   *  "prefer recent" on an agent-facing surface without re-measuring. */
+  freshnessBias?: boolean;
 }
 
 export interface QueryMemoryResult {
-  /** Fused + ranked (RRF, two-stage canonical fusion, hot-window recency
-   *  boost applied) — UNCUT, UNFENCED. Caller applies its own limit/labeling/
-   *  feedback adjustments. */
+  /** Fused + ranked (RRF, two-stage canonical fusion; `score` is the raw
+   *  fused RRF sum — since fix4b, 2026-09-12, NOTHING multiplies it by
+   *  default and freshness plays no ranking role; exact ties resolve by the
+   *  authority/insertion order. Exception: the legacy `freshnessBias`
+   *  opt-in, see QueryMemoryInput) — UNCUT, UNFENCED. Caller applies its own
+   *  limit/labeling/feedback adjustments. */
   items: QueryMemoryItem[];
   /** Raw pre-fusion candidate counts per competing tier (Fix 4/5 semantics —
    *  BEFORE cross-source fusion collapses same-excerpt duplicates). */
@@ -1480,10 +1508,12 @@ function scoreCorrectionsTier(
 }
 
 // ---------------------------------------------------------------------------
-// RANK/FUSE stage — two-stage RRF + canonical fusion + hot-window recency
-// boost. Ported verbatim from smart-recall.ts's applyRRF/fuseCanonical
-// (Fix 5/5b) — this IS the "one implementation" the architecture review's
-// §4.1 diagram names; it does not vary per tier.
+// RANK/FUSE stage — two-stage RRF + canonical fusion. applyRRF/fuseCanonical
+// ported verbatim from smart-recall.ts (Fix 5/5b) — this IS the "one
+// implementation" the architecture review's §4.1 diagram names; it does not
+// vary per tier. The hot-window recency boost that used to be the third
+// member of this stage was removed from default ranking by fix4b
+// (2026-09-12) — legacy opt-in only; see applyLegacyHotWindowBoost below.
 // ---------------------------------------------------------------------------
 
 interface RRFEntry {
@@ -1520,7 +1550,47 @@ function fuseCanonical(rrfMap: Map<string, RRFEntry>): Map<string, RRFEntry> {
   return canonical;
 }
 
-function applyHotWindowBoost(fusedMap: Map<string, RRFEntry>): void {
+// fix4b — hot-window redesign (2026-09-12, reports/agentrecall-fix4b-
+// hotwindow-2026-09-12.md; diagnosed in reports/agentrecall-fix4-retrieval-
+// 2026-09-11.md Escalation §1). PRODUCT-BEHAVIOR CHANGE, stated prominently:
+// freshness no longer influences default ranking AT ALL.
+//
+// The old `applyHotWindowBoost` multiplied FUSED RRF scores ×3.0/×2.0/×1.3
+// for items dated <6h/<24h/<72h. But RRF compresses adjacent-rank score
+// differences to ~1.6% (1/(60+r) vs 1/(61+r)), so ANY multiplier > ~1.02
+// vaulted an off-topic-but-recent item over every un-boosted on-topic
+// result — in a store written to daily, every query's top-5 filled with the
+// last 72h of diary sections regardless of relevance. Measured on the golden
+// eval as the single largest hit-rate loss (55.0% with the boost, 75.0%
+// with it neutralized).
+//
+// The design brief's PRIMARY redesign (D1) kept freshness as a within-
+// tie-band reorder: fused score decides the band, hotness (<6h → <24h →
+// <72h → none) reorders inside a band of exactly-tied scores, then the
+// authority/insertion order. Measured on the same twin-clone protocol, D1
+// scored 65.0% — below the 70% exit gate — because post one-doc-one-vote,
+// cross-TIER exact ties at 1/(60+r) are the common case, and hotness-over-
+// authority handed those bands to <72h diary lines over the owner's own
+// captured rules (gq05/gq06 measured casualties). Per the brief's explicit
+// fallback clause, what ships is FULL NEUTRALIZATION: the default pipeline
+// applies no freshness signal anywhere; exact fused-score ties resolve by
+// the fix4 authority/insertion order alone (corrections first — see
+// localRecallSearch's `tiers` comment). The legacy multiplicative boost
+// survives SOLELY behind the explicit `freshnessBias` opt-in below, for the
+// one audited caller whose downstream score floor requires it. A measured
+// middle design (authority pinned above hotness inside bands, hotness
+// ordering the rest) scored per-query identical to neutralization (75.0%)
+// and is documented in the fix4b report as a future option — deliberately
+// NOT shipped: the brief sanctioned exactly two designs.
+
+/** LEGACY multiplicative boost — the exact pre-fix4b `applyHotWindowBoost`
+ *  body (all defects included: date-only strings parse to 00:00 UTC so the
+ *  bucket depends on wall-clock time-of-day — audit Finding 2; palace
+ *  regex-scraped excerpt dates are trusted as timestamps; recent items vault
+ *  entire relevance bands). Kept ONLY behind `QueryMemoryInput.freshnessBias`
+ *  (see that field's doc comment for the single audited caller class that
+ *  needs it). Never runs on a default-configured query. */
+function applyLegacyHotWindowBoost(fusedMap: Map<string, RRFEntry>): void {
   for (const entry of fusedMap.values()) {
     if (entry.item.date) {
       const hoursAgo = (Date.now() - new Date(entry.item.date).getTime()) / (1000 * 60 * 60);
@@ -1607,7 +1677,9 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     if (items) applyRRF(items, rrfMap);
   }
   const fusedMap = fuseCanonical(rrfMap);
-  applyHotWindowBoost(fusedMap);
+  // fix4b (2026-09-12): the legacy multiplicative boost runs ONLY behind the
+  // explicit freshnessBias opt-in — see QueryMemoryInput.freshnessBias.
+  if (input.freshnessBias) applyLegacyHotWindowBoost(fusedMap);
 
   const seen = new Set<string>();
   const fused: QueryMemoryItem[] = [];
@@ -1618,6 +1690,10 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     const alsoFoundIn = [...sources].filter((s) => s !== item.source);
     fused.push({ ...item, score, ...(alsoFoundIn.length > 0 ? { alsoFoundIn } : {}) });
   }
+  // fix4b (2026-09-12): the sort is stable, so exact fused-score ties
+  // resolve purely by insertion order — the fix4 authority tie-break
+  // (corrections first). No freshness signal touches default ranking; see
+  // the fallback doc block above applyLegacyHotWindowBoost.
   fused.sort((a, b) => b.score - a.score);
 
   return {

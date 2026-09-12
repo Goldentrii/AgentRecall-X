@@ -140,6 +140,16 @@ export interface SmartRecallInput {
   /** Bridge kill-switch (Wave 4). When false, no verbatim drill-down is attached.
    *  Default true. */
   drilldown?: boolean;
+  /** fix4b (2026-09-12) — legacy multiplicative hot-window boost, explicit
+   *  opt-in, default OFF (threaded to `QueryMemoryInput.freshnessBias` — see
+   *  that field's doc comment for the full contract). Exists for the ONE
+   *  audited caller whose downstream score floor was calibrated against
+   *  boosted magnitudes (the CLI ambient-injection hook); every default
+   *  surface gets the honest un-multiplied ranking, in which freshness
+   *  plays no role (measured product-behavior change, fix4b report). Local
+   *  backend only — the remote (Supabase) backend has its own scoring and
+   *  ignores this. */
+  freshnessBias?: boolean;
 }
 
 export interface SmartRecallResultItem {
@@ -483,7 +493,8 @@ export async function localRecallSearch(
   query: string,
   project: string | undefined,
   limit: number,
-  since?: string
+  since?: string,
+  freshnessBias?: boolean
 ): Promise<SmartRecallResultItem[]> {
   let resolvedProject: string;
   try {
@@ -524,6 +535,9 @@ export async function localRecallSearch(
     // (date, section) gets one slot — see QueryMemoryInput.journal's own
     // doc comment; journalSearch's per-line contract is unaffected.
     journal: { perSectionDedupe: true },
+    // fix4b (2026-09-12): legacy boost opt-in, default OFF — see
+    // SmartRecallInput.freshnessBias.
+    ...(freshnessBias ? { freshnessBias: true } : {}),
   });
 
   // Final materialization: rrf-local confidence label (matches the ORIGINAL
@@ -884,7 +898,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
 
   if (input.since) {
     // `since` filter is only supported by localRecallSearch — always use local.
-    results = await localRecallSearch(input.query, input.project, limit, input.since);
+    results = await localRecallSearch(input.query, input.project, limit, input.since, input.freshnessBias);
   } else {
     const { getRecallBackend, recordRemoteFailure, recordRemoteSuccess } = await import("./recall-backend.js");
     const backend = await getRecallBackend();
@@ -893,16 +907,19 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
 
     if (!isRemote) {
       // Pure-local path: no budget needed.
-      results = await backend.search(input.query, input.project, limit);
+      results = await backend.search(
+        input.query, input.project, limit,
+        input.freshnessBias ? { freshnessBias: true } : undefined,
+      );
       // If the vector backend returned nothing (index not yet populated), fall back to keyword search.
       if (results.length === 0 && backendName === "LocalVectorRecallBackend") {
-        results = await localRecallSearch(input.query, input.project, limit);
+        results = await localRecallSearch(input.query, input.project, limit, undefined, input.freshnessBias);
       }
     } else {
       // Remote path: run local keyword search in parallel from the start.
       // Use semantic results if they arrive within the budget; otherwise use
       // local results (already computed — zero extra wait).
-      const localPromise = localRecallSearch(input.query, input.project, limit);
+      const localPromise = localRecallSearch(input.query, input.project, limit, undefined, input.freshnessBias);
       const remotePromise = backend.search(input.query, input.project, limit);
 
       const [localResults, remoteResults] = await Promise.all([
@@ -949,8 +966,10 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
       const multiplier = betaUtility(positives, negatives) * 2;
       item.score *= multiplier;
       // Update the human-readable label only. `calibrated` stays the
-      // SCORING-TIME value so the bridge gate is not fooled by the ×3–6 boost
-      // chain (Risk #8). Backends without `calibrated` (defensive) get one.
+      // SCORING-TIME value so the bridge gate is not fooled by the boost
+      // (Risk #8; since fix4b 2026-09-12 this Beta ×≤2 is the only remaining
+      // post-RRF score mutation — the hot-window no longer multiplies).
+      // Backends without `calibrated` (defensive) get one.
       item.confidence = calibratedConfidence(item.score, "rrf-local").label;
       if (typeof item.calibrated !== "number") {
         item.calibrated = calibratedConfidence(item.score, "rrf-local").calibrated;

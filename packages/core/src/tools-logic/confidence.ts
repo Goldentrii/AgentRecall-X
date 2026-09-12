@@ -11,12 +11,14 @@
  * `calibratedConfidence(score, scale)` normalizes each backend's NATIVE score
  * onto a shared 0..1 axis, then bins it with ONE set of floors.
  *
- * IMPORTANT (Risk #8): the local post-RRF score is mutated by hot-window boosts
- * (×3 / ×2 / ×1.3) and a Beta feedback multiplier (×up to 2) AFTER RRF. So the
- * 0.12 divisor is the *theoretical* max of an UNBOOSTED RRF score. The Bridge
- * gate must read the `calibrated` value STORED at scoring time, NOT re-derive it
- * from the final boosted score. The divisors here are tunable constants, not
- * trusted gates against the mutated score.
+ * IMPORTANT (Risk #8): the local post-RRF score is mutated by a Beta feedback
+ * multiplier (×up to 2) AFTER RRF. (Until fix4b, 2026-09-12, hot-window boosts
+ * of ×3/×2/×1.3 mutated it too — the hot-window is now a rank-order tie-break
+ * that never touches scores, so the Beta multiplier is the ONLY remaining
+ * post-RRF score mutation.) So the 0.12 divisor is the *theoretical* max of an
+ * UNBOOSTED RRF score. The Bridge gate must read the `calibrated` value STORED
+ * at scoring time, NOT re-derive it from the final boosted score. The divisors
+ * here are tunable constants, not trusted gates against the mutated score.
  */
 
 export type ConfidenceLabel = "high" | "medium" | "low" | "weak";

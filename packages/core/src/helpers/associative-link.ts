@@ -28,8 +28,19 @@ export async function linkToSimilar(
     // (0.015) sat BELOW the whole single-source band (1/(60+6) ≈ 0.01515 at
     // limit 6), turning the gate into a no-op that linked the top-3 of ANY
     // keyword match on every save. 0.02 restores the original multi-
-    // evidence class on the un-inflated scale: cross-source fusions and
-    // boosted-recent items pass, a lone unboosted keyword match does not.
+    // evidence class on the un-inflated scale.
+    //
+    // fix4b (2026-09-12): the hot-window boost no longer multiplies fused
+    // scores on default paths (removed outright; legacy opt-in only — see
+    // query-memory.ts's applyLegacyHotWindowBoost, and this caller does NOT
+    // opt in), so the "boosted-recent single-source" leg of the old pass
+    // class is retired: under the multiplicative boost a LONE keyword match
+    // from the last 72h (1/61×1.3 = 0.0213, ×2 = 0.0328, ×3 = 0.0492 —
+    // every window clears 0.02) auto-linked on every save, exactly the
+    // single-evidence class review M2's gate exists to block. The gate is
+    // now strictly multi-evidence: a cross-source fusion (≥ 2/62 ≈ 0.0323)
+    // passes, any single-source match (≤ 0.0164, regardless of age) does
+    // not.
     const candidates = results
       .filter((r) => r.id !== savedSlug && r.score > 0.02)
       .slice(0, 3);
