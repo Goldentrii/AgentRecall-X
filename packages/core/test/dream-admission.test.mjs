@@ -4,7 +4,7 @@
  * Pins the REPLACEMENT for the unreachable Step-3 confidence gate:
  *   old: confidence = (obs/7) × recency_weight, max weight 0.85 at a 2 AM run
  *        → 3 obs scored 0.36 < 0.5 → SILENTLY discarded (22+ zero nights)
- *   new: ≥3 distinct observation-days in 7d promotes; 1–2 is admitted as a
+ *   new: ≥3 distinct (day, project) incidents in 7d promotes; 1–2 is admitted as a
  *        candidate; every decision carries a reason (no silent discards).
  */
 import { describe, it, before, after } from "node:test";
@@ -355,5 +355,128 @@ describe("runDreamAdmission — admit-then-vote against a real (temp) store", ()
     assert.match(clearsBar.reason, /cap/, "…and says the cap bypass happened");
     const state = core.readAwarenessState();
     assert.ok(state.topInsights.some((i) => i.title.includes("bar clearing")));
+  });
+});
+
+describe("HIGH-1 (review 2026-09-12) — promotion-skip must never masquerade as 'already-promoted'", () => {
+  let core;
+  const H1_ROOT = TEST_ROOT + "-h1";
+
+  before(async () => {
+    process.env.AGENT_RECALL_ROOT = H1_ROOT;
+    fs.mkdirSync(H1_ROOT, { recursive: true });
+    fs.writeFileSync(path.join(H1_ROOT, "awareness-state.json"), JSON.stringify(emptyAwareness()), "utf-8");
+    core = await import("../dist/index.js");
+  });
+
+  after(() => {
+    delete process.env.AGENT_RECALL_ROOT;
+    fs.rmSync(H1_ROOT, { recursive: true, force: true });
+  });
+
+  it("the reviewer's probe: a 3-distinct-day 'use ripgrep' (2 words → title_too_short) is REJECTED with the real reason, and the night classifies filtered", async () => {
+    const report = await core.runDreamAdmission(
+      [
+        {
+          // 2 words: fails addInsight's quality gate (needs >= 3), so
+          // promoteConfirmedInsights records a SKIP — the exact channel the
+          // pre-fix upgrade loop mislabeled "already in awareness".
+          title: "use ripgrep",
+          observations: [
+            { date: "2026-09-09", project: "nova" },
+            { date: "2026-09-10", project: "nova" },
+            { date: "2026-09-11", project: "nova" },
+          ],
+          applies_when: ["search"],
+          evidence: "seen three days running",
+        },
+      ],
+      { runDate: RUN_DATE },
+    );
+
+    const r = report.results[0];
+    assert.equal(r.outcome, "rejected", "NOT already-promoted — nothing is in awareness");
+    assert.match(r.reason, /quality gate/, "reason names the real cause");
+    assert.match(r.reason, /NOT in awareness/, "the false 'already in awareness' claim is gone");
+
+    const state = core.readAwarenessState();
+    assert.ok(
+      !state.topInsights.some((i) => i.title.toLowerCase().includes("ripgrep")),
+      "awareness really does not contain it",
+    );
+
+    // The night is LOUD: filtered, not benign already-known → cannot ever
+    // reach the >=7-night "corpus genuinely thin" banner.
+    const y = core.readDreamYield("2026-09-12");
+    assert.equal(core.classifyNight(y), "filtered");
+  });
+
+  it("night 2 (no new observations): the stuck candidate stays LOUD — already-counted is re-verified, not filed benign", async () => {
+    const report = await core.runDreamAdmission(
+      [
+        {
+          title: "use ripgrep",
+          observations: [
+            { date: "2026-09-09", project: "nova" },
+            { date: "2026-09-10", project: "nova" },
+            { date: "2026-09-11", project: "nova" },
+          ],
+          applies_when: ["search"],
+          evidence: "seen three days running",
+        },
+      ],
+      { runDate: new Date(2026, 8, 13, 2, 0, 0) },
+    );
+
+    const r = report.results[0];
+    assert.equal(r.outcome, "rejected", "quality-gate-stuck candidates re-alarm every night");
+    assert.match(r.reason, /NOT in awareness/);
+    assert.equal(core.classifyNight(core.readDreamYield("2026-09-13")), "filtered");
+  });
+
+  it("'already-promoted' is only ever claimed after VERIFYING awareness presence", async () => {
+    // Pre-seed awareness with an equivalent insight, then run a bar-clearing
+    // candidate: promotion skips (dedup) and the label is now backed by a
+    // real presence check.
+    await core.awarenessUpdate({
+      insights: [{
+        title: "always vacuum the database weekly",
+        evidence: "seeded control insight",
+        applies_when: ["db"],
+        source: "test-seed",
+        severity: "important",
+      }],
+    });
+    const report = await core.runDreamAdmission(
+      [
+        {
+          title: "always vacuum the database weekly",
+          observations: [
+            { date: "2026-09-11", project: "a" },
+            { date: "2026-09-12", project: "a" },
+            { date: "2026-09-13", project: "a" },
+          ],
+          applies_when: ["db"],
+          evidence: "recurred in journals",
+        },
+      ],
+      { runDate: new Date(2026, 8, 14, 2, 0, 0) },
+    );
+    const r = report.results[0];
+    assert.equal(r.outcome, "already-promoted");
+    assert.match(r.reason, /VERIFIED present in awareness/);
+  });
+
+  it("LOW-4: the dream bar and the online bar are the SAME exported constant", () => {
+    assert.equal(core.DREAM_PROMOTION_THRESHOLD, core.PROMOTION_CONFIRMATION_THRESHOLD);
+  });
+
+  it("LOW-9: a corrupt admission ledger surfaces in errors[] and the night classifies errored, never benign", async () => {
+    fs.writeFileSync(path.join(H1_ROOT, "dreams", "admission-ledger.json"), "not json {{{", "utf-8");
+    const report = await core.runDreamAdmission([], { runDate: new Date(2026, 8, 15, 2, 0, 0) });
+    assert.ok(report.errors.some((e) => /ledger was corrupt/.test(e)), "corruption is loud");
+    const y = core.readDreamYield("2026-09-15");
+    assert.ok(y.errors?.some((e) => /ledger was corrupt/.test(e)), "…and persisted in the yield record");
+    assert.equal(core.classifyNight(y), "errored", "an errored zero-yield night is not 'corpus thin'");
   });
 });

@@ -14,6 +14,7 @@
  * structurally impossible:
  *
  *   "filtered"      — candidates seen, math rejected them → banner at ≥3 nights
+ *   "errored"       — run recorded errors, zero yield     → banner at ≥3 nights
  *   "no-yield-data" — run completed but wrote no yield record (SOP not yet
  *                     repointed / instrumentation gap)     → banner at ≥3 nights
  *   "empty-corpus"  — zero candidates in the corpus        → banner at ≥7 nights
@@ -65,7 +66,8 @@ const BANNER_THRESHOLD = 2;  // surface when N or more consecutive failures
 /** Yield lookback must be long enough that a 22-night silent streak can never
  *  hide inside it again. */
 const YIELD_LOOKBACK_DAYS = 30;
-/** Zero-yield streaks containing a "filtered" or "no-yield-data" night banner here. */
+/** Zero-yield streaks containing a "filtered", "errored" or "no-yield-data"
+ *  night banner here. */
 const ZERO_YIELD_BANNER_THRESHOLD = 3;
 /** Pure thin-corpus / already-known streaks banner here (a quiet week is
  *  legitimate; a quiet-plus week deserves a look). */
@@ -188,10 +190,12 @@ export function getDreamHealth(opts: DreamHealthOptions = {}): DreamHealth {
   }
 
   const filtered = out.zero_yield_causes["filtered"] ?? 0;
+  const errored = out.zero_yield_causes["errored"] ?? 0;
   const noData = out.zero_yield_causes["no-yield-data"] ?? 0;
-  if (out.consecutive_zero_yield >= ZERO_YIELD_BANNER_THRESHOLD && (filtered > 0 || noData > 0)) {
+  if (out.consecutive_zero_yield >= ZERO_YIELD_BANNER_THRESHOLD && (filtered > 0 || errored > 0 || noData > 0)) {
     const causes: string[] = [];
     if (filtered > 0) causes.push(`${filtered} night(s) the admission math rejected every candidate (${candidatesSeenInStreak} candidates seen, 0 admitted)`);
+    if (errored > 0) causes.push(`${errored} night(s) ran with errors (see errors[] in the yield files)`);
     if (noData > 0) causes.push(`${noData} night(s) ran without writing a yield record (SOP not repointed to \`ar dream admit\`?)`);
     out.banner =
       `⚠ Dream ran ${out.consecutive_zero_yield} nights in a row with ZERO yield — ` +

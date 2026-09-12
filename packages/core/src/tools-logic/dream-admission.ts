@@ -45,8 +45,13 @@
  */
 
 import { addIndexedInsight, findSimilarInsight, readInsightsIndex, normalizeTitle, tokenOverlap } from "../palace/insights-index.js";
-import { addInsight } from "../palace/awareness.js";
-import { promoteConfirmedInsights, type PromotionResult } from "./insight-promotion.js";
+import { addInsight, readAwarenessState } from "../palace/awareness.js";
+import {
+  promoteConfirmedInsights,
+  titlePresentInAwareness,
+  PROMOTION_CONFIRMATION_THRESHOLD,
+  type PromotionResult,
+} from "./insight-promotion.js";
 import { withLock } from "../storage/filelock.js";
 import { readJsonSafe, writeJsonAtomic, ensureDir } from "../storage/fs-utils.js";
 import {
@@ -56,6 +61,7 @@ import {
   type DreamYieldDecision,
   type DreamYieldCorpus,
 } from "../storage/dream-yield.js";
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 /** Bump when the admission contract changes (SOP repoints pin this). */
@@ -65,12 +71,12 @@ export const DREAM_ADMISSION_VERSION = "v2";
 export const DREAM_WINDOW_DAYS = 7;
 
 /**
- * Promotion bar — deliberately THE SAME number as promoteConfirmedInsights'
- * default (packages/core/src/tools-logic/insight-promotion.ts). One bar, two
- * entry points (online session_end + offline dream); never duplicate it with
- * harsher numbers.
+ * Promotion bar — deliberately THE SAME value as promoteConfirmedInsights'
+ * default. One bar, two entry points (online session_end + offline dream);
+ * never duplicate it with harsher numbers. fix10 LOW-4: re-exported from the
+ * ONE constant instead of a second literal, so the bars cannot drift apart.
  */
-export const DREAM_PROMOTION_THRESHOLD = 3;
+export const DREAM_PROMOTION_THRESHOLD = PROMOTION_CONFIRMATION_THRESHOLD;
 
 /** Ledger keeps counted observation keys this many days (> window, so an
  *  observation can never be double-counted while still inside any window). */
@@ -187,7 +193,8 @@ function inWindowKeys(candidate: DreamCandidate, runDay: string): { keys: string
 /**
  * The formula, replaced. Pure — no store access, unit-pinnable.
  *
- * 3 distinct observation-days within the window at a 2 AM run → "promote".
+ * 3 distinct (day, project) incidents within the window at a 2 AM run → "promote"
+ * (one day observed in three projects counts 3 — see the observation-unit note above).
  * 1–2 → "admit" (retained candidate; confirmations accrue with no window).
  * 0 → "reject", with the reason spelled out.
  */
@@ -215,7 +222,7 @@ export function evaluateDreamCandidate(
       title,
       outcome: "promote",
       observations_in_window: n,
-      reason: `clears advertised bar: ${n} distinct observation-days in ${DREAM_WINDOW_DAYS}d ≥ ${threshold}${droppedNote}`,
+      reason: `clears advertised bar: ${n} distinct (day, project) incidents in ${DREAM_WINDOW_DAYS}d ≥ ${threshold}${droppedNote}`,
     };
   }
   if (n >= 1) {
@@ -251,10 +258,26 @@ function ledgerPath(): string {
   return path.join(dreamsDir(), "admission-ledger.json");
 }
 
-function readLedger(): AdmissionLedger {
-  const l = readJsonSafe<AdmissionLedger>(ledgerPath());
-  if (!l || !Array.isArray(l.entries)) return { version: 1, entries: [] };
-  return l;
+/**
+ * fix10 LOW-9: a ledger that EXISTS but cannot be parsed must not silently
+ * reset — losing dedup state means overlapping windows can re-count
+ * (bounded confirmation inflation). Corruption is reported so the night's
+ * yield record carries it in errors[] and health classifies the night as
+ * "errored", never benign.
+ */
+function readLedger(): { ledger: AdmissionLedger; corrupted: boolean } {
+  const p = ledgerPath();
+  const l = readJsonSafe<AdmissionLedger>(p);
+  if (!l || !Array.isArray(l.entries)) {
+    let corrupted = false;
+    try {
+      corrupted = fs.existsSync(p); // present but unreadable/malformed
+    } catch {
+      corrupted = false;
+    }
+    return { ledger: { version: 1, entries: [] }, corrupted };
+  }
+  return { ledger: l, corrupted: false };
 }
 
 function findLedgerEntry(ledger: AdmissionLedger, title: string): LedgerEntry | null {
@@ -313,7 +336,15 @@ export async function runDreamAdmission(
   const errors: string[] = [];
 
   return withLock("dream-admission", async () => {
-    const ledger = readLedger();
+    const { ledger, corrupted: ledgerCorrupted } = readLedger();
+    if (ledgerCorrupted) {
+      // LOW-9: surfaced, never silent — lands in the yield record's errors[]
+      // and turns the night's health class to "errored".
+      errors.push(
+        "admission ledger was corrupt and has been reset — overlapping-window dedup state lost; " +
+        "tonight's observations may re-count once (bounded confirmation inflation)",
+      );
+    }
     const results: DreamCandidateResult[] = [];
 
     for (const candidate of candidates ?? []) {
@@ -376,7 +407,7 @@ export async function runDreamAdmission(
             // uses underneath).
             const r = await addInsight({
               title: math.title,
-              evidence: candidate.evidence ?? `dream-admission: ${math.observations_in_window} distinct observation-days in ${DREAM_WINDOW_DAYS}d (projects: ${projects.join(", ") || "unknown"})`,
+              evidence: candidate.evidence ?? `dream-admission: ${math.observations_in_window} distinct (day, project) incidents in ${DREAM_WINDOW_DAYS}d (projects: ${projects.join(", ") || "unknown"})`,
               appliesWhen: candidate.applies_when ?? [],
               source: "dream-admission",
               source_project: projects[0] ?? "_global",
@@ -401,6 +432,22 @@ export async function runDreamAdmission(
               reason: `insights-index at cap (200 entries, all ≥2 confirmations) — below-bar candidate not recorded; evidence NOT counted (will retry when the cap clears)`,
             });
           }
+          continue;
+        }
+
+        if (capBlocked && merged !== null) {
+          // LOW-8: defensive invariant. Unreachable under current index
+          // semantics (once the first call merged/created an entry, later
+          // calls confirm that entry and never hit the cap) — but if it ever
+          // fires, ledgering ALL newKeys while only some confirmations were
+          // recorded would silently undercount forever. Surface instead.
+          results.push({
+            ...base,
+            outcome: "rejected",
+            new_observations: 0,
+            reason: "internal invariant violated: index cap hit AFTER a successful merge — confirmations partially recorded, nothing ledgered (will retry next night)",
+          });
+          errors.push(`candidate "${math.title}": cap-after-merge invariant violated`);
           continue;
         }
 
@@ -437,32 +484,68 @@ export async function runDreamAdmission(
     // Promotion — the SHARED bar. Anything at ≥ threshold all-time
     // confirmations (tonight's recording included) enters awareness.
     let promotion: PromotionResult = { promoted: [], skipped: [] };
+    let promotionError: string | null = null;
     try {
       promotion = await promoteConfirmedInsights(threshold);
     } catch (err) {
-      errors.push(`promotion pass failed: ${err instanceof Error ? err.message : String(err)}`);
+      promotionError = err instanceof Error ? err.message : String(err);
+      errors.push(`promotion pass failed: ${promotionError}`);
     }
 
     // Upgrade tonight's admitted candidates that crossed the bar.
+    //
+    // HIGH-1 (review 2026-09-12): "absent from promotion.promoted" is NOT
+    // proof of "already in awareness" — promoteConfirmedInsights also skips
+    // on its addInsight QUALITY GATE (e.g. title_too_short), and the whole
+    // pass can THROW (2 AM lock contention with a concurrent session_end).
+    // The old label filed both as benign "already-promoted", sticking the
+    // candidate forever and letting a filtered store reach the ≥7-night
+    // "corpus genuinely thin" banner. Claim "already in awareness" only
+    // after VERIFYING presence with the promotion pass's own predicate;
+    // otherwise the candidate is `rejected` with the real reason, and the
+    // night classifies as filtered/errored — loud, not benign.
     const index = readInsightsIndex();
+    const awarenessTitlesLower = (readAwarenessState()?.topInsights ?? []).map(
+      (i: { title: string }) => (i.title ?? "").toLowerCase(),
+    );
+    // "already-counted" is verified too: a quality-gate-stuck candidate has
+    // no new observations on later nights and would otherwise re-file as
+    // benign already-known EVERY night after the first loud one.
     for (const r of results) {
-      if (r.outcome !== "admitted") continue;
+      if (r.outcome !== "admitted" && r.outcome !== "already-counted") continue;
+      const wasAlreadyCounted = r.outcome === "already-counted";
       const indexed = r.index_title
         ? index.insights.find((i) => i.title === r.index_title) ?? findSimilarInsight(r.title, index.insights)
         : findSimilarInsight(r.title, index.insights);
       const count = indexed?.confirmed_count ?? r.confirmed_count ?? 0;
       r.confirmed_count = count;
       if (count < threshold) {
-        r.reason = `${r.reason}; now at ${count}/${threshold} confirmations`;
+        if (!wasAlreadyCounted) r.reason = `${r.reason}; now at ${count}/${threshold} confirmations`;
         continue;
       }
-      const promotedMatch = promotion.promoted.some((t) => titleMatches(t, r.index_title ?? r.title));
+      const effectiveTitle = r.index_title ?? r.title;
+      const promotedMatch = promotion.promoted.some((t) => titleMatches(t, effectiveTitle));
       if (promotedMatch) {
         r.outcome = "promoted";
         r.reason = `${r.math.reason}; promoted to awareness (confirmed ${count}× ≥ ${threshold})`;
+      } else if (
+        titlePresentInAwareness(effectiveTitle, awarenessTitlesLower) ||
+        (effectiveTitle !== r.title && titlePresentInAwareness(r.title, awarenessTitlesLower))
+      ) {
+        if (!wasAlreadyCounted) {
+          r.outcome = "already-promoted";
+          r.reason = `${r.math.reason}; bar cleared (confirmed ${count}×) and an equivalent insight is VERIFIED present in awareness`;
+        }
+        // already-counted + verified present = genuinely benign; keep as-is.
       } else {
-        r.outcome = "already-promoted";
-        r.reason = `${r.math.reason}; bar cleared (confirmed ${count}×) but an equivalent insight is already in awareness`;
+        // Taxonomy: a quality-gate refusal is the GATE filtering the
+        // candidate → rejected only (night classifies "filtered"); a thrown
+        // promotion pass already sits in errors[] via the catch above (night
+        // classifies "errored"). Both are loud; neither is benign.
+        r.outcome = "rejected";
+        r.reason = promotionError
+          ? `${r.math.reason}; bar cleared (confirmed ${count}×) but the promotion pass FAILED (${promotionError}) — NOT in awareness; will retry next night`
+          : `${r.math.reason}; bar cleared (confirmed ${count}×) but promotion was refused by the awareness quality gate (e.g. title too short / no evidence) — NOT in awareness; rewrite the candidate title/evidence`;
       }
     }
 
@@ -565,7 +648,8 @@ Write all candidates to a temp file and run:
     --journal-files {N} --journal-bytes {B} --corrections-new {C}
 
 The command (deterministic, tested):
-  - promotes any candidate with ≥ ${DREAM_PROMOTION_THRESHOLD} distinct observation-days in ${DREAM_WINDOW_DAYS}d
+  - promotes any candidate with ≥ ${DREAM_PROMOTION_THRESHOLD} distinct (journal-day, project) incidents in ${DREAM_WINDOW_DAYS}d
+    (same day in two projects = 2 incidents; same-day repeats in one project = 1)
     (same bar as the online promoteConfirmedInsights path — no recency multiplier,
     a 2 AM run counts yesterday at full weight);
   - admits 1–2x candidates into insights-index where confirmations accrue all-time;

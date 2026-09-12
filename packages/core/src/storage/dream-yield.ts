@@ -18,6 +18,10 @@
  *                      22 nights)
  *   "already-known"  — candidates were seen but every one was already counted
  *                      or already promoted (nothing NEW, but nothing hidden)
+ *   "errored"        — the run recorded errors (ledger corruption/write
+ *                      failure, promotion-pass failure, …) and produced no
+ *                      yield; never benign (fix10 review MEDIUM-2 — errors[]
+ *                      used to be invisible to classification)
  *   "no-yield-data"  — the run log says the dream completed but no yield
  *                      record exists (instrumentation gap — e.g. the SOP has
  *                      not been repointed to `ar dream admit` yet). Flagged,
@@ -83,6 +87,7 @@ export type NightYieldClass =
   | "empty-corpus"
   | "filtered"
   | "already-known"
+  | "errored"
   | "no-yield-data";
 
 export function dreamsDir(): string {
@@ -112,6 +117,10 @@ export function readDreamYield(date: string): DreamYieldRecord | null {
 export function classifyNight(record: DreamYieldRecord | null): NightYieldClass {
   if (!record) return "no-yield-data";
   if (record.promoted + record.admitted > 0) return "productive";
+  // MEDIUM-2: a zero-yield night that recorded errors is NEVER benign — a
+  // ledger reset or failed promotion pass must not read as "corpus thin" or
+  // "already known".
+  if ((record.errors?.length ?? 0) > 0) return "errored";
   if (record.candidates_seen === 0) return "empty-corpus";
   // Zero yield with candidates present: if the MATH rejected anything, the
   // math is the cause; only when nothing was rejected is "everything was

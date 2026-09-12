@@ -517,7 +517,12 @@ export {
   type BuildRecognitionOptions,
 } from "./tools-logic/recognition-builder.js";
 export { sessionEnd, checkInsightQuality, type SessionEndInput, type SessionEndResult, type InsightQualityWarning, type MergeSuggestion } from "./tools-logic/session-end.js";
-export { promoteConfirmedInsights, type PromotionResult } from "./tools-logic/insight-promotion.js";
+export {
+  promoteConfirmedInsights,
+  titlePresentInAwareness,
+  PROMOTION_CONFIRMATION_THRESHOLD,
+  type PromotionResult,
+} from "./tools-logic/insight-promotion.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)

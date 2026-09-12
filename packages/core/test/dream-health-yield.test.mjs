@@ -95,6 +95,27 @@ describe("classifyNight — the zero-output taxonomy", () => {
       "productive",
     );
   });
+
+  it("MEDIUM-2: errors[] influences the class — an errored zero-yield night is never benign", () => {
+    const base = {
+      version: 1, date: "2026-09-11", generated_at: "", already_known: 0,
+      discarded_by_reason: {}, decisions: [], promoted_titles: [],
+    };
+    // errored outranks empty-corpus AND already-known…
+    assert.equal(
+      core.classifyNight({ ...base, candidates_seen: 0, admitted: 0, promoted: 0, rejected: 0, errors: ["ledger was corrupt"] }),
+      "errored",
+    );
+    assert.equal(
+      core.classifyNight({ ...base, candidates_seen: 2, admitted: 0, promoted: 0, rejected: 0, already_known: 2, errors: ["promotion pass failed: lock contention"] }),
+      "errored",
+    );
+    // …but real yield stays productive (errors ride along in the record).
+    assert.equal(
+      core.classifyNight({ ...base, candidates_seen: 2, admitted: 1, promoted: 0, rejected: 0, errors: ["ledger write failed"] }),
+      "productive",
+    );
+  });
 });
 
 describe("getDreamHealth — yield streaks and banners", () => {
@@ -147,6 +168,19 @@ describe("getDreamHealth — yield streaks and banners", () => {
     assert.ok(h.banner, "silent filtering MUST banner");
     assert.match(h.banner, /admission math rejected every candidate/);
     assert.match(h.banner, /9 candidates seen/);
+    assert.equal(h.banner_kind, "zero-yield");
+  });
+
+  it("MEDIUM-2: 3 errored nights banner red — errors are never a quiet corpus", () => {
+    for (const n of [1, 2, 3]) {
+      writeRunLog(n, true);
+      writeYield(n, { candidates_seen: 0, errors: ["promotion pass failed: awareness-state lock contention"] });
+    }
+    const h = core.getDreamHealth({ aamDreamsDir: AAM_DIR });
+    assert.equal(h.consecutive_zero_yield, 3);
+    assert.equal(h.zero_yield_causes["errored"], 3);
+    assert.ok(h.banner, "errored streak MUST banner at 3 nights");
+    assert.match(h.banner, /ran with errors/);
     assert.equal(h.banner_kind, "zero-yield");
   });
 

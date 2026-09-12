@@ -18,10 +18,41 @@ export interface PromotionResult {
 }
 
 /**
+ * The promotion bar. ONE constant, TWO entry points: the online path
+ * (session_end → promoteConfirmedInsights default) and the offline dream
+ * (dream-admission.ts re-exports it as DREAM_PROMOTION_THRESHOLD). fix10
+ * LOW-4: previously duplicated as two literals — raising one silently forked
+ * the bar.
+ */
+export const PROMOTION_CONFIRMATION_THRESHOLD = 3;
+
+/**
+ * The awareness-presence predicate promoteConfirmedInsights uses for its
+ * dedup skip — exported (fix10 HIGH-1) so dream-admission can verify a
+ * bar-clearing candidate ACTUALLY landed in awareness instead of inferring
+ * "already present" from mere absence in `promoted` (which also happens on
+ * quality-gate rejection or a thrown promotion pass).
+ *
+ * `existingTitlesLower` must be LOWERCASED awareness titles.
+ */
+export function titlePresentInAwareness(title: string, existingTitlesLower: Iterable<string>): boolean {
+  const titleLower = title.toLowerCase();
+  const words = tokenizeWords(title, { minLength: 0 });
+  for (const existing of existingTitlesLower) {
+    if (existing === titleLower) return true;
+    const existingWords = tokenizeWords(existing, { minLength: 0 });
+    if (words.length === 0 || existingWords.length === 0) continue;
+    const overlap = words.filter((w) => existingWords.includes(w) && (w.length > 3 || NON_ASCII_RE.test(w))).length;
+    if (overlap / Math.max(existingWords.length, words.length) > 0.5) return true;
+  }
+  return false;
+}
+
+/**
  * Promote insights from insights-index into awareness when confirmed_count >= threshold.
  * @param threshold minimum confirmations required (default 3)
  */
-export async function promoteConfirmedInsights(threshold = 3): Promise<PromotionResult> {
+export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATION_THRESHOLD): Promise<PromotionResult> {
   const index = readInsightsIndex();
   const state = readAwarenessState();
 
@@ -45,17 +76,10 @@ export async function promoteConfirmedInsights(threshold = 3): Promise<Promotion
     // (Intl.Segmenter) and lowercases/whitespace-splits the rest exactly
     // like the old grammar did for ASCII; the length floor now exempts
     // non-ASCII tokens (NON_ASCII_RE — the floor is English-tuned).
-    const titleLower = insight.title.toLowerCase();
-    const words = tokenizeWords(insight.title, { minLength: 0 });
-    const alreadyPresent = [...existingTitles].some((existing) => {
-      // Exact title match (fast path)
-      if (existing === titleLower) return true;
-      // Word-overlap similarity (same logic as addIndexedInsight)
-      const existingWords = tokenizeWords(existing, { minLength: 0 });
-      if (words.length === 0 || existingWords.length === 0) return false;
-      const overlap = words.filter((w) => existingWords.includes(w) && (w.length > 3 || NON_ASCII_RE.test(w))).length;
-      return overlap / Math.max(existingWords.length, words.length) > 0.5;
-    });
+    // fix10 HIGH-1: the predicate is extracted (titlePresentInAwareness) so
+    // dream-admission applies the IDENTICAL check when verifying a
+    // promotion actually landed.
+    const alreadyPresent = titlePresentInAwareness(insight.title, existingTitles);
 
     if (alreadyPresent) {
       skipped.push(insight.title);
