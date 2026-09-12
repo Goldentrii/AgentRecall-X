@@ -872,10 +872,13 @@ async function main(): Promise<void> {
           if (!core.runtimeInstalled()) {
             process.stderr.write(`[ar] installing ${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE} into ${runtimeDir} (self-contained, ~380MB — one time)...\n`);
             const { spawnSync } = await import("node:child_process");
+            // fix7 review L: npm is `npm.cmd` on Windows and .cmd spawns
+            // need a shell there (Node ≥18.20 EINVAL hardening).
+            const isWin = process.platform === "win32";
             const install = spawnSync(
-              "npm",
+              isWin ? "npm.cmd" : "npm",
               ["install", "--prefix", runtimeDir, "--no-audit", "--no-fund", "--ignore-scripts", `${core.RUNTIME_PACKAGE}@${core.RUNTIME_PACKAGE_RANGE}`],
-              { stdio: ["ignore", "inherit", "inherit"] },
+              { stdio: ["ignore", "inherit", "inherit"], ...(isWin ? { shell: true } : {}) },
             );
             if (install.status !== 0) {
               output(`runtime install failed (npm exit ${install.status}) — check network/npm config and re-run \`ar embeddings setup\``);

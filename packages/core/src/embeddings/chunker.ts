@@ -27,9 +27,12 @@
  *     the lexical palace tier mints, same accumulation property.
  *   - journal: chunks within each `## section`, ONE vote per (date, section)
  *     — the same granularity smart_recall's perSectionDedupe enforces on
- *     the lexical side. Ids are per-chunk (the lexical journal id embeds
- *     line+excerpt and cannot be reproduced here — documented divergence;
- *     fuseCanonical's excerpt identity still collapses true duplicates).
+ *     the lexical side. Ids minted here are per-chunk placeholders (the
+ *     lexical journal id embeds line+excerpt and cannot be reproduced from
+ *     a chunk); queryMemory JOINS them onto the best lexical item sharing
+ *     the identical "${date} / ${section}" title before fusion (fix7 review
+ *     H1 — see query-memory.ts), so dual-evidence journal sections fold
+ *     into ONE entry with summed votes like every other tier.
  *   - insight: one chunk per indexed insight (title + applies_when +
  *     skill_tags), id = stableId("insight", title) — same id as the lexical
  *     insight tier; carries `projects` so the SCOPE stage applies to
@@ -91,7 +94,12 @@ function toExcerpt(text: string): string {
 }
 
 /** Greedy line-accumulating splitter: flush when adding the next line would
- *  exceed the target. Deterministic; no lookahead. */
+ *  exceed the target. Deterministic; no lookahead. A single line longer
+ *  than the target is TRUNCATED to it (fix7 review L, accepted): the tail
+ *  of a >480-char line is invisible to the semantic leg (the models'
+ *  ~512-token input cap would discard it at embed time anyway) — it stays
+ *  lexically searchable, and the cut is deterministic so build-time and
+ *  query-time hashes always agree. */
 function splitLines(lines: string[], startLine: number): Array<{ text: string; line: number }> {
   const out: Array<{ text: string; line: number }> = [];
   let buf: string[] = [];
@@ -192,8 +200,10 @@ function chunkJournal(candidates: MemoryCandidate[]): EmbeddingChunk[] {
           text: piece.text,
           hash: sha256(piece.text),
           tier: "journal",
-          // Per-chunk id (hash-derived): the lexical journal id embeds
-          // line+excerpt and cannot be reproduced here — see file header.
+          // Per-chunk PLACEHOLDER id (hash-derived) — replaced by the best
+          // same-title lexical item's id at fusion time (fix7 review H1
+          // join in query-memory.ts); stands alone only when no lexical
+          // item matched this (date, section) at all. See file header.
           id: stableId("journal", `${title}::sem::${sha256(piece.text).slice(0, 16)}`),
           title,
           excerpt: toExcerpt(piece.text),

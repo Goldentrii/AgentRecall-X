@@ -264,8 +264,14 @@ RRF_score(doc) = Σ_legs  w_leg / (k + rank_leg(doc))     // applyRRF(items, map
 
 Same-id items found both ways fold into ONE entry with summed contributions
 (a correction that matches lexically at tier-rank 1 and semantically at leg-
-rank 1 scores `2/61`). Cosine is used ONLY to order the leg's own list —
-never summed with any other score (the Fix-1 incompatible-scale rule holds).
+rank 1 scores `2/61`). Journal semantic items ADOPT the id of the best
+lexical item sharing their exact `"${date} / ${section}"` title before
+fusion (fix7 review H1 — lexical journal ids are per-hit and unreproducible
+from a chunk), so the fold holds for every tier; on any fold the LEXICAL
+item's fields win regardless of insertion order (review H2 — match-anchored
+excerpt, real line, `foundBySemantic` reserved for semantic-ONLY
+discoveries). Cosine is used ONLY to order the leg's own list — never
+summed with any other score (the Fix-1 incompatible-scale rule holds).
 
 Two fusion parameters were set by golden-eval measurement, not design
 (fix7 report, placement/weight matrix):
@@ -277,9 +283,10 @@ Two fusion parameters were set by golden-eval measurement, not design
   outrank palace/journal/insight lexical singles while the owner's captured
   rules keep top tie authority (map insertion order IS the fix4b tie-break).
 
-Measured (twin clones, 2026-09-12): flag OFF 75.0% top-5 hit-rate
-(per-query identical to fix4b), flag ON with multilingual-e5-base 90.0%,
-zero regressions, all six protected hits hold; warm p95 151 ms.
+Measured (twin clones, 2026-09-12, post-review-fix certified pass): flag
+OFF 75.0% top-5 hit-rate (per-query identical to fix4b), flag ON with the
+default model (paraphrase-multilingual-MiniLM-L12-v2) 90.0%, zero
+regressions, all six protected hits hold; warm p95 ≈150 ms.
 
 ---
 

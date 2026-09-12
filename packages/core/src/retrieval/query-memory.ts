@@ -1552,6 +1552,19 @@ interface RRFEntry {
  * class (smart-recall.ts Fix 1) cannot recur. Used ONLY by the opt-in
  * semantic leg (see queryMemory below); its value was chosen by golden-eval
  * measurement, not tuned per-query (fix7 report's placement/weight matrix).
+ *
+ * fix7 review H2 (2026-09-12): on an id-level fold, LEXICAL FIELDS WIN
+ * regardless of insertion order. The semantic leg fuses BEFORE
+ * palace/journal/insight (its measured tie-band placement), so without this
+ * rule a dual-evidence item would keep the semantic chunk's excerpt/line
+ * (unanchored, chunk-start line → wrong verbatim drill-down) and a
+ * `semantic: true` marker whose documented contract is "semantic-ONLY
+ * discoveries". When a LEXICAL item folds into an entry currently held by a
+ * SEMANTIC-originated item, the entry's `item` is REPLACED by the lexical
+ * one (match-anchored excerpt, real line, no `semantic` marker) while the
+ * accumulated score, the sources set, and — critically — the entry's MAP
+ * POSITION (the tie-break authority) are preserved. Flag-off items never
+ * carry `semantic`, so this branch is structurally unreachable flag-off.
  */
 function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>, weight = 1): void {
   rankedItems.forEach((item, idx) => {
@@ -1560,6 +1573,15 @@ function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>,
     const existing = rrfMap.get(item.id);
     if (existing) {
       existing.score += contribution;
+      // fix7 review H2: lexical fields displace semantic-originated fields
+      // on a fold (Map value replacement keeps the entry's insertion
+      // position, so tie-break placement is unaffected). No sources.add
+      // here: semantic items carry NATIVE tier source labels, so a fold is
+      // always same-source — and the flag-off path never folds cross-tier
+      // (id spaces disjoint by construction, see scoreCorrectionsTier).
+      if (existing.item.semantic && !item.semantic) {
+        existing.item = item;
+      }
     } else {
       rrfMap.set(item.id, { score: contribution, item, sources: new Set([item.source]) });
     }
@@ -1580,14 +1602,15 @@ function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>,
  *    owner's own captured rules keep top tie authority. When false, the
  *    leg inserts last (loses all ties).
  *
- * MEASURED (fix7 report, twin-clone golden eval, multilingual-e5-base):
+ * MEASURED (fix7 report, twin-clone golden eval; certified post-review-fix
+ * with the default MiniLM-L12-v2 model):
  *   weight 1.0 + after-corrections → 90.0% hit-rate, 3/5 paraphrase
  *   recovered, ZERO regressions, all six protected hits hold. weight 1.0 +
- *   last → 85.0% (gq10's semantic-only golden loses every 1/61 tie).
- *   weight 1.3 / 1.1 (any placement) → semantic items vault the lexical-
- *   single band wholesale and FLOOD top-5 (gq02/gq15/gq18 regress, one of
- *   them protected) — weights > 1 are measured-toxic on this store; do not
- *   raise without re-running the full protected battery.
+ *   last placement → a semantic-only golden loses every 1/61 tie (measured
+ *   −1 hit on the pre-fix matrix). weight 1.3 / 1.1 (any placement) →
+ *   semantic items vault the lexical-single band wholesale and FLOOD top-5
+ *   (three regressions, one protected) — weights > 1 are measured-toxic on
+ *   this store; do not raise without re-running the full protected battery.
  */
 const SEMANTIC_RRF_WEIGHT = 1.0;
 const SEMANTIC_AFTER_CORRECTIONS = true;
@@ -1732,16 +1755,20 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
 
   // SEMANTIC LEG (fix7, 2026-09-12) — OPT-IN ONLY (AGENT_RECALL_EMBEDDINGS
   // / config.json embeddings_enabled; read per-call, the RECALL_FUSION
-  // precedent). Flag OFF: this block is a single boolean check — no module
-  // load, no index read, no model touch; the result is byte-identical to
-  // fix4b (pinned by fix7-embeddings.test.mjs's equivalence test). Flag ON:
-  // one ADDITIONAL ranked list joins the same RRF fusion below. The leg's
-  // items are trust-filtered/scoped through the same chokepoints as every
-  // lexical tier (see retrieval/semantic-leg.ts's header — the security
-  // property, adversarially tested) and carry native tier source labels.
-  // Loaded dynamically so the flag-off path never even parses the
-  // embeddings modules (same lazy-import pattern smartRecall uses for
-  // recall-backend.js).
+  // precedent). Flag OFF: this block costs one env check (plus, when the
+  // env var is unset, embeddingsEnabled()'s small mtime-cached config.json
+  // probe) — no index read, no model touch, no semantic module executes,
+  // and the RESULT is byte-identical to fix4b (pinned by
+  // fix7-embeddings.test.mjs's equivalence test). Flag ON: one ADDITIONAL
+  // ranked list joins the same RRF fusion below. The leg's items are
+  // trust-filtered/scoped through the same chokepoints as every lexical
+  // tier (see retrieval/semantic-leg.ts's header — the security property,
+  // adversarially tested) and carry native tier source labels. The dynamic
+  // import keeps this FILE decoupled from the embeddings modules (review
+  // note: the package barrel index.ts re-exports them statically for
+  // CLI/test consumers, so package-level import already parses them — they
+  // are side-effect-free at top level by design; the honest claim is
+  // "never EXECUTES flag-off", not "never loads").
   let semanticItems: QueryMemoryItem[] | undefined;
   let semanticNote: SemanticLegNote | undefined;
   if (embeddingsEnabled()) {
@@ -1757,9 +1784,43 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
         scope: input.scope,
         since: input.since,
         room: input.palace?.room,
+        // fix7 review L: no silent param discard — the leg honors the
+        // caller's rollup-archive exclusion the same way the lexical
+        // journal scorer does.
+        includeRollupArchive: input.journal?.includeRollupArchive,
       });
       semanticItems = sem.items;
       semanticNote = sem.note;
+      // fix7 review H1 (2026-09-12): journal id-space JOIN. Palace/insight/
+      // corrections semantic items mint the SAME ids as their lexical twins
+      // (chunker.ts id conventions), so applyRRF folds dual-evidence items
+      // into one entry with summed votes. Journal could not: lexical journal
+      // ids embed line+excerpt (per-hit uniqueness, W3b) and are
+      // unreproducible from a chunk — so a section found by BOTH legs
+      // surfaced as TWO near-duplicate slots with SPLIT votes (defeating
+      // perSectionDedupe cross-leg and under-ranking multi-evidence docs).
+      // Join here, where both sides are in hand: a semantic journal item
+      // adopts the id of the BEST lexical item sharing its exact
+      // "${date} / ${section}" title (both sides construct it identically;
+      // scoreJournalTier returns score-sorted items, so first-seen per
+      // title is the best). The semantic leg emits at most one journal item
+      // per title (docKey = journal/title), so no intra-leg id collision
+      // can result. With applyRRF's lexical-fields-win fold rule (H2), the
+      // merged entry carries the lexical line-anchored excerpt.
+      if (semanticItems.length > 0) {
+        const lexicalJournal = byTier.journal;
+        if (lexicalJournal && lexicalJournal.length > 0) {
+          const bestByTitle = new Map<string, QueryMemoryItem>();
+          for (const it of lexicalJournal) {
+            if (!bestByTitle.has(it.title)) bestByTitle.set(it.title, it);
+          }
+          semanticItems = semanticItems.map((it) => {
+            if (it.source !== "journal") return it;
+            const lex = bestByTitle.get(it.title);
+            return lex ? { ...it, id: lex.id } : it;
+          });
+        }
+      }
     } catch (err) {
       // Defense in depth — runSemanticLeg already never throws; this guard
       // covers the dynamic import itself. The recall must not fail.

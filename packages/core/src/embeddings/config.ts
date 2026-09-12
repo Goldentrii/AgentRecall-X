@@ -105,17 +105,21 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
 
 /**
  * Default model — chosen by MEASUREMENT on the golden eval (fix7 report,
- * 2026-09-12, tradeoff table):
- *   multilingual-e5-base   90.0% hit-rate · 3/5 paraphrase recovered ·
- *                          0 regressions · ~289MB cache · ~5-10ms/query warm
- *   multilingual-e5-small  85.0% · 2/5 · 0 regressions · ~144MB · ~3-5ms
- *   MiniLM-L12-v2          80.0% · 3/5 · REGRESSES 2 lexical hits (gq08,
- *                          gq18) · ~145MB · ~3ms
- * e5-base is the only candidate that clears the fix7 exit gate (≥85% AND
- * ≥3/5 paraphrase AND no regression). Users on tight disk can select
- * e5-small via AGENT_RECALL_EMBEDDINGS_MODEL (documented tradeoff).
+ * 2026-09-12, tradeoff table; numbers are the POST-review-fix certified
+ * runs — the H1 journal-fold fix changed the fusion landscape and the
+ * matrix was fully re-measured after it):
+ *   MiniLM-L12-v2          90.0% hit-rate · 3/5 paraphrase recovered ·
+ *                          0 regressions · ~145MB cache · ~3ms/query warm
+ *   multilingual-e5-base   85.0% · 2/5 · 0 regressions · ~289MB · ~5-10ms
+ *   multilingual-e5-small  80.0% · 2/5 · 1 regression (gq08) · ~144MB
+ * MiniLM is the only candidate that clears the fix7 exit gate (≥85% AND
+ * ≥3/5 paraphrase AND no regression) after the fold fix: its tighter
+ * cosine space (unrelated ≈0.1-0.35) admits fewer journal chunks past the
+ * MIN_COSINE floor, so fewer dual-evidence folds crowd out semantic-only
+ * goldens — pre-fix it looked worst (its "regressions" were the split-slot
+ * bug), post-fix it wins. Re-run the full matrix before changing this.
  */
-export const DEFAULT_EMBEDDING_MODEL = "multilingual-e5-base";
+export const DEFAULT_EMBEDDING_MODEL = "paraphrase-multilingual-minilm-l12-v2";
 
 /** Resolve the active model spec (env override → default). Unknown ids fall
  *  back to the default LOUDLY at the call sites that surface status (the
@@ -140,18 +144,28 @@ export function resolveEmbeddingModel(): EmbeddingModelSpec {
  *   3. <root>/config.json `"embeddings_enabled": true` → on
  *   4. default → off
  *
- * The config read is best-effort and tiny (config.json is a small file the
- * supabase path already reads); any read/parse failure means OFF — the flag
- * must never make a recall throw.
+ * The env check is per-call (RECALL_FUSION precedent). The config-file half
+ * is best-effort and mtime-CACHED (fix7 review L: one statSync per call
+ * instead of exists+read+parse — config.json edits are picked up on the
+ * next call via the mtime key); any read/parse failure means OFF — the
+ * flag must never make a recall throw.
  */
+let _cfgCache: { path: string; mtimeMs: number; enabled: boolean } | null = null;
+
 export function embeddingsEnabled(): boolean {
   const env = process.env.AGENT_RECALL_EMBEDDINGS;
   if (env !== undefined && env !== "") return env === "1";
   try {
     const p = path.join(getRoot(), "config.json");
-    if (!fs.existsSync(p)) return false;
+    const stat = fs.statSync(p, { throwIfNoEntry: false });
+    if (!stat) return false;
+    if (_cfgCache && _cfgCache.path === p && _cfgCache.mtimeMs === stat.mtimeMs) {
+      return _cfgCache.enabled;
+    }
     const cfg = JSON.parse(fs.readFileSync(p, "utf-8"));
-    return cfg?.embeddings_enabled === true;
+    const enabled = cfg?.embeddings_enabled === true;
+    _cfgCache = { path: p, mtimeMs: stat.mtimeMs, enabled };
+    return enabled;
   } catch {
     return false;
   }

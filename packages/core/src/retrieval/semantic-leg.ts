@@ -97,6 +97,11 @@ export interface SemanticLegInput {
   scope?: string;
   since?: string;
   room?: string;
+  /** Mirrors QueryMemoryInput.journal.includeRollupArchive (fix7 review L:
+   *  no silent param discard — a caller that excluded the rollup archive
+   *  lexically must not receive it through the semantic leg). Default true,
+   *  matching scoreJournalTier's own default. */
+  includeRollupArchive?: boolean;
   topK?: number;
 }
 
@@ -130,7 +135,10 @@ export async function runSemanticLeg(input: SemanticLegInput): Promise<SemanticL
 
     // 3. Candidates — the SAME trust-filtered fetch shape as the lexical
     //    tiers (see this file's header), re-chunked deterministically.
-    let chunks = chunkProject(input.project, { room: input.room, includeRollupArchive: true });
+    let chunks = chunkProject(input.project, {
+      room: input.room,
+      includeRollupArchive: input.includeRollupArchive ?? true,
+    });
 
     //    Tier scoping — only tiers the caller requested may contribute
     //    (see SemanticLegInput.tiers).
@@ -163,6 +171,17 @@ export async function runSemanticLeg(input: SemanticLegInput): Promise<SemanticL
     //    chunk not yet indexed is silently lexical-only until the next
     //    rebuild; `matched` makes that coverage gap diagnosable).
     const [queryVec] = await embedder.embedQueries([input.query]);
+    // fix7 review L: dim guard — a dim-mismatched embedder output (corrupt
+    // or swapped model files; readEmbeddingIndex only validates against the
+    // SPEC's dim) would produce NaN cosines, which pass any `< minCosine`
+    // floor and sort nondeterministically. Degrade instead.
+    if (!queryVec || queryVec.length !== index.dim) {
+      return empty({
+        status: "error",
+        model: spec.id,
+        message: `query embedding dim ${queryVec?.length ?? 0} != index dim ${index.dim} — model/index mismatch; run \`ar embeddings rebuild\``,
+      });
+    }
     const minCosine = MIN_COSINE[spec.id] ?? 0;
     let matched = 0;
     const bestByDoc = new Map<string, { chunk: EmbeddingChunk; cosine: number }>();

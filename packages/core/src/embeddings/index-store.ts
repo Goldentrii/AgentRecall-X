@@ -99,7 +99,12 @@ export async function writeEmbeddingIndex(
 }
 
 /** In-process read cache keyed by (path, mtimeMs, size) — repeated recalls
- *  in one MCP-server process skip re-reading a multi-MB file. */
+ *  in one MCP-server process skip re-reading a multi-MB file. KNOWN
+ *  NARROW STALENESS WINDOW (fix7 review L, accepted): two rebuilds landing
+ *  within the same mtime tick AND producing byte-equal sizes would serve
+ *  the older copy until the next tick — content-hash keys make same-size
+ *  different-content rebuilds vanishingly rare, and a rebuild is a manual
+ *  CLI action; `resetEmbeddingIndexCache()` is the test/debug escape. */
 const _readCache = new Map<string, { mtimeMs: number; size: number; index: EmbeddingIndex }>();
 
 /**

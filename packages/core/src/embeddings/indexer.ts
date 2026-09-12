@@ -21,7 +21,7 @@
 import * as fs from "node:fs";
 import { projectsRootDir } from "../storage/paths.js";
 import { chunkProject, chunkGlobalInsights, type EmbeddingChunk } from "./chunker.js";
-import { getEmbedder, type Embedder, type EmbedderError } from "./runtime.js";
+import { getEmbedder } from "./runtime.js";
 import { resolveEmbeddingModel, type EmbeddingModelSpec } from "./config.js";
 import { readEmbeddingIndex, writeEmbeddingIndex } from "./index-store.js";
 
@@ -43,7 +43,7 @@ export interface BuildEmbeddingsOptions {
 
 export interface BuildEmbeddingsReport {
   ok: boolean;
-  error?: EmbedderError;
+  error?: { reason: string; message: string };
   model: string;
   dim: number;
   indexPath?: string;
@@ -116,14 +116,38 @@ export async function buildEmbeddingsIndex(opts: BuildEmbeddingsOptions = {}): P
   report.totalChunks = chunksByHash.size;
 
   // ---- reuse existing vectors (content-hash cache hit) ----
-  const existing = opts.force ? null : readEmbeddingIndex(spec);
-  const reusable = existing && !("error" in existing) ? existing : null;
+  // fix7 review M1 (2026-09-12): the existing index is ALWAYS read first.
+  //  - scoped build over a CORRUPT/mismatched index → REFUSE: a scoped
+  //    build cannot preserve other projects' vectors it cannot read, and
+  //    proceeding would silently narrow the index to the scoped project
+  //    while reporting pruned: 0 (the reviewer's reproduced data-loss bug).
+  //    A MISSING index is fine (fresh partial build, coverage diagnosable).
+  //  - scoped + force → re-embed the scoped chunk set but PRESERVE every
+  //    foreign hash (previously `force` dropped the whole existing index).
+  //  - full + force → rebuild from scratch (unchanged).
+  const existing = readEmbeddingIndex(spec);
+  const existingErr = "error" in existing ? existing.error : null;
+  const existingOk = existingErr ? null : (existing as Exclude<typeof existing, { error: unknown }>);
+  if (scoped && existingErr && existingErr.reason !== "missing") {
+    report.error = {
+      reason: "existing-index-unreadable",
+      message:
+        `existing index unreadable (${existingErr.message}) — a project-scoped build cannot ` +
+        `preserve other projects' vectors from an unreadable index; run a full \`ar embeddings rebuild\``,
+    };
+    report.durationMs = performance.now() - t0;
+    return report;
+  }
+  // Which existing index (if any) backs the scoped-preserve block below,
+  // and whether CURRENT-set hashes may reuse cached vectors.
+  const reusable = existingOk && (scoped || !opts.force) ? existingOk : null;
+  const reuseCurrent = !opts.force;
 
   const outHashes: string[] = [];
   const rows: Float32Array[] = [];
   const toEmbed: EmbeddingChunk[] = [];
   for (const [hash, chunk] of chunksByHash) {
-    const row = reusable?.rowByHash.get(hash);
+    const row = reuseCurrent ? reusable?.rowByHash.get(hash) : undefined;
     if (row !== undefined) {
       outHashes.push(hash);
       rows.push(reusable!.vectors.subarray(row * spec.dim, (row + 1) * spec.dim));

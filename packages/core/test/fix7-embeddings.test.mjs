@@ -451,3 +451,147 @@ describe("fix7 — opt-in local embeddings", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// fix7 independent-review fix pins (H1, H2, M1 — 2026-09-12)
+// ---------------------------------------------------------------------------
+
+describe("fix7 review fixes — fusion fold + scoped-force preservation", () => {
+  const ENV_KEYS2 = [
+    "OPENAI_API_KEY", "AGENT_RECALL_SUPABASE_URL", "AGENT_RECALL_SUPABASE_KEY",
+    "AGENT_RECALL_EMBEDDINGS", "AGENT_RECALL_EMBEDDINGS_MODEL", "AGENT_RECALL_EMBEDDINGS_HOME",
+  ];
+  const SAVED2 = {};
+  let TMP2;
+
+  before(() => {
+    for (const k of ENV_KEYS2) { SAVED2[k] = process.env[k]; delete process.env[k]; }
+    process.env.AGENT_RECALL_EMBEDDINGS_MODEL = "_fake-hash-bow";
+  });
+  after(() => {
+    resetRoot();
+    resetRecallBackend();
+    for (const [k, v] of Object.entries(SAVED2)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  beforeEach(() => {
+    resetEmbeddingIndexCache();
+    resetEmbedderCache();
+    resetRecallBackend();
+    delete process.env.AGENT_RECALL_EMBEDDINGS;
+  });
+
+  it("H1: a journal section found by BOTH legs folds into ONE entry with summed votes and the LEXICAL excerpt", async () => {
+    TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix7-h1-"));
+    setRoot(TMP2);
+    const PROJECT = "fix7-h1-journal";
+    try {
+      // One journal file, one section: matches the query lexically (raw
+      // token "blorptastic") AND semantically (fake-bow shares the stem).
+      // The section carries a far-away marker line so the two legs'
+      // excerpts are distinguishable: the lexical excerpt is a ±window
+      // around the matched LINE; the semantic chunk excerpt would contain
+      // the whole section text including the marker.
+      seedJournal(PROJECT, `${daysAgo(4)}--card--h1.md`,
+        "## brief\n\nZZH1MARKER unrelated preamble line for provenance detection\n\n" +
+        "the blorptastic rollout finished cleanly on the staging ring\n");
+      const report = await buildEmbeddingsIndex({ projects: [PROJECT] });
+      assert.equal(report.ok, true);
+
+      process.env.AGENT_RECALL_EMBEDDINGS = "1";
+      const res = await smartRecall({ query: "blorptastic rollout", project: PROJECT, limit: 10, drilldown: false });
+      const journalItems = res.results.filter((r) => r.source === "journal");
+      assert.equal(journalItems.length, 1,
+        `dual-evidence journal section must be ONE slot, not split votes: ${JSON.stringify(journalItems.map((r) => [r.title, r.score, r.excerpt.slice(0, 40)]))}`);
+      const hit = journalItems[0];
+      // Summed votes: journal-leg rank 1 (1/61) + semantic-leg rank 1 (1/61).
+      assert.ok(Math.abs(hit.score - 2 / 61) < 1e-9,
+        `expected folded 2/61=${(2 / 61).toFixed(6)}, got ${hit.score}`);
+      // Lexical fields won the fold (H2): line-anchored excerpt, no marker,
+      // no semantic-origin flag, real line number.
+      assert.ok(!hit.excerpt.includes("ZZH1MARKER"),
+        `excerpt must be the lexical line window, not the semantic chunk: ${hit.excerpt}`);
+      assert.ok(hit.excerpt.includes("blorptastic"), "lexical excerpt anchors on the match");
+      assert.ok(!hit.foundBySemantic, "dual-evidence item must not carry foundBySemantic");
+    } finally {
+      resetRoot();
+      fs.rmSync(TMP2, { recursive: true, force: true });
+    }
+  });
+
+  it("H2: a palace doc found by BOTH legs keeps the lexical line excerpt despite the semantic leg fusing first", async () => {
+    TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix7-h2-"));
+    setRoot(TMP2);
+    const PROJECT = "fix7-h2-palace";
+    try {
+      const { ensurePalaceInitialized } = await import("../dist/palace/rooms.js");
+      ensurePalaceInitialized(PROJECT);
+      const pd = path.join(path.dirname(journalDir(PROJECT)), "palace", "rooms", "decisions");
+      fs.mkdirSync(pd, { recursive: true });
+      fs.writeFileSync(path.join(pd, "h2-note.md"),
+        "ZZH2MARKER provenance sentinel line far from the match\n\n" +
+        "the snizzle gadget cutover is approved for tuesday\n");
+      const report = await buildEmbeddingsIndex({ projects: [PROJECT] });
+      assert.equal(report.ok, true);
+
+      process.env.AGENT_RECALL_EMBEDDINGS = "1";
+      const res = await smartRecall({ query: "snizzle cutover", project: PROJECT, limit: 10, drilldown: false });
+      const hit = res.results.find((r) => r.source === "palace" && /h2-note/.test(r.title));
+      assert.ok(hit, `palace doc must surface: ${JSON.stringify(res.results.map((r) => [r.source, r.title]))}`);
+      assert.ok(Math.abs(hit.score - 2 / 61) < 1e-9,
+        `dual-evidence palace doc folds to 2/61, got ${hit.score}`);
+      assert.ok(!hit.excerpt.includes("ZZH2MARKER"),
+        `lexical line excerpt must win the fold even though the semantic leg fused first: ${hit.excerpt}`);
+      assert.ok(!hit.foundBySemantic, "dual-evidence item must not carry foundBySemantic");
+    } finally {
+      resetRoot();
+      fs.rmSync(TMP2, { recursive: true, force: true });
+    }
+  });
+
+  it("M1: scoped --force re-embeds only the scoped project and PRESERVES foreign vectors; scoped build over a corrupt index REFUSES", async () => {
+    TMP2 = fs.mkdtempSync(path.join(os.tmpdir(), "ar-fix7-m1-"));
+    setRoot(TMP2);
+    try {
+      seedCorrection("m1-alpha", { id: `${daysAgo(9)}-m1-alpha-rule`, rule: "Alpha project rule about the ingest cadence" });
+      seedCorrection("m1-beta", { id: `${daysAgo(9)}-m1-beta-rule`, rule: "Beta project rule about the export retention" });
+      const full = await buildEmbeddingsIndex({});
+      assert.equal(full.ok, true);
+      assert.equal(full.embeddedNew, 2);
+
+      // Scoped FORCE on alpha: beta's vector must survive.
+      const scopedForce = await buildEmbeddingsIndex({ projects: ["m1-alpha"], force: true });
+      assert.equal(scopedForce.ok, true);
+      assert.equal(scopedForce.embeddedNew, 1, "exactly the scoped project's chunk re-embeds");
+      resetEmbeddingIndexCache();
+      const after = readEmbeddingIndex(EMBEDDING_MODELS["_fake-hash-bow"]);
+      assert.ok(!("error" in after));
+      assert.equal(after.hashes.length, 2,
+        "scoped --force must never wipe foreign projects' vectors (review M1 data-loss repro)");
+
+      // Scoped build over a CORRUPT index: refuse loudly, index untouched.
+      const indexPath = embeddingsIndexPath(EMBEDDING_MODELS["_fake-hash-bow"]);
+      const intact = fs.readFileSync(indexPath);
+      fs.writeFileSync(indexPath, "corrupted-bytes");
+      resetEmbeddingIndexCache();
+      const refused = await buildEmbeddingsIndex({ projects: ["m1-alpha"] });
+      assert.equal(refused.ok, false);
+      assert.equal(refused.error?.reason, "existing-index-unreadable");
+      assert.match(refused.error?.message ?? "", /full `ar embeddings rebuild`/);
+      assert.equal(fs.readFileSync(indexPath, "utf-8"), "corrupted-bytes", "refusal must not touch the index");
+
+      // FULL rebuild over the same corrupt index: proceeds and repairs.
+      fs.writeFileSync(indexPath, intact); // restore then corrupt again to prove the full path too
+      fs.writeFileSync(indexPath, "corrupted-bytes");
+      resetEmbeddingIndexCache();
+      const repaired = await buildEmbeddingsIndex({});
+      assert.equal(repaired.ok, true);
+      assert.equal(repaired.embeddedNew, 2, "full rebuild re-embeds everything over a corrupt index");
+    } finally {
+      resetRoot();
+      fs.rmSync(TMP2, { recursive: true, force: true });
+    }
+  });
+});

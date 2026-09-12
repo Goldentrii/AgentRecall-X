@@ -159,13 +159,15 @@ async function loadRealEmbedder(
 
   // Configure BEFORE the model load. cacheDir keeps model files under the
   // embeddings home; allowRemoteModels=false is the zero-network guarantee
-  // for every caller except the sanctioned setup downloader.
-  mod.env.cacheDir = embeddingsModelsDir();
-  mod.env.allowRemoteModels = allowRemote;
-  mod.env.allowLocalModels = true;
-
+  // for every caller except the sanctioned setup downloader. The env
+  // assignments live INSIDE the try (fix7 review L): this function's
+  // never-throws contract must hold even against a runtime whose `env`
+  // export is missing/frozen.
   let extractor: (texts: string[], opts: Record<string, unknown>) => Promise<{ dims: number[]; data: Float32Array }>;
   try {
+    mod.env.cacheDir = embeddingsModelsDir();
+    mod.env.allowRemoteModels = allowRemote;
+    mod.env.allowLocalModels = true;
     extractor = await mod.pipeline("feature-extraction", spec.hfRepo, { dtype: spec.dtype });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
