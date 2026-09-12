@@ -85,6 +85,15 @@ export interface SemanticLegInput {
   query: string;
   /** Already-resolved slug (queryMemory convention). */
   project: string;
+  /**
+   * The tiers the CALLER requested from queryMemory — the leg contributes
+   * ONLY items of these tiers. Load-bearing for non-smart_recall consumers:
+   * journalSearch calls queryMemory({ tiers: ["journal"] }) and its adapter
+   * parses `title` as "${date} / ${section}" — a palace/corrections item
+   * leaking into that surface would corrupt its external contract (and
+   * would also widen what the caller asked for). Default: all four.
+   */
+  tiers?: Array<"journal" | "palace" | "insight" | "corrections">;
   scope?: string;
   since?: string;
   room?: string;
@@ -122,6 +131,13 @@ export async function runSemanticLeg(input: SemanticLegInput): Promise<SemanticL
     // 3. Candidates — the SAME trust-filtered fetch shape as the lexical
     //    tiers (see this file's header), re-chunked deterministically.
     let chunks = chunkProject(input.project, { room: input.room, includeRollupArchive: true });
+
+    //    Tier scoping — only tiers the caller requested may contribute
+    //    (see SemanticLegInput.tiers).
+    if (input.tiers) {
+      const allowed = new Set(input.tiers);
+      chunks = chunks.filter((c) => allowed.has(c.tier));
+    }
 
     //    `since` parity with the lexical journal scorer.
     const sinceCutoff = input.since ? parseSinceDate(input.since) : null;

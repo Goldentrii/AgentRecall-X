@@ -10,6 +10,14 @@
  * are NOT user-facing and removed from docs/help surfaces.
  * Code path kept as matchFn A/B seam only — do not re-activate without new data.
  * Do not re-propose without evidence from a corpus with >5x current density.
+ *
+ * SUPERSEDED-IN-PART (fix7, 2026-09-12): the "no benefit" verdict no longer
+ * holds unqualified — the fix7 golden eval measured the semantic-paraphrase
+ * class at +15 hit-rate points (75%→90%) using LOCAL ONNX embeddings as an
+ * additional RRF candidate leg (src/embeddings/*, retrieval/semantic-leg.ts,
+ * OPT-IN via AGENT_RECALL_EMBEDDINGS). THIS file remains what it was: the
+ * dormant CLOUD (OpenAI) seam, still not user-facing, still not on any
+ * default path — the sanctioned local path does not use it.
  */
 
 /** Timeout in ms for the embedding fetch. Not a user-facing env flag — internal seam only. */

@@ -245,6 +245,42 @@ with the Loop-1 README correction: **do not describe Hopfield as part of how
 recall ranks today.** It is available for an opt-in re-rank pass that is not
 enabled by default.
 
+### fix7 (2026-09-12): the OPT-IN semantic leg — weighted RRF, one more list
+
+Behind `AGENT_RECALL_EMBEDDINGS=1` (or config.json `"embeddings_enabled":
+true`; default OFF, flag-off byte-identical to the above), a FIFTH ranked
+list joins the same `applyRRF` fusion: the store's trust-filtered chunks
+ranked by cosine against a locally-inferred query embedding
+(`retrieval/semantic-leg.ts`; local ONNX model, zero network on the recall
+path). The generalized contribution is **weighted RRF** — still strictly
+rank-based:
+
+```
+RRF_score(doc) = Σ_legs  w_leg / (k + rank_leg(doc))     // applyRRF(items, map, weight)
+  w_leg = 1.0 for every lexical tier AND (measured) for the semantic leg
+  semantic leg length = SEMANTIC_TOP_K = 8 (one vote per document/section,
+  per-model MIN_COSINE floor)
+```
+
+Same-id items found both ways fold into ONE entry with summed contributions
+(a correction that matches lexically at tier-rank 1 and semantically at leg-
+rank 1 scores `2/61`). Cosine is used ONLY to order the leg's own list —
+never summed with any other score (the Fix-1 incompatible-scale rule holds).
+
+Two fusion parameters were set by golden-eval measurement, not design
+(fix7 report, placement/weight matrix):
+- `SEMANTIC_RRF_WEIGHT = 1.0` — weights 1.1/1.3 vault the entire leg above
+  the `1/(60+r)` lexical-single band and FLOOD top-5 (three measured
+  regressions, one protected). Do not raise without re-running the battery.
+- `SEMANTIC_AFTER_CORRECTIONS = true` — the leg's items enter the fusion
+  map right after the corrections tier, so at exact fused-score ties they
+  outrank palace/journal/insight lexical singles while the owner's captured
+  rules keep top tie authority (map insertion order IS the fix4b tie-break).
+
+Measured (twin clones, 2026-09-12): flag OFF 75.0% top-5 hit-rate
+(per-query identical to fix4b), flag ON with multilingual-e5-base 90.0%,
+zero regressions, all six protected hits hold; warm p95 151 ms.
+
 ---
 
 ## (c) Set-cosine semantic match — `helpers/semantic-match.ts`

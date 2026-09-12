@@ -104,12 +104,18 @@ export const EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
 };
 
 /**
- * Default model — chosen by measurement on the golden eval (fix7 report,
- * 2026-09-12): multilingual-e5-small recovered the most paraphrase-class
- * queries at the smallest download (~144MB q8 cache) and lowest warm
- * latency; see the report's tradeoff table before changing this.
+ * Default model — chosen by MEASUREMENT on the golden eval (fix7 report,
+ * 2026-09-12, tradeoff table):
+ *   multilingual-e5-base   90.0% hit-rate · 3/5 paraphrase recovered ·
+ *                          0 regressions · ~289MB cache · ~5-10ms/query warm
+ *   multilingual-e5-small  85.0% · 2/5 · 0 regressions · ~144MB · ~3-5ms
+ *   MiniLM-L12-v2          80.0% · 3/5 · REGRESSES 2 lexical hits (gq08,
+ *                          gq18) · ~145MB · ~3ms
+ * e5-base is the only candidate that clears the fix7 exit gate (≥85% AND
+ * ≥3/5 paraphrase AND no regression). Users on tight disk can select
+ * e5-small via AGENT_RECALL_EMBEDDINGS_MODEL (documented tradeoff).
  */
-export const DEFAULT_EMBEDDING_MODEL = "multilingual-e5-small";
+export const DEFAULT_EMBEDDING_MODEL = "multilingual-e5-base";
 
 /** Resolve the active model spec (env override → default). Unknown ids fall
  *  back to the default LOUDLY at the call sites that surface status (the

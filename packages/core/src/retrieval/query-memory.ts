@@ -1544,10 +1544,19 @@ interface RRFEntry {
   sources: Set<QueryMemorySource>;
 }
 
-function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>): void {
+/**
+ * fix7 (2026-09-12): `weight` (default 1 — every lexical tier) scales one
+ * LEG's rank contributions: `weight / (RRF_K + rank)`. This is weighted
+ * Reciprocal Rank Fusion (the standard multi-leg RRF extension) — still
+ * strictly RANK-based, never raw-score-based, so the incompatible-scale
+ * class (smart-recall.ts Fix 1) cannot recur. Used ONLY by the opt-in
+ * semantic leg (see queryMemory below); its value was chosen by golden-eval
+ * measurement, not tuned per-query (fix7 report's placement/weight matrix).
+ */
+function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>, weight = 1): void {
   rankedItems.forEach((item, idx) => {
     const rank = idx + 1;
-    const contribution = 1 / (RRF_K + rank);
+    const contribution = weight / (RRF_K + rank);
     const existing = rrfMap.get(item.id);
     if (existing) {
       existing.score += contribution;
@@ -1556,6 +1565,32 @@ function applyRRF(rankedItems: QueryMemoryItem[], rrfMap: Map<string, RRFEntry>)
     }
   });
 }
+
+/**
+ * fix7 semantic-leg fusion parameters — MEASURED on the golden eval
+ * (agentrecall-fix7-embeddings-2026-09-12.md, placement/weight matrix),
+ * not designed a priori. Both only ever apply under the embeddings opt-in.
+ *
+ *  - SEMANTIC_RRF_WEIGHT: weighted-RRF multiplier for the semantic leg's
+ *    contributions (see applyRRF).
+ *  - SEMANTIC_AFTER_CORRECTIONS: when true, the semantic leg's items enter
+ *    the fusion map immediately AFTER the corrections tier — at EXACT
+ *    fused-score ties they then outrank palace/journal/insight lexical
+ *    singles (semantic evidence over incidental keyword overlap) while the
+ *    owner's own captured rules keep top tie authority. When false, the
+ *    leg inserts last (loses all ties).
+ *
+ * MEASURED (fix7 report, twin-clone golden eval, multilingual-e5-base):
+ *   weight 1.0 + after-corrections → 90.0% hit-rate, 3/5 paraphrase
+ *   recovered, ZERO regressions, all six protected hits hold. weight 1.0 +
+ *   last → 85.0% (gq10's semantic-only golden loses every 1/61 tie).
+ *   weight 1.3 / 1.1 (any placement) → semantic items vault the lexical-
+ *   single band wholesale and FLOOD top-5 (gq02/gq15/gq18 regress, one of
+ *   them protected) — weights > 1 are measured-toxic on this store; do not
+ *   raise without re-running the full protected battery.
+ */
+const SEMANTIC_RRF_WEIGHT = 1.0;
+const SEMANTIC_AFTER_CORRECTIONS = true;
 
 function fuseCanonical(rrfMap: Map<string, RRFEntry>): Map<string, RRFEntry> {
   const canonical = new Map<string, RRFEntry>();
@@ -1715,6 +1750,10 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
       const sem = await runSemanticLeg({
         query: input.query,
         project: input.project,
+        // Tier scoping — the leg may only contribute tiers this caller
+        // requested (journalSearch passes tiers:["journal"]; a palace item
+        // leaking into its adapter would corrupt its external contract).
+        tiers: input.tiers,
         scope: input.scope,
         since: input.since,
         room: input.palace?.room,
@@ -1732,20 +1771,33 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     }
   }
 
-  // RANK/FUSE stage.
+  // RANK/FUSE stage. fix7: the semantic leg joins as one additional
+  // weighted-RRF leg — a same-id item found both ways accumulates
+  // contributions into its lexical entry (multi-evidence, the applyRRF
+  // id-level fold), a semantic-only item enters at the MEASURED map
+  // position (SEMANTIC_AFTER_CORRECTIONS): map insertion order is the
+  // tie-break authority order, so "after corrections" gives semantic items
+  // tie priority over palace/journal/insight lexical singles while the
+  // owner's captured rules keep the top; "last" cedes all ties. Weight and
+  // placement were selected on the golden eval — see the fix7 report's
+  // placement/weight matrix, and applyRRF's doc comment for why weighted
+  // RRF stays rank-based.
   const rrfMap = new Map<string, RRFEntry>();
+  let semanticFused = false; // idempotence guard — the leg fuses exactly once
+  const fuseSemantic = () => {
+    if (!semanticFused && semanticItems && semanticItems.length > 0) {
+      semanticFused = true;
+      applyRRF(semanticItems, rrfMap, SEMANTIC_RRF_WEIGHT);
+    }
+  };
   for (const tier of input.tiers) {
     const items = byTier[tier];
     if (items) applyRRF(items, rrfMap);
+    if (SEMANTIC_AFTER_CORRECTIONS && tier === "corrections") fuseSemantic();
   }
-  // fix7: the semantic leg fuses LAST — a same-id item found both ways
-  // accumulates contributions into its lexical entry (multi-evidence), and
-  // a semantic-only item enters the map after every lexical tier, so at
-  // EXACT fused-score ties the fix4 authority order (corrections → palace →
-  // journal → insight) still outranks it — the leg adds evidence, never
-  // tie-break authority. (Placement measured against the after-corrections
-  // alternative on the golden eval; see the fix7 report.)
-  if (semanticItems && semanticItems.length > 0) applyRRF(semanticItems, rrfMap);
+  // Last-position placement, and the fallback for tier sets that don't
+  // include corrections at all (e.g. journalSearch's ["journal"]).
+  if (!SEMANTIC_AFTER_CORRECTIONS || !input.tiers.includes("corrections")) fuseSemantic();
   const fusedMap = fuseCanonical(rrfMap);
   // fix4b (2026-09-12): the legacy multiplicative boost runs ONLY behind the
   // explicit freshnessBias opt-in — see QueryMemoryInput.freshnessBias.
