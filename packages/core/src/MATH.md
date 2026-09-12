@@ -118,18 +118,46 @@ corrections.internalScore = exactness·0.70 + severityBoost·0.15 + proofBoost·
                         proofBoost = min(1, log2(proof_count+1)/3); no time decay)
 ```
 
-**Post-RRF multipliers** (applied after the merge, *before* final sort):
+**Post-RRF adjustments** (applied after the merge):
 
 ```
-Hot-window recency boost (by item.date):
-  <6h  → ×3.0     <24h → ×2.0     <72h → ×1.3     else ×1
+Hot-window recency boost — REMOVED from default ranking (fix4b 2026-09-12,
+  PRODUCT-BEHAVIOR CHANGE): the old boost multiplied fused scores
+  ×3.0/×2.0/×1.3 for items dated <6h/<24h/<72h. On the default pipeline
+  freshness now plays NO ranking role at all; exact fused-score ties
+  resolve by the fix4 authority/insertion order (corrections first).
+  LEGACY ESCAPE HATCH: `freshnessBias: true` (queryMemory/smartRecall
+  input, default OFF) re-enables the old multiplicative boost verbatim —
+  all defects included (date-only strings bucket by wall-clock time-of-day;
+  palace regex-scraped excerpt dates trusted as timestamps; recent items
+  vault whole relevance bands). Kept for exactly one audited caller: the
+  CLI ambient-injection hook, whose `score ≥ 0.03` floor was calibrated
+  against boosted magnitudes (a lone tier-rank-1 match is 1/61 ≈ 0.0164
+  raw and only clears 0.03 via the ×2/×3 windows). No default surface
+  sets it.
 Beta feedback multiplier (per item, shared across backends):
   E[Beta] = (pos+1)/(pos+neg+2)        // Laplace-smoothed
   multiplier = E[Beta] · 2             // neutral 0.5 → ×1.0
+  (since fix4b this is the ONLY post-RRF score mutation on default paths)
 Graph-walk expansion (fix4 S2 2026-09-11): 1-hop linked rooms are now
   `alsoLinked` METADATA on the top result — no synthetic result rows, no
   score (the old form minted stub rows at top.score · 0.6)
 ```
+
+Why the boost had to go (fix4 Escalation §1 + fix4b, measured): RRF
+compresses adjacent-rank score differences to ~1.6% (`1/(60+r)` vs
+`1/(61+r)`), so ANY multiplier > ~1.02 vaulted an off-topic-but-recent item
+over every un-boosted on-topic result — in a store written to daily, every
+query's top-5 filled with the last 72h of diary sections regardless of
+relevance. Golden-query eval (twin-clone control protocol, 2026-09-12):
+55.0% top-5 hit-rate with the boost, 75.0% neutralized. A gentler
+within-tie-band freshness tie-break (the fix4b brief's primary design D1)
+was implemented and measured first: 65.0% — post one-doc-one-vote,
+cross-tier EXACT ties at 1/(60+r) are the common case, and hotness-over-
+authority handed those bands to <72h diary lines over the owner's own
+captured rules. Neutralization shipped per the brief's fallback clause;
+the freshness *feature* ("what did we just do") survives only on the
+opted-in ambient surface.
 
 ### Source-specific Ebbinghaus decay
 
@@ -158,8 +186,9 @@ label: ≥0.66 high · ≥0.40 medium · ≥0.20 low · else weak     // CONFIDE
 ```
 
 The bridge gate reads the **scoring-time** `calibrated` value, *not* the
-post-boost score, on purpose (the ×3/×2/×1.3 hot-window and ×≤2 Beta multipliers
-would otherwise fool the gate — see Risk #8 in `confidence.ts`).
+post-boost score, on purpose (the ×≤2 Beta multiplier — since fix4b the only
+post-RRF score mutation — would otherwise fool the gate; see Risk #8 in
+`confidence.ts`).
 
 ### Inputs
 
@@ -180,11 +209,17 @@ Free-text query + project; per-source candidate lists; an on-disk
   cited forgetting curve. The per-source `S` values (`2 / 180 / 9999`) are
   **assigned by category intuition, not fit** to AgentRecall recall outcomes.
 - **The per-source internal weights** (`0.90/0.10`, `0.50/0.50`,
-  `0.40/0.35/0.25`, `0.70/0.15/0.15`), the **salience floor 0.4**, the
-  **hot-window ×3/×2/×1.3**, and the **confidence divisors 0.12 / 0.049**:
+  `0.40/0.35/0.25`, `0.70/0.15/0.15`), the **salience floor 0.4**, and the
+  **confidence divisors 0.12 / 0.049**:
   all **HAND-TUNED**. They are reasonable and internally documented, but none is
   fit to a labeled relevance set. The divisors are explicitly called "tunable
   constants — NOT trusted gates" in `confidence.ts`.
+- **Hot-window removal: GROUNDED** — the only constant-change in this file
+  backed by a controlled measurement (golden-query eval, twin clones, same
+  pass: control 55.0% hit-rate with the boost, 75.0% neutralized, D1
+  tie-break variant 65.0%; fix4 Escalation §1 + fix4b report 2026-09-12).
+  The `freshnessBias` legacy path keeps the old **HAND-TUNED ×3/×2/×1.3 and
+  6/24/72h window edges** verbatim — labels unchanged there.
 
 ### Hopfield: present as a primitive, **NOT wired into the default recall path**
 
