@@ -40,6 +40,7 @@ import {
   topicQuery,
   topicStateFile,
   sweepStaleProfiles,
+  sweepStaleAmbientCounters,
 } from "../dist/utils/topic-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -409,5 +410,56 @@ describe("topic-state: CJK background text builds profile terms", () => {
       final.stdout.includes("[AgentRecall] Relevant past context:"),
       `expected CJK-background-informed injection, got: ${JSON.stringify(final.stdout)}`
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fix12 hygiene (2026-09-12): store-root .ambient-counter-* sweep.
+// These per-session rate-limit counters previously accumulated forever
+// (+~5/day; 240+ observed at the live store root — the hygiene scan's
+// "counter-accumulation" class detects but never cleans). hook-ambient now
+// sweeps counters untouched for 7+ days, same opportunistic contract as
+// sweepStaleProfiles.
+// ---------------------------------------------------------------------------
+describe("ambient counter sweep (.ambient-counter-* at store root)", () => {
+  it("sweepStaleAmbientCounters removes 7d+ stale counters, keeps fresh ones, ignores non-counter files", () => {
+    const root = freshRoot("counter-sweep");
+    fs.mkdirSync(root, { recursive: true });
+    const oldCounter = path.join(root, ".ambient-counter-dead-session");
+    const freshCounter = path.join(root, ".ambient-counter-live-session");
+    const bystander = path.join(root, "scoreboard.json");
+    fs.writeFileSync(oldCounter, "7");
+    fs.writeFileSync(freshCounter, "2");
+    fs.writeFileSync(bystander, "{}");
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(oldCounter, eightDaysAgo, eightDaysAgo);
+    fs.utimesSync(bystander, eightDaysAgo, eightDaysAgo);
+
+    const removed = sweepStaleAmbientCounters(root);
+    assert.equal(removed, 1, "exactly the one stale counter should be swept");
+    assert.equal(fs.existsSync(oldCounter), false, "8-day-old counter must be removed");
+    assert.equal(fs.existsSync(freshCounter), true, "fresh counter must survive");
+    assert.equal(fs.existsSync(bystander), true, "non-counter files are never touched, whatever their age");
+  });
+
+  it("returns 0 on a missing root and never throws", () => {
+    assert.equal(sweepStaleAmbientCounters(path.join(os.tmpdir(), "ar-counter-sweep-nonexistent")), 0);
+  });
+
+  it("hook-ambient end-to-end: a stale counter is swept while the CURRENT session's counter survives", async () => {
+    const root = freshRoot("counter-e2e");
+    fs.mkdirSync(root, { recursive: true });
+    const staleCounter = path.join(root, ".ambient-counter-ancient-session");
+    fs.writeFileSync(staleCounter, "42");
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(staleCounter, eightDaysAgo, eightDaysAgo);
+
+    const sessionId = "counter-e2e-session";
+    const r = await runHook(root, ["--project", "counter-e2e", "hook-ambient"], buildStdin("debugging the payment retry logic in the queue worker", sessionId));
+    assert.equal(r.code, 0, `hook-ambient must exit 0, stderr=${r.stderr}`);
+
+    assert.equal(fs.existsSync(staleCounter), false, "stale counter must be swept by the hook invocation");
+    const ownCounter = path.join(root, `.ambient-counter-${sessionId.replace(/[^a-z0-9_-]/gi, "_")}`);
+    assert.equal(fs.existsSync(ownCounter), true, "the current session's own counter must be written and survive");
   });
 });

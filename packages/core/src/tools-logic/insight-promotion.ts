@@ -8,7 +8,7 @@
  * Does NOT import awareness-update.ts (would create circular dependency).
  */
 
-import { addInsight, readAwarenessState } from "../palace/awareness.js";
+import { addInsight, readAwarenessState, readAwarenessArchive, AWARENESS_TOP_INSIGHTS_CAP } from "../palace/awareness.js";
 import { readInsightsIndex } from "../palace/insights-index.js";
 import { tokenizeWords, NON_ASCII_RE } from "../helpers/tokenize.js";
 
@@ -61,11 +61,65 @@ export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATIO
     (state?.topInsights ?? []).map((i: { title: string }) => i.title.toLowerCase())
   );
 
+  // Saturation churn guard (fix12 hygiene, 2026-09-12; churn first observed
+  // during the fix3 backfill): against a SATURATED awareness (cap reached,
+  // every slot outranking the candidate) addInsight resurrects the candidate
+  // from the archive, bumps its confirmations +1, then immediately demotes it
+  // back — so every session_end/`ar awareness rollup` re-attempted the same
+  // doomed promotion forever: two archive writes + a state write per candidate
+  // per run, and an ARTIFICIAL +1 confirmations escalator on the archived
+  // entry with no new real confirmation behind it (the insights-index entry
+  // is unchanged between runs).
+  //
+  // Guard — skip ONLY a provably doomed round-trip, i.e. when BOTH hold:
+  //   (a) no new information: the archived twin already carries >= the
+  //       candidate's confirmed_count (the archive has absorbed everything
+  //       the index can attest), AND
+  //   (b) no survival chance: the resurrected twin (archived + 1 — addInsight
+  //       bumps on resurrection) still cannot outrank the CURRENT weakest
+  //       top-insights slot (strict inequality required to survive: on a tie
+  //       the just-pushed candidate sorts last among equals and is the one
+  //       popped back to the archive).
+  // Condition (b) is the fix12 review MEDIUM-1 fix: without it, an archived
+  // twin whose count the pre-fix escalator had inflated (e.g. 50) blocked an
+  // ORGANIC promotion that would have displaced a weak slot and STAYED.
+  // When confirmed_count grows past the archived count, (a) fails and the
+  // attempt proceeds — churn stays bounded by real confirmations. When the
+  // twin can win the cap fight, (b) fails and the promotion goes through
+  // (resurrect-displace-stay, zero churn). Non-saturated awareness never hits
+  // the guard (a resurrected candidate simply stays).
+  //
+  // NOTE deliberately NOT changed here (owner-taste, flagged in the fix12
+  // report): whether a saturated top-20 should ever be displaced by a
+  // lower-confirmation candidate, and whether archived insights should
+  // re-enter spontaneously when slots free up — this guard only removes the
+  // wasted write cycles and the artificial counter inflation.
+  const saturated = (state?.topInsights?.length ?? 0) >= AWARENESS_TOP_INSIGHTS_CAP;
+  const archive = saturated ? readAwarenessArchive() : [];
+  const weakestTopConfirmations = saturated
+    ? Math.min(...state!.topInsights.map((i) => i.confirmations ?? 0))
+    : -Infinity;
+
   const promoted: string[] = [];
   const skipped: string[] = [];
 
   for (const insight of index.insights) {
     if (insight.confirmed_count < threshold) continue;
+
+    if (saturated) {
+      let archivedConfirmations = -1;
+      for (const a of archive) {
+        if (titlePresentInAwareness(insight.title, [a.title.toLowerCase()])) {
+          archivedConfirmations = Math.max(archivedConfirmations, a.confirmations ?? 0);
+        }
+      }
+      const noNewInformation = archivedConfirmations >= insight.confirmed_count;
+      const cannotSurviveCap = archivedConfirmations + 1 <= weakestTopConfirmations;
+      if (archivedConfirmations >= 0 && noNewInformation && cannotSurviveCap) {
+        skipped.push(insight.title);
+        continue;
+      }
+    }
 
     // Title-similarity dedup: exact match first, then word overlap.
     // CJK-aware (fix #3, 2026-09-11): the pre-fix grammar was

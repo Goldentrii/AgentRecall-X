@@ -208,6 +208,21 @@ describe("Awareness system — module integration", () => {
 
   it("fetchDashboardArchivedTitles uses AgentRecall Supabase config", async () => {
     const previousFetch = globalThis.fetch;
+    // Hermetic env (fix12 hygiene, 2026-09-12): readSupabaseConfig() lets
+    // AGENT_RECALL_SUPABASE_URL/KEY override config.json, so an ambient key
+    // in the developer's shell silently replaced "configured-key" in the
+    // asserted headers and failed this test on ANY branch. Scrub the same
+    // env set the sibling "skips network" test scrubs, restore in finally.
+    const previousEnv = {
+      AGENT_RECALL_SUPABASE_URL: process.env.AGENT_RECALL_SUPABASE_URL,
+      AGENT_RECALL_SUPABASE_KEY: process.env.AGENT_RECALL_SUPABASE_KEY,
+      SUPABASE_URL: process.env.SUPABASE_URL,
+      SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+    };
+    delete process.env.AGENT_RECALL_SUPABASE_URL;
+    delete process.env.AGENT_RECALL_SUPABASE_KEY;
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_ANON_KEY;
     fs.writeFileSync(path.join(TEST_ROOT, "config.json"), JSON.stringify({
       supabase_url: "https://configured.supabase.co",
       supabase_anon_key: "configured-key",
@@ -231,6 +246,10 @@ describe("Awareness system — module integration", () => {
     } finally {
       globalThis.fetch = previousFetch;
       fs.rmSync(path.join(TEST_ROOT, "config.json"), { force: true });
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

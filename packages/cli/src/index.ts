@@ -14,6 +14,7 @@ import {
   topicQuery,
   appendTurn as appendTopicTurn,
   sweepStaleProfiles,
+  sweepStaleAmbientCounters,
 } from "./utils/topic-state.js";
 
 const args = process.argv.slice(2);
@@ -2293,6 +2294,12 @@ async function main(): Promise<void> {
           // 7+ days. Cheap (readdir + stat over a handful of small files) and
           // best-effort — never blocks the hook.
           sweepStaleProfiles(storeRoot);
+          // Same contract for the store-root `.ambient-counter-*` rate-limit
+          // files (fix12 hygiene: they previously accumulated forever — the
+          // hygiene scan's counter-accumulation class). 7d mtime bar, so the
+          // CURRENT session's counter (touched below every invocation) is
+          // never swept.
+          sweepStaleAmbientCounters(core.getRoot());
         } catch { /* non-blocking — profile persistence is best-effort */ }
         // --- END ROLLING TOPIC PROFILE ---
 
@@ -2984,6 +2991,63 @@ async function main(): Promise<void> {
         roomCount = rooms.length;
       } catch { /* non-blocking */ }
 
+      // Heed KPI — evidence-tiered split (fix12 hygiene, 2026-09-12).
+      // The single heed_rate = heeded/(heeded+recurred) number is bookkeeping,
+      // not evidence: in the 2026-09-12 retrospective 75.8% of its numerator
+      // was pre-C3 default-heeded absence-of-evidence credit, and its
+      // denominator carried session_end self-report marker fan-out. So this
+      // surface renders BOTH evidence tiers (ADJUDICATED / LOOSE, correction-
+      // and event-level) via the canonical classification in
+      // core/storage/heed-tiers.ts (shared with scripts/eval/heed-rate —
+      // never fork). Best-effort: any failure degrades to no section.
+      let heedSection = "";
+      try {
+        const eventsById = core.readOutcomeEventsByCorrection(resolvedProject);
+        const allRecords = core.readCorrections(resolvedProject);
+        const rows = allRecords.map((r) => ({
+          id: r.id,
+          project: resolvedProject,
+          retracted: r.active === false,
+          result: core.classifyCorrection(eventsById.get(r.id) ?? []),
+        }));
+        const agg = core.aggregateHeedTiers(rows);
+        // C3 online heed channel liveness: "triggered" events are the
+        // check/check-action consult trail that makes session-end heed
+        // verdicts authoritative. 0 events = the channel is DORMANT (it has
+        // never fired in this store) — annotate it so nobody reads the
+        // resulting silence as perfect compliance. See the emission-site note
+        // in core/tools-logic/check-action.ts and the fix11 heed-rate report
+        // (owner decision #2: drive check-action usage, or accept the C3b
+        // nightly dream audit as the sole adjudicated producer).
+        let triggeredEver = 0;
+        for (const evts of eventsById.values()) {
+          for (const e of evts) if (e.kind === "triggered") triggeredEver++;
+        }
+        const pct = (r: number | null): string => (r === null ? "n/a" : `${(r * 100).toFixed(1)}%`);
+        if (agg.surfaced > 0) {
+          const a = agg.adjudicated;
+          const l = agg.loose;
+          const defFrac = agg.kpi_formula.heeded_default_fraction;
+          const noAdj = agg.no_evidence.no_adjudicated_evidence;
+          const noAdjShare = agg.no_evidence.share_without_adjudicated;
+          heedSection = `
+
+  Heed KPI (evidence-tiered — the single heeded/(heeded+recurred) number is bookkeeping, not evidence):
+    ADJUDICATED (evidence-cited both directions: dream-audit / check-action)
+      corrections  ${pct(a.corrections.rate)}  (${a.corrections.heeded} heeded / ${a.corrections.mixed} mixed / ${a.corrections.violated} violated · n=${a.corrections.denominator})
+      events       ${pct(a.events.rate)}  (${a.events.heeded} heeded vs ${a.events.recurred} recurred)
+    LOOSE (+ default-heeded absence-of-evidence credit, + self-report markers = legacy KPI formula)
+      corrections  ${pct(l.corrections.rate)}  (${l.corrections.heeded} heeded / ${l.corrections.mixed} mixed / ${l.corrections.violated} violated · n=${l.corrections.denominator})
+      events       ${pct(l.events.rate)}  (${l.events.heeded} vs ${l.events.recurred}${defFrac !== null ? ` · ${(defFrac * 100).toFixed(1)}% of heeded is pre-C3 default credit` : ""})
+    Surfaced: ${agg.surfaced} correction(s) · ${noAdj}${noAdjShare !== null ? ` (${(noAdjShare * 100).toFixed(1)}%)` : ""} with no adjudicated evidence either way
+    Online heed channel (check/check-action → "triggered"): ${triggeredEver === 0
+      ? "DORMANT — 0 events ever recorded; adjudicated evidence comes only from the nightly dream audit (C3b).\n      Do not read the absence of recurrences as perfect compliance."
+      : `${triggeredEver} event(s) recorded`}`;
+        } else if (correctionCount > 0) {
+          heedSection = `\n\n  Heed KPI: no surfaced corrections with outcome events yet — heed is unmeasured (not "perfect").`;
+        }
+      } catch { /* non-blocking */ }
+
       output(`AgentRecall Stats — ${resolvedProject}
 
   Corrections:    ${correctionCount}
@@ -2991,7 +3055,7 @@ async function main(): Promise<void> {
   Journal:        ${journalCount} entries
   Insights:       ${insightCount} (${totalConfirmations} total confirmations)
   Palace rooms:   ${roomCount}
-  Graph edges:    ${graphEdges}
+  Graph edges:    ${graphEdges}${heedSection}
 ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the tool for a few sessions." : ""}${feedbackCount === 0 ? "\n  Warning: No feedback signals yet. The ambient hook will start collecting after recalls." : ""}${graphEdges < 3 ? "\n  Warning: Few graph connections. Palace rooms will connect as you write to them." : ""}`);
       break;
     }

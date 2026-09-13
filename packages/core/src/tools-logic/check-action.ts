@@ -410,6 +410,20 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
   // One-per-day dedup: if a "triggered" event already fired today for this correction,
   // skip to avoid log inflation on repeated check-action calls in the same session.
   // Best-effort: trigger recording must NEVER affect the check-action result.
+  //
+  // ⚠ DORMANT CHANNEL (fix12 hygiene, 2026-09-12 — do NOT delete the schema):
+  // this emission site has NEVER fired in the live store — 0 "triggered"
+  // events across 1,560 ledger events (fix11 heed-rate retrospective,
+  // reports/agentrecall-fix11-heedrate-2026-09-12.md, "What the ledgers CAN
+  // and CANNOT support" #1 and owner decision #2). Nothing calls check/
+  // check-action in the owner's harness today, so the C3 online heed path is
+  // instrumentation without a producer: every adjudicated heed/violation
+  // verdict in the store comes from the C3b nightly dream audit instead. The
+  // path stays in place pending the harness-integration decision (drive
+  // check/check-action usage, or accept C3b as the sole adjudicated producer
+  // and widen its coverage). KPI surfaces (`ar stats`, rmr-report) annotate
+  // the channel as dormant so 0 triggered / 0 recurred is never read as
+  // "perfect compliance" — keep that annotation in sync if this ever fires.
   if (topCorrections.length > 0) {
     try {
       const nowISO = new Date().toISOString();

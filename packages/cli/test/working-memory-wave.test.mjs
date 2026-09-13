@@ -49,10 +49,23 @@ function ambientPayload(prompt, sessionId, cwd) {
   return JSON.stringify({ prompt, session_id: sessionId, cwd });
 }
 
-/** Back-date a WM file's mtime by `ms` beyond the orphan-rescue window. */
+/**
+ * Back-date a WM file's mtime by `ms` beyond the orphan-rescue window.
+ *
+ * Returns the UTC day (`YYYY-MM-DD`) of the mtime it set — which is the date
+ * the PRODUCT stamps into the rescued card's filename (working-memory.ts
+ * `rescueOrphans`: `new Date(wmFile.mtimeMs).toISOString().slice(0, 10)`).
+ * fix12 hygiene fix-round (2026-09-13): the rescue tests previously expected
+ * `new Date().toISOString().slice(0, 10)` (UTC-today), which diverges from
+ * the backdated mtime's UTC day during the first 2h after UTC midnight —
+ * a daily date-window flake (three tests failed at 00:04 UTC on an untouched
+ * main tree, green an hour earlier). Expectations must derive the date the
+ * same way the product does, from the same mtime.
+ */
 function backdateOrphan(wmFilePath, extraMs = 60 * 60 * 1000) {
   const past = (Date.now() - (60 * 60 * 1000 + extraMs)) / 1000; // > WM_ORPHAN_WINDOW_MS (1h)
   fs.utimesSync(wmFilePath, past, past);
+  return new Date(fs.statSync(wmFilePath).mtimeMs).toISOString().slice(0, 10);
 }
 
 after(() => {
@@ -175,7 +188,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
       { ts: new Date(Date.now() - 2.9 * 60 * 60 * 1000).toISOString(), prompt: "found the root cause, writing the fix now", cwd: `/Users/testuser/Projects/${slug}` },
     ];
     fs.writeFileSync(wmFilePath, wmLines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
-    backdateOrphan(wmFilePath);
+    const cardDate = backdateOrphan(wmFilePath);
 
     const home = isolatedHome();
     const { code, stderr } = await runCli(["--project", "some-other-current-project", "hook-start"], {
@@ -189,9 +202,9 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     // exactly the creation-invariant violation fix5 closes). Rescue feature
     // assertions (card written with rescue provenance + both prompts,
     // recency entry present, WM deleted) unchanged — landing zone only.
-    const today = new Date().toISOString().slice(0, 10);
+    // Card date = UTC day of the backdated WM mtime (see backdateOrphan).
     assert.ok(!fs.existsSync(path.join(TEST_ROOT, "projects", slug)), "a zero-confidence guess must not mint a new projects/ dir");
-    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${today}--card--${sid}.md`);
+    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${cardDate}--card--${sid}.md`);
     assert.ok(fs.existsSync(cardPath), `expected a rescued session card staged under _unclaimed/<sid>/; stderr=${stderr}`);
     const cardBody = fs.readFileSync(cardPath, "utf-8");
     assert.ok(cardBody.includes("working-memory-rescue"), "rescued card frontmatter must carry source: working-memory-rescue");
@@ -214,13 +227,14 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     const wmDirPath = path.join(TEST_ROOT, "working-memory");
     fs.mkdirSync(wmDirPath, { recursive: true });
 
+    let cardDate; // UTC day of the backdated WM mtime — the product's card-name date
     function writeOrphan(sid, slug) {
       const p = path.join(wmDirPath, `${sid}.jsonl`);
       const wmLines = [
         { ts: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), prompt: `M1_UNIQUE_TERM for ${sid}`, cwd: `/Users/testuser/Projects/${slug}` },
       ];
       fs.writeFileSync(p, wmLines.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf-8");
-      backdateOrphan(p);
+      cardDate = backdateOrphan(p);
       return p;
     }
     const wmPathA = writeOrphan(sidA, slugA);
@@ -248,12 +262,12 @@ describe("working-memory wave — hook-start orphan rescue", () => {
       });
       assert.equal(first.code, 0, `first (faulted) hook-start should still exit 0; stderr=${first.stderr}`);
 
-      const today = new Date().toISOString().slice(0, 10);
       // fix5 retarget (2026-09-11): rescue cards stage under _unclaimed/<sid>/
       // (zero-confidence guesses; the projects/<guess> dirs never existed).
       // The M1 fault-isolation property under test is landing-zone independent.
-      const cardPathA = path.join(TEST_ROOT, "_unclaimed", sidA, `${today}--card--${sidA}.md`);
-      const cardPathB = path.join(TEST_ROOT, "_unclaimed", sidB, `${today}--card--${sidB}.md`);
+      // Card date = UTC day of the backdated WM mtime (see backdateOrphan).
+      const cardPathA = path.join(TEST_ROOT, "_unclaimed", sidA, `${cardDate}--card--${sidA}.md`);
+      const cardPathB = path.join(TEST_ROOT, "_unclaimed", sidB, `${cardDate}--card--${sidB}.md`);
       // Cards are written by BOTH orphans in the SAME faulted sweep — card
       // writing is per-project and independent of the (globally faulted)
       // recency file, so sidA hitting the fault must never prevent sidB
@@ -301,20 +315,20 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     });
     const wmFilePath = path.join(TEST_ROOT, "working-memory", `${sid}.jsonl`);
     assert.ok(fs.existsSync(wmFilePath), "precondition: WM file must exist");
-    backdateOrphan(wmFilePath);
+    const cardDate = backdateOrphan(wmFilePath);
 
     const { code, stderr } = await runCli(["--project", "unrelated-project", "hook-start"], {
       env: { HOME: isolatedHome(), CLAUDE_SESSION_ID: "c1-rescuer-1" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
-    const today = new Date().toISOString().slice(0, 10);
     // fix5 retarget (2026-09-11): the rescue card stages under
     // _unclaimed/<sid>/ (zero-confidence guess; no projects/ mint). The C1
     // scrub property under test is unchanged — staged records pass the SAME
     // scrub-on-write (the scrub happens at wmAppend capture, upstream of the
     // landing zone).
-    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${today}--card--${sid}.md`);
+    // Card date = UTC day of the backdated WM mtime (see backdateOrphan).
+    const cardPath = path.join(TEST_ROOT, "_unclaimed", sid, `${cardDate}--card--${sid}.md`);
     assert.ok(fs.existsSync(cardPath), "rescued card should have been written");
     const cardBody = fs.readFileSync(cardPath, "utf-8");
     assert.ok(!cardBody.includes(secret), `raw secret must never appear verbatim in a rescued card; card body: ${cardBody}`);
@@ -343,11 +357,12 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     });
     assert.equal(first.code, 0, `first hook-start should exit 0; stderr=${first.stderr}`);
 
-    const today = new Date().toISOString().slice(0, 10);
     // fix5 retarget (2026-09-11): rescue cards stage under _unclaimed/<sid>/
     // (zero-confidence guess). The idempotency GUARD under test — a card-
     // exists check, not mere WM-file absence — is unchanged; it now also
-    // covers the staging area (findUnclaimedCardForSid).
+    // covers the staging area (findUnclaimedCardForSid). (This test's card
+    // lookups are endsWith-based, deliberately date-agnostic — no cardDate
+    // needed here.)
     const journalDir = path.join(TEST_ROOT, "_unclaimed", sid);
     const cardsAfterFirst = fs.readdirSync(journalDir).filter((f) => f.endsWith(`--card--${sid}.md`));
     assert.equal(cardsAfterFirst.length, 1, "exactly one card should exist after the first rescue");
