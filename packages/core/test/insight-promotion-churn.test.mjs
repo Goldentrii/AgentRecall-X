@@ -154,4 +154,73 @@ describe("promoteConfirmedInsights — saturation churn guard", () => {
     );
     assert.equal(archivedCandidate(), undefined, "archive entry consumed by the resurrection");
   });
+
+  // fix12 review MEDIUM-1 (fix round 2026-09-13) — the reviewer's exact
+  // adversarial case: a saturated top-20 whose WEAKEST slot has 1
+  // confirmation, plus an archived twin whose count the pre-fix escalator
+  // inflated to 50, and an index candidate at confirmed_count 5. The first
+  // fix-round guard compared ONLY archived-vs-index (50 >= 5 → skip) and
+  // blocked an ORGANIC promotion: the resurrected twin (50+1=51) would have
+  // displaced the weak slot and STAYED. The guard now also requires "cannot
+  // outrank the current weakest slot" (archived+1 <= min) before skipping —
+  // a survivable promotion must always go through, at ANY index count.
+  //
+  // Runs LAST deliberately: the previous test's end state (19 slots @50 +
+  // the re-promoted streaming-parser insight = 20, archive empty) is exactly
+  // the saturated fixture this case needs; the streaming-parser slot becomes
+  // the weak 1-confirmation incumbent.
+  it("REVIEWER CASE: an inflated archived twin must NOT block an organic promotion that can displace a weak slot", async () => {
+    const title = "Prefer columnar storage for archival scans";
+
+    // Weaken one slot to 1 confirmation (the other 19 stay at 50).
+    const state = core.readAwarenessState();
+    assert.equal(state.topInsights.length, core.AWARENESS_TOP_INSIGHTS_CAP, "fixture must be saturated");
+    const weak = state.topInsights.find((i) => /streaming parser/i.test(i.title));
+    assert.ok(weak, "prior test left the streaming-parser insight in topInsights");
+    weak.confirmations = 1;
+    await core.writeAwarenessState(state);
+
+    // Archived twin inflated by the (pre-fix) escalator.
+    await core.writeAwarenessArchive([{
+      id: "insight-archived-columnar",
+      title,
+      evidence: "archived evidence",
+      confirmations: 50,
+      lastConfirmed: "2026-09-01T00:00:00.000Z",
+      appliesWhen: ["columnar", "storage"],
+      source: "test",
+    }]);
+
+    // Index candidate at confirmed_count 5 — 50 >= 5, so the OLD guard skipped here.
+    core.writeInsightsIndex({
+      version: "1.0.0",
+      updated: new Date().toISOString(),
+      insights: [{
+        id: "cand-columnar",
+        title,
+        source: "test",
+        applies_when: ["columnar", "storage"],
+        severity: "important",
+        confirmed_count: 5,
+        last_confirmed: new Date().toISOString(),
+      }],
+    });
+
+    const result = await core.promoteConfirmedInsights(3);
+
+    assert.ok(result.promoted.includes(title), "organic promotion must NOT be blocked by the inflated archived twin");
+    assert.ok(!result.skipped.includes(title));
+    const after = core.readAwarenessState();
+    const landed = after.topInsights.find((i) => i.title === title);
+    assert.ok(landed, "resurrected candidate must be IN topInsights (promote-and-stay, zero churn)");
+    assert.equal(landed.confirmations, 51, "resurrection carries archived count + 1");
+    assert.ok(
+      !after.topInsights.some((i) => /streaming parser/i.test(i.title)),
+      "the weak 1-confirmation slot is the one displaced"
+    );
+    assert.ok(
+      core.readAwarenessArchive().some((a) => /streaming parser/i.test(a.title)),
+      "displaced slot is archived, not deleted"
+    );
+  });
 });

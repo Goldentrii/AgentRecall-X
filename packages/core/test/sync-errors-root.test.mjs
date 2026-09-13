@@ -115,4 +115,75 @@ describe("logSyncError respects setRoot()/AGENT_RECALL_ROOT (pollution regressio
       assert.ok(!fs.existsSync(realLogPath));
     }
   });
+
+  // fix12 review MEDIUM-2 — the residual SAME-TICK window: the first fix-round
+  // captured the root at doSync ENTRY, i.e. inside the setImmediate callback.
+  // A root swap in the same tick as the synchronous syncToSupabase() call
+  // (after it returns, before the check phase runs the callback) still
+  // misrouted the log. The capture now happens synchronously inside
+  // syncToSupabase itself and is threaded through — this test swaps the root
+  // in the SAME TICK as the fire and pins that the failure logs into the
+  // fire-time store, not the swapped one.
+  //
+  // Failure trigger: postgrest-js ≥2.10x resolves network failures with
+  // {error} instead of rejecting, so doSync's catch is unreachable via the
+  // network (reviewer observation, report future-batch item). The one
+  // deterministic synchronous throw inside doSync's try is client CREATION:
+  // getSupabaseClient() → createClient(<malformed url>) throws. Both roots
+  // get a malformed-URL config so the throw fires regardless of which root
+  // doSync's config read observes — what's pinned is WHERE the line lands.
+  it("logs into the root captured at the synchronous fire point, even when the root is swapped in the SAME tick", async () => {
+    const core = await import("agent-recall-core");
+    const { syncToSupabase, setRoot, resetRoot, resetSupabaseClient } = core;
+
+    const fireRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sync-fire-"));
+    const swapRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sync-swap-"));
+    const badConfig = JSON.stringify({
+      supabase_url: "::::not-a-valid-url",
+      supabase_anon_key: "test-key",
+      sync_enabled: true,
+    });
+    fs.writeFileSync(path.join(fireRoot, "config.json"), badConfig);
+    fs.writeFileSync(path.join(swapRoot, "config.json"), badConfig);
+
+    // Hermetic env: ambient AGENT_RECALL_SUPABASE_* would override the
+    // malformed config URL with a valid one and defeat the throw.
+    const previousEnv = {
+      AGENT_RECALL_SUPABASE_URL: process.env.AGENT_RECALL_SUPABASE_URL,
+      AGENT_RECALL_SUPABASE_KEY: process.env.AGENT_RECALL_SUPABASE_KEY,
+    };
+    delete process.env.AGENT_RECALL_SUPABASE_URL;
+    delete process.env.AGENT_RECALL_SUPABASE_KEY;
+
+    try {
+      resetSupabaseClient(); // another test may have cached a client
+      setRoot(fireRoot);
+      syncToSupabase("/tmp/ar-sync-race-fixture.md", "# content", "race-proj", "journal");
+      setRoot(swapRoot); // SAME tick — before the setImmediate callback runs
+
+      // Let the deferred doSync run and fail.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const fireLog = path.join(fireRoot, "sync-errors.log");
+      const swapLog = path.join(swapRoot, "sync-errors.log");
+      assert.ok(
+        fs.existsSync(fireLog),
+        "the failure must be logged under the root that owned the write at fire time"
+      );
+      assert.match(fs.readFileSync(fireLog, "utf-8"), /doSync failed for \/tmp\/ar-sync-race-fixture\.md/);
+      assert.ok(
+        !fs.existsSync(swapLog),
+        "the same-tick-swapped root must receive NO sync-error line"
+      );
+    } finally {
+      resetRoot();
+      resetSupabaseClient();
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(fireRoot, { recursive: true, force: true });
+      fs.rmSync(swapRoot, { recursive: true, force: true });
+    }
+  });
 });

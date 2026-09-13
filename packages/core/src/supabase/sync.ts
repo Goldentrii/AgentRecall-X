@@ -98,9 +98,11 @@ export function logSyncError(message: string, rootAtCall?: string): void {
   // late-landing catch resolved getRoot() back to the REAL store and the
   // temp-store failure leaked into the live log anyway (23 of the 25
   // last-7d entries on 2026-09-12 were /var/folders/… test fixture paths,
-  // all timestamped during the 09-11 suite runs). Async producers now
-  // capture the root SYNCHRONOUSLY at entry and pass it here; when omitted
-  // the old resolve-at-log-time behavior is unchanged.
+  // all timestamped during the 09-11 suite runs). The root is now captured
+  // SYNCHRONOUSLY at the fire point (syncToSupabase / backfill entry — fix12
+  // review MEDIUM-2 tightened this from doSync entry, which still left a
+  // one-check-phase same-tick window) and passed here; when omitted the old
+  // resolve-at-log-time behavior is unchanged.
   const logPath = path.join(rootAtCall ?? getRoot(), "sync-errors.log");
   const timestamp = new Date().toISOString();
   const line = `${timestamp} ${message}\n`;
@@ -138,6 +140,15 @@ export function syncToSupabase(
   store: "journal" | "palace" | "awareness" | "digest" | "corrections",
   room?: string
 ): void {
+  // Root capture at the SYNCHRONOUS fire point (fix12 review MEDIUM-2): this
+  // function is the caller's synchronous entry; the actual work is deferred
+  // via setImmediate. Capturing inside doSync's entry (the first fix-round
+  // shape) left a one-check-phase window — a same-tick AGENT_RECALL_ROOT
+  // swap after syncToSupabase() returned but before the setImmediate callback
+  // ran still misrouted the sync-error log. The error (and its log line)
+  // belong to the store that owned the write AT CALL TIME, so capture here
+  // and thread it through doSync/syncCorrectionRecord.
+  const rootAtCall = getRoot();
   // STAGING GATE (fix5 review HIGH-1, 2026-09-11): `_unclaimed`-staged content
   // is a FAILED/zero-confidence resolution awaiting an explicit claim — it is
   // excluded from the local recall corpus by design, and the cloud corpus is
@@ -181,12 +192,12 @@ export function syncToSupabase(
     // exportCorrections so the doSync path always receives pre-scrubbed JSON.
     const correctionId = content; // caller convention: content = correction id
     setImmediate(() => {
-      void syncCorrectionRecord(filePath, correctionId, project);
+      void syncCorrectionRecord(filePath, correctionId, project, rootAtCall);
     });
     return;
   }
   setImmediate(() => {
-    void doSync(filePath, content, project, store, room);
+    void doSync(filePath, content, project, store, room, rootAtCall);
   });
 }
 
@@ -195,15 +206,15 @@ async function doSync(
   content: string,
   project: string,
   store: string,
-  room?: string
+  room?: string,
+  // The root captured at the SYNCHRONOUS fire point (syncToSupabase /
+  // backfill entry) — see the MEDIUM-2 note on syncToSupabase. This function
+  // runs fire-and-forget one check-phase later, so resolving getRoot() here
+  // (or worse, in the catch) can observe a root swapped after the caller
+  // fired. The default keeps any direct caller safe-by-construction; every
+  // in-repo caller passes the fire-point capture explicitly.
+  rootAtCall: string = getRoot()
 ): Promise<void> {
-  // Capture the store root SYNCHRONOUSLY before any await: this function is
-  // fire-and-forget (setImmediate), so by the time a network failure lands in
-  // the catch, a test's after() hook may already have restored/deleted
-  // AGENT_RECALL_ROOT — logging via a late getRoot() would write the failure
-  // into the WRONG store's sync-errors.log (see logSyncError's root-capture
-  // note). The error always belongs to the store that owned the write.
-  const rootAtCall = getRoot();
   try {
     const client = getSupabaseClient();
     if (!client) return;
@@ -289,11 +300,12 @@ async function doSync(
 async function syncCorrectionRecord(
   filePath: string,
   correctionId: string,
-  project: string
+  project: string,
+  // Fire-point root capture threaded from syncToSupabase (fix12 review
+  // MEDIUM-2) — see the note there. Defaulted for safety; the in-repo caller
+  // always passes it.
+  rootAtCall: string = getRoot()
 ): Promise<void> {
-  // Same synchronous root capture as doSync (fire-and-forget via
-  // setImmediate) — see logSyncError's root-capture note.
-  const rootAtCall = getRoot();
   try {
     // Export the single correction (project + no retracted). If the id doesn't
     // exist in the active set (already retracted or bad id) → empty → skip.
@@ -305,7 +317,7 @@ async function syncCorrectionRecord(
     // scrubForExport (inside exportCorrections) already redacted every free-text
     // field, so doSync's internal scrubForCloud re-scrub is a no-op (idempotent).
     const scrubbedJson = JSON.stringify(row);
-    await doSync(filePath, scrubbedJson, project, "corrections");
+    await doSync(filePath, scrubbedJson, project, "corrections", undefined, rootAtCall);
   } catch (err) {
     logSyncError(
       `syncCorrectionRecord failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
@@ -397,7 +409,7 @@ export async function backfill(
         continue;
       }
 
-      await doSync(file.path, file.content, project, file.store, file.room);
+      await doSync(file.path, file.content, project, file.store, file.room, rootAtCall);
       synced++;
     } catch (err) {
       logSyncError(

@@ -71,14 +71,23 @@ export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATIO
   // entry with no new real confirmation behind it (the insights-index entry
   // is unchanged between runs).
   //
-  // Guard: when awareness is saturated, skip a candidate whose archived twin
-  // already carries >= the candidate's confirmed_count — the archive has
-  // absorbed everything the index can attest, so a re-attempt adds no
-  // information. When confirmed_count GROWS past the archived count (a real
-  // new confirmation arrived), the attempt proceeds and, if demoted again,
-  // archiveInsight re-arms the guard at the higher bar — churn is now bounded
-  // by real confirmations instead of unbounded per-session. Non-saturated
-  // awareness never hits the guard (a resurrected candidate simply stays).
+  // Guard — skip ONLY a provably doomed round-trip, i.e. when BOTH hold:
+  //   (a) no new information: the archived twin already carries >= the
+  //       candidate's confirmed_count (the archive has absorbed everything
+  //       the index can attest), AND
+  //   (b) no survival chance: the resurrected twin (archived + 1 — addInsight
+  //       bumps on resurrection) still cannot outrank the CURRENT weakest
+  //       top-insights slot (strict inequality required to survive: on a tie
+  //       the just-pushed candidate sorts last among equals and is the one
+  //       popped back to the archive).
+  // Condition (b) is the fix12 review MEDIUM-1 fix: without it, an archived
+  // twin whose count the pre-fix escalator had inflated (e.g. 50) blocked an
+  // ORGANIC promotion that would have displaced a weak slot and STAYED.
+  // When confirmed_count grows past the archived count, (a) fails and the
+  // attempt proceeds — churn stays bounded by real confirmations. When the
+  // twin can win the cap fight, (b) fails and the promotion goes through
+  // (resurrect-displace-stay, zero churn). Non-saturated awareness never hits
+  // the guard (a resurrected candidate simply stays).
   //
   // NOTE deliberately NOT changed here (owner-taste, flagged in the fix12
   // report): whether a saturated top-20 should ever be displaced by a
@@ -87,6 +96,9 @@ export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATIO
   // wasted write cycles and the artificial counter inflation.
   const saturated = (state?.topInsights?.length ?? 0) >= AWARENESS_TOP_INSIGHTS_CAP;
   const archive = saturated ? readAwarenessArchive() : [];
+  const weakestTopConfirmations = saturated
+    ? Math.min(...state!.topInsights.map((i) => i.confirmations ?? 0))
+    : -Infinity;
 
   const promoted: string[] = [];
   const skipped: string[] = [];
@@ -101,7 +113,9 @@ export async function promoteConfirmedInsights(threshold = PROMOTION_CONFIRMATIO
           archivedConfirmations = Math.max(archivedConfirmations, a.confirmations ?? 0);
         }
       }
-      if (archivedConfirmations >= insight.confirmed_count) {
+      const noNewInformation = archivedConfirmations >= insight.confirmed_count;
+      const cannotSurviveCap = archivedConfirmations + 1 <= weakestTopConfirmations;
+      if (archivedConfirmations >= 0 && noNewInformation && cannotSurviveCap) {
         skipped.push(insight.title);
         continue;
       }
