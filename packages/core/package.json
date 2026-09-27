@@ -47,6 +47,7 @@
     "vectra": "^0.14.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
