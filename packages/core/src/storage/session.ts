@@ -30,6 +30,7 @@ import { generateSlug } from "../helpers/auto-name.js";
 import { sanitizeName } from "./sanitize.js";
 import { getRoot } from "../types.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
+import { singletonKey } from "../repository/singleton-key.js";
 
 /**
  * 6-char hex fallback ID for hosts with no real session identity available.
@@ -41,6 +42,23 @@ const FALLBACK_SESSION_ID = crypto.randomBytes(3).toString("hex");
 
 /** Track which files this session has claimed (owns). */
 const ownedFiles = new Set<string>();
+
+/**
+ * G1 S8: raw keys here (`smart:<name>` / `journal:<date>:base`, etc) carried
+ * NO root/context component — instance A claiming a name under root A forced
+ * instance B under a different root onto a suffixed filename, or marked a
+ * file "owned" that B never wrote. Every add/has call is routed through
+ * these two helpers so the underlying Set key always carries the calling
+ * context's key as a prefix (root-scoped isolation, same pattern as this
+ * file's own idempotencyKey() below, which already includes root "purely
+ * for test isolation").
+ */
+function ownedAdd(key: string): void {
+  ownedFiles.add(`${singletonKey()}::${key}`);
+}
+function ownedHas(key: string): boolean {
+  return ownedFiles.has(`${singletonKey()}::${key}`);
+}
 
 /**
  * Get the current session's identity.
@@ -148,7 +166,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
       if (themeTag !== "none") segments.push(themeTag);
       segments.push(slug, uniq);
       const name = `${segments.join("--")}.md`;
-      if (dir) ownedFiles.add(`smart:${name}`);
+      if (dir) ownedAdd(`smart:${name}`);
       return name;
     }
 
@@ -168,7 +186,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
         [0];
 
       if (existingToday) {
-        ownedFiles.add(`smart:${existingToday}`);
+        ownedAdd(`smart:${existingToday}`);
         return existingToday;
       }
     }
@@ -180,7 +198,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
     const name = `${date}--${joinTagSegments(opts.saveType, sigTag, themeTag, slug)}.md`;
 
     if (dir) {
-      ownedFiles.add(`smart:${name}`);
+      ownedAdd(`smart:${name}`);
     }
     return name;
   }
@@ -188,14 +206,14 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
   // Legacy naming (backward compat)
   const baseKey = `journal:${date}`;
 
-  if (ownedFiles.has(`${baseKey}:base`)) return `${date}.md`;
-  if (ownedFiles.has(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}.md`;
+  if (ownedHas(`${baseKey}:base`)) return `${date}.md`;
+  if (ownedHas(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}.md`;
 
   if (!baseExists) {
-    ownedFiles.add(`${baseKey}:base`);
+    ownedAdd(`${baseKey}:base`);
     return `${date}.md`;
   }
-  ownedFiles.add(`${baseKey}:session`);
+  ownedAdd(`${baseKey}:session`);
   return `${date}-${FALLBACK_SESSION_ID}.md`;
 }
 
@@ -226,14 +244,14 @@ export function captureLogFileName(date: string, baseExists: boolean, opts?: Sma
   // Legacy naming
   const baseKey = `capture:${date}`;
 
-  if (ownedFiles.has(`${baseKey}:base`)) return `${date}-log.md`;
-  if (ownedFiles.has(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}-log.md`;
+  if (ownedHas(`${baseKey}:base`)) return `${date}-log.md`;
+  if (ownedHas(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}-log.md`;
 
   if (!baseExists) {
-    ownedFiles.add(`${baseKey}:base`);
+    ownedAdd(`${baseKey}:base`);
     return `${date}-log.md`;
   }
-  ownedFiles.add(`${baseKey}:session`);
+  ownedAdd(`${baseKey}:session`);
   return `${date}-${FALLBACK_SESSION_ID}-log.md`;
 }
 

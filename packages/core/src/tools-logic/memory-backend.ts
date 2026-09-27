@@ -25,6 +25,8 @@
 
 import { builtinModules } from "node:module";
 import type { CorrectionExport } from "./export-corrections.js";
+import { singletonKey } from "../repository/singleton-key.js";
+import { onRuntimeClose } from "../repository/context-store.js";
 
 // ---------------------------------------------------------------------------
 // Interface
@@ -97,8 +99,13 @@ export class DisabledMemoryBackend implements MemoryBackend {
 // Factory
 // ---------------------------------------------------------------------------
 
-/** Cached backend instance. Reset via resetMemoryBackend() in tests. */
-let _cachedBackend: MemoryBackend | null = null;
+// G1 S6 is env-derived (AR_MEMORY_BACKEND), not root-derived — the same
+// backend is correct for every context by design. Still keyed per context
+// (R2.9 uniformity across G1 S2-S6/S8) so a runtime's close() can evict its
+// entry; in practice every key in this process resolves to an equivalent
+// backend since the env var does not vary per root.
+const _cachedBackends = new Map<string, MemoryBackend>();
+onRuntimeClose((key) => { _cachedBackends.delete(key); });
 
 /**
  * Allowlist for third-party module specifiers: bare npm package names only.
@@ -151,28 +158,28 @@ const BUILTIN_DENYLIST: ReadonlySet<string> = new Set([
  *   a clear "no backend configured" error to the operator.
  */
 export async function getMemoryBackend(): Promise<MemoryBackend> {
-  if (_cachedBackend) return _cachedBackend;
+  const key = singletonKey();
+  const cached = _cachedBackends.get(key);
+  if (cached) return cached;
+  const cache = (b: MemoryBackend): MemoryBackend => { _cachedBackends.set(key, b); return b; };
 
   const rawSpec = (process.env.AR_MEMORY_BACKEND ?? "").trim();
   // Keywords only — the verbatim rawSpec is what reaches import() below.
   const keyword = rawSpec.toLowerCase();
 
   if (!keyword || keyword === "none" || keyword === "disabled") {
-    _cachedBackend = new DisabledMemoryBackend();
-    return _cachedBackend;
+    return cache(new DisabledMemoryBackend());
   }
 
   if (keyword === "local-archive") {
     try {
       const mod = await import("./local-archive-backend.js");
-      _cachedBackend = new mod.LocalArchiveMemoryBackend();
-      return _cachedBackend;
+      return cache(new mod.LocalArchiveMemoryBackend());
     } catch (err) {
       process.stderr.write(
         `[agent-recall] memory-backend: failed to load local-archive backend: ${String(err)}\n`
       );
-      _cachedBackend = new DisabledMemoryBackend();
-      return _cachedBackend;
+      return cache(new DisabledMemoryBackend());
     }
   }
 
@@ -185,8 +192,7 @@ export async function getMemoryBackend(): Promise<MemoryBackend> {
       `only lowercase bare package names (e.g. "ar-mem0-adapter") or scoped packages (@org/pkg) are accepted. ` +
       `Path specifiers and uppercase are not allowed. Falling back to disabled.\n`
     );
-    _cachedBackend = new DisabledMemoryBackend();
-    return _cachedBackend;
+    return cache(new DisabledMemoryBackend());
   }
 
   // Gate 2: Node builtins are never valid backends — reject before import().
@@ -195,8 +201,7 @@ export async function getMemoryBackend(): Promise<MemoryBackend> {
       `[agent-recall] memory-backend: AR_MEMORY_BACKEND="${rawSpec}" is a Node builtin module, ` +
       `not a memory backend — refusing to load it. Falling back to disabled.\n`
     );
-    _cachedBackend = new DisabledMemoryBackend();
-    return _cachedBackend;
+    return cache(new DisabledMemoryBackend());
   }
 
   try {
@@ -217,21 +222,18 @@ export async function getMemoryBackend(): Promise<MemoryBackend> {
       process.stderr.write(
         `[agent-recall] memory-backend: "${rawSpec}" loaded but reported unavailable — falling back to disabled\n`
       );
-      _cachedBackend = new DisabledMemoryBackend();
-      return _cachedBackend;
+      return cache(new DisabledMemoryBackend());
     }
-    _cachedBackend = backend;
-    return backend;
+    return cache(backend);
   } catch (err) {
     process.stderr.write(
       `[agent-recall] memory-backend: failed to load "${rawSpec}": ${String(err)} — falling back to disabled\n`
     );
-    _cachedBackend = new DisabledMemoryBackend();
-    return _cachedBackend;
+    return cache(new DisabledMemoryBackend());
   }
 }
 
-/** Reset the cached backend instance (for testing). */
+/** Reset all cached backend instances (for testing). */
 export function resetMemoryBackend(): void {
-  _cachedBackend = null;
+  _cachedBackends.clear();
 }
