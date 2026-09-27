@@ -1,0 +1,15 @@
+catalog: E:\Users\tong\Documents\New project\arx-sme\docs\plans\shared-memory-evolution\ACCEPTANCE.json (47 ids)
+workers: E:\Users\tong\Documents\New project\arx-sme\reports\shared-memory-evolution\2026-09-27-r1\orchestration\workers.json
+results: E:\Users\tong\Documents\New project\arx-sme\reports\shared-memory-evolution\2026-09-27-r1\results (47 result objects loaded)
+
+structural violations: 0
+
+engineering_required: 1/41 PASS; not passing: A01=BLOCKED, A03=NOT_RUN, A04=NOT_RUN, A05=BLOCKED, A06=NOT_RUN, A07=BLOCKED, A08=BLOCKED, A09=NOT_RUN, A10=BLOCKED, A11=BLOCKED, A12=BLOCKED, A13=BLOCKED, A14=NOT_RUN, A15=NOT_RUN, A16=NOT_RUN, A17=NOT_RUN, A18=NOT_RUN, A19=NOT_RUN, A20=NOT_RUN, A21=NOT_RUN, A22=NOT_RUN, A23=NOT_RUN, A24=NOT_RUN, A25=NOT_RUN, A26=BLOCKED, A27=BLOCKED, A28=NOT_RUN, A29=NOT_RUN, A30=BLOCKED, A31=BLOCKED, A32=NOT_RUN, A33=NOT_RUN, A34=NOT_RUN, A35=NOT_RUN, A36=NOT_RUN, A37=NOT_RUN, A38=BLOCKED, A39=NOT_RUN, A40=NOT_RUN, A41=NOT_RUN
+evolution_required: 0/4 PASS; not passing: A42=BLOCKED, A43=BLOCKED, A44=BLOCKED, A45=BLOCKED
+release_required: 0/2 PASS; not passing: A46=NOT_RUN, A47=NOT_RUN
+
+ENGINEERING_ACCEPTED = false
+EVOLUTION_VALIDATED = false
+READY_FOR_OWNER_RELEASE = false
+FULL_VISION_COMPLETE = false
+PARTIAL_SUCCESS = false

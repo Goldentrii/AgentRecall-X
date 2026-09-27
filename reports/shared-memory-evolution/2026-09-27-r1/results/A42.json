@@ -1,0 +1,16 @@
+{
+ "id": "A42",
+ "status": "BLOCKED",
+ "commit": "b2665b9b4705862dcc6aab49c8f31f743bffb677",
+ "evaluator_commit": "ffe79105f5c9f0017610c1479b995fa173bf7d69",
+ "environment": "reports/shared-memory-evolution/2026-09-27-r1/manifest.json (Windows 11, Node 24.11.1)",
+ "command": "not executed as a full case; see reason",
+ "started_at": "2026-09-27",
+ "exit_code": null,
+ "metrics": {},
+ "evidence": [
+  "reports\\shared-memory-evolution\\2026-09-27-r1/adr/budget-estimate.md"
+ ],
+ "verified_by": "n/a",
+ "reason": "BLOCKED: paid A/B/C evaluation (~$2.2k est., adr/budget-estimate.md) not approved; no independent held-out task set exists."
+}
