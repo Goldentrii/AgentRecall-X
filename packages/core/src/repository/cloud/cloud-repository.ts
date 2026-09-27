@@ -310,38 +310,46 @@ export class CloudRepository implements MemoryRepository {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "local_only", message: "local_only records are never uploaded" };
     }
 
-    const cleanCmd: MutateCommand = { ...cmd } as MutateCommand;
-    if (cmd.op === "create") {
-      const c = cleanCmd as CreateCommand;
-      c.content = scrubForCloud(c.content);
-      c.metadata = stripReservedMetadata(c.metadata);
+    // B2 fix (fix round 1): a shallow `{...cmd}` copy shares nested objects
+    // (patch/replacement) BY REFERENCE with the caller's own command —
+    // scrubbing "the copy" then still mutates the caller's object, and using
+    // the ORIGINAL `cmd` (not the copy) for payloadHash/callMutateRpc/outbox
+    // sent the unscrubbed content over the wire for `create` (the copy was
+    // scrubbed but never referenced again). structuredClone() is a true deep
+    // clone (MutateCommand is plain JSON-shaped data — no Date/functions/etc,
+    // same assumption contract.ts's own canonicalJson() makes), and every
+    // downstream use below reads ONLY `cleanCmd`, never the caller's `cmd`.
+    const cleanCmd: MutateCommand = structuredClone(cmd);
+    if (cleanCmd.op === "create") {
+      cleanCmd.content = scrubForCloud(cleanCmd.content);
+      cleanCmd.metadata = stripReservedMetadata(cleanCmd.metadata);
       // contentHash is informational client-side only; the server recomputes
       // it itself from the (already scrubbed) content it receives — see
       // migrations/0002_shared_memory.sql ar2_mutate (NFC-normalized sha256,
       // matching contract.ts:contentHash exactly).
-      void contentHash(c.content);
-    } else if (cmd.op === "update" && cmd.patch.content !== undefined) {
-      cmd.patch.content = scrubForCloud(cmd.patch.content);
-      if (cmd.patch.metadata !== undefined) cmd.patch.metadata = stripReservedMetadata(cmd.patch.metadata);
-    } else if (cmd.op === "supersede") {
-      cmd.replacement.content = scrubForCloud(cmd.replacement.content);
-      cmd.replacement.metadata = stripReservedMetadata(cmd.replacement.metadata);
+      void contentHash(cleanCmd.content);
+    } else if (cleanCmd.op === "update" && cleanCmd.patch.content !== undefined) {
+      cleanCmd.patch.content = scrubForCloud(cleanCmd.patch.content);
+      if (cleanCmd.patch.metadata !== undefined) cleanCmd.patch.metadata = stripReservedMetadata(cleanCmd.patch.metadata);
+    } else if (cleanCmd.op === "supersede") {
+      cleanCmd.replacement.content = scrubForCloud(cleanCmd.replacement.content);
+      cleanCmd.replacement.metadata = stripReservedMetadata(cleanCmd.replacement.metadata);
     }
 
-    const hash = payloadHash(cmd, expectedRevision);
-    const proposal = cmd.op === "update" ? proposalId(this.opts.principal.principal_id, operationId) : null;
+    const hash = payloadHash(cleanCmd, expectedRevision);
+    const proposal = cleanCmd.op === "update" ? proposalId(this.opts.principal.principal_id, operationId) : null;
 
     try {
-      const receipt = await this.callMutateRpc(cmd, expectedRevision, operationId, hash, proposal);
+      const receipt = await this.callMutateRpc(cleanCmd, expectedRevision, operationId, hash, proposal);
       return receipt;
     } catch (e) {
       if (e instanceof NetworkError) {
-        const outboxRef = await this.outbox.enqueue(await this.buildOutboxEntry(cmd, expectedRevision, operationId, hash, proposal, false));
+        const outboxRef = await this.outbox.enqueue(await this.buildOutboxEntry(cleanCmd, expectedRevision, operationId, hash, proposal, false));
         return { status: "queued", operation_id: operationId, id: (cmd as { id: string }).id, outbox_ref: outboxRef };
       }
       if (e instanceof TimeoutError) {
         // Sent, ack lost: reconcile later via the idempotency key (safe replay).
-        await this.outbox.enqueue(await this.buildOutboxEntry(cmd, expectedRevision, operationId, hash, proposal, true));
+        await this.outbox.enqueue(await this.buildOutboxEntry(cleanCmd, expectedRevision, operationId, hash, proposal, true));
         return { status: "unknown", operation_id: operationId, id: (cmd as { id: string }).id, reason: "ack_lost" };
       }
       if (e instanceof PgError) {
