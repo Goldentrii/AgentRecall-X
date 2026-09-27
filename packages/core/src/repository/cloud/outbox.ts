@@ -13,6 +13,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { PgError } from "./sql-executor.js";
 
 export interface OutboxEntry {
   operation_id: string;
@@ -139,7 +140,20 @@ export class Outbox {
             resolved = true;
           }
           // status === "unknown" (timeout again) falls through to retry.
-        } catch {
+        } catch (e) {
+          // Fix round 1 (non-blocking): a genuine PgError (e.g. a
+          // supersede's unique-violation on a colliding replacement id) is
+          // a PERMANENT rejection, not a transient transport failure — the
+          // live mutate() path (cloud-repository.ts) already classifies it
+          // as a terminal `rejected` receipt; drain() must match, not
+          // retry it MAX_ATTEMPTS times every round forever.
+          if (e instanceof PgError) {
+            const receipt = { status: "rejected", operation_id: entry.operation_id, reason: "schema", message: e.message };
+            this.remove(entry.operation_id);
+            results.push({ operation_id: entry.operation_id, outcome: "terminal_rejected", receipt });
+            resolved = true;
+            break;
+          }
           // NetworkError/TimeoutError: keep retrying within this round.
         }
       }
