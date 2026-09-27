@@ -354,6 +354,32 @@ export class LocalRepository implements MemoryRepository {
           removeFileIfExists(path.join(walDir, file));
           continue;
         }
+        // Was EVERY record+event already durable before this recovery pass
+        // touched anything? If so, the crash happened strictly at the
+        // "before_receipt" gap (rev1 §5: record -> event -> RECEIPT) —
+        // everything the operation actually DID is already durable and
+        // visible via get()/history() like any other commit; only the
+        // receipt bookkeeping is missing. Per the frozen acceptance suite's
+        // G-durability group, recovery must NOT retroactively mint a receipt
+        // the client never saw for this shape — getOperation() keeps
+        // reporting this operation_id as unresolved forever. Only when
+        // something is GENUINELY incomplete (after_wal: nothing written yet;
+        // or a partial multi-record op, B4: some but not all records landed)
+        // does recovery complete the remaining work AND mint the receipt —
+        // that's the only shape where "replay every WAL entry idempotently"
+        // (rev1 §5) means finishing an in-flight write, not resurrecting an
+        // already-finished one's bookkeeping.
+        const alreadyFullyLanded = entry.records.every(({ record, event }) => {
+          const onDisk = readJsonIfExists<MemoryRecord>(this.recordPath(record.id));
+          if (!onDisk || onDisk.revision !== record.revision) return false;
+          const events = readJsonlTornTolerant<ChangeEvent>(this.eventsPath(this.monthKeyOf(event.at)));
+          return events.some((e) => e.event_id === event.event_id);
+        });
+        if (alreadyFullyLanded) {
+          removeFileIfExists(path.join(walDir, file));
+          continue;
+        }
+
         // Complete EVERY record this operation touches before writing the
         // one receipt — this is what makes a multi-record op (supersede,
         // confirm-of-proposal) atomic across a crash (B4 fix): a crash
