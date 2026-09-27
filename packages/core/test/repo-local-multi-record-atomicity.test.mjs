@@ -83,8 +83,12 @@ describe("B4: supersede / confirm-of-proposal two-record atomicity across a cras
 
     const originalRead = await rt1.run(() => rt1.repository.get(targetId, { principal: principal(), channel: "sdk" }));
     // get() never returns superseded (not in the active/candidate status
-    // set) — confirm via history() that it really did transition.
-    const originalHistory = await rt1.run(() => rt1.repository.history(targetId, { principal: principal(), channel: "sdk" }));
+    // set) — confirm via a management+include_non_active history() read
+    // (B5 fix: history() now applies the SAME status scoping as every other
+    // read path, so seeing "superseded" needs the same owner/can_approve
+    // + management-channel scope that unlocks it elsewhere) that it really
+    // did transition.
+    const originalHistory = await rt1.run(() => rt1.repository.history(targetId, { principal: principal(), channel: "management", include_non_active: true }));
     assert.equal(originalHistory[originalHistory.length - 1].status, "superseded");
     void originalRead;
 
@@ -138,7 +142,7 @@ describe("B4: supersede / confirm-of-proposal two-record atomicity across a cras
     assert.equal(originalRead.items[0].content, "forbid X and Y", "the original must have the proposal's content applied after recovery");
     assert.equal(originalRead.items[0].authority, "explicit_user");
 
-    const proposalHistory = await rt1.run(() => rt1.repository.history(proposeReceipt.id, { principal: principal(), channel: "sdk" }));
+    const proposalHistory = await rt1.run(() => rt1.repository.history(proposeReceipt.id, { principal: principal(), channel: "management", include_non_active: true }));
     assert.equal(proposalHistory[proposalHistory.length - 1].status, "superseded", "the proposal must be marked superseded after recovery, not left dangling as a candidate");
 
     await rt1.close();

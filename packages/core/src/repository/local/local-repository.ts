@@ -516,6 +516,12 @@ export class LocalRepository implements MemoryRepository {
     this.assertOpen();
     if (!isUuid(id)) return [];
     const grants = this.loadGrants();
+    // B5 fix (WP-P1-review.md #5): apply the SAME status filter readAll()
+    // applies everywhere else — retracted content is never returned (A16),
+    // regardless of include_non_active/management scoping, and this must
+    // hold per-REVISION here (an early revision can be active/candidate
+    // while only the LATEST is retracted).
+    const statusSet = this.readableStatusSet(ctx, grants);
     const dir = this.historyDir(id);
     const revs = listFilesSafe(dir)
       .filter((f) => f.endsWith(".json"))
@@ -525,7 +531,7 @@ export class LocalRepository implements MemoryRepository {
     const out: MemoryRecord[] = [];
     for (const rev of revs) {
       const record = readJsonIfExists<MemoryRecord>(this.historyPath(id, rev));
-      if (record && canRead(record, ctx, this.ownerId, grants)) out.push(record);
+      if (record && statusSet.has(record.status) && canRead(record, ctx, this.ownerId, grants)) out.push(record);
     }
     return out;
   }
