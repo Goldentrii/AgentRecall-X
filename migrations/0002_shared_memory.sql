@@ -19,10 +19,43 @@
 -- availability was verified against grounding rather than assumed.
 --
 -- Identity: auth.uid() = the calling principal's Supabase Auth user id.
--- Owner-trust: auth.uid() = owner_id AND auth.jwt()->>'ar_role' = 'owner'.
--- Agent JWTs carry ar_role='agent' (never 'owner') — R2.1/R2.8.
+-- Owner-trust (fix round 1, B1): auth.uid() = owner_id — agents are ALWAYS
+-- separate Supabase Auth users bound via ar2_grants (R2.1/R2.8), so this is
+-- sufficient on its own and requires no custom JWT claim. A real Supabase
+-- project issues no `ar_role` claim without a Custom Access Token Auth Hook,
+-- which this repo does not ship — gating on `auth.jwt()->>'ar_role'='owner'`
+-- (rev2/2.1's original design) would either always be NULL/false in
+-- production (locking the real owner out) or, worse, silently accidentally
+-- pass owners through via SQL's three-valued NULL logic depending on which
+-- downstream pattern reads it (see ar2_owner_trusted below and
+-- reviews/WP-P2-report.md "Fix round 1" for the exact mechanism). Defense in
+-- depth: ar2_owner_trusted() additionally REFUSES owner-trust if the JWT
+-- explicitly claims ar_role='agent' anywhere (top-level, user_metadata,
+-- app_metadata) — this guards a future custom-hook misconfiguration, it is
+-- never the primary mechanism. See "Runbook: agent credentials" below.
 -- Client-reported owner_id/principal_id fields in RPC payloads are NEVER
 -- trusted; every RPC below derives identity from auth.uid() exclusively.
+--
+-- RUNBOOK — agent credentials (B1, no code enforces this, operational only):
+-- Agent processes (MCP server, CLI running unattended, background workers)
+-- MUST authenticate as their own dedicated Supabase Auth user (one per
+-- agent credential, R2.8) and MUST NEVER hold, load, cache, or be handed the
+-- owner's own Supabase session/JWT. Owner-gated actions (grant/revoke/alias/
+-- confirm/exception/release_dependency/supersede/protected-constraint
+-- retract) are authorized SOLELY by `auth.uid() = owner_id` — if an agent
+-- process is ever given the owner's real session, it inherits full owner
+-- trust with no further gate. `ar login --owner` (CLI-only) is the only
+-- supported way to obtain an owner session; it is interactive, short-lived,
+-- and never persists a refresh token (R2.8) specifically so agent runtimes
+-- have no path to acquire one. If a future Custom Access Token Auth Hook is
+-- added to mint `ar_role`, it must be sourced from a trusted server-side
+-- table (e.g. which Supabase Auth user created the account / has an owner
+-- row), never from client-supplied `user_metadata` (Supabase Auth allows
+-- users to write their own `user_metadata` at signup/update — trusting it
+-- here would let anyone self-issue ar_role='owner'). This migration does
+-- not depend on any such hook existing; ar2_owner_trusted()'s ar_role check
+-- is purely a defense-in-depth negative (ar_role='agent' => refuse), never
+-- a positive requirement.
 
 -- ---------------------------------------------------------------------------
 -- 0. Schema version
@@ -258,6 +291,45 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION ar2_visible(uuid, uuid, uuid, text, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ar2_visible(uuid, uuid, uuid, text, uuid) TO authenticated;
+
+-- Fix round 1, B1: defense-in-depth negative check only (see header comment
+-- and RUNBOOK). Checked in three locations because a future Custom Access
+-- Token Auth Hook, or a client-writable `user_metadata` field, could place
+-- it in any of them; COALESCE(...,false) is load-bearing — see
+-- ar2_owner_trusted below for why a NULL here must never propagate.
+CREATE OR REPLACE FUNCTION ar2_jwt_claims_agent() RETURNS boolean
+  LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(
+    (auth.jwt() ->> 'ar_role') = 'agent'
+    OR (auth.jwt() -> 'user_metadata' ->> 'ar_role') = 'agent'
+    OR (auth.jwt() -> 'app_metadata' ->> 'ar_role') = 'agent',
+    false
+  );
+$$;
+REVOKE ALL ON FUNCTION ar2_jwt_claims_agent() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_jwt_claims_agent() TO authenticated;
+
+-- Fix round 1, B1: the ONE owner-trust predicate, used everywhere. Both
+-- operands are COALESCEd to a definite boolean — never NULL — because SQL's
+-- three-valued logic silently swallows a NULL owner-trust value in TWO
+-- OPPOSITE, dangerous directions depending on which caller pattern reads it:
+-- `IF NOT (v_owner_trusted AND x) THEN reject` treats NULL as "don't
+-- reject" (fails OPEN — this is what accidentally let a real owner through
+-- under the old ar_role-dependent code, masking the bug); `CASE WHEN
+-- v_owner_trusted THEN 'active' ELSE 'candidate' END` treats NULL as the
+-- ELSE branch (fails CLOSED but silently wrong — this is what the B1 RED
+-- test actually caught: a real owner's create landing as `candidate`).
+-- Returning a guaranteed boolean here makes every downstream `IF NOT
+-- ar2_owner_trusted(...)` and `CASE WHEN ar2_owner_trusted(...)` behave
+-- identically and correctly, with no three-valued-logic footgun left.
+CREATE OR REPLACE FUNCTION ar2_owner_trusted(p_owner_id uuid) RETURNS boolean
+  LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(auth.uid() = p_owner_id, false) AND NOT ar2_jwt_claims_agent();
+$$;
+REVOKE ALL ON FUNCTION ar2_owner_trusted(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_owner_trusted(uuid) TO authenticated;
 
 CREATE OR REPLACE FUNCTION ar2_active_grant(
   p_owner_id uuid, p_workspace_id uuid, p_principal_id uuid
@@ -682,7 +754,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'not_found', 'message', 'workspace not found');
   END IF;
-  v_owner_trusted := (v_caller = v_owner) AND (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_owner);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'grant requires owner trust');
   END IF;
@@ -711,7 +783,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'not_found', 'message', 'workspace not found');
   END IF;
-  v_owner_trusted := (v_caller = v_owner) AND (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_owner);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'revoke requires owner trust');
   END IF;
@@ -738,7 +810,7 @@ BEGIN
   IF v_caller IS NULL THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'unauthenticated', 'message', 'no auth.uid()');
   END IF;
-  v_owner_trusted := (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_caller);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'alias requires owner trust');
   END IF;
@@ -843,7 +915,6 @@ CREATE OR REPLACE FUNCTION ar2_mutate(
 AS $$
 DECLARE
   v_caller uuid := auth.uid();
-  v_role text := auth.jwt() ->> 'ar_role';
   v_owner uuid;
   v_owner_trusted boolean;
   v_op text := p_cmd ->> 'op';
@@ -874,7 +945,7 @@ BEGIN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', COALESCE(v_id::text, ''), 'reason', 'schema', 'message', 'owner_id is required');
   END IF;
   v_owner := p_owner_id;
-  v_owner_trusted := (v_caller = v_owner) AND (v_role = 'owner');
+  v_owner_trusted := ar2_owner_trusted(v_owner);
 
   -- ---- idempotency (R2.5): operation lookup BEFORE validate/authorize ----
   SELECT * INTO v_existing_op FROM ar2_operations WHERE principal_id = v_caller AND operation_id = p_operation_id;
@@ -1000,7 +1071,10 @@ BEGIN
     RETURN v_receipt;
   END IF;
 
-  v_is_author := v_target.source_principal_id = v_caller;
+  -- COALESCEd defensively: a NULL here (e.g. a corrupted source jsonb with
+  -- no principal_id) must fail closed (not-author), never silently swallow
+  -- into the "OR v_caller = v_owner" allow branch below via NULL-with-OR.
+  v_is_author := COALESCE(v_target.source_principal_id = v_caller, false);
   v_protected := (v_target.kind = 'constraint') AND (v_target.authority IN ('explicit_user', 'legacy'));
   v_new_revision := v_target.revision + 1;
 
