@@ -35,7 +35,7 @@ import {
   validateCommand, isUuid, sanitizeSlug, payloadHash, contentHash as sha256Content,
   ContractValidationError, proposalId, stripReservedMetadata, MAX_DERIVED_CLOSURE,
 } from "../contract.js";
-import { authorize, canRead, ownerTrusted, effectivePermissions, type LocalGrant, isOwnerPrincipal } from "../policy.js";
+import { authorize, canRead, hasAnyStanding, ownerTrusted, effectivePermissions, type LocalGrant, isOwnerPrincipal } from "../policy.js";
 import { runWithRoot } from "../context-store.js";
 import { projectSubPath } from "../../storage/paths.js";
 import { withRepoLock } from "./lock.js";
@@ -390,13 +390,18 @@ export class LocalRepository implements MemoryRepository {
    * retracted content is never returned (A16).
    */
   private readableStatusSet(ctx: ReadContext, grants: LocalGrant[]): Set<MemoryRecord["status"]> {
+    // "superseded" is ordinary lineage information (frozen suite: a plain
+    // owner get() must see a just-superseded record's status), unlike
+    // "quarantined" (a moderation action) and "retracted" (A16: never
+    // returned via ANY read path, regardless of scope — never added here).
+    const base: MemoryRecord["status"][] = ["active", "candidate", "superseded"];
     if (ctx.include_non_active && ctx.channel === "management") {
       const isOwner = isOwnerPrincipal(ctx.principal, this.ownerId);
       const canApprove = isOwner || (ctx.workspace_id !== undefined
         && effectivePermissions(ctx.principal, this.ownerId, ctx.workspace_id, ctx.project_id ?? null, grants).can_approve);
-      if (canApprove) return new Set(["active", "candidate", "superseded", "quarantined"]);
+      if (canApprove) return new Set([...base, "quarantined"]);
     }
-    return new Set(["active", "candidate"]);
+    return new Set(base);
   }
 
   private isClosureValid(record: MemoryRecord, ctx: ReadContext, grants: LocalGrant[]): boolean {
@@ -624,7 +629,20 @@ export class LocalRepository implements MemoryRepository {
       }
       throw err;
     }
-    return withRepoLock(this.root, () => this.mutateLocked(cmd, expectedRevision, operationId, ctx));
+    try {
+      return withRepoLock(this.root, () => this.mutateLocked(stripCmdReservedMetadata(cmd), expectedRevision, operationId, ctx));
+    } catch (err) {
+      // canonicalJson (contract.ts, rev2.2) throws on a literal __proto__ key
+      // ANYWHERE in the payload — stripCmdReservedMetadata above removes it
+      // from metadata before payloadHash() ever sees it, but this is a
+      // defense-in-depth catch-all: a validation-shaped throw from anywhere
+      // in the commit path must surface as rejected:schema, never as an
+      // uncaught rejection (contract R2.13's own driver invariant).
+      if (err instanceof ContractValidationError) {
+        return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "schema", message: err.message };
+      }
+      throw err;
+    }
   }
 
   private mutateLocked(cmd: MutateCommand, expectedRevision: number | null, operationId: string, ctx: WriteContext): WriteReceipt {
@@ -648,16 +666,22 @@ export class LocalRepository implements MemoryRepository {
     }
 
     const target = this.loadRecord(cmd.id);
-    if (!target || !canRead(target, ctx, this.ownerId, grants)) {
+    // R2.3 existence-hiding (mutation side, frozen suite G-existence): gated
+    // by hasAnyStanding (author/owner/any grant), NOT canRead() — a
+    // can_write-only grant (no can_read) must still reach a real CAS/
+    // authorize decision, not be existence-hidden. canRead() is a SEPARATE,
+    // narrower gate used below only for ConflictReceipt.current.
+    if (!target || !hasAnyStanding(target, ctx, this.ownerId, grants)) {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "not_found", message: "no such record" };
     }
     if (target.status === "retracted" && cmd.op !== "confirm") {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "retracted", message: "record is retracted" };
     }
     if (target.revision !== expectedRevision) {
+      const canSeeCurrent = canRead(target, ctx, this.ownerId, grants);
       return {
         status: "conflict", operation_id: operationId, id: cmd.id, expected_revision: expectedRevision as number,
-        current: { revision: target.revision, status: target.status, updated_at: target.updated_at },
+        current: canSeeCurrent ? { revision: target.revision, status: target.status, updated_at: target.updated_at } : null,
       };
     }
 
@@ -995,6 +1019,28 @@ export class LocalRepository implements MemoryRepository {
     }
     return null;
   }
+}
+
+/**
+ * Strip reserved/dangerous metadata keys BEFORE payloadHash() ever sees the
+ * command — canonicalJson (contract.ts, rev2.2) throws ContractValidationError
+ * on a literal `__proto__` own-key ANYWHERE in the payload, so a legitimate
+ * create/update whose metadata happens to carry one (attacker-supplied or
+ * not) must be sanitized first, not merely rejected outright. Applied once
+ * here so the hash, the stored record, and every reject path all see the
+ * SAME (stripped) view.
+ */
+function stripCmdReservedMetadata(cmd: MutateCommand): MutateCommand {
+  if (cmd.op === "create" && cmd.metadata) {
+    return { ...cmd, metadata: stripReservedMetadata(cmd.metadata) };
+  }
+  if (cmd.op === "update" && cmd.patch?.metadata) {
+    return { ...cmd, patch: { ...cmd.patch, metadata: stripReservedMetadata(cmd.patch.metadata) } };
+  }
+  if (cmd.op === "supersede" && cmd.replacement?.metadata) {
+    return { ...cmd, replacement: { ...cmd.replacement, metadata: stripReservedMetadata(cmd.replacement.metadata) } };
+  }
+  return cmd;
 }
 
 function computeClosure(derivedFrom: RevisionRef[], load: (id: string) => MemoryRecord | null): RevisionRef[] {

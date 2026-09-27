@@ -139,6 +139,32 @@ export function canRead(
   }
 }
 
+/**
+ * R2.3 existence-hiding gate for MUTATIONS (frozen suite's G-existence group,
+ * NOT the same test as canRead()): a caller with ZERO standing on a record's
+ * workspace/project (no grant at all, not author, not owner) gets
+ * `rejected:not_found` — indistinguishable from a nonexistent id — for ANY
+ * mutation attempt. A caller who has SOME grant (even can_write-only, no
+ * can_read — R2.3's own "write-only" test) is NOT existence-hidden: their
+ * request proceeds to a real CAS comparison and/or a real authorize()
+ * decision (forbidden/requires_owner_approval/etc), even though canRead()
+ * itself may still say they can't see the CONTENT (that's a separate gate —
+ * see ConflictReceipt.current, which canRead() DOES gate).
+ */
+export function hasAnyStanding(
+  record: Pick<MemoryRecord, "workspace_id" | "project_id" | "source">,
+  ctx: Pick<ReadContext, "principal">,
+  ownerId: string,
+  grants: readonly LocalGrant[],
+  now: number = Date.now(),
+): boolean {
+  const p = ctx.principal;
+  if (isOwnerPrincipal(p, ownerId)) return true;
+  if (record.source.principal_id === p.principal_id) return true; // author, regardless of visibility
+  const perm = effectivePermissions(p, ownerId, record.workspace_id, record.project_id, grants, now);
+  return perm.can_read || perm.can_write;
+}
+
 // ---------------------------------------------------------------------------
 // rev1 §4.2 / rev2 R2.1 — authority recomputation (server-side; D6/D7 fix)
 // ---------------------------------------------------------------------------
