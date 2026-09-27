@@ -477,23 +477,41 @@ CREATE POLICY ar2_records_select ON ar2_records FOR SELECT TO authenticated
     AND ar2_visible(owner_id, workspace_id, project_id, visibility, source_principal_id)
   );
 
+-- Fix round 1 (frozen-suite G-retract finding): a naive EXISTS subquery
+-- against `ar2_records` from another table's RLS policy ALSO applies
+-- ar2_records_select's OWN RLS to that subquery (RLS is not bypassed just
+-- because the reference is inside another policy's USING clause) — so the
+-- `status <> 'retracted'` clause above silently zeroed out EVERY lookup
+-- against a retracted record, hiding its entire history/events/outcomes even
+-- from its own owner (contradicting "history shows the retraction as a
+-- tombstone", which is explicitly NOT covered by A16's read-path exclusion —
+-- only current-content reads are). This SECURITY DEFINER helper runs as the
+-- table owner, which is exempt from RLS by default (same reasoning as every
+-- other SECURITY DEFINER function in this file), so it sees retracted rows
+-- too; it then re-applies ar2_visible() explicitly itself (visibility, not
+-- status, is what actually gates it for these three tables).
+CREATE OR REPLACE FUNCTION ar2_record_visible_any_status(p_owner_id uuid, p_id uuid) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = pg_catalog, public
+AS $$
+  SELECT COALESCE(
+    (SELECT ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
+     FROM ar2_records r WHERE r.owner_id = p_owner_id AND r.id = p_id),
+    false
+  );
+$$;
+REVOKE ALL ON FUNCTION ar2_record_visible_any_status(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_record_visible_any_status(uuid, uuid) TO authenticated;
+
 DROP POLICY IF EXISTS ar2_record_revisions_select ON ar2_record_revisions;
 CREATE POLICY ar2_record_revisions_select ON ar2_record_revisions FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM ar2_records r
-    WHERE r.owner_id = ar2_record_revisions.owner_id AND r.id = ar2_record_revisions.id
-      AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-  ));
+  USING (ar2_record_visible_any_status(ar2_record_revisions.owner_id, ar2_record_revisions.id));
 
 DROP POLICY IF EXISTS ar2_events_select ON ar2_events;
 CREATE POLICY ar2_events_select ON ar2_events FOR SELECT TO authenticated
   USING (
     owner_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM ar2_records r
-      WHERE r.owner_id = ar2_events.owner_id AND r.id = ar2_events.record_id
-        AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-    )
+    OR ar2_record_visible_any_status(ar2_events.owner_id, ar2_events.record_id)
   );
 
 DROP POLICY IF EXISTS ar2_operations_select ON ar2_operations;
@@ -504,11 +522,7 @@ DROP POLICY IF EXISTS ar2_outcomes_select ON ar2_outcomes;
 CREATE POLICY ar2_outcomes_select ON ar2_outcomes FOR SELECT TO authenticated
   USING (
     owner_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM ar2_records r
-      WHERE r.owner_id = ar2_outcomes.owner_id AND r.id = ar2_outcomes.memory_id
-        AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-    )
+    OR ar2_record_visible_any_status(ar2_outcomes.owner_id, ar2_outcomes.memory_id)
   );
 
 DROP POLICY IF EXISTS ar2_access_epochs_select ON ar2_access_epochs;

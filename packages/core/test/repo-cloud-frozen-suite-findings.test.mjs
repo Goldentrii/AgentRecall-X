@@ -124,3 +124,54 @@ describe("WP-P2 fix round 1 / frozen-suite finding: a plain private fact create 
     assert.equal(ownerSharedReceipt.effective_status, "candidate", "visibility=owner_shared must still land candidate for a non-owner-trusted writer");
   });
 });
+
+describe("WP-P2 fix round 1 / frozen-suite finding (evaluator v3): history() must show a retracted record as a tombstone", () => {
+  // Root cause: ar2_record_revisions_select's RLS policy did `EXISTS (SELECT
+  // 1 FROM ar2_records r WHERE ... AND ar2_visible(...))` — a naive
+  // reference to ar2_records from inside ANOTHER table's policy. Postgres
+  // does not bypass a table's own RLS just because the reference sits
+  // inside a different policy's USING clause, so ar2_records_select's
+  // OWN `status <> 'retracted'` clause (A16's read-path exclusion) silently
+  // zeroed out the subquery for any retracted record — hiding its entire
+  // history even from its own owner. history() is explicitly NOT covered by
+  // A16's exclusion ("history shows the retraction as a tombstone, not
+  // silently omitted" — G-retract, contract-suite.mjs). Same bug, same
+  // fix, applied to ar2_events_select and ar2_outcomes_select too (both had
+  // the identical EXISTS-against-ar2_records pattern).
+  let harness;
+
+  before(async () => {
+    harness = await createHarness();
+    await harness.setup();
+  });
+
+  after(async () => {
+    await harness.teardown();
+  });
+
+  it("history() still reports a retracted record's revisions, with the last one status=retracted", async () => {
+    const owner = await harness.newOwner("U-history-tombstone");
+    const wsId = await harness.workspace(owner);
+    const repo = await harness.repoFor(owner);
+    const recId = randomUUID();
+
+    const created = await repo.mutate(
+      { op: "create", id: recId, workspace_id: wsId, project_id: null, kind: "fact", visibility: "private", content: "will be retracted", authority: "explicit_user" },
+      null, randomUUID(), owner.ownerWrite(),
+    );
+    assert.equal(created.status, "committed");
+
+    const retracted = await repo.mutate({ op: "retract", id: recId, reason: "cleanup" }, created.revision, randomUUID(), owner.ownerWrite());
+    assert.equal(retracted.status, "committed");
+    assert.equal(retracted.effective_status, "retracted");
+
+    const hist = await repo.history(recId, owner.read());
+    assert.ok(hist.length > 0, "history must still report the record existed, even after retraction");
+    assert.equal(hist[hist.length - 1].status, "retracted");
+
+    // get()/query() must still correctly EXCLUDE the retracted content (A16) — this fix must not
+    // accidentally widen those paths back open.
+    const stillDenied = await repo.get(recId, owner.read());
+    assert.equal(stillDenied.items.length, 0, "get() must still deny retracted content (A16) after this fix");
+  });
+});
