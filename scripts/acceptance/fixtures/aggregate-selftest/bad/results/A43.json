@@ -1,0 +1,14 @@
+{
+  "id": "A43",
+  "status": "NOT_RUN",
+  "commit": null,
+  "evaluator_commit": "82e1157feedfacefeedfacefeedfacefeedface0",
+  "environment": "fixture-env",
+  "command": "node scripts/acceptance/contract-suite.mjs --case A43",
+  "started_at": "2026-09-27T00:00:00.000Z",
+  "exit_code": null,
+  "metrics": {},
+  "evidence": [],
+  "verified_by": "",
+  "reason": "not yet executed in this synthetic fixture"
+}

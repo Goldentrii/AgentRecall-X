@@ -1,0 +1,13 @@
+{
+  "note": "Implementer identities; aggregator rejects PASS whose verified_by matches an implementer of the tested package.",
+  "implementers": {
+    "WP-P1": {"requested_model": "fable", "expected_actual": "claude-sonnet-5", "branch": "wp-p1", "worktree": "arx-wp-p1", "owns": "repository/local, runtime, policy, types.getRoot, singleton keying, sdk"},
+    "WP-P2": {"requested_model": "fable", "expected_actual": "claude-sonnet-5", "branch": "wp-p2", "worktree": "arx-wp-p2", "owns": "repository/cloud, migrations/0002, pglite harness"},
+    "orchestrator": {"model": "claude-opus-5-5", "owns": "contract.ts, trust.ts, harness.d.ts, ADR"}
+  },
+  "verifiers": {
+    "WP-V": {"requested_model": "fable", "expected_actual": "claude-sonnet-5", "branch": "wp-v", "owns": "scripts/acceptance/**"}
+  },
+  "dispatched_at": "2026-09-27",
+  "frozen_contract_commit": "82e115714d15cbe165d84aa1d3952602bee3175a"
+}
