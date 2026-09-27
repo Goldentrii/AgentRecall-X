@@ -1,0 +1,337 @@
+{
+ "commit": "db6338a5d60a36ea9c38a58e1d22e8037d75f095",
+ "os": "Windows 11 Pro 10.0.26220 (Git Bash)",
+ "node": "v24.11.1",
+ "npm": "11.6.2",
+ "sandbox": "HOME/USERPROFILE/AGENT_RECALL_ROOT -> mktemp; SUPABASE/EMBEDDING/OPENAI env unset",
+ "dirty_patch_sha256": "017ab6788c4d5d579d145ee382e5203390cbd2b7880abb7380ba26b6e903ed7b",
+ "trees": {
+  "clean": {
+   "steps": [
+    {
+     "label": "clean",
+     "step": "install",
+     "cmd": "npm ci --no-audit --no-fund",
+     "exit_code": 0,
+     "secs": 37,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "build",
+     "cmd": "npm run build",
+     "exit_code": 0,
+     "secs": 7,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "lint",
+     "cmd": "npm run lint",
+     "exit_code": 0,
+     "secs": 4,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "test-core",
+     "cmd": "npm test -w packages/core",
+     "exit_code": 1,
+     "secs": 71,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "test-mcp-server",
+     "cmd": "npm test -w packages/mcp-server",
+     "exit_code": 1,
+     "secs": 20,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "test-sdk",
+     "cmd": "npm test -w packages/sdk",
+     "exit_code": 0,
+     "secs": 2,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "clean",
+     "step": "test-cli",
+     "cmd": "npm test -w packages/cli",
+     "exit_code": 1,
+     "secs": 60,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    }
+   ],
+   "tests": {
+    "core": {
+     "tests": 1859,
+     "pass": 1828,
+     "fail": 31,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "(c1) counts are correct and exhaustively partition `total`",
+      "(c2) every DecayClass/Confidence key is present even at zero (no `?? 0` needed by callers)",
+      "(c3) breakdown does not perturb any pre-existing KPI field (precision/heeded/recurred/verdict_coverage/etc unchanged)",
+      "(review fix) a corrupted/out-of-union decay_class_override or confidence on disk does not mint a stray Record key — exhaustive-partition invariant holds even on garbage input",
+      "CRITICAL-2 regression fix",
+      "Guard 1 — symlink escape is blocked by realpath jail",
+      "Guard 2 — secret content in files is redacted before palace write",
+      "N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; retrieved_count may undercount",
+      "P0-a rework",
+      "Sync utilities",
+      "Wave 5 — deriveBlindSpots",
+      "Wave 5 — personal tier stays off backfill/sync",
+      "a genuinely DIFFERENT nested repo under an overridden root still wins on its own identity (directory-identity fix does not reopen CRITICAL-3)",
+      "a project root with only package.json (no git) can still be registered",
+      "a rescue-tagged file planted directly in the legacy journal root never surfaces via queryMemory(), while a genuine (tagless, pre-package-shaped) legacy sibling still does",
+      "ab-report --json: exits 0 and emits valid JSON on empty ledger",
+      "ab-report.mjs",
+      "ab-report: correct counts on seeded ledger",
+      "ab-report: exits 0 on empty ledger (no A/B data)",
+      "ab-report: forced sessions are excluded from arm counts",
+      "ab-report: recurred outcomes attribute to the nearest prior session's arm only",
+      "archiveSession (Wave 2)",
+      "audit: recordOutcome concurrent-process race on hot-path counters",
+      "bootstrapImport skips items whose realpath resolves outside the repo's scan root",
+      "caps log at 500 lines",
+      "defense in depth: a PRE-EXISTING broad allowlist entry (predating this fix) must still yield to a nested repo's own git identity",
+      "deriveSlug handles palace paths",
+      "egress-guard — behavioral: backfill scrubs AKIA key + PEM block",
+      "every ALLOWLIST_B entry is still flagged by the scanner (stale entries are not silently ignored)",
+      "every ALLOWLIST_C entry is still flagged by the scanner (stale entries are not silently ignored)",
+      "every journal-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason",
+      "every palace-room-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason",
+      "identity-trust completeness — journal shape (function-scope rebuild, 2026-08-30)",
+      "identity-trust completeness — palace-room shape (function-scope rebuild, 2026-08-30)",
+      "legit case preserved: an EXACT allowlist registration (explicit write from a real project root) still wins outright",
+      "never imports / calls syncToSupabase (raw tier is local-only)",
+      "resolveProject/detectProject — a non-root cwd cannot annex a git-identified project",
+      "retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)",
+      "scrubForCloud on content with no secrets returns content unchanged (modulo injection scrub)",
+      "scrubForCloud redacts AKIA key from content that would be uploaded",
+      "scrubForCloud redacts PEM header AND base64 body",
+      "sync error logging",
+      "the blind-spots file and the whole personal/ dir classify as personal",
+      "v4 W2 — getCorrectionKPIs' by_decay_class / by_confidence breakdown",
+      "writeBlindSpots persists ONLY to personalDir/blind-spots.json",
+      "writes error line to sync-errors.log"
+     ]
+    },
+    "mcp-server": {
+     "tests": 79,
+     "pass": 76,
+     "fail": 3,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory into a card",
+      "SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling",
+      "SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling",
+      "idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash"
+     ]
+    },
+    "sdk": {
+     "tests": 40,
+     "pass": 39,
+     "fail": 0,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 1,
+     "failing_names": [
+      "Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance"
+     ]
+    },
+    "cli": {
+     "tests": 293,
+     "pass": 291,
+     "fail": 2,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "ar sync-memory — frontmatter/fence blank-line regression",
+      "new-slug gate: mints a brand-new slug only when content count >= 3 AND ~/Projects/<name> exists",
+      "transcript-reader (F1 + F1b, continuity wave 2026-07-31)",
+      "writes a blank line between the YAML frontmatter and the fenced body, with real retrieved content inside the fence"
+     ]
+    }
+   },
+   "real_store_touched": [
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/7f39f9e3.md",
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/8101cf42.md",
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/a874e987.md"
+   ]
+  },
+  "dirty": {
+   "steps": [
+    {
+     "label": "dirty",
+     "step": "install",
+     "cmd": "npm ci --no-audit --no-fund",
+     "exit_code": 0,
+     "secs": 37,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "build",
+     "cmd": "npm run build",
+     "exit_code": 0,
+     "secs": 7,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "lint",
+     "cmd": "npm run lint",
+     "exit_code": 0,
+     "secs": 3,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "test-core",
+     "cmd": "npm test -w packages/core",
+     "exit_code": 1,
+     "secs": 71,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "test-mcp-server",
+     "cmd": "npm test -w packages/mcp-server",
+     "exit_code": 1,
+     "secs": 20,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "test-sdk",
+     "cmd": "npm test -w packages/sdk",
+     "exit_code": 0,
+     "secs": 2,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    },
+    {
+     "label": "dirty",
+     "step": "test-cli",
+     "cmd": "npm test -w packages/cli",
+     "exit_code": 1,
+     "secs": 60,
+     "head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095"
+    }
+   ],
+   "tests": {
+    "core": {
+     "tests": 1859,
+     "pass": 1828,
+     "fail": 31,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "(c1) counts are correct and exhaustively partition `total`",
+      "(c2) every DecayClass/Confidence key is present even at zero (no `?? 0` needed by callers)",
+      "(c3) breakdown does not perturb any pre-existing KPI field (precision/heeded/recurred/verdict_coverage/etc unchanged)",
+      "(review fix) a corrupted/out-of-union decay_class_override or confidence on disk does not mint a stray Record key — exhaustive-partition invariant holds even on garbage input",
+      "CRITICAL-2 regression fix",
+      "Guard 1 — symlink escape is blocked by realpath jail",
+      "Guard 2 — secret content in files is redacted before palace write",
+      "N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; retrieved_count may undercount",
+      "P0-a rework",
+      "Sync utilities",
+      "Wave 5 — deriveBlindSpots",
+      "Wave 5 — personal tier stays off backfill/sync",
+      "a genuinely DIFFERENT nested repo under an overridden root still wins on its own identity (directory-identity fix does not reopen CRITICAL-3)",
+      "a project root with only package.json (no git) can still be registered",
+      "a rescue-tagged file planted directly in the legacy journal root never surfaces via queryMemory(), while a genuine (tagless, pre-package-shaped) legacy sibling still does",
+      "ab-report --json: exits 0 and emits valid JSON on empty ledger",
+      "ab-report.mjs",
+      "ab-report: correct counts on seeded ledger",
+      "ab-report: exits 0 on empty ledger (no A/B data)",
+      "ab-report: forced sessions are excluded from arm counts",
+      "ab-report: recurred outcomes attribute to the nearest prior session's arm only",
+      "archiveSession (Wave 2)",
+      "audit: recordOutcome concurrent-process race on hot-path counters",
+      "bootstrapImport skips items whose realpath resolves outside the repo's scan root",
+      "caps log at 500 lines",
+      "defense in depth: a PRE-EXISTING broad allowlist entry (predating this fix) must still yield to a nested repo's own git identity",
+      "deriveSlug handles palace paths",
+      "egress-guard — behavioral: backfill scrubs AKIA key + PEM block",
+      "every ALLOWLIST_B entry is still flagged by the scanner (stale entries are not silently ignored)",
+      "every ALLOWLIST_C entry is still flagged by the scanner (stale entries are not silently ignored)",
+      "every journal-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason",
+      "every palace-room-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason",
+      "identity-trust completeness — journal shape (function-scope rebuild, 2026-08-30)",
+      "identity-trust completeness — palace-room shape (function-scope rebuild, 2026-08-30)",
+      "legit case preserved: an EXACT allowlist registration (explicit write from a real project root) still wins outright",
+      "never imports / calls syncToSupabase (raw tier is local-only)",
+      "resolveProject/detectProject — a non-root cwd cannot annex a git-identified project",
+      "retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)",
+      "scrubForCloud on content with no secrets returns content unchanged (modulo injection scrub)",
+      "scrubForCloud redacts AKIA key from content that would be uploaded",
+      "scrubForCloud redacts PEM header AND base64 body",
+      "sync error logging",
+      "the blind-spots file and the whole personal/ dir classify as personal",
+      "v4 W2 — getCorrectionKPIs' by_decay_class / by_confidence breakdown",
+      "writeBlindSpots persists ONLY to personalDir/blind-spots.json",
+      "writes error line to sync-errors.log"
+     ]
+    },
+    "mcp-server": {
+     "tests": 79,
+     "pass": 76,
+     "fail": 3,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory into a card",
+      "SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling",
+      "SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling",
+      "idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash"
+     ]
+    },
+    "sdk": {
+     "tests": 40,
+     "pass": 39,
+     "fail": 0,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 1,
+     "failing_names": [
+      "Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance"
+     ]
+    },
+    "cli": {
+     "tests": 293,
+     "pass": 291,
+     "fail": 2,
+     "cancelled": 0,
+     "skipped": 0,
+     "todo": 0,
+     "failing_names": [
+      "ar sync-memory — frontmatter/fence blank-line regression",
+      "new-slug gate: mints a brand-new slug only when content count >= 3 AND ~/Projects/<name> exists",
+      "transcript-reader (F1 + F1b, continuity wave 2026-07-31)",
+      "writes a blank line between the YAML frontmatter and the fenced body, with real retrieved content inside the fence"
+     ]
+    }
+   },
+   "real_store_touched": [
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/7f39f9e3.md",
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/8101cf42.md",
+    "/c/Users/tong/.agent-recall/projects/cli/palace/sops/a874e987.md"
+   ]
+  }
+ },
+ "clean_equals_dirty": true,
+ "note_real_store": "The 3 touched files are Plywood SOP mirrors written by the orchestrator's plywood compile step (not by tests).",
+ "ubuntu": "NOT_RUN: no Linux host/WSL distro/Docker daemon available on this machine"
+}

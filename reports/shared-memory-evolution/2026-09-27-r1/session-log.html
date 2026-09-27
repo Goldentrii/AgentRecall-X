@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AgentRecall-X · Shared-memory evolution · Session log 2026-09-27</title>
+<style>
+:root{--bg:#fbfaf7;--card:#fff;--ink:#1f2328;--mute:#6a737d;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;--blue:#0969da;--line:#e6e2d9}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+main{max-width:1080px;margin:0 auto;padding:32px 20px 80px}h1{font-size:28px;margin:0 0 4px}h2{font-size:20px;margin:36px 0 12px;border-bottom:2px solid var(--line);padding-bottom:6px}
+.sub{color:var(--mute)}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.k{font-size:13px;color:var(--mute)}.v{font-size:18px;font-weight:700}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}code{background:#f2efe8;padding:1px 6px;border-radius:6px;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{background:#f6f3ec}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}.PASS{background:#dafbe1;color:var(--ok)}.BLOCKED{background:#fff8c5;color:var(--warn)}.NOT_RUN{background:#eaeef2;color:#57606a}
+ol.tl li{margin:6px 0}.small{font-size:13px;color:var(--mute)}a{color:var(--blue)}
+</style>
+</head>
+<body><main>
+<h1>AgentRecall-X · 共享记忆与可验证进化 · 会话日志</h1>
+<div class="sub">Run <code>2026-09-27-r1</code> · Orchestrator: Claude Opus 5.5 (1M) · Windows 11 · Node 24.11.1 · 2026-09-27</div>
+
+<h2>一句话结论</h2>
+<div class="card">
+本次完成 <b>P0（冻结契约）+ P1（本地权威存储）+ P2（Supabase/Postgres 权威存储）</b>地基，并建立独立冻结的验收评测器。
+<b>尚未</b>把新存储接进 5 个 MCP 工具（P3），P4–P7 未开始。机械汇总：
+<b class="bad">ENGINEERING_ACCEPTED = 否</b> · <b class="bad">EVOLUTION_VALIDATED = 否</b> · <b class="bad">READY_FOR_OWNER_RELEASE = 否</b>。
+47 项验收：<b>1 PASS / 17 BLOCKED / 29 NOT_RUN / 0 FAIL</b>。没有把 mock 或子集结果写成 PASS。
+</div>
+
+<div class="grid">
+<div class="card"><div class="k">最终集成 commit</div><div class="v"><code>b2665b9</code>；版本提交 <code>5b32de2</code></div></div>
+<div class="card"><div class="k">GitHub</div><div class="v ok">已推送 feature 分支 + <a href="https://github.com/Goldentrii/AgentRecall-X/pull/42">PR #42</a></div><div class="small">main 受保护（PR + 必需检查）；未直推、未管理员绕过</div></div>
+<div class="card"><div class="k">PR CI</div><div class="v warn">build-and-test 失败</div><div class="small">失败点 = 基线就存在的 heeded-guard 5/9（与 main 完全相同）；build/lint 通过；GitGuardian、bench-fixture 通过</div></div>
+<div class="card"><div class="k">npm</div><div class="v warn">未发布（BLOCKED）</div><div class="small">本机 npm 未登录（ENEEDAUTH）；已 bump 3.5.0-beta.0，4 包 pack dry-run 通过</div></div>
+<div class="card"><div class="k">新增测试失败（vs 基线）</div><div class="v ok">0</div><div class="small">修复 1 个基线失败（SDK Case B 串库）</div></div>
+</div>
+
+<h2>你需要做的决定 / 动作</h2>
+<div class="card"><ol>
+<li><b>npm 发布</b>：执行 <code>npm login</code>，然后在 <code>E:\Users\tong\Documents\New project\arx-sme</code>：<br>
+<code>npm publish -w packages/core --tag beta</code>，再依次 <code>-w packages/mcp-server</code>、<code>-w packages/sdk</code>、<code>-w packages/cli</code>（都加 <code>--tag beta</code>；latest 仍为 3.4.51）。</li>
+<li><b>PR #42 → main</b>：必需检查因基线 heeded-guard 失败而红。选项：管理员绕过合并，或先修 heeded-guard 再合并。</li>
+<li>提供<b>真实隔离 Supabase 项目</b>（或允许 Docker 本地 Supabase）→ 解锁 A05/A07/A08/A10–A13/A26/A27。</li>
+<li>提供<b>第二台设备/VM + Ubuntu</b> → A01/A30/A38。</li>
+<li><b>进化实验预算</b>（估算 ~$2.2k，范围 $0.5k–7.7k）+ 独立 held-out 任务作者（≥150 个带可执行 oracle）→ A42–A45。</li>
+<li>默认模式 legacy→local 是否切换；SDK 不再调用全局 setRoot 的行为变化与版本策略。</li>
+<li>撤回后 history 语义：撤回前修订的正文保留还是脱敏？</li>
+<li>ADR-002 提议的 PLAN §11.2 lease 恢复演练是否纳入计划。</li>
+</ol></div>
+
+<h2>基线与发现（P0 grounding）</h2>
+<div class="card"><ul>
+<li>GitHub main = 本地 HEAD = 计划基线 <code>db6338a</code>（3.4.51），无分歧。你 root + 4 包 README 的未提交修改原样保留（原工作区从未被修改）。</li>
+<li>Windows 基线：build/lint 通过；测试失败 core 31/1859、mcp 3/79、cli 2/293、sdk 0/40；clean 与 dirty 一致。</li>
+<li>远程 Ubuntu CI 在基线就失败：<code>benchmark/heeded-guard</code> 5/9（Windows 同样）。</li>
+<li>scout 确认计划 §1 全部断言，并发现：SDK 串库是<b>确定性</b>的；4 个未按 root 区分的单例（Supabase client 等）；corrections 云同步 0 生产调用方；<code>ar_insights</code> 0 写入方；schema 无 RLS；任何 agent 可经 <code>check()</code> 铸造阻断型 p0；<code>OPENAI_API_KEY</code> 存在时 local 模式会外连。</li>
+</ul></div>
+
+<h2>Plywood 实际使用</h2>
+<div class="card">真实工具：私有仓库 <code>Goldentrii/agent-craft</code> @ <code>c11d05b</code>（Plywood v0.5.1），克隆到 <code>E:\tools\agent-craft</code>，直接调用 CLI（本机未装 MCP/hooks）。
+用了 <code>compile</code>（7 份 brief）、<code>validate</code>（3 份）、<code>feedback</code>（回执）。派发由 Claude Code Agent 工具完成（如实记录）。
+发现 Plywood 缺陷：<code>validate</code> 在 Windows GBK 下 UTF-8 解码崩溃（<code>PYTHONUTF8=1</code> 绕过）。副作用：compile 会把 SOP 镜像写入真实库 <code>~/.agent-recall/projects/cli/palace/sops/</code>。</div>
+
+<h2>环境发现：模型别名被重映射</h2>
+<div class="card warn">本机：<code>sonnet → claude-fable-5</code>（约 5 倍价格）、<code>fable → claude-sonnet-5</code>、<code>opus → opus-4-8</code>、<code>haiku → opus-4-7</code>。
+前 3 个 scout + 1 个 reviewer 实际跑在 Fable 5；发现后 worker 全部改请求 <code>fable</code> 以真正用 Sonnet 5（transcript 验证）。</div>
+
+<h2>交付内容</h2>
+<table>
+<tr><th>工作包</th><th>作者</th><th>内容</th><th>独立复核</th></tr>
+<tr><td>P0 契约</td><td>Orchestrator</td><td>ADR-001 rev1→2→2.1→2.2；contract.ts / trust.ts / harness.d.ts；ADR-002 rev2 + evolution-contract.ts</td><td>R0 18 阻断 → R0b 4 → 全关闭；ADR-002 6 阻断 → 关闭（并抓出我一条虚假声明，已更正）</td></tr>
+<tr><td>WP-V 评测器</td><td>Sonnet 5（独立）</td><td>冻结 contract-suite（13 组、1000 次下限）、egress-guard、aggregator、naive/拒绝一切/挂起 对抗 harness、超时+watchdog</td><td>审查 6 阻断 → 关闭；closure 新 1 项 → 修复</td></tr>
+<tr><td>WP-P1 本地</td><td>Sonnet 5</td><td>ALS RuntimeContext + 严格模式、单例按上下文、SDK 实例隔离、policy.ts、LocalRepository（WAL/fsync/恢复/CAS/幂等/锁/多记录原子）</td><td>复现 5 个 bug（含路径穿越读任意文件）→ 修复 → MERGE_OK</td></tr>
+<tr><td>WP-P2 云端</td><td>Sonnet 5</td><td>0002 迁移（10 张 ar2_* 表、REVOKE+RLS、SECURITY DEFINER RPC、xmin 游标）、CloudRepository + 持久 outbox</td><td>FAIL（未脱敏上传、跨项目写入、owner 信任依赖不存在的 JWT claim 等 6 项）→ 修复 → 无安全阻断</td></tr>
+<tr><td>集成</td><td>Orchestrator</td><td>合并；2 处小修（__proto__；超 256 闭包接受并读时隐藏 + ar2_get 派生有效性）；3.5.0-beta.0</td><td>冻结 suite 独立验证</td></tr>
+</table>
+
+<h2>最终验证（commit b2665b9）</h2>
+<table>
+<tr><th>项目</th><th>结果</th></tr>
+<tr><td>build / lint</td><td class="ok">通过</td></tr>
+<tr><td>4 包测试 vs 基线</td><td class="ok">0 个新增失败名；修复 1 个（Case B）</td></tr>
+<tr><td>冻结 suite · local 驱动</td><td>59 通过 / 1 失败 / 1 取消（Node v24 三层嵌套子测试挂起，nodejs/node#58227，复核独立复现）</td></tr>
+<tr><td>冻结 suite · PGlite 云驱动</td><td>55 / 6 / 1（挂起 1 + 复核判定 suite fixture 缺陷 3 + 真实但 fail-closed 缺口 1）</td></tr>
+<tr><td>heeded-guard</td><td class="bad">5/9（基线原有，未修）</td></tr>
+</table>
+
+<h2>47 项验收</h2>
+<table><tr><th>ID</th><th>状态</th><th>原因</th></tr>
+<tr><td>A02</td><td><span class="pill PASS">PASS</span></td><td>契约冻结，独立复核阻断全部关闭</td></tr>
+<tr><td>A01</td><td><span class="pill BLOCKED">BLOCKED</span></td><td>无 Ubuntu；Windows 基线例外保留，0 新增</td></tr>
+<tr><td>A05, A07, A08, A10, A11, A12, A13, A26, A27</td><td><span class="pill BLOCKED">BLOCKED</span></td><td>无真实隔离 Supabase；PGlite 子集已跑但不能替代</td></tr>
+<tr><td>A30, A38</td><td><span class="pill BLOCKED">BLOCKED</span></td><td>无第二设备/真实多 host</td></tr>
+<tr><td>A31</td><td><span class="pill BLOCKED">BLOCKED</span></td><td>云端参考环境未冻结</td></tr>
+<tr><td>A42–A45</td><td><span class="pill BLOCKED">BLOCKED</span></td><td>付费实验未批准、无独立 held-out 任务集</td></tr>
+<tr><td>A03, A04, A14, A15, A19, A32, A33</td><td><span class="pill NOT_RUN">NOT_RUN</span></td><td>P3 未开始（A04 子集：Case B + 60 次交错隔离已通过）</td></tr>
+<tr><td>A06, A16, A17, A18, A20, A21</td><td><span class="pill NOT_RUN">NOT_RUN</span></td><td>P4 未开始</td></tr>
+<tr><td>A09, A22, A28, A29, A34–A37</td><td><span class="pill NOT_RUN">NOT_RUN</span></td><td>P5 未开始（ADR-002 已冻结）</td></tr>
+<tr><td>A23, A24, A25, A41</td><td><span class="pill NOT_RUN">NOT_RUN</span></td><td>P6 未开始</td></tr>
+<tr><td>A39, A40, A46, A47</td><td><span class="pill NOT_RUN">NOT_RUN</span></td><td>P7 未开始</td></tr>
+</table>
+
+<h2>时间线</h2>
+<ol class="tl">
+<li>读 HANDOFF/PLAN/ACCEPTANCE/REVIEW/AGENTS/ORCHESTRATOR-PROTOCOL；计划文件哈希与 REVIEW 指纹一致。</li>
+<li>核对 GitHub 无分歧；建独立 worktree，不碰原工作区。</li>
+<li>发现 Plywood；Windows 基线（沙盒 HOME，真实记忆库未被测试触碰）；拉远程 Ubuntu CI 失败日志。</li>
+<li>3 个 grounding scout 并行；估算实验成本。</li>
+<li>ADR-001 → R0（18 阻断）→ rev2 → R0b（4）→ rev2.1 冻结。</li>
+<li>并行派发 WP-V / WP-P1 / WP-P2（独立 worktree + 文件归属矩阵）。</li>
+<li>WP-V 交付 → 发现 __proto__ 漏洞 → rev2.2；suite 审查 → 修复 → closure → 超时/watchdog。</li>
+<li>P1 审查 5 bug → TDD 修复 → MERGE_OK。P2 审查 FAIL → TDD 修复 → 无安全阻断；我修正了自己下错的 256 上限指令并修 ar2_get。</li>
+<li>ADR-002 → 复核 → rev2 → 冻结。</li>
+<li>集成 b2665b9 → 全量验证 → 47 项结果 → aggregator 0 结构违规 → FINAL-REPORT。</li>
+<li>你要求 push + npm：我先提出反对意见（安全问题、SDK 行为变化），你确认后：bump 3.5.0-beta.0 → 推送 feature 分支 → PR #42（main 受保护；CI 因基线 heeded-guard 失败）→ npm 因未登录无法发布。</li>
+<li>/arsave → 本 HTML → 关机。</li>
+</ol>
+
+<h2>文件位置</h2>
+<div class="card small">
+开发 worktree：<code>E:\Users\tong\Documents\New project\arx-sme</code>（分支 feat/shared-memory-evolution，已推送）<br>
+证据包：<code>…\arx-sme\reports\shared-memory-evolution\2026-09-27-r1\</code>（FINAL-REPORT.md、acceptance-results.json、aggregate-output.json、manifest.json、adr/、reviews/、orchestration/、tests/、baseline/）<br>
+其他 worktree（保留）：arx-clean-ref、arx-dirty-ref、arx-wp-v、arx-wp-p1、arx-wp-p2、arx-verify-p1、arx-verify-p2<br>
+原工作区 <code>AgentRecall-X</code>：未修改。Plywood：<code>E:\tools\agent-craft</code>
+</div>
+
+<h2>下一次运行建议</h2>
+<div class="card"><ol>
+<li>P3：把 repository 接进 5 个工具 + SDK/CLI + 迁移工具（关键路径）。</li>
+<li>WP-V 修 3 个 suite fixture 缺陷 + 规避 Node v24 三层嵌套。</li>
+<li>P2 修 G-existence（可写不可读者的 CAS 路径）。</li>
+<li>修基线 heeded-guard，让 main CI 变绿后再合并 PR #42。</li>
+</ol></div>
+</main></body></html>

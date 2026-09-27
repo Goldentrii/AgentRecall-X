@@ -1,6 +1,6 @@
 {
   "name": "agent-recall-core",
-  "version": "3.4.51",
+  "version": "3.5.0-beta.0",
   "description": "Core memory palace engine for AgentRecall",
   "type": "module",
   "main": "dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./repository/runtime.js": {
+      "types": "./dist/repository/runtime.d.ts",
+      "import": "./dist/repository/runtime.js"
     }
   },
   "files": [
@@ -43,6 +47,7 @@
     "vectra": "^0.14.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

@@ -4,12 +4,15 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
+import { currentContext, isStrictMode, NoRuntimeContextError } from "./repository/context-store.js";
+
+export { NoRuntimeContextError };
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.4.51";
+export const VERSION = "3.5.0-beta.0";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)
@@ -34,7 +37,21 @@ export function resetRoot(): void {
   _root = null;
 }
 
+/**
+ * Resolve the storage root. R2.9 order: an active RuntimeContext (ALS store)
+ * wins first, and propagates through every `await`/timer/`setImmediate`
+ * continuation of the code that entered it (fixes the fire-and-forget leak
+ * class documented in orchestration/ground/G1-root-sdk.md §4 Scenario 3).
+ * Only when there is NO active context do we fall back to the legacy
+ * process-global (`_root` / env / default) — and if strict mode has ever
+ * been turned on (a MemoryRuntime was created anywhere in this process, or
+ * AGENT_RECALL_STRICT_CONTEXT=1), that fallback is refused instead: callers
+ * outside a runtime must not silently share the legacy global root.
+ */
 export function getRoot(): string {
+  const ctx = currentContext();
+  if (ctx) return ctx.root;
+  if (isStrictMode()) throw new NoRuntimeContextError();
   return _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }
 

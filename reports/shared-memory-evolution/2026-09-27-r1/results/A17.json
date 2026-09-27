@@ -1,0 +1,14 @@
+{
+ "id": "A17",
+ "status": "NOT_RUN",
+ "commit": "b2665b9b4705862dcc6aab49c8f31f743bffb677",
+ "evaluator_commit": "ffe79105f5c9f0017610c1479b995fa173bf7d69",
+ "environment": "reports/shared-memory-evolution/2026-09-27-r1/manifest.json (Windows 11, Node 24.11.1)",
+ "command": "not executed as a full case; see reason",
+ "started_at": "2026-09-27",
+ "exit_code": null,
+ "metrics": {},
+ "evidence": [],
+ "verified_by": "n/a",
+ "reason": "NOT_RUN: P4 (scope/derived/conflict/handoff/guardedAction integration) not started."
+}

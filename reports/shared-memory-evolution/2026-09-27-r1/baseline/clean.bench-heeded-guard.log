@@ -1,0 +1,16 @@
+
+[heeded-guard] AR_ROOT=C:\Users\tong\AppData\Local\Temp\ar-heeded-3YYS09
+
+[T1] evidence-grounded heeded path + old default-heeded stays dead
+  ❌ correction written (passes quality gate) → {}
+  ❌ retrieved_count = 1 after one retrieval → got undefined
+  ✅ T1a: heeded=0 after sessionEnd with unrelated summary + no trigger (old default-heeded dead)
+  ❌ T1a: retrieved_count unaffected (still 1) → retrieved=undefined
+  ❌ T1b: heeded=1 after check-action trigger + sessionEnd (evidence-grounded path) → heeded=0 — expected 1 (triggered via check-action, no recurrence marker)
+  ✅ T1b: heeded_count never exceeds retrieved_count
+  ✅ T1b: precision is in [0,1]
+  ❌ T1c: heeded_count = 1 after TWO same-day session_ends with trigger (1/day guard held) → heeded=0 — 1/day guard must prevent a second heeded write on the same day
+  ✅ T1c: heeded_count still ≤ retrieved_count
+
+[heeded-guard] PASS 4 / FAIL 5
+

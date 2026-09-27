@@ -1,0 +1,1 @@
+plywood-bug: cli/plywood:287 Path.read_text() without encoding -> UnicodeDecodeError on Windows GBK locale; workaround PYTHONUTF8=1
