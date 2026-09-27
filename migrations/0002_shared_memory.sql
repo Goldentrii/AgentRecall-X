@@ -1078,11 +1078,21 @@ BEGIN
       v_effective_authority := 'agent_inference';
     END IF;
 
-    -- R2.1 rows 1/2: constraint kind, workspace/owner_shared visibility, or no
-    -- resolved project -> candidate unless owner_trusted; else straight to active
+    -- R2.1 rows 1/2: constraint kind, or workspace/owner_shared visibility ->
+    -- candidate unless owner_trusted; else straight to active. Fix round 2
+    -- (frozen-suite G-authz "positive control" failure): a plain private/
+    -- project-visibility fact with NO project_id (a perfectly ordinary,
+    -- unremarkable write — most facts/preferences/decisions aren't scoped
+    -- to any one project) must NOT be downgraded to candidate just because
+    -- project_id happens to be null. The original `OR project_id IS NULL`
+    -- clause was a misreading of R2.1 row 2's "project_id != resolved
+    -- project" — that condition is about the create explicitly targeting a
+    -- project outside the caller's grant scope, which B3's project_ids
+    -- check (above) already rejects outright (forbidden), not downgrades to
+    -- candidate. A null project_id is simply "no project scoping", not a
+    -- foreign/mismatched one, and row 1 (direct active) applies.
     IF (p_cmd ->> 'kind') = 'constraint'
        OR (p_cmd ->> 'visibility') IN ('workspace', 'owner_shared')
-       OR (p_cmd ->> 'project_id') IS NULL
     THEN
       v_effective_status := CASE WHEN v_owner_trusted THEN 'active' ELSE 'candidate' END;
     ELSE

@@ -31,7 +31,7 @@ import type {
   CreateCommand, RevisionRef, ConstraintException, DependencyRelease, RecordSource,
 } from "../contract.js";
 import {
-  validateCommand, payloadHash, contentHash, stripReservedMetadata, proposalId, ContractValidationError,
+  validateCommand, payloadHash, contentHash, stripReservedMetadata, proposalId, ContractValidationError, isUuid,
 } from "../contract.js";
 import { scrubForCloud } from "../../storage/content-guard.js";
 import { NetworkError, TimeoutError, PgError, type SqlExecutor } from "./sql-executor.js";
@@ -134,6 +134,18 @@ export class CloudRepository implements MemoryRepository {
   }
 
   async get(id: string, ctx: ReadContext): Promise<ReadResult<MemoryRecord>> {
+    // Fix round 1 (frozen-suite G-validate "path-traversal id" finding): a
+    // malformed id (e.g. "../x") must never reach ar2_get as a raw uuid
+    // cast — Postgres (and, identically, a real PostgREST-fronted Supabase)
+    // raises a hard 22P02 invalid_text_representation error for that, which
+    // propagated as an uncaught PgError out of this method instead of the
+    // graceful "not found" a client expects for a request that couldn't
+    // possibly resolve to a real record. A non-UUID id is unconditionally
+    // unreadable, so this is fresh (not "unverified") — no network call was
+    // needed to know the answer.
+    if (!isUuid(id)) {
+      return { items: [], authority: "cloud", snapshot_cursor: new Date().toISOString(), freshness: "fresh", partial: false, withheld_derived: 0, pending_ops: this.outbox.list().length, overflow: false, access_epoch: this.lastEpoch, errors: [] };
+    }
     const key = `get:${ctx.principal.owner_id}:${id}`;
     const { value, freshness, epoch } = await this.cached(key, async () => {
       const row = await this.opts.executor.rpc("ar2_get", { p_owner_id: ctx.principal.owner_id, p_id: id });
@@ -215,6 +227,7 @@ export class CloudRepository implements MemoryRepository {
   }
 
   async history(id: string, ctx: ReadContext): Promise<MemoryRecord[]> {
+    if (!isUuid(id)) return []; // same reasoning as get() above
     const rows = (await this.opts.executor.rpc("ar2_history", { p_owner_id: ctx.principal.owner_id, p_id: id })) as RawRecord[];
     return (rows ?? []).map(mapRecord);
   }
