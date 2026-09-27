@@ -334,6 +334,25 @@ test("G-idem", async (t) => {
     assert.equal(otherResult.status, "committed", "a different principal reusing the same operation_id must be independent, not idempotency_mismatch");
     assert.notEqual(otherResult.id, ownerResult.id);
   });
+
+  if (harness.capabilities.agents) {
+    await t.test("replay of an already-committed op still returns the original receipt AFTER the actor's grant is revoked (R2.5)", async () => {
+      const agent = await harness.newAgent(owner, "idem-revoke-replay", { workspace_id: ws, project_ids: null, can_read: true, can_write: true, can_approve: false, personal: false });
+      const agentRepoForIdem = await harness.repoFor(agent);
+      const opId = uuid();
+      const cmd = baseCreate({ workspace_id: ws, content: "idem-revoke-payload" });
+      const first = await agentRepoForIdem.mutate(cmd, null, opId, agent.write());
+      assert.equal(first.status, "committed");
+
+      await harness.revoke(owner, agent, ws);
+
+      const replay = await agentRepoForIdem.mutate(cmd, null, opId, agent.write());
+      assert.equal(replay.status, "committed", "R2.5: same-hash replay after grant revocation must still resolve to the ORIGINAL receipt, not a fresh authorization decision");
+      assert.equal(replay.replayed, true);
+      assert.equal(replay.id, first.id);
+      assert.equal(replay.revision, first.revision, "revoked-agent replay must not cause a second effect");
+    });
+  }
 });
 
 // ===========================================================================
@@ -363,11 +382,19 @@ if (harness.capabilities.agents) {
       content: "never publish without approval", applicability: { polarity: "forbid", action_terms: ["publish"] },
     });
     const constraintCreated = await ownerRepo.mutate(constraintCmd, null, uuid(), owner.ownerWrite());
-    assert.equal(constraintCreated.status, "committed", "owner-trusted constraint create must commit");
-    assert.equal(constraintCreated.effective_authority, "explicit_user", "owner-trusted create must be recomputed as explicit_user");
-    assert.equal(constraintCreated.effective_status, "active");
+    // Deliberately NOT a bare assertion here: this used to throw synchronously and silently cancel EVERY
+    // subsequent t.test() below it (retract/quarantine/narrow/confirm/metadata/forged-trust/supersede/
+    // exception/release_dependency never even registered as run against a driver that gets this one thing
+    // wrong). Isolate it in its own subtest so one wrong field can never mask the rest of the matrix.
+    await t.test("owner-trusted constraint create is committed, active, and recomputed to explicit_user authority", () => {
+      assert.equal(constraintCreated.status, "committed", "owner-trusted constraint create must commit");
+      assert.equal(constraintCreated.effective_authority, "explicit_user", "owner-trusted create must be recomputed as explicit_user");
+      assert.equal(constraintCreated.effective_status, "active");
+    });
     const constraintId = constraintCmd.id;
-    let constraintRevision = constraintCreated.revision;
+    // Fallback keeps downstream subtests syntactically able to proceed (and independently fail on their
+    // OWN merits) even if the setup subtest above already flagged a wrong/missing revision.
+    let constraintRevision = constraintCreated.revision ?? 1;
 
     await t.test("agent cannot retract an explicit_user constraint", async () => {
       const r = await agentRepo.mutate({ op: "retract", id: constraintId, reason: "agent trying" }, constraintRevision, uuid(), agent.write());
@@ -467,6 +494,121 @@ if (harness.capabilities.agents) {
       const after = await ownerRepo.get(constraintId, owner.read());
       assert.equal(itemsOf(after)[0].status, "active", "constraint must remain untouched by a forged-trust op");
     });
+
+    // --- R2.1 rows previously uncovered: supersede / exception / release_dependency, each positive
+    // (owner_trusted + can_approve) and negative (agent, neither) -----------------------------------
+
+    await t.test("owner supersede (matching current revision) -> old superseded, replacement active", async () => {
+      const targetCmd = baseCreate({ workspace_id: ws, kind: "fact", content: "supersede-target-v1" });
+      const targetCreated = await ownerRepo.mutate(targetCmd, null, uuid(), owner.write());
+      assert.equal(targetCreated.status, "committed");
+      const replacement = { id: uuid(), workspace_id: ws, project_id: null, kind: "fact", visibility: "private", content: "supersede-target-v2", authority: "agent_inference" };
+      const r = await ownerRepo.mutate({ op: "supersede", id: targetCmd.id, replacement }, targetCreated.revision, uuid(), owner.ownerWrite());
+      assert.equal(r.status, "committed");
+      const oldAfter = await ownerRepo.get(targetCmd.id, owner.read());
+      assert.equal(itemsOf(oldAfter)[0]?.status, "superseded", "old revision must be marked superseded");
+      const newAfter = await ownerRepo.get(replacement.id, owner.read());
+      const newRec = itemsOf(newAfter)[0];
+      assert.ok(newRec, "replacement record must be readable");
+      assert.equal(newRec.status, "active");
+      assert.equal(newRec.content, "supersede-target-v2");
+    });
+
+    await t.test("owner supersede against a stale target revision -> conflict (not requires_owner_approval)", async () => {
+      const targetCmd = baseCreate({ workspace_id: ws, kind: "fact", content: "supersede-stale-v1" });
+      const targetCreated = await ownerRepo.mutate(targetCmd, null, uuid(), owner.write());
+      const bump = await ownerRepo.mutate({ op: "update", id: targetCmd.id, patch: { content: "bumped-first" } }, targetCreated.revision, uuid(), owner.write());
+      assert.equal(bump.status, "committed");
+      const replacement = { id: uuid(), workspace_id: ws, project_id: null, kind: "fact", visibility: "private", content: "stale-attempt", authority: "agent_inference" };
+      const r = await ownerRepo.mutate({ op: "supersede", id: targetCmd.id, replacement }, targetCreated.revision /* stale on purpose */, uuid(), owner.ownerWrite());
+      assert.equal(r.status, "conflict", "supersede targeting a revision that has already moved on must CAS-conflict, not silently apply against the wrong base");
+    });
+
+    await t.test("agent supersede without owner trust -> rejected:requires_owner_approval, T unchanged", async () => {
+      const targetCmd = baseCreate({ workspace_id: ws, kind: "fact", content: "supersede-neg-v1" });
+      const targetCreated = await ownerRepo.mutate(targetCmd, null, uuid(), owner.write());
+      const replacement = { id: uuid(), workspace_id: ws, project_id: null, kind: "fact", visibility: "private", content: "agent-attempt", authority: "agent_inference" };
+      const r = await agentRepo.mutate({ op: "supersede", id: targetCmd.id, replacement }, targetCreated.revision, uuid(), agent.write());
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "requires_owner_approval");
+      const after = await ownerRepo.get(targetCmd.id, owner.read());
+      assert.equal(itemsOf(after)[0]?.revision, targetCreated.revision, "T must be unchanged by an unapproved supersede attempt");
+      assert.equal(itemsOf(after)[0]?.status, "active");
+    });
+
+    await t.test("owner exception on a constraint -> applied, exceptions[] updated", async () => {
+      const constraintCmd = baseCreate({
+        workspace_id: ws, kind: "constraint", authority: "explicit_user", visibility: "workspace",
+        content: "no-publish-exception-target", applicability: { polarity: "forbid", action_terms: ["publish"] },
+      });
+      const cCreated = await ownerRepo.mutate(constraintCmd, null, uuid(), owner.ownerWrite());
+      assert.equal(cCreated.status, "committed");
+      const exceptionId = uuid();
+      const exceptionCmd = {
+        op: "exception", id: constraintCmd.id, exception_id: exceptionId,
+        applicability: { polarity: "forbid", action_terms: ["publish"], project_ids: [uuid()] },
+        valid_until: new Date(Date.now() + 86400000).toISOString(), reason: "one-off approved release",
+      };
+      const r = await ownerRepo.mutate(exceptionCmd, cCreated.revision, uuid(), owner.ownerWrite());
+      assert.equal(r.status, "committed");
+      const after = await ownerRepo.get(constraintCmd.id, owner.read());
+      const rec = itemsOf(after)[0];
+      assert.ok(Array.isArray(rec.exceptions) && rec.exceptions.some((e) => e.exception_id === exceptionId), "exceptions[] must include the new owner-approved exception");
+    });
+
+    await t.test("agent exception without owner trust -> rejected:requires_owner_approval", async () => {
+      const constraintCmd = baseCreate({ workspace_id: ws, kind: "constraint", authority: "explicit_user", visibility: "workspace", content: "no-publish-exception-neg" });
+      const cCreated = await ownerRepo.mutate(constraintCmd, null, uuid(), owner.ownerWrite());
+      assert.equal(cCreated.status, "committed");
+      const exceptionCmd = {
+        op: "exception", id: constraintCmd.id, exception_id: uuid(), applicability: {},
+        valid_until: new Date(Date.now() + 86400000).toISOString(), reason: "agent trying to grant itself an exception",
+      };
+      const r = await agentRepo.mutate(exceptionCmd, cCreated.revision, uuid(), agent.write());
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "requires_owner_approval");
+      const after = await ownerRepo.get(constraintCmd.id, owner.read());
+      assert.equal((itemsOf(after)[0]?.exceptions ?? []).length, 0, "no exception must have been recorded");
+    });
+
+    await t.test("owner release_dependency on a derived record -> applied, dependency_release server-set", async () => {
+      const source = baseCreate({ workspace_id: ws, kind: "fact", content: "release-dep-source" });
+      const sourceCreated = await ownerRepo.mutate(source, null, uuid(), owner.write());
+      assert.equal(sourceCreated.status, "committed");
+      const derived = baseCreate({
+        workspace_id: ws, kind: "experience", authority: "verified_observation", content: "release-dep-derived",
+        derived_from: [{ id: source.id, revision: sourceCreated.revision }],
+      });
+      const derivedCreated = await ownerRepo.mutate(derived, null, uuid(), owner.write());
+      assert.equal(derivedCreated.status, "committed");
+      const r = await ownerRepo.mutate(
+        { op: "release_dependency", id: derived.id, redaction_report_ref: "reports/redaction-1.json" },
+        derivedCreated.revision, uuid(), owner.ownerWrite(),
+      );
+      assert.equal(r.status, "committed");
+      const after = await ownerRepo.get(derived.id, owner.read());
+      const rec = itemsOf(after)[0];
+      assert.ok(rec.dependency_release && rec.dependency_release.redaction_report_ref === "reports/redaction-1.json", "dependency_release must be server-set on the record after an owner-approved release");
+    });
+
+    await t.test("agent release_dependency without owner trust -> rejected:requires_owner_approval", async () => {
+      const source = baseCreate({ workspace_id: ws, kind: "fact", content: "release-dep-source-2" });
+      const sourceCreated = await ownerRepo.mutate(source, null, uuid(), owner.write());
+      const derived = baseCreate({
+        workspace_id: ws, kind: "experience", authority: "verified_observation", content: "release-dep-derived-2",
+        derived_from: [{ id: source.id, revision: sourceCreated.revision }],
+      });
+      const derivedCreated = await ownerRepo.mutate(derived, null, uuid(), owner.write());
+      assert.equal(derivedCreated.status, "committed");
+      const r = await agentRepo.mutate(
+        { op: "release_dependency", id: derived.id, redaction_report_ref: "reports/redaction-2.json" },
+        derivedCreated.revision, uuid(), agent.write(),
+      );
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "requires_owner_approval");
+      const after = await ownerRepo.get(derived.id, owner.read());
+      assert.equal(itemsOf(after)[0]?.dependency_release, null, "no dependency_release must have been recorded by an unapproved attempt");
+    });
   });
 } else {
   na("G-authz", "harness capabilities.agents=false");
@@ -499,6 +641,22 @@ if (harness.capabilities.multiUser || harness.capabilities.agents) {
       const r = await ownerRepo.mutate(cmd, null, uuid(), owner.ownerWrite());
       assert.equal(r.status, "committed", `fixture ${spec.visibility}/${spec.projectId ?? "-"} must commit`);
       fixtures.push({ id: cmd.id, visibility: spec.visibility, projectId: spec.projectId });
+    }
+
+    // R2.2's `local_only` row: "never leaves the machine; cloud drivers reject it." On a local-mode
+    // harness it behaves like any other owner-only fixture (never readable by anyone but the owner). On
+    // a cloud-mode harness the CREATE itself must be rejected outright -- there is no "local runtime" for
+    // a hosted backend to scope it to.
+    if (ownerRepo.mode === "local") {
+      const localOnlyCmd = baseCreate({ workspace_id: ws, project_id: null, visibility: "local_only", content: `secret-local_only-${uuid()}` });
+      const localOnlyCreated = await ownerRepo.mutate(localOnlyCmd, null, uuid(), owner.ownerWrite());
+      assert.equal(localOnlyCreated.status, "committed", "local_only fixture must commit on a local-mode harness");
+      fixtures.push({ id: localOnlyCmd.id, visibility: "local_only", projectId: null });
+    } else {
+      const localOnlyCmd = baseCreate({ workspace_id: ws, project_id: null, visibility: "local_only", content: "should-be-rejected" });
+      const localOnlyResult = await ownerRepo.mutate(localOnlyCmd, null, uuid(), owner.ownerWrite());
+      assert.equal(localOnlyResult.status, "rejected", "cloud-mode harness must reject a local_only create outright");
+      assert.equal(localOnlyResult.reason, "local_only");
     }
     // A handoff fixture for latestHandoff denial checks.
     const taskKey = "vis-task-" + uuid();
@@ -557,51 +715,58 @@ if (harness.capabilities.multiUser || harness.capabilities.agents) {
     }
 
     const ID_GUESS_REPEATS = 3;
+    // A07 / PLAN.md §9.2 floor: "至少1000次矩阵请求" (>=1000 allow/deny matrix requests). Reads are
+    // side-effect-free, so repeating the full actor x fixture x read-path matrix across ROUNDS is a
+    // legitimate way to reach that floor (it also surfaces any intermittent/racy authorization bug the
+    // same way G-cas repeats 100 CAS pairs rather than trying exactly one).
+    const ROUNDS = 5;
 
-    for (const { label, actor, allowed, allowedHandoff } of actors) {
-      const repo = await harness.repoFor(actor);
-      const readCtx = () => actor.read({ workspace_id: ws });
+    for (let round = 0; round < ROUNDS; round += 1) {
+      for (const { label, actor, allowed, allowedHandoff } of actors) {
+        const repo = await harness.repoFor(actor);
+        const readCtx = () => actor.read({ workspace_id: ws });
 
-      for (const fx of fixtures) {
-        const shouldAllow = allowed.has(fx.id);
-        const fxLabel = `${fx.visibility}${fx.projectId ? `(${fx.projectId.slice(0, 8)})` : ""}`;
+        for (const fx of fixtures) {
+          const shouldAllow = allowed.has(fx.id);
+          const fxLabel = `${fx.visibility}${fx.projectId ? `(${fx.projectId.slice(0, 8)})` : ""}`;
 
-        const g = await repo.get(fx.id, readCtx());
-        record(`${label} get ${fxLabel}`, shouldAllow ? containsId(g, fx.id) : isDenied(g), { got: g });
+          const g = await repo.get(fx.id, readCtx());
+          record(`round${round} ${label} get ${fxLabel}`, shouldAllow ? containsId(g, fx.id) : isDenied(g), { got: g });
 
-        const q = await repo.query({ ids: [fx.id] }, readCtx());
-        record(`${label} query ${fxLabel}`, shouldAllow ? containsId(q, fx.id) : isDenied(q), { got: q });
+          const q = await repo.query({ ids: [fx.id] }, readCtx());
+          record(`round${round} ${label} query ${fxLabel}`, shouldAllow ? containsId(q, fx.id) : isDenied(q), { got: q });
 
-        const snap = await repo.readSnapshot(readCtx(), { ids: [fx.id] });
-        record(`${label} readSnapshot ${fxLabel}`, shouldAllow ? containsId(snap, fx.id) : isDenied(snap), {});
+          const snap = await repo.readSnapshot(readCtx(), { ids: [fx.id] });
+          record(`round${round} ${label} readSnapshot ${fxLabel}`, shouldAllow ? containsId(snap, fx.id) : isDenied(snap), {});
 
-        const page = await repo.list({ ids: [fx.id] }, readCtx(), null);
-        record(`${label} list ${fxLabel}`, shouldAllow ? page.items.some((i) => i.id === fx.id) : page.items.length === 0, {});
+          const page = await repo.list({ ids: [fx.id] }, readCtx(), null);
+          record(`round${round} ${label} list ${fxLabel}`, shouldAllow ? page.items.some((i) => i.id === fx.id) : page.items.length === 0, {});
 
-        const hist = await repo.history(fx.id, readCtx());
-        record(`${label} history ${fxLabel}`, shouldAllow ? hist.length > 0 : hist.length === 0, {});
+          const hist = await repo.history(fx.id, readCtx());
+          record(`round${round} ${label} history ${fxLabel}`, shouldAllow ? hist.length > 0 : hist.length === 0, {});
 
-        const exp = await repo.export({ ids: [fx.id] }, readCtx());
-        record(`${label} export ${fxLabel}`, shouldAllow ? exp.records.some((i) => i.id === fx.id) : exp.records.length === 0, {});
+          const exp = await repo.export({ ids: [fx.id] }, readCtx());
+          record(`round${round} ${label} export ${fxLabel}`, shouldAllow ? exp.records.some((i) => i.id === fx.id) : exp.records.length === 0, {});
 
-        // id guessing: a totally nonexistent id must look identical (empty) to a denied real id, repeated.
-        for (let g2 = 0; g2 < ID_GUESS_REPEATS; g2 += 1) {
-          const guess = await repo.get(uuid(), readCtx());
-          record(`${label} get id-guess#${g2} vs ${fxLabel}`, isDenied(guess), {});
+          // id guessing: a totally nonexistent id must look identical (empty) to a denied real id, repeated.
+          for (let g2 = 0; g2 < ID_GUESS_REPEATS; g2 += 1) {
+            const guess = await repo.get(uuid(), readCtx());
+            record(`round${round} ${label} get id-guess#${g2} vs ${fxLabel}`, isDenied(guess), {});
+          }
         }
+
+        const lh = await repo.latestHandoff(projA, taskKey, readCtx());
+        record(`round${round} ${label} latestHandoff`, allowedHandoff ? containsId(lh, handoffCmd.id) : isDenied(lh), {});
       }
 
-      const lh = await repo.latestHandoff(projA, taskKey, readCtx());
-      record(`${label} latestHandoff`, allowedHandoff ? containsId(lh, handoffCmd.id) : isDenied(lh), {});
+      // Legit positive control each round: owner reading their own fixtures always succeeds.
+      for (const fx of fixtures) {
+        const g = await ownerRepo.get(fx.id, owner.read());
+        record(`round${round} owner get ${fx.visibility}`, containsId(g, fx.id), {});
+      }
     }
 
-    // Legit positive control beyond per-actor loop above: owner reading their own fixtures always succeeds.
-    for (const fx of fixtures) {
-      const g = await ownerRepo.get(fx.id, owner.read());
-      record(`owner get ${fx.visibility}`, containsId(g, fx.id), {});
-    }
-
-    assert.ok(requestCount >= 200, `G-visibility must issue >=200 requests, issued ${requestCount}`);
+    assert.ok(requestCount >= 1000, `G-visibility must issue >=1000 requests (A07/PLAN.md §9.2), issued ${requestCount}`);
     assert.equal(
       violations.length, 0,
       `G-visibility: ${violations.length}/${requestCount} allow/deny violations: ${JSON.stringify(violations.slice(0, 10).map((v) => v.label))}`,
@@ -609,6 +774,78 @@ if (harness.capabilities.multiUser || harness.capabilities.agents) {
   });
 } else {
   na("G-visibility", "harness capabilities.multiUser=false and agents=false");
+}
+
+// ===========================================================================
+// G-existence (R2.3) -- mutation-side existence hiding
+// ===========================================================================
+// G-visibility only exercises existence hiding on the READ side (get/query/... of an unreadable id looks
+// like a nonexistent id). R2.3 additionally requires the same indistinguishability on the MUTATE side:
+// updating/retracting a record the caller cannot read must resolve to rejected:not_found (never
+// "forbidden", which would confirm the id refers to something real), and a genuine CAS conflict must
+// never carry `current` for a caller who can't read the record.
+
+if (harness.capabilities.agents || harness.capabilities.multiUser) {
+  test("G-existence", async (t) => {
+    const owner = await harness.newOwner("U");
+    const ownerRepo = await harness.repoFor(owner);
+    const ws = await harness.workspace(owner);
+
+    const seed = baseCreate({ workspace_id: ws, visibility: "private", content: "existence-secret" });
+    const created = await ownerRepo.mutate(seed, null, uuid(), owner.ownerWrite());
+    assert.equal(created.status, "committed");
+
+    async function makeStranger(label) {
+      if (harness.capabilities.multiUser) return harness.newOwner(label);
+      // No multiUser support: an agent granted on a DIFFERENT, unrelated workspace has zero standing on `ws`.
+      return harness.newAgent(owner, label, { workspace_id: uuid(), project_ids: null, can_read: false, can_write: false, can_approve: false, personal: false });
+    }
+
+    await t.test("update by a caller with no grant on T -> rejected:not_found, never forbidden", async () => {
+      const stranger = await makeStranger("existence-stranger-update");
+      const strangerRepo = await harness.repoFor(stranger);
+      const r = await strangerRepo.mutate({ op: "update", id: seed.id, patch: { content: "hijacked" } }, created.revision, uuid(), stranger.write());
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "not_found", `must not leak existence via a different reason (got "${r.reason}")`);
+    });
+
+    await t.test("retract by a caller with no grant on T -> rejected:not_found, never forbidden", async () => {
+      const stranger = await makeStranger("existence-stranger-retract");
+      const strangerRepo = await harness.repoFor(stranger);
+      const r = await strangerRepo.mutate({ op: "retract", id: seed.id, reason: "hijack attempt" }, created.revision, uuid(), stranger.write());
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "not_found");
+      const after = await ownerRepo.get(seed.id, owner.read());
+      assert.equal(itemsOf(after)[0]?.status, "active", "the unauthorized retract attempt must not have taken effect");
+    });
+
+    await t.test("a deliberately wrong expectedRevision from an unauthorized caller still resolves not_found, never conflict", async () => {
+      const stranger = await makeStranger("existence-stranger-wrongrev");
+      const strangerRepo = await harness.repoFor(stranger);
+      const r = await strangerRepo.mutate({ op: "update", id: seed.id, patch: { content: "hijack-2" } }, created.revision + 999, uuid(), stranger.write());
+      assert.equal(r.status, "rejected");
+      assert.equal(r.reason, "not_found", "a CAS-shaped mismatch must not surface as 'conflict' to a caller who cannot read T -- that would itself leak existence");
+    });
+
+    if (harness.capabilities.agents) {
+      await t.test("ConflictReceipt.current is absent when the CAS-losing caller cannot read T (R2.3)", async () => {
+        const writeOnly = await harness.newAgent(owner, "existence-write-only-no-read", {
+          workspace_id: ws, project_ids: null, can_read: false, can_write: true, can_approve: false, personal: true,
+        });
+        const writeOnlyRepo = await harness.repoFor(writeOnly);
+        // Move T on so writeOnly's captured revision is stale, forcing a genuine CAS conflict (not a
+        // grant-rejection) once writeOnly attempts its own update.
+        const bump = await ownerRepo.mutate({ op: "update", id: seed.id, patch: { content: "bumped-by-owner" } }, created.revision, uuid(), owner.write());
+        assert.equal(bump.status, "committed");
+
+        const r = await writeOnlyRepo.mutate({ op: "update", id: seed.id, patch: { content: "write-only-attempt" } }, created.revision, uuid(), writeOnly.write());
+        assert.equal(r.status, "conflict", "a can_write (but not can_read) grant must still reach real CAS comparison, not be short-circuited as not_found");
+        assert.ok(r.current === null || r.current === undefined, "ConflictReceipt.current must be absent for a caller who cannot read T (R2.3)");
+      });
+    }
+  });
+} else {
+  na("G-existence", "harness capabilities.multiUser=false and agents=false");
 }
 
 // ===========================================================================
@@ -720,6 +957,26 @@ test("G-derived", async (t) => {
     assert.ok(!containsId(r, derived2.id), "derived record must be withheld once a closure source's revision no longer matches");
     assert.ok((r.withheld_derived ?? 0) >= 1);
   });
+
+  await t.test("derived_closure exceeding the 256-entry cap is withheld (R2.11: 'cap 256; overflow -> withheld')", async () => {
+    const OVER_CAP = 257;
+    const sourceRefs = [];
+    for (let i = 0; i < OVER_CAP; i += 1) {
+      const s = baseCreate({ workspace_id: ws, kind: "fact", content: `closure-cap-source-${i}` });
+      const sCreated = await repo.mutate(s, null, uuid(), owner.write());
+      assert.equal(sCreated.status, "committed", `closure-cap source ${i} must commit`);
+      sourceRefs.push({ id: s.id, revision: sCreated.revision });
+    }
+    const overCapDerived = baseCreate({
+      workspace_id: ws, kind: "experience", authority: "verified_observation", content: "over-cap-derived",
+      derived_from: sourceRefs,
+    });
+    const overCapCreated = await repo.mutate(overCapDerived, null, uuid(), owner.write());
+    assert.equal(overCapCreated.status, "committed", "the CREATE itself must still succeed (the cap governs closure validity/withholding, not creation)");
+    const r = await repo.query({ ids: [overCapDerived.id] }, owner.read());
+    assert.ok(!containsId(r, overCapDerived.id), `a derived record with ${OVER_CAP} direct sources (over the 256 cap) must be withheld, not silently truncated and shown`);
+    assert.ok((r.withheld_derived ?? 0) >= 1, "withheld_derived must count the over-cap record");
+  });
 });
 
 // ===========================================================================
@@ -741,22 +998,32 @@ test("G-handoff", async (t) => {
     assert.equal(r.reason, "schema");
   });
 
-  await t.test("latestHandoff returns the newest checkpoint for a task_key", async () => {
+  await t.test("latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)", async () => {
+    // Deliberately NO artificial sleeps between checkpoints: on a coarse system clock, a driver that
+    // orders "newest" purely by created_at wall-time can tie or even invert order under a few ms of
+    // separation. Ordering here comes only from strictly sequential `await`s (JS gives us a real
+    // happens-before between these three commits regardless of clock resolution) plus each receipt's own
+    // commit_cursor, which is checked as a monotonic corroborating signal.
     const taskKey = "handoff-task-" + uuid();
     const c1 = baseCreate({ workspace_id: ws, kind: "handoff", content: handoffContent(makeHandoffPayload({ task_key: taskKey, state: "checkpoint-1" })) });
     const r1 = await repo.mutate(c1, null, uuid(), owner.write());
     assert.equal(r1.status, "committed");
-    await new Promise((res) => setTimeout(res, 5));
     const c2 = baseCreate({ workspace_id: ws, kind: "handoff", content: handoffContent(makeHandoffPayload({ task_key: taskKey, state: "checkpoint-2" })) });
     const r2 = await repo.mutate(c2, null, uuid(), owner.write());
     assert.equal(r2.status, "committed");
-    await new Promise((res) => setTimeout(res, 5));
     const c3 = baseCreate({ workspace_id: ws, kind: "handoff", content: handoffContent(makeHandoffPayload({ task_key: taskKey, state: "checkpoint-3" })) });
     const r3 = await repo.mutate(c3, null, uuid(), owner.write());
     assert.equal(r3.status, "committed");
 
+    // commit_cursor is documented as an ordering cursor; it must be non-decreasing across strictly
+    // sequential commits regardless of clock resolution.
+    assert.ok(
+      String(r1.commit_cursor) <= String(r2.commit_cursor) && String(r2.commit_cursor) <= String(r3.commit_cursor),
+      `commit_cursor must be monotonic across sequential commits: ${r1.commit_cursor} / ${r2.commit_cursor} / ${r3.commit_cursor}`,
+    );
+
     const latest = await repo.latestHandoff(null, taskKey, owner.read());
-    assert.ok(containsId(latest, c3.id), "latestHandoff must return the newest checkpoint");
+    assert.ok(containsId(latest, c3.id), "latestHandoff must return the newest (last-committed) checkpoint");
     assert.ok(!containsId(latest, c1.id) && !containsId(latest, c2.id), "latestHandoff must not return older checkpoints alongside the newest");
   });
 
@@ -851,12 +1118,15 @@ if (crashKinds.length > 0) {
     const ws = await harness.workspace(owner);
 
     for (const kind of crashKinds) {
-      await t.test(`fault=${kind}: 200 writes, restart, verify`, async () => {
+      await t.test(`fault=${kind}: 1000 writes (fault re-armed at intervals), restart, verify`, async () => {
         const repo = await harness.repoFor(owner);
-        await harness.armFault(kind, owner);
+        const TOTAL = 1000; // A08 / PLAN.md §9.2 floor: "1,000 个确认 committed 操作"
+        const FAULT_EVERY = 100; // 10 explicit fault-armed commit boundaries spread across the run
 
         const attempts = [];
-        for (let i = 0; i < 200; i += 1) {
+        for (let i = 0; i < TOTAL; i += 1) {
+          const faultArmedForThisWrite = i % FAULT_EVERY === 0;
+          if (faultArmedForThisWrite) await harness.armFault(kind, owner);
           const cmd = baseCreate({ workspace_id: ws, content: `durability-${kind}-${i}` });
           const opId = uuid();
           let receipt = null;
@@ -866,31 +1136,41 @@ if (crashKinds.length > 0) {
           } catch {
             threw = true;
           }
-          attempts.push({ opId, id: cmd.id, receipt, threw });
+          attempts.push({ opId, id: cmd.id, receipt, threw, faultArmedForThisWrite });
+          if (faultArmedForThisWrite) await harness.clearFaults(); // isolate the fault to exactly this one write
         }
-        await harness.clearFaults();
         const restarted = await harness.restart(owner);
 
+        let committedBeforeRestart = 0;
         const violations = [];
         for (const a of attempts) {
+          const wasClientCommitted = !!(a.receipt && a.receipt.status === "committed");
+          if (wasClientCommitted) committedBeforeRestart += 1;
           const op = await restarted.getOperation(a.opId, owner.principal);
-          const wasClientCommitted = a.receipt && a.receipt.status === "committed";
-          const isNowCommitted = op && op.receipt && op.receipt.status === "committed";
+          const isNowCommitted = !!(op && op.receipt && op.receipt.status === "committed");
 
           if (wasClientCommitted && !isNowCommitted) {
             violations.push({ opId: a.opId, reason: "client-committed write lost after restart" });
           }
-          if (kind === "crash_before_receipt" && a.threw && isNowCommitted === false && op !== null) {
-            // acceptable: op recorded but not committed (e.g. still pending) -- only a hard contradiction if it claims committed
-          }
-          if (kind === "crash_before_receipt" && !wasClientCommitted && isNowCommitted) {
+          if (kind === "crash_before_receipt" && a.faultArmedForThisWrite && !wasClientCommitted && isNowCommitted) {
             // A crash strictly BEFORE any receipt was produced must not silently resolve to committed later
             // (that would mean the client's failure to observe a receipt was inconsistent with server state).
             violations.push({ opId: a.opId, reason: "crash_before_receipt: reported committed after restart despite no client-visible receipt" });
           }
         }
 
-        assert.equal(violations.length, 0, `G-durability(${kind}): ${violations.length}/200 violations: ${JSON.stringify(violations.slice(0, 5))}`);
+        // Non-vacuous (review blocker #1): a driver that rejects/throws on every write -- or on almost
+        // every write -- must not be able to "pass" this group by producing zero violations trivially
+        // (0 committed / 0 lost is not evidence of durability, it's evidence of doing nothing). Only
+        // TOTAL/FAULT_EVERY writes were ever fault-affected; the rest ran under normal conditions and a
+        // correctly functioning driver must show the overwhelming majority of them as committed.
+        const nonVacuousThreshold = TOTAL - Math.floor(TOTAL / FAULT_EVERY) - Math.floor(TOTAL * 0.05);
+        assert.ok(
+          committedBeforeRestart >= nonVacuousThreshold,
+          `G-durability(${kind}): only ${committedBeforeRestart}/${TOTAL} writes reached client-visible committed (need >= ${nonVacuousThreshold}); a driver that rejects/throws on (nearly) everything must not pass this group vacuously`,
+        );
+
+        assert.equal(violations.length, 0, `G-durability(${kind}): ${violations.length}/${TOTAL} violations: ${JSON.stringify(violations.slice(0, 5))}`);
       });
     }
   });
