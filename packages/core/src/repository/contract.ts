@@ -551,7 +551,9 @@ export function stripReservedMetadata(meta: Record<string, unknown> | undefined)
   for (const [k, v] of Object.entries(meta ?? {})) {
     // Covers rev1's repealed `dependency_released_by` key too (rev2.1 D4).
     if (k.startsWith("_ar") || k.startsWith("dependency_release")) continue;
-    out[k] = v;
+    // rev2.2: prototype-pollution keys never pass (WP-V step-0 finding).
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+    Object.defineProperty(out, k, { value: v, enumerable: true, writable: true, configurable: true });
   }
   return out;
 }
@@ -572,6 +574,7 @@ export function canonicalJson(value: unknown): string {
       const proto = Object.getPrototypeOf(value);
       if (proto !== Object.prototype && proto !== null) throw new ContractValidationError("non-plain object in payload");
       const obj = value as Record<string, unknown>;
+      if (Object.prototype.hasOwnProperty.call(obj, "__proto__")) throw new ContractValidationError("__proto__ key in payload");
       const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
       return `{${keys.map((k) => `${JSON.stringify(k.normalize("NFC"))}:${canonicalJson(obj[k])}`).join(",")}}`;
     }
