@@ -149,12 +149,14 @@ export class CloudRepository implements MemoryRepository {
     const key = `get:${ctx.principal.owner_id}:${id}`;
     const { value, freshness, epoch } = await this.cached(key, async () => {
       const row = await this.opts.executor.rpc("ar2_get", { p_owner_id: ctx.principal.owner_id, p_id: id });
+      if (row && (row as Record<string, unknown>)._ar_withheld === true) return "withheld" as const;
       return row ? mapRecord(row as RawRecord) : null;
     });
     if (value === undefined) return this.emptyResult(freshness, ["get: no network and no cached value"]);
+    const withheld = value === "withheld";
     return {
-      items: value ? [value] : [], authority: "cloud", snapshot_cursor: new Date().toISOString(), freshness,
-      partial: false, withheld_derived: 0, pending_ops: this.outbox.list().length, overflow: false, access_epoch: epoch, errors: [],
+      items: value && !withheld ? [value] : [], authority: "cloud", snapshot_cursor: new Date().toISOString(), freshness,
+      partial: false, withheld_derived: withheld ? 1 : 0, pending_ops: this.outbox.list().length, overflow: false, access_epoch: epoch, errors: [],
     };
   }
 

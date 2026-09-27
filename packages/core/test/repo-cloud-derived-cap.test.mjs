@@ -39,7 +39,7 @@ describe("WP-P2 fix round 1 / B6: MAX_DERIVED_CLOSURE=256 enforced server-side",
     return Array.from({ length: n }, () => ({ id: randomUUID(), revision: 1 }));
   }
 
-  it("create() with 257 derived_from refs is rejected:schema", async () => {
+  it("create() with 257 derived_from refs is accepted but withheld on every read (ADR R2.11 ruling)", async () => {
     const owner = await harness.newOwner("U-b6-over-cap");
     const wsId = await harness.workspace(owner);
     const repo = await harness.repoFor(owner);
@@ -49,11 +49,11 @@ describe("WP-P2 fix round 1 / B6: MAX_DERIVED_CLOSURE=256 enforced server-side",
       { op: "create", id: recId, workspace_id: wsId, project_id: null, kind: "experience", visibility: "private", content: "derived from too many sources", authority: "explicit_user", derived_from: refs(257) },
       null, randomUUID(), owner.ownerWrite(),
     );
-    assert.equal(receipt.status, "rejected", `257 derived_from refs must be rejected, got ${JSON.stringify(receipt)}`);
-    assert.equal(receipt.reason, "schema");
+    assert.equal(receipt.status, "committed", `257 derived_from refs must be accepted (withheld on read), got ${JSON.stringify(receipt)}`);
 
     const check = await repo.get(recId, owner.read());
-    assert.equal(check.items.length, 0, "an over-cap create must not land in the database at all");
+    assert.equal(check.items.length, 0, "an over-cap derived record must be withheld from reads");
+    assert.ok(check.withheld_derived >= 1, "withheld_derived must count the over-cap record");
   });
 
   it("create() with exactly 256 derived_from refs (the cap boundary) succeeds", async () => {
