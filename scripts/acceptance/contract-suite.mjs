@@ -16,13 +16,134 @@
  * harness's capabilities don't support it -- registers a single trivially
  * passing test named "N/A:<group>:<reason>". Consumers must treat N/A tests
  * as not_applicable, never as a PASS of that group's requirement.
+ *
+ * TIMEOUTS (fix round 2): a hanging driver must produce a FAIL, not a stuck
+ * verifier. Every test/subtest below carries an explicit node:test `timeout`
+ * (60s default; larger for the 1000-op groups). node:test's own timeout race
+ * reliably returns control to the caller and lets sibling tests -- and the
+ * final `after()` teardown hook -- run even when a test body never resolves
+ * (verified empirically; see WP-V-report.md "Fix round 2"). A process-level
+ * watchdog (AR_SUITE_WATCHDOG_MS, default 15 min) is the backstop for the
+ * residual case where a hung operation holds a real leaked handle (an open
+ * socket/timer) that would otherwise keep the event loop alive indefinitely
+ * even after node:test itself has moved on. All timeout knobs are overridable
+ * via env vars for fast local verification against an adversarial harness.
  */
 
-import { test } from "node:test";
+import { test as nodeTest, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
+
+// ---------------------------------------------------------------------------
+// Timeouts + hang watchdog (must exist before anything that could hang runs)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TEST_TIMEOUT_MS = Number(process.env.AR_DEFAULT_TEST_TIMEOUT_MS ?? 60_000);
+const DEFAULT_GROUP_TIMEOUT_MS = Number(process.env.AR_DEFAULT_GROUP_TIMEOUT_MS ?? 120_000);
+const BIG_GROUP_TIMEOUT_MS = Number(process.env.AR_BIG_GROUP_TIMEOUT_MS ?? 600_000);
+const DURABILITY_SUBTEST_TIMEOUT_MS = Number(process.env.AR_DURABILITY_SUBTEST_TIMEOUT_MS ?? 600_000);
+const DURABILITY_GROUP_TIMEOUT_MS = Number(process.env.AR_DURABILITY_GROUP_TIMEOUT_MS ?? 1_260_000);
+const SUITE_WATCHDOG_MS = Number(process.env.AR_SUITE_WATCHDOG_MS ?? 900_000);
+
+/** full test name -> ms epoch when it started; used only for the watchdog's diagnostic message. */
+const runningNow = new Map();
+
+function trackRunning(fullName, fn) {
+  return async (...args) => {
+    runningNow.set(fullName, Date.now());
+    try {
+      return await fn(...args);
+    } finally {
+      runningNow.delete(fullName);
+    }
+  };
+}
+
+function splitOptsAndFn(optionsOrFn, maybeFn) {
+  if (typeof optionsOrFn === "function") return { options: {}, fn: optionsOrFn };
+  return { options: optionsOrFn ?? {}, fn: maybeFn };
+}
+
+/** Group-level test() with a default timeout + hang tracking (shadows node:test's own `test`). */
+function test(name, optionsOrFn, maybeFn) {
+  const { options, fn } = splitOptsAndFn(optionsOrFn, maybeFn);
+  return nodeTest(name, { timeout: DEFAULT_GROUP_TIMEOUT_MS, ...options }, trackRunning(name, fn));
+}
+
+/**
+ * Arms `t.test()` for one group with a default SUBTEST timeout + hang tracking. Mutates `t` in place
+ * (it's a fresh per-invocation TestContext, never shared across groups), so every `await t.test(...)`
+ * call within this group's closure -- at ANY nesting depth, since nested subtests that don't accept
+ * their own `t` parameter close over this same outer `t` -- picks up the timeout automatically.
+ */
+function armGroupTimeouts(t, groupName, subtestTimeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
+  const originalTest = t.test.bind(t);
+  t.test = (name, optionsOrFn, maybeFn) => {
+    const { options, fn } = splitOptsAndFn(optionsOrFn, maybeFn);
+    return originalTest(name, { timeout: subtestTimeoutMs, ...options }, trackRunning(`${groupName} > ${name}`, fn));
+  };
+  return t;
+}
+
+// `harness` is declared here (before bootstrap runs) so the watchdog can safely check it even if it
+// fires WHILE harness bootstrap itself is still hanging (createHarness()/setup() never resolving) --
+// referencing an unassigned `let` is `undefined`, not a TDZ ReferenceError, unlike `const`.
+let harness;
+let torndownOnce = false;
+
+/** Guarantees harness.teardown() runs at most once, from whichever path gets there first. */
+async function teardownOnce(reasonLabel) {
+  if (torndownOnce) return;
+  torndownOnce = true;
+  if (!harness) {
+    console.error(`contract-suite: teardownOnce(${reasonLabel}): harness was never fully initialized; nothing to tear down.`);
+    return;
+  }
+  try {
+    await harness.teardown();
+  } catch (e) {
+    console.error(`contract-suite: harness.teardown() threw (${reasonLabel}): ${e && e.message ? e.message : e}`);
+  }
+}
+
+function withDeadline(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} did not complete within ${ms}ms`)), ms).unref?.()),
+  ]);
+}
+
+const watchdogTimer = setTimeout(() => {
+  void (async () => {
+    const stuck = [...runningNow.entries()].map(([name, startedAt]) => `${name} (running ${Date.now() - startedAt}ms)`);
+    console.error("\n=== CONTRACT-SUITE WATCHDOG FIRED ===");
+    console.error(`Suite did not complete within ${SUITE_WATCHDOG_MS}ms.`);
+    console.error(
+      stuck.length > 0
+        ? `Still in flight per internal tracking (this is very likely the hung test):\n  - ${stuck.join("\n  - ")}`
+        : "Nothing was in flight per internal tracking -- a leaked handle outside a tracked test/subtest (e.g. harness bootstrap) is holding the process open.",
+    );
+    console.error("Attempting harness.teardown() before forcing exit (bounded to 5s so a broken teardown can't re-hang us)...");
+    try {
+      await withDeadline(teardownOnce("watchdog force-exit"), 5_000, "harness.teardown()");
+      console.error("teardown attempt finished (or there was nothing to tear down).");
+    } catch (e) {
+      console.error(`teardown attempt did not complete cleanly: ${e.message}`);
+    }
+    console.error("Forcing process exit(1). A hanging driver must produce a FAIL, not a stuck verifier.\n");
+    process.exitCode = 1;
+    // Brief grace period so the console.error lines above have a chance to flush before a hard exit.
+    setTimeout(() => process.exit(1), 200).unref?.();
+  })();
+}, SUITE_WATCHDOG_MS);
+watchdogTimer.unref?.(); // never itself the reason the process stays alive on the healthy/fast path
+
+after(async () => {
+  clearTimeout(watchdogTimer);
+  await teardownOnce("normal completion");
+});
 
 // ---------------------------------------------------------------------------
 // Harness bootstrap
@@ -40,7 +161,7 @@ if (typeof createHarness !== "function") {
   console.error(`contract-suite: ${harnessPathArg} must default-export createHarness()`);
   process.exit(2);
 }
-const harness = await createHarness();
+harness = await createHarness();
 await harness.setup();
 
 // ---------------------------------------------------------------------------
@@ -140,6 +261,7 @@ function makeHandoffPayload(overrides = {}) {
 // ===========================================================================
 
 test("G-validate", async (t) => {
+  armGroupTimeouts(t, "G-validate");
   const owner = await harness.newOwner("U");
   const repo = await harness.repoFor(owner);
   const ws = await harness.workspace(owner);
@@ -245,6 +367,7 @@ test("G-cas", async (t) => {
 // ===========================================================================
 
 test("G-idem", async (t) => {
+  armGroupTimeouts(t, "G-idem");
   const owner = await harness.newOwner("U");
   const repo = await harness.repoFor(owner);
   const ws = await harness.workspace(owner);
@@ -360,7 +483,8 @@ test("G-idem", async (t) => {
 // ===========================================================================
 
 if (harness.capabilities.agents) {
-  test("G-authz", async (t) => {
+  test("G-authz", { timeout: 240_000 }, async (t) => {
+    armGroupTimeouts(t, "G-authz");
     const owner = await harness.newOwner("U");
     const ownerRepo = await harness.repoFor(owner);
     const ws = await harness.workspace(owner);
@@ -619,7 +743,7 @@ if (harness.capabilities.agents) {
 // ===========================================================================
 
 if (harness.capabilities.multiUser || harness.capabilities.agents) {
-  test("G-visibility", async (t) => {
+  test("G-visibility", { timeout: BIG_GROUP_TIMEOUT_MS }, async (t) => {
     const owner = await harness.newOwner("U");
     const ownerRepo = await harness.repoFor(owner);
     const ws = await harness.workspace(owner);
@@ -787,6 +911,7 @@ if (harness.capabilities.multiUser || harness.capabilities.agents) {
 
 if (harness.capabilities.agents || harness.capabilities.multiUser) {
   test("G-existence", async (t) => {
+    armGroupTimeouts(t, "G-existence");
     const owner = await harness.newOwner("U");
     const ownerRepo = await harness.repoFor(owner);
     const ws = await harness.workspace(owner);
@@ -853,6 +978,7 @@ if (harness.capabilities.agents || harness.capabilities.multiUser) {
 // ===========================================================================
 
 test("G-retract", async (t) => {
+  armGroupTimeouts(t, "G-retract");
   const owner = await harness.newOwner("U");
   const repo = await harness.repoFor(owner);
   const ws = await harness.workspace(owner);
@@ -909,7 +1035,8 @@ test("G-retract", async (t) => {
 // G-derived (R2.11)
 // ===========================================================================
 
-test("G-derived", async (t) => {
+test("G-derived", { timeout: 180_000 }, async (t) => {
+  armGroupTimeouts(t, "G-derived", 120_000); // the 257-source closure-cap subtest can be slow over a real network
   const owner = await harness.newOwner("U");
   const repo = await harness.repoFor(owner);
   const ws = await harness.workspace(owner);
@@ -984,6 +1111,7 @@ test("G-derived", async (t) => {
 // ===========================================================================
 
 test("G-handoff", async (t) => {
+  armGroupTimeouts(t, "G-handoff");
   const owner = await harness.newOwner("U");
   const repo = await harness.repoFor(owner);
   const ws = await harness.workspace(owner);
@@ -1001,9 +1129,12 @@ test("G-handoff", async (t) => {
   await t.test("latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)", async () => {
     // Deliberately NO artificial sleeps between checkpoints: on a coarse system clock, a driver that
     // orders "newest" purely by created_at wall-time can tie or even invert order under a few ms of
-    // separation. Ordering here comes only from strictly sequential `await`s (JS gives us a real
-    // happens-before between these three commits regardless of clock resolution) plus each receipt's own
-    // commit_cursor, which is checked as a monotonic corroborating signal.
+    // separation. Ordering here comes only from strictly sequential `await`s -- JS gives us a real
+    // happens-before between these three commits regardless of clock resolution -- plus the
+    // latestHandoff identity check below. NOTE: commit_cursor is typed as an opaque `string` in
+    // contract.ts and the contract does NOT guarantee it's lexicographically sortable (a real driver's
+    // cursor could be e.g. "100" after "99", which sorts backwards as a string); do not assert ordering
+    // on it here (closure re-review finding, fix round 2).
     const taskKey = "handoff-task-" + uuid();
     const c1 = baseCreate({ workspace_id: ws, kind: "handoff", content: handoffContent(makeHandoffPayload({ task_key: taskKey, state: "checkpoint-1" })) });
     const r1 = await repo.mutate(c1, null, uuid(), owner.write());
@@ -1014,13 +1145,6 @@ test("G-handoff", async (t) => {
     const c3 = baseCreate({ workspace_id: ws, kind: "handoff", content: handoffContent(makeHandoffPayload({ task_key: taskKey, state: "checkpoint-3" })) });
     const r3 = await repo.mutate(c3, null, uuid(), owner.write());
     assert.equal(r3.status, "committed");
-
-    // commit_cursor is documented as an ordering cursor; it must be non-decreasing across strictly
-    // sequential commits regardless of clock resolution.
-    assert.ok(
-      String(r1.commit_cursor) <= String(r2.commit_cursor) && String(r2.commit_cursor) <= String(r3.commit_cursor),
-      `commit_cursor must be monotonic across sequential commits: ${r1.commit_cursor} / ${r2.commit_cursor} / ${r3.commit_cursor}`,
-    );
 
     const latest = await repo.latestHandoff(null, taskKey, owner.read());
     assert.ok(containsId(latest, c3.id), "latestHandoff must return the newest (last-committed) checkpoint");
@@ -1050,7 +1174,7 @@ test("G-handoff", async (t) => {
 // G-cursor (A13 subset)
 // ===========================================================================
 
-test("G-cursor", async (t) => {
+test("G-cursor", { timeout: BIG_GROUP_TIMEOUT_MS }, async (t) => {
   const owner = await harness.newOwner("U");
   const ws = await harness.workspace(owner);
 
@@ -1113,7 +1237,8 @@ test("G-cursor", async (t) => {
 
 const crashKinds = (harness.capabilities.faults ?? []).filter((k) => k === "crash_before_receipt" || k === "crash_after_wal");
 if (crashKinds.length > 0) {
-  test("G-durability", async (t) => {
+  test("G-durability", { timeout: DURABILITY_GROUP_TIMEOUT_MS }, async (t) => {
+    armGroupTimeouts(t, "G-durability", DURABILITY_SUBTEST_TIMEOUT_MS);
     const owner = await harness.newOwner("U");
     const ws = await harness.workspace(owner);
 
@@ -1184,6 +1309,7 @@ if (crashKinds.length > 0) {
 
 if ((harness.capabilities.faults ?? []).includes("offline")) {
   test("G-outbox", async (t) => {
+    armGroupTimeouts(t, "G-outbox");
     const owner = await harness.newOwner("U");
     const ws = await harness.workspace(owner);
     const repo = await harness.repoFor(owner);
@@ -1255,6 +1381,7 @@ if ((harness.capabilities.faults ?? []).includes("offline")) {
 
 if ((harness.capabilities.faults ?? []).includes("ack_lost")) {
   test("G-ackloss", async (t) => {
+    armGroupTimeouts(t, "G-ackloss");
     const owner = await harness.newOwner("U");
     const ws = await harness.workspace(owner);
     const repo = await harness.repoFor(owner);
@@ -1292,10 +1419,7 @@ if ((harness.capabilities.faults ?? []).includes("ack_lost")) {
   na("G-ackloss", "harness capabilities.faults does not include ack_lost");
 }
 
-// ===========================================================================
-// Teardown (registered last so it runs after all groups above)
-// ===========================================================================
-
-test("zzz-harness-teardown", async () => {
-  await harness.teardown();
-});
+// Teardown runs via the after() hook registered near the top of this file (fix round 2): unlike a
+// "run last" convention test, node:test's after() is guaranteed to fire once the run is exhausted --
+// including when a test (or one of its subtests) times out -- so harness.teardown() can never be
+// skipped by a hang. See the timeout-infrastructure block above for the actual hook.
