@@ -274,10 +274,17 @@ patchRequestModule(http, "http");
 patchRequestModule(https, "https");
 
 // --- globalThis.fetch -------------------------------------------------------
+// fetch() is spec'd to ALWAYS return a Promise -- never throw synchronously -- so a caller doing
+// `fetch(url).then(...).catch(...)` must see a rejection, not an uncaught synchronous exception
+// (observed by an independent reviewer against fix round 1; fixed here, fix round 2).
 if (typeof globalThis.fetch === "function") {
   const origFetch = globalThis.fetch;
   globalThis.fetch = function patchedFetch(input, init) {
-    guard("fetch", hostFromUrlLike(input));
+    try {
+      guard("fetch", hostFromUrlLike(input));
+    } catch (e) {
+      return Promise.reject(e);
+    }
     return origFetch.call(globalThis, input, init);
   };
 }
@@ -289,7 +296,12 @@ try {
     try {
       const origUndiciRequest = undici.request;
       undici.request = function patchedUndiciRequest(url, opts) {
-        guard("undici.request", hostFromUrlLike(url));
+        // undici.request() is also promise-returning by convention; same rule as fetch() above.
+        try {
+          guard("undici.request", hostFromUrlLike(url));
+        } catch (e) {
+          return Promise.reject(e);
+        }
         return origUndiciRequest.call(undici, url, opts);
       };
     } catch {
@@ -300,7 +312,12 @@ try {
     try {
       const origUndiciFetch = undici.fetch;
       undici.fetch = function patchedUndiciFetch(input, init) {
-        guard("undici.fetch", hostFromUrlLike(input));
+        // Same fetch()-must-return-a-promise fix as globalThis.fetch above.
+        try {
+          guard("undici.fetch", hostFromUrlLike(input));
+        } catch (e) {
+          return Promise.reject(e);
+        }
         return origUndiciFetch.call(undici, input, init);
       };
     } catch {
