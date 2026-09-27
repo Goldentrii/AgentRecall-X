@@ -170,7 +170,8 @@
  */
 
 import * as fs from "node:fs";
-import { getRoot, setRoot } from "../types.js";
+import { getRoot } from "../types.js";
+import { runWithRoot } from "../repository/context-store.js";
 import { projectsRootDir } from "../storage/paths.js";
 import { isValidProjectSlug } from "../storage/project.js";
 import {
@@ -494,22 +495,24 @@ function listProjectSlugs(): string[] {
 }
 
 /**
- * Runs `fn` with the process-global root temporarily swapped to `storeRoot`
- * (a no-op passthrough when `storeRoot` is undefined), restoring the PRIOR
- * root afterward even if `fn` throws. See this file's header for why this
- * module — unlike association.ts's `--store` — must do this: it reuses
- * corrections.ts's `getRoot()`-coupled locked write machinery rather than
- * reimplementing it.
+ * Runs `fn` with the root scoped to `storeRoot` (a no-op passthrough when
+ * `storeRoot` is undefined), restoring the PRIOR root afterward even if `fn`
+ * throws. See this file's header for why this module — unlike
+ * association.ts's `--store` — must do this: it reuses corrections.ts's
+ * `getRoot()`-coupled locked write machinery rather than reimplementing it.
+ *
+ * G1 finding (Scenario 3): this used to be `setRoot(storeRoot)` ... `await
+ * fn()` ... `setRoot(previous)` — a global-variable swap-and-restore across
+ * an `await`. Anything ELSE that ran during that await (any concurrent SDK
+ * instance call, any fire-and-forget continuation) resolved its OWN
+ * `getRoot()` calls against `storeRoot` too; the 2026-09-12 production leak
+ * (supabase/sync.ts:94-105) is this exact class. `runWithRoot` instead pushes
+ * an AsyncLocalStorage context for the duration of `fn` — concurrent code
+ * outside this call tree never observes it, ALS-isolated per R2.9.
  */
 async function withStoreRoot<T>(storeRoot: string | undefined, fn: () => Promise<T>): Promise<T> {
   if (storeRoot === undefined) return fn();
-  const previous = getRoot();
-  setRoot(storeRoot);
-  try {
-    return await fn();
-  } finally {
-    setRoot(previous);
-  }
+  return runWithRoot(storeRoot, fn);
 }
 
 /**

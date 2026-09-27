@@ -12,12 +12,12 @@ import * as os from "node:os";
 // tool makes) — see packages/sdk/src/agent-recall.ts. This case now asserts
 // the CORRECT behavior and passes.
 //
-// Case B (per-instance root scoping) is still open and documents TODAY's
-// real (broken) behavior — it is expected to FAIL until that fix ships.
-//
-// Do not "fix" Case B's assertions without also shipping the corresponding
-// production fix — that would silently re-hide the bug this file exists to
-// pin down.
+// Case B (per-instance root scoping) — FLIPPED (P1, TOW2-324): the SDK
+// constructor now owns a MemoryRuntime (AsyncLocalStorage-scoped context)
+// instead of writing the process-global root (packages/core/src/types.ts's
+// `_root`, via `setRoot()`). Constructing instanceB no longer redirects
+// instanceA's in-flight/subsequent calls — this is now a hard regression
+// guard, not a documented-broken todo.
 
 describe("SDK audit contract (Phase 0 regression fixtures)", () => {
   afterEach(async () => {
@@ -56,12 +56,7 @@ describe("SDK audit contract (Phase 0 regression fixtures)", () => {
     }
   });
 
-  // TODO(TOW2-324): flips to a real assertion when SDK root isolation ships.
-  // Marked { todo: true } so the KNOWN, tracked gap stays visible in test
-  // output without keeping CI red for every unrelated change (owner call,
-  // 2026-07-27). A failing todo does not fail the suite; when the fix lands,
-  // remove the todo flag so this becomes a hard regression guard again.
-  it("Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance", { todo: true }, async () => {
+  it("Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance", async () => {
     const { AgentRecall } = await import("../dist/index.js");
     const tmpA = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sdk-audit-caseB-A-"));
     const tmpB = fs.mkdtempSync(path.join(os.tmpdir(), "ar-sdk-audit-caseB-B-"));
@@ -72,25 +67,19 @@ describe("SDK audit contract (Phase 0 regression fixtures)", () => {
       const instanceB = new AgentRecall({ root: tmpB, project: "isotest" }); // eslint-disable-line no-unused-vars
 
       // instanceA.capture(...) should write under tmpA, since instanceA is the
-      // one making the call. This is the CORRECT expected behavior.
+      // one making the call. This is now a HARD assertion (P1, TOW2-324):
+      // the SDK owns a per-instance MemoryRuntime (AsyncLocalStorage-scoped),
+      // so constructing instanceB no longer redirects instanceA's root.
       const result = await instanceA.capture("q", "a");
 
-      // As of v3.4.38, setRoot()/getRoot() (packages/core/src/types.ts lines
-      // 25-39) operate on shared module-level state (`let _root`), not
-      // anything scoped per-instance. Constructing instanceB after instanceA
-      // silently redirects ALL subsequent calls (including instanceA's) to
-      // tmpB. Assert the CORRECT behavior (write lands under tmpA) — this is
-      // expected to FAIL today, proving the cross-instance root leak.
       const landedUnderA = result.file_path.startsWith(tmpA);
       const landedUnderB = result.file_path.startsWith(tmpB);
 
       assert.ok(
         landedUnderA,
-        `EXPECTED TO FAIL today: instanceA.capture() should write under tmpA ` +
-          `(${tmpA}) since instanceA made the call, but it actually wrote to ` +
-          `${result.file_path} (under tmpB: ${landedUnderB}). This proves ` +
-          `constructing instanceB silently redirected the shared global root ` +
-          `out from under instanceA.`
+        `instanceA.capture() should write under tmpA (${tmpA}) since ` +
+          `instanceA made the call, but it actually wrote to ` +
+          `${result.file_path} (under tmpB: ${landedUnderB}).`
       );
     } finally {
       fs.rmSync(tmpA, { recursive: true, force: true });
