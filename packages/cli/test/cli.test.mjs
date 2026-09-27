@@ -50,7 +50,7 @@ describe("AgentRecall CLI", () => {
 
   it("--version prints version", async () => {
     const { stdout } = await execFileAsync("node", [CLI, "--version"]);
-    assert.ok(stdout.trim().match(/^\d+\.\d+\.\d+$/));
+    assert.ok(stdout.trim().match(/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/)); // semver incl. prerelease
   });
 
   it("--help prints usage", async () => {
