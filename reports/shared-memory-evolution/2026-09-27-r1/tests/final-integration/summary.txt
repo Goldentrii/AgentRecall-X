@@ -1,0 +1,13 @@
+install=0
+build=0
+lint=0
+suite-local=1 # pass 59 # fail 1 # cancelled 1 
+suite-pglite=1 # pass 55 # fail 6 # cancelled 1 
+core=1 ℹ tests 1998 ℹ fail 31 
+mcp-server=1 ℹ tests 79 ℹ fail 3 
+sdk=0 ℹ tests 40 ℹ fail 0 
+cli=1 ℹ tests 293 ℹ fail 2 
+bench-consistency=0 [consistency] PASS 10 / FAIL 0
+bench-funnel=0 [funnel] PASS 18 / FAIL 0
+bench-heeded-guard=1 [heeded-guard] PASS 4 / FAIL 5
+bench-room-slug-guards=0 [room-slug-guards] PASS 9 / FAIL 0

@@ -1,0 +1,506 @@
+
+> agent-recall-cli@3.4.51 test
+> node --test test/*.test.mjs
+
+▶ ar assoc — CLI wiring (evolution p2)
+  ✔ --help documents rebuild and stats (1070.7267ms)
+  ✔ top-level help mentions the assoc command group (1788.9207ms)
+  ✔ rejects an unknown assoc subcommand (1811.5787ms)
+  ✔ stats on an empty/never-rebuilt store degrades gracefully (DEGENERATE, no crash) (1657.4882ms)
+  ✔ --dry-run computes and prints a correct summary without writing edges.json (1511.9481ms)
+  ✔ --json rebuild emits machine-readable output with the same summary (1514.9035ms)
+  ✔ without --dry-run, actually writes edges.json, and a second rebuild is byte-identical (3360.8054ms)
+  ✔ supports a custom --out path (1206.5321ms)
+  ✔ stats renders the human table for the 1-edge fixture (still DEGENERATE — fewer than 5 edges) (922.1556ms)
+  ✔ stats --json emits the same degenerate reason and top_edges (917.4429ms)
+✔ ar assoc — CLI wiring (evolution p2) (15769.0574ms)
+▶ ar assoc stats — healthy (non-degenerate) graph end-to-end
+  ✔ is NOT degenerate and top edge is the weight=5 pair (856.5624ms)
+  ✔ human render has no DEGENERATE line (767.4327ms)
+✔ ar assoc stats — healthy (non-degenerate) graph end-to-end (2462.4544ms)
+▶ audit regression — CJK forward-looking prohibition capture gate
+  ✔ TOW2-326 CLOSED: '不要在未经用户确认的情况下发布代码' is captured as a durable correction (third bypass path) (2.7699ms)
+  ✔ sanity: plain question '现在几点了？' is not captured (0.8103ms)
+  ✔ sanity: plain greeting '你好，今天天气不错' is not captured (0.0909ms)
+  ✔ sanity: known-good original Chinese correction still captures (detector is wired correctly) (0.0753ms)
+✔ audit regression — CJK forward-looking prohibition capture gate (4.3651ms)
+✔ awareness rollup exits 0 with empty insights-index (1152.5017ms)
+✔ awareness rollup --threshold 99 exits 0 (1727.3541ms)
+✔ awareness rollup --threshold 99 output contains threshold value (1827.1495ms)
+✔ awareness rollup help text includes rollup subcommand (1822.937ms)
+▶ S-M4: GATED_PROHIBITION_PATTERNS — 许可证 (license) must not satisfy the confirmation-noun clause
+  ✔ 不得在没有许可证的情况下使用这个库 (bare, no quote frame) does NOT fire the bypass (2.033ms)
+  ✔ REGRESSION GUARD: bare 许可 (not followed by 证) still satisfies the confirmation-noun clause (0.9712ms)
+  ✔ SIBLING (re-verify finding): 不同意见 (differing opinions) must not satisfy the confirmation-noun clause via embedded 同意 (0.1382ms)
+  ✔ REGRESSION GUARD: genuine 同意 (consent) still satisfies the confirmation-noun clause (0.1905ms)
+✔ S-M4: GATED_PROHIBITION_PATTERNS — 许可证 (license) must not satisfy the confirmation-noun clause (3.9381ms)
+▶ S-M3: GATED_PROHIBITION_PATTERNS — quote/narrative-framed prohibitions must NOT capture
+  ✔ 产品手册规定：不要在未经用户确认的情况下发布代码 — quoted manual attribution, currently captured as settled P0 (0.1728ms)
+  ✔ 上次讨论过不要在未经批准的情况下上线新功能，但那次讨论没有达成一致 — undecided narrative wrapping a real trigger clause (0.0709ms)
+  ✔ 我觉得不要在未经用户确认的情况下发布代码，也许我们该再讨论一下 — musing/hedge frame (reuses HEDGE_FRAME's CJK openers) (0.1373ms)
+  ✔ 团队认为不要在没有审核的情况下合并代码 — team-musing frame (0.1265ms)
+  ✔ REGRESSION GUARD: the bare audit string (no narrative/quote frame) still captures via the bypass (0.1115ms)
+  ✔ REGRESSION GUARD: '你搞错了' + the audit string still captures (not a narrative/quote opener) (0.1024ms)
+✔ S-M3: GATED_PROHIBITION_PATTERNS — quote/narrative-framed prohibitions must NOT capture (1.4545ms)
+▶ C-1: BEHAVIORAL_SIGNALS' 不要 exclusion widened (慌/害怕/在意 were missing — GATED_PROHIBITION_PATTERNS already had them)
+  ✔ 你搞错了，不要慌，这个没什么大不了的 — behavioralHit must NOT fire via 不要慌 (reassurance, not a rule) (0.1195ms)
+  ✔ REGRESSION GUARD: genuine 不要 durability signal (no reassurance completion) still fires BEHAVIORAL_SIGNALS (0.0699ms)
+✔ C-1: BEHAVIORAL_SIGNALS' 不要 exclusion widened (慌/害怕/在意 were missing — GATED_PROHIBITION_PATTERNS already had them) (0.2532ms)
+▶ TP battery — detectCorrection() regression guards
+  ✔ 以后不要再直接改主分支了 + a correction partner still captures (0.0525ms)
+  ✔ Never merge without human approval first — English TOW2-326 twin captures via the bypass (0.7296ms)
+✔ TP battery — detectCorrection() regression guards (0.836ms)
+▶ S-M1: hook-correction scopes the WRITTEN rule/context to the trigger sentence — SECURITY M1 injection twins
+  ✔ CJK: a trigger clause followed by an injection tail — the stored record contains ONLY the trigger sentence, tail text is ABSENT (1187.8879ms)
+  ✔ English: a trigger clause naturally p1 on its own, followed by an injection tail carrying an 'always' p0 marker — severity must NOT flip to p0 via the tail (1706.5602ms)
+  ✔ SECURITY (own code-review, round 2 CRITICAL finding): a two-gate capture (corrHit + behHit in DIFFERENT sentences) does NOT join the behavioral-hit sentence — closes the adjacency exploit (1842.0766ms)
+  ✔ REGRESSION GUARD: a genuine TWO-sentence correction whose corr/behavioral signals fire in DIFFERENT sentences is still CAPTURED (detection unaffected) — the stored record is scoped to the correction-hit sentence alone (documented precision tradeoff, see scopeToTriggerSentences) (1838.3081ms)
+  ✔ REGRESSION GUARD: a genuine single-sentence correction is still captured and written whole (no over-truncation) (1321.9262ms)
+✔ S-M1: hook-correction scopes the WRITTEN rule/context to the trigger sentence — SECURITY M1 injection twins (7897.1619ms)
+▶ CJK prohibition signals — audit string status after the fix
+  ✔ behavioral gate recognizes the prohibition; capture now true via the GATED_PROHIBITION_PATTERNS bypass, not the two-gate AND (2.2099ms)
+✔ CJK prohibition signals — audit string status after the fix (2.7313ms)
+▶ CJK prohibition signals — new BEHAVIORAL_SIGNALS entries fire correctly when paired
+  ✔ 你搞错了 + 禁止 captures (correction + behavioral both present) (0.6655ms)
+  ✔ 你搞错了 + 不得 captures (0.1215ms)
+  ✔ 你搞错了 + 不能直接 captures (0.0851ms)
+  ✔ 你搞错了 + audit-style 不要 prohibition captures once paired with a correction phrase (0.0781ms)
+✔ CJK prohibition signals — new BEHAVIORAL_SIGNALS entries fire correctly when paired (1.0982ms)
+▶ CJK prohibition signals — realistic negative fixtures (must NOT capture)
+  ✔ N01: encouragement: don't worry (0.8963ms)
+  ✔ N02: encouragement: don't be so polite (0.1073ms)
+  ✔ N03: encouragement: don't rush (0.0827ms)
+  ✔ N04: encouragement: relax (0.1456ms)
+  ✔ N05: encouragement: don't be nervous (0.1032ms)
+  ✔ N06: encouragement: don't be so formal (0.0454ms)
+  ✔ N07: ordinary instruction: run tests first (0.0613ms)
+  ✔ N08: ordinary instruction: no rule/correction language (0.0243ms)
+  ✔ N09: one-time reprioritization, not a durable rule (0.0245ms)
+  ✔ N10: idiom 不得不 = have to, not prohibited (0.0204ms)
+  ✔ N11: idiom 不能不 = must, not prohibited (accepted miss) (0.0306ms)
+  ✔ N12: capability statement / bug report (0.0279ms)
+  ✔ N13: capacity/scheduling statement (0.0209ms)
+✔ CJK prohibition signals — realistic negative fixtures (must NOT capture) (1.8491ms)
+▶ GATED_PROHIBITION_PATTERNS — benign-reassurance sentences that ALSO mention confirmation/approval tokens must NOT capture
+  ✔ R01: reassurance (don't worry) that happens to mention 没有...确认 (0.0986ms)
+  ✔ R02: reassurance (relax) explicitly WAIVING the need for approval — polarity-inverted from a policy (0.0364ms)
+  ✔ R03: English reassurance that happens to mention without...approval (0.5992ms)
+  ✔ R04: English encouragement-to-proceed that happens to mention without...confirmation (0.0349ms)
+  ✔ REGRESSION GUARD: the audit string and the mixed CJK+EN fixture still capture (fix must not over-correct) (0.0681ms)
+✔ GATED_PROHIBITION_PATTERNS — benign-reassurance sentences that ALSO mention confirmation/approval tokens must NOT capture (0.9104ms)
+▶ GATED_PROHIBITION_PATTERNS — round-2 widened exclusion (new reassurance openers must NOT capture)
+  ✔ R05: reassurance (don't panic) with incidental 没有...审核 mention (0.0795ms)
+  ✔ R06: reassurance (don't be afraid) with incidental 没有...确认 mention (0.0344ms)
+  ✔ R07: reassurance (don't mind it) explicitly waiving approval (0.0284ms)
+  ✔ R08: English reassurance (don't stress) with incidental without...sign-off (0.0271ms)
+  ✔ R09: English reassurance (don't panic) with incidental without...confirmation (0.0254ms)
+  ✔ R10: English reassurance (do not stress) with incidental without...sign-off (0.028ms)
+  ✔ REGRESSION GUARD: the round-1 false positives stay fixed, and the genuine positives stay captured (0.0625ms)
+✔ GATED_PROHIBITION_PATTERNS — round-2 widened exclusion (new reassurance openers must NOT capture) (0.373ms)
+▶ GATED_PROHIBITION_PATTERNS — round-3: 不能 scoped to 你不能 (capability/bug-report statements must NOT capture)
+  ✔ R11: bug report: the system can't show this button without audit permission (0.0515ms)
+  ✔ R12: bug report: this page can't be accessed without login confirmation (0.02ms)
+  ✔ R13: bug report: the old client can't sync data without network confirmation (0.0279ms)
+  ✔ R14: bug report: this endpoint currently can't be called without the double-confirm dialog (0.0204ms)
+  ✔ REGRESSION GUARD: genuine 你不能 corrections still capture (fix must not over-correct) (0.0361ms)
+✔ GATED_PROHIBITION_PATTERNS — round-3: 不能 scoped to 你不能 (capability/bug-report statements must NOT capture) (0.2079ms)
+▶ ar claim — unclaimed staging CLI surface
+  ✔ --list renders staged cards INSIDE the memory fence (staged titles are retrieved content) (1275.5552ms)
+  ✔ claim moves the card into the target project's journal, logs the manifest, and --undo reverses it (3529.9038ms)
+  ✔ claim into an invalid target slug is refused with a nonzero exit and an actionable message (1889.2277ms)
+✔ ar claim — unclaimed staging CLI surface (6696.3181ms)
+▶ AgentRecall CLI
+  ✔ --version prints version (1315.3248ms)
+  ✔ --help prints usage (1693.5005ms)
+  ✔ write + read roundtrip (3671.6963ms)
+  ✔ capture creates log entry (1246.2797ms)
+  ✔ list shows entries (1414.3863ms)
+  ✔ projects lists tracked projects (1677.2574ms)
+  ✔ palace write + read (2893.7812ms)
+  ✔ palace walk returns context (1041.5491ms)
+  ✔ palace lint runs health check (888.1071ms)
+  ✔ search finds content (883.1143ms)
+  ✔ unknown command exits with error (803.5614ms)
+✔ AgentRecall CLI (17545.9166ms)
+▶ continuity wave — hook-end round-trip (unified naming + card + recency)
+  ✔ resolves ONE slug via resolveSessionProject and writes archive + card + recency line under it (no --project override) (1373.2555ms)
+  ✔ an explicit --project override wins over the resolved guess, consistently across archive + card + recency (1756.1642ms)
+✔ continuity wave — hook-end round-trip (unified naming + card + recency) (3130.2639ms)
+▶ continuity wave — hook-start renders F5 hook-health warning
+  ✔ renders the ⚠️ hook-failures line as the FIRST line when hook-health.json has a fresh failure (1863.0615ms)
+  ✔ no health line at all when hook-health.json has zero recent failures (2008.1574ms)
+✔ continuity wave — hook-start renders F5 hook-health warning (3871.5363ms)
+▶ continuity wave — L1/L2 hook-start continuity rendering (review fixes, 2026-07-31)
+  ✔ L1: renders the ⏪ Continuity block BEFORE the 'Project:' header line, matching the MCP terse formatter's placement (1458.9415ms)
+  ✔ L2: continuity title/next_step truncation uses a word-boundary + ellipsis, not a bare mid-word cut (1301.4383ms)
+✔ continuity wave — L1/L2 hook-start continuity rendering (review fixes, 2026-07-31) (2760.8123ms)
+▶ continuity wave — `ar resurrect` (F6)
+  ✔ finds a synthetic dead session cross-slug, even under a DIFFERENT --project context (1330.6715ms)
+  ✔ empty store → helpful markdown message, exit 0 (non-JSON mode) (1470.5859ms)
+✔ continuity wave — `ar resurrect` (F6) (2801.7154ms)
+▶ continuity wave — `ar health` (F5 CLI surface)
+  ✔ empty-state renders cleanly and exits 0 (human-readable) (1234.6252ms)
+  ✔ empty-state --json returns a zeroed HookHealthState, exit 0 (951.0218ms)
+  ✔ renders a populated failure state (non-empty) (854.4534ms)
+✔ continuity wave — `ar health` (F5 CLI surface) (3040.4598ms)
+▶ ar corrections conflicts / retract (v4 W5)
+  ✔ (a) conflicts lists a planted conflicting pair with correct ids/values (1453.6197ms)
+  ✔ (b) conflicts returns an empty listing (exit 0) for a non-conflicting store (1676.739ms)
+  ✔ (c) retract retracts exactly the named id, clears the pair from conflicts, and the retracted rule stops surfacing via queryMemory's corrections tier (7784.0226ms)
+  ✔ (d) retract with no id rejects (non-zero exit), retracts nothing (1541.9033ms)
+  ✔ (d) retract with an id but no --superseded-by rejects (non-zero exit), retracts nothing (1110.6307ms)
+  ✔ (d) retract "--all" in the id slot is rejected as an invalid id, never treated as a bulk flag (885.9519ms)
+  ✔ conflicts on an empty/non-existent project store returns an empty listing without throwing (875.1625ms)
+✔ ar corrections conflicts / retract (v4 W5) (15340.5409ms)
+▶ ar corrections retier (evolution p4)
+  ✔ (a) --dry-run (default) reports the full tier table + proposal counts, and writes NOTHING (1435.3528ms)
+  ✔ (b) --write persists tier via the sanctioned path; a second --write run is idempotent (zero writes) (3591.2576ms)
+  ✔ (c) archive/promote-to-gate proposal listings render inside the memory fence; the tier table does not (2031.9912ms)
+  ✔ (d) --proposals-out writes the proposal lists to a plain JSON file (not a corrections-store write) (1910.4505ms)
+  ✔ (e) demotion is automatic in --write; promote-to-gate/archive proposals are NEVER auto-applied (1891.4288ms)
+  ✔ rejects a malformed --as-of (1546.4573ms)
+✔ ar corrections retier (evolution p4) (12422.3327ms)
+▶ ar dream — behavioral
+  ✔ admit: unparseable JSON exits non-zero and writes NOTHING (1419.1233ms)
+  ✔ admit: shape violations are rejected per-candidate, before any store write (1682.5921ms)
+  ✔ admit: --run-date rejects impossible calendar dates instead of rolling them over (LOW-5) (1907.6471ms)
+  ✔ admit: a valid run prints a FENCED report and writes the yield record (2074.5244ms)
+  ✔ health: returns the yield-aware health JSON (1873.813ms)
+  ✔ sop: prints the versioned Step-3 replacement text (1826.489ms)
+  ✔ unknown subcommand exits non-zero with usage (1180.1603ms)
+✔ ar dream — behavioral (11971.7353ms)
+▶ ar corrections harvest-implicit — CLI wiring (evolution p1b)
+  ✔ unknown-subcommand usage documents harvest-implicit (1498.1504ms)
+  ✔ rejects when neither --date nor --backfill is given (1617.4934ms)
+  ✔ rejects --date combined with --backfill (1808.3854ms)
+  ✔ rejects --backfill without --since (2026.6295ms)
+  ✔ rejects --until without --backfill (1823.0525ms)
+  ✔ rejects a malformed --date (1562.1167ms)
+  ✔ dry-run is the DEFAULT (no --write needed) and prints a correct candidate table, writing nothing (1083.0625ms)
+  ✔ --json emits machine-readable output matching the core result shape (1108.0041ms)
+  ✔ --write actually persists the correction with the p1/implicit contract (2230.0372ms)
+  ✔ --experimental-signals opts back into signal (c) repeat-instruction, off by default (fix round 2) (1731.3592ms)
+✔ ar corrections harvest-implicit — CLI wiring (evolution p1b) (16499.6406ms)
+▶ FIX 1 — hook-ambient: harness prefixes produce zero output
+  ✔ no injection for prefix: <task-notification> (1514.2898ms)
+  ✔ no injection for prefix: <agent-message from="console-builder"> (1583.8359ms)
+  ✔ no injection for prefix: <local-command-caveat> (1803.5405ms)
+  ✔ no injection for prefix: <command-name> (1999.2549ms)
+  ✔ no injection for prefix: <system-reminder> (1819.8197ms)
+  ✔ no injection for prefix: <task-notification> (1353.2668ms)
+  ✔ no injection for prefix: <agent-message> (1198.1146ms)
+✔ FIX 1 — hook-ambient: harness prefixes produce zero output (11273.7786ms)
+▶ FIX 1 — hook-correction: harness prefixes → zero store writes
+  ✔ task-notification does not create any correction files (1148.4484ms)
+  ✔ agent-message does not trigger correction capture (1234.6558ms)
+✔ FIX 1 — hook-correction: harness prefixes → zero store writes (2383.6318ms)
+▶ FIX 1 — hook-save: harness prefixes produce zero output
+  ✔ task-notification with save-like word does not inject save signal (969.1898ms)
+  ✔ system-reminder does not inject save signal (834.5167ms)
+✔ FIX 1 — hook-save: harness prefixes produce zero output (1803.9421ms)
+▶ FIX 1 — normal prompts: unchanged behavior (not suppressed)
+  ✔ a genuine save-intent human prompt still injects the save signal (802.0957ms)
+  ✔ hook-ambient with a normal prompt exits 0 without crashing (901.3097ms)
+✔ FIX 1 — normal prompts: unchanged behavior (not suppressed) (1703.7224ms)
+▶ Census replay — 3 worst noise examples produce zero injection
+  ✔ Census Example 1: <task-notification> produces zero stdout (749.2112ms)
+  ✔ Census Example 2: <agent-message> produces zero stdout (1454.8824ms)
+  ✔ Census Example 3: test-results summary — exits 0, no crash (737.1362ms)
+✔ Census replay — 3 worst noise examples produce zero injection (2941.4946ms)
+▶ Census replay — genuinely relevant prompts still reach injection pipeline
+  ✔ Relevant case 1: prompt with >=2 correction token overlap fires a prior (832.2442ms)
+  ✔ Relevant case 2: blind spot with >=2 token overlap fires (prior-builder unit) (131.5657ms)
+✔ Census replay — genuinely relevant prompts still reach injection pipeline (964.0265ms)
+▶ FIX 3 — injection cap at 2 items (via prior-builder route)
+  ✔ buildPriors caps output at 2 even when 3+ corrections match (0.3217ms)
+  ✔ hook-ambient exit 0 for a prompt that would inject if recalled (empty store → no inject) (713.2565ms)
+✔ FIX 3 — injection cap at 2 items (via prior-builder route) (713.7736ms)
+▶ hook-correction detector — miss events now captured
+  ✔ E11: hallucination callout captures (there is no X + hallucination) (2.3684ms)
+  ✔ E12: 'not really good' + 'need to learn more' captures (1.5451ms)
+  ✔ E22: 'should have flagged' + 'defaulting to sparse' captures (1.2394ms)
+  ✔ E26: 'please remember' + 'this is not a website' captures (0.3583ms)
+  ✔ E28: 'you actually did not apply' + 'for every page' captures (0.1892ms)
+  ✔ E35: 'you didn't verify' + 'don't make mistakes' captures (0.242ms)
+  ✔ E47: 'submit everything in 1 PR' + 'one project per PR' captures (0.4013ms)
+  ✔ E56: 'code wrong' + 'everytime' captures (0.1657ms)
+✔ hook-correction detector — miss events now captured (7.7773ms)
+▶ hook-correction detector — intentional hard misses stay skipped
+  ✔ E10: positive instruction without negation skips (bilingual Linear rule) (0.3714ms)
+  ✔ E41: autonomy grant skips (no correction signal) (0.2866ms)
+  ✔ E57: bare 'I don't want you to open it' skips — narrowing casualty (correction gate fires, no independent durability signal) (0.2907ms)
+✔ hook-correction detector — intentional hard misses stay skipped (1.9296ms)
+▶ hook-correction detector — original patterns still fire
+  ✔ 'that's wrong' still captures (with behavioral signal) (0.1318ms)
+  ✔ 'you missed' still captures (0.0965ms)
+  ✔ 不对 captures (Chinese correction) (0.151ms)
+✔ hook-correction detector — original patterns still fire (0.4957ms)
+▶ hook-correction detector — false positive guard (≤2/31)
+  ✔ false-positive rate on 31 no-events stays ≤ 2 (0.7616ms)
+✔ hook-correction detector — false positive guard (≤2/31) (0.8316ms)
+▶ hook-correction detector — daily-traffic FP guard (≤2/13)
+  ✔ false-positive rate on 13 daily-traffic cases stays ≤ 2 (0.2216ms)
+✔ hook-correction detector — daily-traffic FP guard (≤2/13) (0.2848ms)
+▶ hook-correction detector — contract
+  ✔ short prompt (≤3 chars): captured=false but correctionHit still reported (hook-ambient feedback path) (0.0798ms)
+  ✔ empty prompt: all-null result (0.0458ms)
+✔ hook-correction detector — contract (0.184ms)
+▶ hook-end archive (Wave 2)
+  ✔ empty stdin → exit 0, no throw (1593.3613ms)
+  ✔ blank/whitespace stdin → exit 0, no throw (1540.1913ms)
+  ✔ a zero-capture session with a transcript_path leaves a verbatim raw file (1759.168ms)
+✔ hook-end archive (Wave 2) (4908.6932ms)
+▶ P3 backstop — (a) CONTRACT: Stop stdin field name is transcript_path
+  ✔ hook-end reads transcript_path from Stop stdin JSON (OQ-4 field contract) (1735.4771ms)
+✔ P3 backstop — (a) CONTRACT: Stop stdin field name is transcript_path (1736.0661ms)
+▶ P3 backstop — (b) FORCE-ARCHIVE: agent save-intent triggers archive
+  ✔ transcript with 'I've saved this to AgentRecall' causes archive to fire (1565.3897ms)
+  ✔ transcript with 'save this' in last message causes archive and intent log (1702.4015ms)
+✔ P3 backstop — (b) FORCE-ARCHIVE: agent save-intent triggers archive (3268.1133ms)
+▶ P3 backstop — (c) NO-DOUBLE-ARCHIVE: idempotent on same session
+  ✔ running hook-end twice for the same session does not write a second archive file (3761.3501ms)
+✔ P3 backstop — (c) NO-DOUBLE-ARCHIVE: idempotent on same session (3761.6499ms)
+▶ P3 backstop — (d) FALSE-POSITIVE: hedged assistant prose is demoted
+  ✔ 'I could save this if you want' does NOT fire explicit-save (hedge-demotion) (1905.1043ms)
+  ✔ 'maybe remember this later' does NOT fire explicit-save (hedge-demotion anchored at ^) (1541.6849ms)
+  ✔ 'remind me to save this' does NOT fire explicit-save (1253.4675ms)
+✔ P3 backstop — (d) FALSE-POSITIVE: hedged assistant prose is demoted (4700.7552ms)
+▶ ar hygiene (CLI wiring)
+  ✔ --help mentions hygiene (1653.1172ms)
+  ✔ clean store -> --json grade clean, exit 0, no baseline file written (1459.0051ms)
+  ✔ human mode renders a grade banner and 'no baseline yet' hint on a clean store (1688.3152ms)
+  ✔ a fresh RED finding (secret pattern) -> exit 1, surfaced under NEW findings (1969.774ms)
+  ✔ human mode renders the finding + agent_instruction, still exit 1 (1843.1348ms)
+  ✔ --baseline-update seeds the baseline, always exits 0, and writes hygiene-baseline.json (1671.1089ms)
+  ✔ after --baseline-update, a bare run against the SAME store reports zero fresh findings (1018.0487ms)
+  ✔ a NEW junk project dir after baselining -> exactly one fresh finding (1116.7367ms)
+  ✔ --project scopes fresh/known findings to that project's path prefix (1107.7756ms)
+✔ ar hygiene (CLI wiring) (13533.0871ms)
+▶ ar outcomes audit — CLI wiring (evolution p1a)
+  ✔ --help mentions the new audit subcommand (1669.8847ms)
+  ✔ rejects when neither --date nor --backfill is given (1501.5849ms)
+  ✔ rejects --date combined with --backfill (1676.2007ms)
+  ✔ rejects --backfill without --since (1862.6896ms)
+  ✔ rejects --until without --backfill (1759.5365ms)
+  ✔ rejects a malformed --date (1349.0156ms)
+  ✔ --dry-run runs end-to-end against the fixture claude-dir and prints a correct adjudication table, writing nothing (1196.4351ms)
+  ✔ --json emits machine-readable output with the same adjudication (1201.6012ms)
+  ✔ without --dry-run, actually appends a transcript-audit:-prefixed event exactly once (idempotent re-run) (2238.4533ms)
+✔ ar outcomes audit — CLI wiring (evolution p1a) (14468.8194ms)
+▶ ar outcomes — C3b dream-audit verdict surface
+  ✔ outcomes --help renders without error (1703.9903ms)
+  ✔ audit-candidates returns correction retrieved yesterday with no verdict (3130.4223ms)
+  ✔ audit-candidates excludes corrections with heeded verdict on that date (1864.421ms)
+  ✔ audit-candidates excludes corrections with recurred verdict on that date (1913.426ms)
+  ✔ audit-candidates excludes corrections with not_triggered verdict on that date (1858.5085ms)
+  ✔ audit-candidates excludes corrections not retrieved on the target date (1545.698ms)
+  ✔ record writes not_triggered with dream-audit evidence prefix (2098.7168ms)
+  ✔ record: second call for same correction on same day returns skipped_reason (1688.9039ms)
+  ✔ record without required flags exits non-zero with agent_instruction in stderr (855.3ms)
+  ✔ record rejects invalid --kind value (786.2079ms)
+  ✔ E2E: unknown correction flips to covered after dream-audit record (coverage lift) (2140.3884ms)
+  ✔ backdated audit event carries at=auditDay noon AND recorded_at=now, both survive jsonl round-trip (835.5278ms)
+  ✔ recorded_at local-date matches todayStr() even when UTC date is yesterday (TZ regression) (1141.9345ms)
+  ✔ core recordOutcome throws on not_triggered without dream-audit: prefix (0.6976ms)
+  ✔ core recordOutcome accepts not_triggered with dream-audit: prefix and stamps recorded_at (1.489ms)
+  ✔ spoofed dream-audit: prefix in --evidence is stored once-prefixed (no double prefix) (1331.5062ms)
+✔ ar outcomes — C3b dream-audit verdict surface (22907.7257ms)
+▶ P1 fence — hook-start
+  ✔ RED->GREEN: an injection-laden P0 correction is bracketed in the SessionStart card (1859.5225ms)
+  ✔ the F5 health banner (computed diagnostic, not memory) stays the literal FIRST line, outside the fence (1647.3429ms)
+✔ P1 fence — hook-start (3508.0043ms)
+▶ P1 fence — hook-ambient
+  ✔ RED->GREEN: a priors line quoting an injection-laden correction is bracketed (1631.8019ms)
+✔ P1 fence — hook-ambient (1632.0617ms)
+▶ P1 fence — hook-pretool
+  ✔ RED->GREEN: a dangerous-command warning quoting an injection-laden correction is bracketed (1682.6581ms)
+✔ P1 fence — hook-pretool (1682.9055ms)
+▶ P1 fence — ar awareness read
+  ✔ RED->GREEN: raw awareness.md content is bracketed by the fence (1760.5073ms)
+  ✔ --json mode is unaffected (raw structured state, not the fenced markdown path) (1868.4048ms)
+✔ P1 fence — ar awareness read (3629.3546ms)
+▶ L3 + R1 pin: hook-correction captures go to _pending/, never active
+  ✔ a genuine hook capture lands in the pending store with hook provenance; ACTIVE ledger stays empty (1958.6255ms)
+✔ L3 + R1 pin: hook-correction captures go to _pending/, never active (1959.6405ms)
+▶ R2c: S-M1 injection twins, first-class against the PENDING store
+  ✔ TWIN 1 (CJK): trigger clause + injection tail — pending record contains ONLY the trigger sentence; active ledger empty (1848.8671ms)
+  ✔ TWIN 2 (EN): p1 trigger clause + 'always' p0 tail — pending severity must NOT flip to p0 via the tail (1628.3295ms)
+✔ R2c: S-M1 injection twins, first-class against the PENDING store (3477.5925ms)
+▶ R2a (hook channel): pending records pass the scrub-on-write path
+  ✔ a secret inside the trigger sentence is redacted in the pending record (content AND filename) (1619.4983ms)
+✔ R2a (hook channel): pending records pass the scrub-on-write path (1619.7677ms)
+▶ session_start pending surface (hook-start render)
+  ✔ hook-start prints a compact pending-review line when items await review (3401.8022ms)
+✔ session_start pending surface (hook-start render) (3402.1642ms)
+▶ root-resolution bypass fix — hook-start
+  ✔ writes .hook-start-lock under --root, not under the (isolated) real home dir (1983.5107ms)
+  ✔ reads semantic-prefetch.json from --root, not the isolated home (1921.6839ms)
+✔ root-resolution bypass fix — hook-start (3906.0995ms)
+▶ root-resolution bypass fix — hook-end
+  ✔ writes .hook-end-lock and .last-session-summary.txt under --root, reading the Q&A log via getRoot()-resolved journalDir (2359.4403ms)
+✔ root-resolution bypass fix — hook-end (2359.7233ms)
+▶ root-resolution bypass fix — hook-correction
+  ✔ writes .hook-correction-seen under --root when a correction is captured (1339.3501ms)
+✔ root-resolution bypass fix — hook-correction (1339.6164ms)
+▶ root-resolution bypass fix — hook-ambient
+  ✔ writes the .ambient-counter-<sid> rate-limit file under --root (1382.2049ms)
+✔ root-resolution bypass fix — hook-ambient (1382.487ms)
+▶ root-resolution bypass fix — ar stats
+  ✔ counts corrections/journal entries from --root, not the isolated home (1358.5233ms)
+✔ root-resolution bypass fix — ar stats (1358.8089ms)
+▶ root-resolution bypass fix — ar setup supabase --backfill
+  ✔ resolves the projects dir and config.json from --root, not ~/.agent-recall under the isolated home (1548.782ms)
+✔ root-resolution bypass fix — ar setup supabase --backfill (1548.9772ms)
+▶ ar scrub — fail-CLOSED stdin scrub
+  ✔ empty stdin → exit 0, empty stdout (1832.7214ms)
+  ✔ clean input pipe-through: content preserved verbatim, exit 0 (1694.2343ms)
+  ✔ AKIA pattern: scrubbed in output, exit 0 (redacted, not blocked) (1467.9315ms)
+  ✔ ghp_ pattern: scrubbed in output, exit 0 (1662.6866ms)
+  ✔ sk- pattern (OpenAI/Anthropic): scrubbed in output, exit 0 (1779.1653ms)
+  ✔ injection-scrub layer: bidi override chars stripped from output (1855.9253ms)
+  ✔ injection-scrub layer: <system-reminder> tag stripped from output (1551.4327ms)
+  ✔ multi-line input with secrets: all secrets scrubbed, structure preserved (1217.5249ms)
+  ✔ --check: clean input exits 0, no output written (950.7165ms)
+  ✔ --check: scrubbable secret exits 1 (found, redactable), no output (875.0248ms)
+  ✔ --check: ghp_ exits 1 (scrubbable) (806.289ms)
+  ✔ --check: sk- exits 1 (scrubbable) (859.691ms)
+  ✔ --check: clean journal prose exits 0 (no false positives) (765.9292ms)
+  ✔ --check exit-2 path: agent_instruction appears on stderr (1405.8964ms)
+  ✔ default mode (non-check) has no stderr for scrubbable secrets (698.0369ms)
+  ✔ Authorization: Bearer header is NOT scrubbed (documented fail-open) (813.969ms)
+  ✔ --help documents the Bearer-token fail-open in BOTH default and --check descriptions (706.3492ms)
+✔ ar scrub — fail-CLOSED stdin scrub (20945.8408ms)
+▶ ar stats — evidence-tiered heed KPI
+  ✔ renders BOTH evidence tiers at both levels (not a single number) (1808.952ms)
+  ✔ annotates the C3 online heed channel as DORMANT when 0 triggered events exist (1808.0791ms)
+  ✔ reports the triggered-event count (no DORMANT tag) once the online channel has fired (1580.5376ms)
+  ✔ degrades to an explicit 'unmeasured' line when corrections exist but nothing surfaced (1653.5811ms)
+✔ ar stats — evidence-tiered heed KPI (6867.6192ms)
+▶ ar sync-memory — frontmatter/fence blank-line regression
+  ✖ writes a blank line between the YAML frontmatter and the fenced body, with real retrieved content inside the fence (1846.7499ms)
+✖ ar sync-memory — frontmatter/fence blank-line regression (1848.1389ms)
+▶ topic-state: profile accumulation across simulated prompts
+  ✔ appendTurn persists turns in order and loadProfile reads them back (13.532ms)
+  ✔ rolling window is capped at the last 8 turns (MAX_TURNS) (27.0307ms)
+  ✔ separate session keys accumulate independent profiles (8.8052ms)
+✔ topic-state: profile accumulation across simulated prompts (50.441ms)
+▶ topic-state: decayed frequency map
+  ✔ newest turn gets weight 1.0, older turns decay by 0.65^distance (0.4058ms)
+  ✔ a term recurring across turns accumulates weight from every occurrence (0.2611ms)
+  ✔ computeDecayedProfile caps output at 64 terms (MAX_PROFILE_TERMS), keeping the highest-weight ones (0.2887ms)
+  ✔ topicQuery merges current keywords (always included) with top decayed profile terms (0.3347ms)
+  ✔ profileOnlyTerms excludes anything already present in current-prompt keywords (0.186ms)
+✔ topic-state: decayed frequency map (2.0367ms)
+▶ topic-state: background-then-generic-question fires a recall the bare prompt wouldn't
+  ✔ 4 background turns build a profile; the 5th, generic prompt injects the seeded memory (9881.7098ms)
+  ✔ CONTRAST: the same generic prompt with NO prior background turns injects nothing (2008.231ms)
+✔ topic-state: background-then-generic-question fires a recall the bare prompt wouldn't (11890.2687ms)
+▶ topic-state: precision guard — unrelated topic profile does not spray old memories
+  ✔ a profile built around an unrelated topic does not inject an unrelated stored memory (4885.5717ms)
+✔ topic-state: precision guard — unrelated topic profile does not spray old memories (4885.7341ms)
+▶ topic-state: session hygiene — staleness
+  ✔ loadProfile discards AND deletes a profile file older than 24h on first touch (3.8853ms)
+  ✔ a fresh (<24h) profile is NOT discarded (5.1926ms)
+  ✔ sweepStaleProfiles removes sibling files untouched for 7+ days, keeps fresh ones (5.1296ms)
+  ✔ hook-ambient end-to-end: a session whose profile file is >24h old starts a fresh profile instead of reusing stale background terms (761.6489ms)
+✔ topic-state: session hygiene — staleness (776.1299ms)
+▶ topic-state: CJK background text builds profile terms
+  ✔ extractTopicKeywords extracts Han-script tokens from a Chinese prompt (unlike the English-only extractKeywords) (1.1823ms)
+  ✔ a Chinese-only background conversation accumulates a profile whose decayed map contains the CJK terms (5.0522ms)
+  ✔ hook-ambient end-to-end: CJK background turns build a profile that informs a later generic (English) question (4172.7691ms)
+✔ topic-state: CJK background text builds profile terms (4179.2021ms)
+▶ ambient counter sweep (.ambient-counter-* at store root)
+  ✔ sweepStaleAmbientCounters removes 7d+ stale counters, keeps fresh ones, ignores non-counter files (5.3745ms)
+  ✔ returns 0 on a missing root and never throws (0.2476ms)
+  ✔ hook-ambient end-to-end: a stale counter is swept while the CURRENT session's counter survives (659.5526ms)
+✔ ambient counter sweep (.ambient-counter-* at store root) (665.3443ms)
+▶ transcript-reader (F1 + F1b, continuity wave 2026-07-31)
+  ▶ F1b — RAW_TAIL_CAP must preserve the TAIL, not the head
+    ✔ a marker at the TRUE end of a >80K-char transcript survives in rawTail (11.2587ms)
+    ✔ a whole file smaller than the head sample is returned verbatim, no dedup artifacts (7.1764ms)
+    ✔ returns null for a missing path (never throws) (1.5919ms)
+    ✔ H3: a CJK-heavy transcript whose BYTE size fits the head sample is not duplicated in rawTail (6.958ms)
+    ✔ M8: readHeadTail's head window never emits a U+FFFD when it cuts mid-CJK-character (4.9739ms)
+  ✔ F1b — RAW_TAIL_CAP must preserve the TAIL, not the head (32.6609ms)
+  ▶ F1 — resolveSessionProject (claim-not-generate)
+    ✔ EXCLUDES hook-injected boilerplate (attachment records) from the content signal (2.0617ms)
+    ✔ Signal 1 (cwd) + claim-not-generate: prefers an EXISTING on-disk slug over a noisier non-existing one (4.5546ms)
+    ✖ new-slug gate: mints a brand-new slug only when content count >= 3 AND ~/Projects/<name> exists (7.6014ms)
+    ✔ new-slug gate REJECTS a candidate with only 1-2 mentions (no ~/Projects dir either) (1.6297ms)
+    ✔ never selects a deny-listed/invalid slug even when it exists on disk (3.26ms)
+  ✖ F1 — resolveSessionProject (claim-not-generate) (19.5285ms)
+✖ transcript-reader (F1 + F1b, continuity wave 2026-07-31) (1702.1487ms)
+▶ H1 drift guard — guessSlugFromWmLines vs F1 resolveSessionProject (cwd-only fixtures)
+  ✔ (A) existing-slug case: both functions pick the SAME slug for identical cwd fixtures (9.4974ms)
+  ✔ (B) no-existing-slug case: the underlying cwd CANDIDATE agrees (documented selection-policy divergence in the final .slug) (4.6023ms)
+✔ H1 drift guard — guessSlugFromWmLines vs F1 resolveSessionProject (cwd-only fixtures) (1726.7215ms)
+▶ working-memory wave — hook-ambient capture
+  ✔ a genuine prompt is appended to working-memory/<sid>.jsonl (1888.409ms)
+  ✔ a harness-artifact prompt (e.g. <task-notification>) is NOT captured to working memory (1783.8937ms)
+  ✔ H2: no resolvable session id (no stdin session_id, no env var) → WM append is SKIPPED entirely; ambient output unaffected (1648.379ms)
+✔ working-memory wave — hook-ambient capture (5321.9574ms)
+▶ working-memory wave — hook-end cleanup (sleep consolidation)
+  ✔ a successful hook-end deletes the session's working-memory file after writing the card (2185.7734ms)
+✔ working-memory wave — hook-end cleanup (sleep consolidation) (2186.0277ms)
+▶ working-memory wave — hook-start orphan rescue
+  ✔ a crashed session (WM file, no hook-end) gets rescued into a card + recency entry on the NEXT hook-start (1125.9383ms)
+  ✔ M1: a fault-injected appendRecentSession failure preserves WM (no permanent continuity invisibility), doesn't abort the sweep, and self-heals on retry (1889.4371ms)
+  ✔ C1 (c): a secret/injection tag from a crashed session never appears verbatim in the rescued card body (1760.7228ms)
+  ✔ idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card (1532.3126ms)
+  ✔ e2e crash-rescue round trip: prompts via hook-ambient → simulated crash → rescue → NEXT hook-start's continuity shows it (2957.7248ms)
+✔ working-memory wave — hook-start orphan rescue (9266.7225ms)
+ℹ tests 293
+ℹ suites 77
+ℹ pass 291
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25319.0692
+
+✖ failing tests:
+
+test at test\sync-memory-fence.test.mjs:92:3
+✖ writes a blank line between the YAML frontmatter and the fenced body, with real retrieved content inside the fence (1846.7499ms)
+  AssertionError [ERR_ASSERTION]: expected sync-memory to write C:\Users\tong\AppData\Local\Temp\ar-sync-memory-fence-home-e2dS5o\.claude\projects\-Users-tong\memory\ar_sync_sync-memory-fence-test.md; stdout=Synced to C:\Users\tong\AppData\Local\Temp\ar-sync-memory-fence-root-jHqUBm\projects\sync-memory-fence-test\SYNC.md (14 lines)
+  
+      at TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/packages/cli/test/sync-memory-fence.test.mjs:121:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1518:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\transcript-reader.test.mjs:212:5
+✖ new-slug gate: mints a brand-new slug only when content count >= 3 AND ~/Projects/<name> exists (7.6014ms)
+  AssertionError [ERR_ASSERTION]: must mint the corroborated new slug; got {"slug":"auto","confidence":0,"candidates":[{"slug":"brand-new-real","count":3}]}
+  + actual - expected
+  
+  + 'auto'
+  - 'brand-new-real'
+  
+      at TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/packages/cli/test/transcript-reader.test.mjs:225:16)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1106:25)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'auto',
+    expected: 'brand-new-real',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path E:\Users\tong\Documents\New project\arx-verify-p2\packages\cli
+npm error workspace agent-recall-cli@3.4.51
+npm error location E:\Users\tong\Documents\New project\arx-verify-p2\packages\cli
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c node --test test/*.test.mjs

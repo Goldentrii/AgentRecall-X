@@ -1,0 +1,491 @@
+TAP version 13
+# Subtest: G-validate
+    # Subtest: non-UUID record id -> rejected:schema
+    ok 1 - non-UUID record id -> rejected:schema
+      ---
+      duration_ms: 0.8108
+      type: 'test'
+      ...
+    # Subtest: non-UUID operation id -> rejected:schema
+    ok 2 - non-UUID operation id -> rejected:schema
+      ---
+      duration_ms: 0.1025
+      type: 'test'
+      ...
+    # Subtest: non-UUID workspace_id -> rejected:schema
+    ok 3 - non-UUID workspace_id -> rejected:schema
+      ---
+      duration_ms: 0.113
+      type: 'test'
+      ...
+    # Subtest: update with expectedRevision null -> schema
+    ok 4 - update with expectedRevision null -> schema
+      ---
+      duration_ms: 7.1773
+      type: 'test'
+      ...
+    # Subtest: path-traversal id ("../x") rejected before any effect is observable
+    ok 5 - path-traversal id ("../x") rejected before any effect is observable
+      ---
+      duration_ms: 0.5293
+      type: 'test'
+      ...
+    1..5
+ok 1 - G-validate
+  ---
+  duration_ms: 14.448
+  type: 'test'
+  ...
+# Subtest: G-cas
+ok 2 - G-cas
+  ---
+  duration_ms: 215.8097
+  type: 'test'
+  ...
+# Subtest: G-idem
+    # Subtest: create replayed 10x same payload -> one change, replayed=true after first
+    ok 1 - create replayed 10x same payload -> one change, replayed=true after first
+      ---
+      duration_ms: 5.1745
+      type: 'test'
+      ...
+    # Subtest: update replayed 10x same payload -> one change
+    ok 2 - update replayed 10x same payload -> one change
+      ---
+      duration_ms: 5.437
+      type: 'test'
+      ...
+    # Subtest: retract replayed 10x same payload -> one change
+    ok 3 - retract replayed 10x same payload -> one change
+      ---
+      duration_ms: 5.7461
+      type: 'test'
+      ...
+    # Subtest: same operation id, different payload -> idempotency_mismatch
+    ok 4 - same operation id, different payload -> idempotency_mismatch
+      ---
+      duration_ms: 1.5234
+      type: 'test'
+      ...
+    # Subtest: different principal reusing the same operation id is independent
+    ok 5 - different principal reusing the same operation id is independent
+      ---
+      duration_ms: 4.1091
+      type: 'test'
+      ...
+    # Subtest: replay of an already-committed op still returns the original receipt AFTER the actor's grant is revoked (R2.5)
+    ok 6 - replay of an already-committed op still returns the original receipt AFTER the actor's grant is revoked (R2.5)
+      ---
+      duration_ms: 3.4688
+      type: 'test'
+      ...
+    1..6
+ok 3 - G-idem
+  ---
+  duration_ms: 26.8596
+  type: 'test'
+  ...
+# Subtest: G-authz
+    # Subtest: positive control: agent create of a plain private fact is directly effective
+    ok 1 - positive control: agent create of a plain private fact is directly effective
+      ---
+      duration_ms: 1.069
+      type: 'test'
+      ...
+    # Subtest: owner-trusted constraint create is committed, active, and recomputed to explicit_user authority
+    ok 2 - owner-trusted constraint create is committed, active, and recomputed to explicit_user authority
+      ---
+      duration_ms: 0.0729
+      type: 'test'
+      ...
+    # Subtest: agent cannot retract an explicit_user constraint
+    ok 3 - agent cannot retract an explicit_user constraint
+      ---
+      duration_ms: 1.7746
+      type: 'test'
+      ...
+    # Subtest: agent cannot quarantine an explicit_user constraint
+    ok 4 - agent cannot quarantine an explicit_user constraint
+      ---
+      duration_ms: 1.7883
+      type: 'test'
+      ...
+    # Subtest: agent 'narrowing' (updating applicability of) an explicit_user constraint yields a proposal, not a mutation
+    ok 5 - agent 'narrowing' (updating applicability of) an explicit_user constraint yields a proposal, not a mutation
+      ---
+      duration_ms: 2.1358
+      type: 'test'
+      ...
+    # Subtest: agent-created constraint is a candidate, not active
+    not ok 6 - agent-created constraint is a candidate, not active
+      ---
+      duration_ms: 60006.7973
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testTimeoutFailure'
+      error: 'test timed out after 60000ms'
+      code: 'ERR_TEST_FAILURE'
+      stack: |-
+        async file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:556:5
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+      ...
+    # Subtest: agent confirming its own candidate constraint -> untrusted_confirm
+    ok 7 - agent confirming its own candidate constraint -> untrusted_confirm
+      ---
+      duration_ms: 3.6277
+      type: 'test'
+      ...
+    # Subtest: reserved metadata keys are stripped by the driver
+    ok 8 - reserved metadata keys are stripped by the driver
+      ---
+      duration_ms: 3.6632
+      type: 'test'
+      ...
+    # Subtest: owner confirming with ownerWrite() -> active explicit_user
+    ok 9 - owner confirming with ownerWrite() -> active explicit_user
+      ---
+      duration_ms: 6.4152
+      type: 'test'
+      ...
+    # Subtest: a plain object shaped like a TrustedUserEvent is rejected (branding, not structure)
+    not ok 10 - a plain object shaped like a TrustedUserEvent is rejected (branding, not structure)
+      ---
+      duration_ms: 2.8948
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+        
+        + 'committed'
+        - 'rejected'
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'rejected'
+      actual: 'committed'
+      operator: 'strictEqual'
+      stack: |-
+        file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:613:14
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+      ...
+    # Subtest: owner supersede (matching current revision) -> old superseded, replacement active
+    ok 11 - owner supersede (matching current revision) -> old superseded, replacement active
+      ---
+      duration_ms: 7.8144
+      type: 'test'
+      ...
+    # Subtest: owner supersede against a stale target revision -> conflict (not requires_owner_approval)
+    ok 12 - owner supersede against a stale target revision -> conflict (not requires_owner_approval)
+      ---
+      duration_ms: 4.326
+      type: 'test'
+      ...
+    # Subtest: agent supersede without owner trust -> rejected:requires_owner_approval, T unchanged
+    not ok 13 - agent supersede without owner trust -> rejected:requires_owner_approval, T unchanged
+      ---
+      duration_ms: 2.0883
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+        
+        + 'not_found'
+        - 'requires_owner_approval'
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'requires_owner_approval'
+      actual: 'not_found'
+      operator: 'strictEqual'
+      stack: |-
+        file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:657:14
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:651:5
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+      ...
+    # Subtest: owner exception on a constraint -> applied, exceptions[] updated
+    ok 14 - owner exception on a constraint -> applied, exceptions[] updated
+      ---
+      duration_ms: 5.4922
+      type: 'test'
+      ...
+    # Subtest: agent exception without owner trust -> rejected:requires_owner_approval
+    ok 15 - agent exception without owner trust -> rejected:requires_owner_approval
+      ---
+      duration_ms: 5.0544
+      type: 'test'
+      ...
+    # Subtest: owner release_dependency on a derived record -> applied, dependency_release server-set
+    ok 16 - owner release_dependency on a derived record -> applied, dependency_release server-set
+      ---
+      duration_ms: 6.3624
+      type: 'test'
+      ...
+    # Subtest: agent release_dependency without owner trust -> rejected:requires_owner_approval
+    not ok 17 - agent release_dependency without owner trust -> rejected:requires_owner_approval
+      ---
+      duration_ms: 4.4355
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+        
+        + 'not_found'
+        - 'requires_owner_approval'
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'requires_owner_approval'
+      actual: 'not_found'
+      operator: 'strictEqual'
+      stack: |-
+        file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:732:14
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:718:5
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+      ...
+    1..17
+not ok 4 - G-authz
+  ---
+  duration_ms: 60069.9932
+  type: 'test'
+  location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:72:10'
+  failureType: 'subtestsFailed'
+  error: '4 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: G-visibility
+ok 5 - G-visibility
+  ---
+  duration_ms: 1446.3208
+  type: 'test'
+  ...
+# Subtest: G-existence
+    # Subtest: update by a caller with no grant on T -> rejected:not_found, never forbidden
+    ok 1 - update by a caller with no grant on T -> rejected:not_found, never forbidden
+      ---
+      duration_ms: 1.8969
+      type: 'test'
+      ...
+    # Subtest: retract by a caller with no grant on T -> rejected:not_found, never forbidden
+    ok 2 - retract by a caller with no grant on T -> rejected:not_found, never forbidden
+      ---
+      duration_ms: 5.5754
+      type: 'test'
+      ...
+    # Subtest: a deliberately wrong expectedRevision from an unauthorized caller still resolves not_found, never conflict
+    ok 3 - a deliberately wrong expectedRevision from an unauthorized caller still resolves not_found, never conflict
+      ---
+      duration_ms: 1.5527
+      type: 'test'
+      ...
+    # Subtest: ConflictReceipt.current is absent when the CAS-losing caller cannot read T (R2.3)
+    not ok 4 - ConflictReceipt.current is absent when the CAS-losing caller cannot read T (R2.3)
+      ---
+      duration_ms: 2.8883
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testCodeFailure'
+      error: |-
+        a can_write (but not can_read) grant must still reach real CAS comparison, not be short-circuited as not_found
+        + actual - expected
+        
+        + 'rejected'
+        - 'conflict'
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'conflict'
+      actual: 'rejected'
+      operator: 'strictEqual'
+      stack: |-
+        file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:967:16
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:956:7
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-verify-p2/scripts/acceptance/contract-suite.mjs:57:14)
+        async Test.run (node:internal/test_runner/test:1113:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:788:7)
+      ...
+    1..4
+not ok 6 - G-existence
+  ---
+  duration_ms: 15.2342
+  type: 'test'
+  location: 'E:\\Users\\tong\\Documents\\New project\\arx-verify-p2\\scripts\\acceptance\\contract-suite.mjs:72:10'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: G-retract
+    # Subtest: get never returns retracted content
+    ok 1 - get never returns retracted content
+      ---
+      duration_ms: 1.0514
+      type: 'test'
+      ...
+    # Subtest: query never returns retracted content
+    ok 2 - query never returns retracted content
+      ---
+      duration_ms: 1.5421
+      type: 'test'
+      ...
+    # Subtest: readSnapshot never returns retracted content
+    ok 3 - readSnapshot never returns retracted content
+      ---
+      duration_ms: 1.0898
+      type: 'test'
+      ...
+    # Subtest: list never returns retracted content
+    ok 4 - list never returns retracted content
+      ---
+      duration_ms: 0.6098
+      type: 'test'
+      ...
+    # Subtest: export never returns retracted content
+    ok 5 - export never returns retracted content
+      ---
+      duration_ms: 0.5918
+      type: 'test'
+      ...
+    # Subtest: latestHandoff never returns a retracted handoff
+    ok 6 - latestHandoff never returns a retracted handoff
+      ---
+      duration_ms: 0.9613
+      type: 'test'
+      ...
+    # Subtest: history shows the retraction as a tombstone, not silently omitted
+    ok 7 - history shows the retraction as a tombstone, not silently omitted
+      ---
+      duration_ms: 1.0495
+      type: 'test'
+      ...
+    1..7
+ok 7 - G-retract
+  ---
+  duration_ms: 14.6025
+  type: 'test'
+  ...
+# Subtest: G-derived
+    # Subtest: derived record is visible while its source is valid
+    ok 1 - derived record is visible while its source is valid
+      ---
+      duration_ms: 2.1403
+      type: 'test'
+      ...
+    # Subtest: derived record is withheld once its source is retracted
+    ok 2 - derived record is withheld once its source is retracted
+      ---
+      duration_ms: 3.4763
+      type: 'test'
+      ...
+    # Subtest: derived record is withheld once its source is revised (closure revision mismatch)
+    ok 3 - derived record is withheld once its source is revised (closure revision mismatch)
+      ---
+      duration_ms: 3.5086
+      type: 'test'
+      ...
+    # Subtest: derived_closure exceeding the 256-entry cap is withheld (R2.11: 'cap 256; overflow -> withheld')
+    ok 4 - derived_closure exceeding the 256-entry cap is withheld (R2.11: 'cap 256; overflow -> withheld')
+      ---
+      duration_ms: 328.268
+      type: 'test'
+      ...
+    1..4
+ok 8 - G-derived
+  ---
+  duration_ms: 345.2408
+  type: 'test'
+  ...
+# Subtest: G-handoff
+    # Subtest: verified_done without evidence -> schema
+    ok 1 - verified_done without evidence -> schema
+      ---
+      duration_ms: 0.2402
+      type: 'test'
+      ...
+    # Subtest: latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)
+    ok 2 - latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)
+      ---
+      duration_ms: 5.4651
+      type: 'test'
+      ...
+    # Subtest: CAS conflict on concurrent checkpoint update
+    ok 3 - CAS conflict on concurrent checkpoint update
+      ---
+      duration_ms: 5.476
+      type: 'test'
+      ...
+    1..3
+ok 9 - G-handoff
+  ---
+  duration_ms: 13.125
+  type: 'test'
+  ...
+# Subtest: G-cursor
+ok 10 - G-cursor
+  ---
+  duration_ms: 3587.811
+  type: 'test'
+  ...
+# Subtest: N/A:G-durability:harness capabilities.faults includes no crash_* kind
+ok 11 - N/A:G-durability:harness capabilities.faults includes no crash_* kind
+  ---
+  duration_ms: 0.1732
+  type: 'test'
+  ...
+# Subtest: G-outbox
+    # Subtest: a queued write that conflicts once online resolves to a terminal conflict
+    ok 1 - a queued write that conflicts once online resolves to a terminal conflict
+      ---
+      duration_ms: 9.6334
+      type: 'test'
+      ...
+    1..1
+ok 12 - G-outbox
+  ---
+  duration_ms: 293.9421
+  type: 'test'
+  ...
+# Subtest: G-ackloss
+    # Subtest: getOperation resolves the unknown receipt to the original committed outcome
+    ok 1 - getOperation resolves the unknown receipt to the original committed outcome
+      ---
+      duration_ms: 0.719
+      type: 'test'
+      ...
+    # Subtest: retrying the same operation id/payload after ack loss does not duplicate
+    ok 2 - retrying the same operation id/payload after ack loss does not duplicate
+      ---
+      duration_ms: 4.007
+      type: 'test'
+      ...
+    1..2
+ok 13 - G-ackloss
+  ---
+  duration_ms: 9.2081
+  type: 'test'
+  ...
+1..13
+# tests 62
+# suites 0
+# pass 55
+# fail 6
+# cancelled 1
+# skipped 0
+# todo 0
+# duration_ms 67169.7592

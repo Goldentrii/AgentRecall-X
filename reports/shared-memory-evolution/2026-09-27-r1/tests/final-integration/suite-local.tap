@@ -1,0 +1,395 @@
+TAP version 13
+# Subtest: G-validate
+    # Subtest: non-UUID record id -> rejected:schema
+    ok 1 - non-UUID record id -> rejected:schema
+      ---
+      duration_ms: 0.7178
+      type: 'test'
+      ...
+    # Subtest: non-UUID operation id -> rejected:schema
+    ok 2 - non-UUID operation id -> rejected:schema
+      ---
+      duration_ms: 0.1329
+      type: 'test'
+      ...
+    # Subtest: non-UUID workspace_id -> rejected:schema
+    ok 3 - non-UUID workspace_id -> rejected:schema
+      ---
+      duration_ms: 0.14
+      type: 'test'
+      ...
+    # Subtest: update with expectedRevision null -> schema
+    ok 4 - update with expectedRevision null -> schema
+      ---
+      duration_ms: 20.3694
+      type: 'test'
+      ...
+    # Subtest: path-traversal id ("../x") rejected before any effect is observable
+    ok 5 - path-traversal id ("../x") rejected before any effect is observable
+      ---
+      duration_ms: 0.5695
+      type: 'test'
+      ...
+    1..5
+ok 1 - G-validate
+  ---
+  duration_ms: 28.4642
+  type: 'test'
+  ...
+# Subtest: G-cas
+ok 2 - G-cas
+  ---
+  duration_ms: 1550.7108
+  type: 'test'
+  ...
+# Subtest: G-idem
+    # Subtest: create replayed 10x same payload -> one change, replayed=true after first
+    ok 1 - create replayed 10x same payload -> one change, replayed=true after first
+      ---
+      duration_ms: 27.8902
+      type: 'test'
+      ...
+    # Subtest: update replayed 10x same payload -> one change
+    ok 2 - update replayed 10x same payload -> one change
+      ---
+      duration_ms: 37.1198
+      type: 'test'
+      ...
+    # Subtest: retract replayed 10x same payload -> one change
+    ok 3 - retract replayed 10x same payload -> one change
+      ---
+      duration_ms: 35.0517
+      type: 'test'
+      ...
+    # Subtest: same operation id, different payload -> idempotency_mismatch
+    ok 4 - same operation id, different payload -> idempotency_mismatch
+      ---
+      duration_ms: 15.1303
+      type: 'test'
+      ...
+    # Subtest: different principal reusing the same operation id is independent
+    ok 5 - different principal reusing the same operation id is independent
+      ---
+      duration_ms: 33.1718
+      type: 'test'
+      ...
+    # Subtest: replay of an already-committed op still returns the original receipt AFTER the actor's grant is revoked (R2.5)
+    ok 6 - replay of an already-committed op still returns the original receipt AFTER the actor's grant is revoked (R2.5)
+      ---
+      duration_ms: 25.3172
+      type: 'test'
+      ...
+    1..6
+ok 3 - G-idem
+  ---
+  duration_ms: 177.6871
+  type: 'test'
+  ...
+# Subtest: G-authz
+    # Subtest: positive control: agent create of a plain private fact is directly effective
+    ok 1 - positive control: agent create of a plain private fact is directly effective
+      ---
+      duration_ms: 17.272
+      type: 'test'
+      ...
+    # Subtest: owner-trusted constraint create is committed, active, and recomputed to explicit_user authority
+    ok 2 - owner-trusted constraint create is committed, active, and recomputed to explicit_user authority
+      ---
+      duration_ms: 0.145
+      type: 'test'
+      ...
+    # Subtest: agent cannot retract an explicit_user constraint
+    ok 3 - agent cannot retract an explicit_user constraint
+      ---
+      duration_ms: 1.831
+      type: 'test'
+      ...
+    # Subtest: agent cannot quarantine an explicit_user constraint
+    ok 4 - agent cannot quarantine an explicit_user constraint
+      ---
+      duration_ms: 1.6348
+      type: 'test'
+      ...
+    # Subtest: agent 'narrowing' (updating applicability of) an explicit_user constraint yields a proposal, not a mutation
+    ok 5 - agent 'narrowing' (updating applicability of) an explicit_user constraint yields a proposal, not a mutation
+      ---
+      duration_ms: 15.1377
+      type: 'test'
+      ...
+    # Subtest: agent-created constraint is a candidate, not active
+    not ok 6 - agent-created constraint is a candidate, not active
+      ---
+      duration_ms: 60001.635
+      type: 'test'
+      location: 'E:\\Users\\tong\\Documents\\New project\\arx-sme\\scripts\\acceptance\\contract-suite.mjs:85:12'
+      failureType: 'testTimeoutFailure'
+      error: 'test timed out after 60000ms'
+      code: 'ERR_TEST_FAILURE'
+      stack: |-
+        async file:///E:/Users/tong/Documents/New%20project/arx-sme/scripts/acceptance/contract-suite.mjs:556:5
+        async TestContext.<anonymous> (file:///E:/Users/tong/Documents/New%20project/arx-sme/scripts/acceptance/contract-suite.mjs:57:14)
+      ...
+    # Subtest: agent confirming its own candidate constraint -> untrusted_confirm
+    ok 7 - agent confirming its own candidate constraint -> untrusted_confirm
+      ---
+      duration_ms: 6.4079
+      type: 'test'
+      ...
+    # Subtest: reserved metadata keys are stripped by the driver
+    ok 8 - reserved metadata keys are stripped by the driver
+      ---
+      duration_ms: 23.156
+      type: 'test'
+      ...
+    # Subtest: owner confirming with ownerWrite() -> active explicit_user
+    ok 9 - owner confirming with ownerWrite() -> active explicit_user
+      ---
+      duration_ms: 25.9606
+      type: 'test'
+      ...
+    # Subtest: a plain object shaped like a TrustedUserEvent is rejected (branding, not structure)
+    ok 10 - a plain object shaped like a TrustedUserEvent is rejected (branding, not structure)
+      ---
+      duration_ms: 1.7893
+      type: 'test'
+      ...
+    # Subtest: owner supersede (matching current revision) -> old superseded, replacement active
+    ok 11 - owner supersede (matching current revision) -> old superseded, replacement active
+      ---
+      duration_ms: 50.0833
+      type: 'test'
+      ...
+    # Subtest: owner supersede against a stale target revision -> conflict (not requires_owner_approval)
+    ok 12 - owner supersede against a stale target revision -> conflict (not requires_owner_approval)
+      ---
+      duration_ms: 34.0503
+      type: 'test'
+      ...
+    # Subtest: agent supersede without owner trust -> rejected:requires_owner_approval, T unchanged
+    ok 13 - agent supersede without owner trust -> rejected:requires_owner_approval, T unchanged
+      ---
+      duration_ms: 15.9498
+      type: 'test'
+      ...
+    # Subtest: owner exception on a constraint -> applied, exceptions[] updated
+    ok 14 - owner exception on a constraint -> applied, exceptions[] updated
+      ---
+      duration_ms: 36.5286
+      type: 'test'
+      ...
+    # Subtest: agent exception without owner trust -> rejected:requires_owner_approval
+    ok 15 - agent exception without owner trust -> rejected:requires_owner_approval
+      ---
+      duration_ms: 29.3029
+      type: 'test'
+      ...
+    # Subtest: owner release_dependency on a derived record -> applied, dependency_release server-set
+    ok 16 - owner release_dependency on a derived record -> applied, dependency_release server-set
+      ---
+      duration_ms: 56.5622
+      type: 'test'
+      ...
+    # Subtest: agent release_dependency without owner trust -> rejected:requires_owner_approval
+    ok 17 - agent release_dependency without owner trust -> rejected:requires_owner_approval
+      ---
+      duration_ms: 42.571
+      type: 'test'
+      ...
+    1..17
+not ok 4 - G-authz
+  ---
+  duration_ms: 60383.1114
+  type: 'test'
+  location: 'E:\\Users\\tong\\Documents\\New project\\arx-sme\\scripts\\acceptance\\contract-suite.mjs:72:10'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: G-visibility
+ok 5 - G-visibility
+  ---
+  duration_ms: 3333.4812
+  type: 'test'
+  ...
+# Subtest: G-existence
+    # Subtest: update by a caller with no grant on T -> rejected:not_found, never forbidden
+    ok 1 - update by a caller with no grant on T -> rejected:not_found, never forbidden
+      ---
+      duration_ms: 6.6155
+      type: 'test'
+      ...
+    # Subtest: retract by a caller with no grant on T -> rejected:not_found, never forbidden
+    ok 2 - retract by a caller with no grant on T -> rejected:not_found, never forbidden
+      ---
+      duration_ms: 6.8773
+      type: 'test'
+      ...
+    # Subtest: a deliberately wrong expectedRevision from an unauthorized caller still resolves not_found, never conflict
+    ok 3 - a deliberately wrong expectedRevision from an unauthorized caller still resolves not_found, never conflict
+      ---
+      duration_ms: 8.2577
+      type: 'test'
+      ...
+    # Subtest: ConflictReceipt.current is absent when the CAS-losing caller cannot read T (R2.3)
+    ok 4 - ConflictReceipt.current is absent when the CAS-losing caller cannot read T (R2.3)
+      ---
+      duration_ms: 27.2678
+      type: 'test'
+      ...
+    1..4
+ok 6 - G-existence
+  ---
+  duration_ms: 106.9224
+  type: 'test'
+  ...
+# Subtest: G-retract
+    # Subtest: get never returns retracted content
+    ok 1 - get never returns retracted content
+      ---
+      duration_ms: 0.7898
+      type: 'test'
+      ...
+    # Subtest: query never returns retracted content
+    ok 2 - query never returns retracted content
+      ---
+      duration_ms: 0.9523
+      type: 'test'
+      ...
+    # Subtest: readSnapshot never returns retracted content
+    ok 3 - readSnapshot never returns retracted content
+      ---
+      duration_ms: 0.8705
+      type: 'test'
+      ...
+    # Subtest: list never returns retracted content
+    ok 4 - list never returns retracted content
+      ---
+      duration_ms: 0.7669
+      type: 'test'
+      ...
+    # Subtest: export never returns retracted content
+    ok 5 - export never returns retracted content
+      ---
+      duration_ms: 0.6967
+      type: 'test'
+      ...
+    # Subtest: latestHandoff never returns a retracted handoff
+    ok 6 - latestHandoff never returns a retracted handoff
+      ---
+      duration_ms: 1.0488
+      type: 'test'
+      ...
+    # Subtest: history shows the retraction as a tombstone, not silently omitted
+    ok 7 - history shows the retraction as a tombstone, not silently omitted
+      ---
+      duration_ms: 0.5431
+      type: 'test'
+      ...
+    1..7
+ok 7 - G-retract
+  ---
+  duration_ms: 105.9477
+  type: 'test'
+  ...
+# Subtest: G-derived
+    # Subtest: derived record is visible while its source is valid
+    ok 1 - derived record is visible while its source is valid
+      ---
+      duration_ms: 1.582
+      type: 'test'
+      ...
+    # Subtest: derived record is withheld once its source is retracted
+    ok 2 - derived record is withheld once its source is retracted
+      ---
+      duration_ms: 15.5632
+      type: 'test'
+      ...
+    # Subtest: derived record is withheld once its source is revised (closure revision mismatch)
+    ok 3 - derived record is withheld once its source is revised (closure revision mismatch)
+      ---
+      duration_ms: 20.8175
+      type: 'test'
+      ...
+    # Subtest: derived_closure exceeding the 256-entry cap is withheld (R2.11: 'cap 256; overflow -> withheld')
+    ok 4 - derived_closure exceeding the 256-entry cap is withheld (R2.11: 'cap 256; overflow -> withheld')
+      ---
+      duration_ms: 5901.7327
+      type: 'test'
+      ...
+    1..4
+ok 8 - G-derived
+  ---
+  duration_ms: 6011.6156
+  type: 'test'
+  ...
+# Subtest: G-handoff
+    # Subtest: verified_done without evidence -> schema
+    ok 1 - verified_done without evidence -> schema
+      ---
+      duration_ms: 0.2676
+      type: 'test'
+      ...
+    # Subtest: latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)
+    ok 2 - latestHandoff returns the newest checkpoint for a task_key (ordered by commit sequence, not wall-clock)
+      ---
+      duration_ms: 81.3539
+      type: 'test'
+      ...
+    # Subtest: CAS conflict on concurrent checkpoint update
+    ok 3 - CAS conflict on concurrent checkpoint update
+      ---
+      duration_ms: 41.9791
+      type: 'test'
+      ...
+    1..3
+ok 9 - G-handoff
+  ---
+  duration_ms: 129.9087
+  type: 'test'
+  ...
+# Subtest: G-cursor
+ok 10 - G-cursor
+  ---
+  duration_ms: 36781.612
+  type: 'test'
+  ...
+# Subtest: G-durability
+    # Subtest: fault=crash_after_wal: 1000 writes (fault re-armed at intervals), restart, verify
+    ok 1 - fault=crash_after_wal: 1000 writes (fault re-armed at intervals), restart, verify
+      ---
+      duration_ms: 24706.9998
+      type: 'test'
+      ...
+    # Subtest: fault=crash_before_receipt: 1000 writes (fault re-armed at intervals), restart, verify
+    ok 2 - fault=crash_before_receipt: 1000 writes (fault re-armed at intervals), restart, verify
+      ---
+      duration_ms: 23995.4846
+      type: 'test'
+      ...
+    1..2
+ok 11 - G-durability
+  ---
+  duration_ms: 48714.6641
+  type: 'test'
+  ...
+# Subtest: N/A:G-outbox:harness capabilities.faults does not include offline
+ok 12 - N/A:G-outbox:harness capabilities.faults does not include offline
+  ---
+  duration_ms: 0.1449
+  type: 'test'
+  ...
+# Subtest: N/A:G-ackloss:harness capabilities.faults does not include ack_lost
+ok 13 - N/A:G-ackloss:harness capabilities.faults does not include ack_lost
+  ---
+  duration_ms: 0.0921
+  type: 'test'
+  ...
+1..13
+# tests 61
+# suites 0
+# pass 59
+# fail 1
+# cancelled 1
+# skipped 0
+# todo 0
+# duration_ms 166338.8379
