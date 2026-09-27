@@ -15,35 +15,69 @@
  *                                Anything else always throws, loopback or not, unless this is set.
  *
  * Patches: node:net Socket.prototype.connect (+ net.connect/net.createConnection),
- * node:dns lookup/resolve(+promises), globalThis.fetch, node:http(s).request/get,
- * node:tls.connect (defense in depth), and undici's request/fetch when resolvable.
+ * node:dgram Socket.prototype.send/connect, node:dns lookup/resolve(+promises,
+ * +Resolver prototype), globalThis.fetch, node:http(s).request/get, node:tls.connect
+ * (defense in depth), undici's request/fetch when resolvable, and (best-effort)
+ * node:worker_threads Worker construction (auto-injects execArgv so spawned worker
+ * threads load this same guard fresh in their own realm). Also propagates itself to
+ * any Node child process via NODE_OPTIONS (see below).
  *
  * This is a test-time guard, not a sandbox: it relies on every network primitive
  * going through these documented Node entry points. It does not replace OS-level
  * network isolation for untrusted code.
  *
- * KNOWN GAP (verified empirically, Node 24, ESM): Node's CJS->ESM interop gives
- * each named/namespace import of a core module (e.g. `import { request } from
- * "node:http"` or `import * as dns from "node:dns"`) a binding SNAPSHOTTED at
- * first module evaluation; reassigning the property on the `import x from
- * "node:mod"` default object (what this file does) does NOT propagate to that
- * snapshot. Empirically: http.request/https.request/fetch/net.* calls remain
- * caught regardless of import style because they transitively call
- * net.Socket.prototype.connect (a shared prototype method, patched below and
- * therefore import-style-agnostic) before any data leaves the process. Plain
- * `dns.lookup`/`dns.resolve` calls do NOT open a socket, so a caller that
- * imports "node:dns" via named/namespace syntax (not `import dns from
- * "node:dns"`) can bypass the dns.lookup/dns.resolve patches below -- this is
- * the one residual gap. dns.Resolver-class usage is still caught (its
- * prototype methods are patched below, same reasoning as net.Socket). Treat
- * this file as a fast in-process tripwire for test/CI convenience, not as the
- * sole authority for a production zero-egress guarantee; pair it with an
- * OS/CI-level network-egress block for anything load-bearing (A22).
+ * ============================================================================
+ * RESIDUAL GAPS (all of them -- read before treating a green run as proof of A22)
+ * ============================================================================
+ * 1. node:dns named/namespace import bypass (verified empirically, Node 24, ESM).
+ *    Node's CJS->ESM interop gives each named/namespace import of a core module
+ *    (e.g. `import { request } from "node:http"` or `import * as dns from
+ *    "node:dns"`) a binding SNAPSHOTTED at first module evaluation; reassigning
+ *    the property on the `import x from "node:mod"` default object (what this
+ *    file does) does NOT propagate to that snapshot. Empirically:
+ *    http.request/https.request/fetch/net.connect/dgram.send calls remain caught
+ *    regardless of import style because they transitively call a shared
+ *    PROTOTYPE method (net.Socket.prototype.connect, dgram.Socket.prototype.send,
+ *    dns.Resolver.prototype.resolve*) patched below and therefore import-style-
+ *    agnostic. Plain `dns.lookup`/`dns.resolve` (the bare functions, not the
+ *    Resolver class) do NOT open a socket, so a caller that imports "node:dns"
+ *    via named/namespace syntax specifically bypasses just those two patches.
+ *    Same class of limitation applies to the worker_threads patch in #3 below.
+ * 2. child_process: NOT patched directly. This file appends `--import <self>` to
+ *    process.env.NODE_OPTIONS, which `child_process.spawn/fork/exec` propagates
+ *    automatically to any child that (a) is itself `node` (or a node-based
+ *    shebang script) AND (b) inherits process.env (Node's default when the
+ *    caller does not pass an explicit `options.env`). This does NOT cover: a
+ *    child launched with an explicit `env` that omits NODE_OPTIONS; a non-Node
+ *    child (shell, python, curl, a compiled binary, ...); or a child that itself
+ *    unsets/overrides NODE_OPTIONS. Verified empirically: a `node -e
+ *    "fetch(...)"` child spawned from a guarded parent without passing
+ *    `--import` explicitly is still blocked, because NODE_OPTIONS carried it.
+ * 3. node:worker_threads: best-effort only. `Worker` is wrapped (default-import
+ *    style only -- same ESM snapshot caveat as #1) so `new Worker(path)` is
+ *    rewritten to `new Worker(path, {...opts, execArgv: [...execArgv,
+ *    "--import", <self>]})`, which DOES give the spawned thread a fresh,
+ *    independently-guarded realm (verified empirically: a worker script calling
+ *    `fetch()` throws EgressBlockedError inside the worker). The residual gap is
+ *    exactly the #1 pattern: a caller doing `import { Worker } from
+ *    "node:worker_threads"` (named import) gets the ORIGINAL unwrapped class and
+ *    is not covered.
+ * 4. Native addons / N-API modules that perform raw socket syscalls without
+ *    going through any of node:net/dgram/tls/http(s)/dns/undici/fetch are
+ *    invisible to this guard by construction -- there is no JS-level hook to
+ *    intercept. Treat any test dependency that ships a native binding as
+ *    requiring independent, out-of-band audit for A22 purposes.
+ *
+ * Treat this file as a fast in-process tripwire for test/CI convenience, not as
+ * the sole authority for a production zero-egress guarantee; pair it with an
+ * OS/CI-level network-egress block (firewall / no-network container / VM) for
+ * anything load-bearing like the A22 acceptance gate.
  */
 
 import net from "node:net";
 import tls from "node:tls";
 import dns from "node:dns";
+import dgram from "node:dgram";
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs";
@@ -152,6 +186,39 @@ if (typeof tls.connect === "function") {
   }
 }
 
+// --- node:dgram (UDP) -------------------------------------------------------
+// dgram.Socket is a shared prototype (like net.Socket), so patching it here is
+// import-style-agnostic regardless of how the caller imported "node:dgram".
+function hostFromDgramSend(args) {
+  let rest = args;
+  if (typeof rest[rest.length - 1] === "function") rest = rest.slice(0, -1); // drop optional callback
+  // signature is one of: send(msg[, offset, length], port[, address]). msg is always index 0 (string or
+  // Buffer/Uint8Array/array-of-buffers); address, when present, is the last remaining string argument.
+  for (let i = rest.length - 1; i >= 1; i -= 1) {
+    if (typeof rest[i] === "string") return rest[i];
+  }
+  return "localhost"; // dgram's documented default destination address when omitted
+}
+function hostFromDgramConnect(args) {
+  return typeof args[1] === "string" ? args[1] : "127.0.0.1"; // dgram.connect()'s documented default
+}
+if (dgram.Socket && dgram.Socket.prototype) {
+  const origDgramSend = dgram.Socket.prototype.send;
+  if (typeof origDgramSend === "function") {
+    dgram.Socket.prototype.send = function patchedDgramSend(...args) {
+      guard("dgram.send", hostFromDgramSend(args));
+      return origDgramSend.apply(this, args);
+    };
+  }
+  const origDgramConnect = dgram.Socket.prototype.connect;
+  if (typeof origDgramConnect === "function") {
+    dgram.Socket.prototype.connect = function patchedDgramConnect(...args) {
+      guard("dgram.connect", hostFromDgramConnect(args));
+      return origDgramConnect.apply(this, args);
+    };
+  }
+}
+
 // --- node:dns -------------------------------------------------------------
 const origLookup = dns.lookup;
 dns.lookup = function patchedLookup(hostname, ...rest) {
@@ -244,4 +311,46 @@ try {
   /* undici not resolvable as a standalone package; fine, coverage already exists via fetch/http(s)/net */
 }
 
-logAttempt("guard.installed", { allowLoopback: ALLOW_LOOPBACK }, false);
+// --- propagate to Node child processes via NODE_OPTIONS -----------------------
+// child_process.spawn/fork/exec inherit process.env (including NODE_OPTIONS) by
+// default unless the caller passes an explicit `env`. This makes the guard apply
+// automatically to any further `node` invocation without every call site having
+// to remember `--import`. See RESIDUAL GAPS #2 above for what this does NOT cover.
+const SELF_URL = import.meta.url;
+const SELF_IMPORT_FLAG = `--import ${SELF_URL}`;
+{
+  const existing = process.env.NODE_OPTIONS ?? "";
+  if (!existing.includes(SELF_URL)) {
+    process.env.NODE_OPTIONS = existing.length > 0 ? `${existing} ${SELF_IMPORT_FLAG}` : SELF_IMPORT_FLAG;
+  }
+}
+
+// --- node:worker_threads (best-effort; see RESIDUAL GAPS #3 above) ------------
+try {
+  const workerThreads = await import("node:worker_threads");
+  const OrigWorker = workerThreads.Worker;
+  if (typeof OrigWorker === "function") {
+    class GuardedWorker extends OrigWorker {
+      constructor(filenameOrUrl, options) {
+        const opts = { ...(options ?? {}) };
+        const execArgv = Array.isArray(opts.execArgv) ? [...opts.execArgv] : [];
+        if (!execArgv.some((a) => typeof a === "string" && a.includes(SELF_URL))) {
+          execArgv.push("--import", SELF_URL);
+        }
+        opts.execArgv = execArgv;
+        // eval:true workers run inline source, not a file; execArgv still applies to the thread's own
+        // bootstrap the same way, so no special-casing needed here.
+        super(filenameOrUrl, opts);
+      }
+    }
+    try {
+      workerThreads.Worker = GuardedWorker;
+    } catch {
+      /* read-only export on this binding style; named/namespace importers remain an acknowledged gap */
+    }
+  }
+} catch {
+  /* node:worker_threads unavailable (unlikely) -- nothing to wrap */
+}
+
+logAttempt("guard.installed", { allowLoopback: ALLOW_LOOPBACK, nodeOptionsPropagated: true }, false);
