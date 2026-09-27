@@ -165,6 +165,18 @@ CREATE TABLE IF NOT EXISTS ar2_records (
   content_tsv          tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
   PRIMARY KEY (owner_id, id)
 );
+-- Non-blocking fix (fix round 1): ar2_grants.workspace_id already had this
+-- FK; ar2_records.workspace_id relied solely on a create-time EXISTS check
+-- (application-level only), so a raw/superuser INSERT could orphan a
+-- record against a deleted or nonexistent workspace. ON DELETE CASCADE
+-- matches the intent that a workspace's records don't outlive it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ar2_records_workspace_fk') THEN
+    ALTER TABLE ar2_records ADD CONSTRAINT ar2_records_workspace_fk
+      FOREIGN KEY (workspace_id) REFERENCES ar2_workspaces(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS ar2_records_scope_idx ON ar2_records (owner_id, workspace_id, project_id);
 CREATE INDEX IF NOT EXISTS ar2_records_status_idx ON ar2_records (owner_id, status);
 CREATE INDEX IF NOT EXISTS ar2_records_tsv_idx ON ar2_records USING gin (content_tsv);
@@ -415,9 +427,18 @@ GRANT EXECUTE ON FUNCTION ar2_derived_valid(uuid, jsonb, jsonb) TO authenticated
 CREATE OR REPLACE FUNCTION ar2_strip_reserved_metadata(p_meta jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE
 AS $$
+  -- Fix round 1 (non-blocking): mirrors contract.ts:stripReservedMetadata's
+  -- rev2.2 __proto__/constructor/prototype stripping (WP-V finding). jsonb
+  -- itself has no JS prototype semantics, but this function's own header
+  -- comment claims the DB is "the real trust boundary" precisely because
+  -- ar2_mutate is reachable by any holder of a valid JWT, not only through
+  -- CloudRepository — so a future JS consumer that JSON-parses this jsonb
+  -- back into an object (e.g. a driver's mapRecord()) must not inherit a
+  -- polluted prototype from data this function already had a chance to strip.
   SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
   FROM jsonb_each(COALESCE(p_meta, '{}'::jsonb))
-  WHERE key NOT LIKE '\_ar%' ESCAPE '\' AND key NOT LIKE 'dependency\_release%' ESCAPE '\';
+  WHERE key NOT LIKE '\_ar%' ESCAPE '\' AND key NOT LIKE 'dependency\_release%' ESCAPE '\'
+    AND key NOT IN ('__proto__', 'constructor', 'prototype');
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -598,6 +619,19 @@ DECLARE
   items jsonb;
   withheld integer := 0;
 BEGIN
+  -- Non-blocking fix (fix round 1): LIMIT must apply AFTER ar2_derived_valid
+  -- filtering, not before — a LIMIT-first `scoped` CTE could fill the whole
+  -- page with rows that then get filtered OUT as invalid/withheld, silently
+  -- returning fewer than p_limit valid items and (via CloudRepository.
+  -- list()'s `items.length === limit` check) terminating pagination early.
+  -- `scoped` therefore scans the full remaining scope (from the keyset
+  -- cursor onward, unbounded) and only `valid_page` applies LIMIT, over the
+  -- already-filtered set. Trade-off, documented: a workspace with a very
+  -- long run of withheld derived records between valid ones forces a wider
+  -- scan per page than the old (incorrect) LIMIT-first version — accepted
+  -- here because withheld records are expected to be rare (stale/retracted
+  -- closures), and correctness (never silently dropping a page's worth of
+  -- valid records) matters more than that edge case's performance.
   WITH scoped AS (
     SELECT r.* FROM ar2_records r
     WHERE r.owner_id = p_owner_id
@@ -617,17 +651,18 @@ BEGIN
         OR (r.updated_at, r.id) < (p_after_updated_at, COALESCE(p_after_id, '00000000-0000-0000-0000-000000000000'::uuid))
       )
     ORDER BY r.updated_at DESC, r.id DESC
-    LIMIT GREATEST(p_limit, 0)
   ),
   filtered AS (
     SELECT s.*, ar2_derived_valid(s.owner_id, s.derived_closure, s.dependency_release) AS valid
     FROM scoped s
+  ),
+  valid_page AS (
+    SELECT * FROM filtered WHERE valid ORDER BY updated_at DESC, id DESC LIMIT GREATEST(p_limit, 0)
   )
   SELECT
-    COALESCE(jsonb_agg(to_jsonb(f) - 'valid' ORDER BY f.updated_at DESC, f.id DESC) FILTER (WHERE f.valid), '[]'::jsonb),
-    COUNT(*) FILTER (WHERE NOT f.valid)
-  INTO items, withheld
-  FROM filtered f;
+    COALESCE((SELECT jsonb_agg(to_jsonb(v) - 'valid' ORDER BY v.updated_at DESC, v.id DESC) FROM valid_page v), '[]'::jsonb),
+    (SELECT COUNT(*) FROM filtered WHERE NOT valid)
+  INTO items, withheld;
 
   RETURN jsonb_build_object('items', items, 'withheld_derived', withheld);
 END;
