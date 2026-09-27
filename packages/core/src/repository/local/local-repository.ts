@@ -58,11 +58,25 @@ function outcomeKey(ownerId: string, memoryId: string, memoryRevision: number, s
 
 type CommittedReceipt = Extract<WriteReceipt, { status: "committed" }>;
 
+interface WalRecordEntry {
+  record: MemoryRecord;
+  event: ChangeEvent;
+}
+
 interface WalEntry {
   operation_id: string;
   principal_id: string;
-  record_after: MemoryRecord;
-  event: ChangeEvent;
+  /**
+   * B4 fix (WP-P1-review.md #4): ALL record_afters a single logical
+   * operation touches, in ONE WAL entry — supersede/confirm-of-proposal
+   * write two records (the superseded/applied original + the replacement/
+   * proposal-turned-superseded); every other op writes exactly one. Only
+   * one receipt is ever written for the whole entry, and only after every
+   * record in this array is durably committed — R2.5's "commit (record +
+   * event + operation in one transaction)" now literally holds for
+   * multi-record ops too, not just single-record ones.
+   */
+  records: WalRecordEntry[];
   receipt: CommittedReceipt;
 }
 
@@ -263,35 +277,52 @@ export class LocalRepository implements MemoryRepository {
   // -------------------------------------------------------------------------
 
   /**
-   * Full commit: WAL intent (fsync) -> record tmp+rename -> markdown view ->
-   * append event (fsync) -> op receipt [+ hash] (fsync) -> delete WAL. Caller
-   * MUST already hold the repo lock (every public entry point above acquires
-   * it before reaching here).
+   * Full commit: WAL intent covering EVERY record this operation touches
+   * (fsync) -> for each record in order: history+record tmp+rename ->
+   * markdown view -> append event (fsync) [-> AR_FAILPOINT=between_records
+   * after the FIRST of >1 records, before the rest] -> once ALL records are
+   * durably written, op receipt [+ hash] (fsync) -> delete WAL. Caller MUST
+   * already hold the repo lock (every public entry point above acquires it
+   * before reaching here). Single-record callers just pass a 1-element array.
    */
+  private commitRecords(
+    records: WalRecordEntry[],
+    receipt: CommittedReceipt,
+    opts: { hash?: string; actorPrincipalId: string },
+  ): void {
+    this.ensureFormat();
+    const actorPrincipalId = opts.actorPrincipalId;
+    const operationId = receipt.operation_id;
+    const wal: WalEntry = { operation_id: operationId, principal_id: actorPrincipalId, records, receipt };
+    writeJsonAtomic(this.walPath(operationId), wal);
+
+    if (process.env.AR_FAILPOINT === "after_wal") process.exit(137);
+
+    for (let i = 0; i < records.length; i++) {
+      const { record, event } = records[i];
+      writeJsonAtomic(this.historyPath(record.id, record.revision), record);
+      writeJsonAtomic(this.recordPath(record.id), record);
+      this.writeMarkdownView(record);
+      appendJsonlSync(this.eventsPath(this.monthKeyOf(event.at)), event);
+      if (i === 0 && records.length > 1 && process.env.AR_FAILPOINT === "between_records") process.exit(137);
+    }
+
+    if (process.env.AR_FAILPOINT === "before_receipt") process.exit(137);
+
+    const key = opKey(actorPrincipalId, operationId);
+    writeJsonAtomic(this.opReceiptPath(key), receipt);
+    if (opts.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
+    removeFileIfExists(this.walPath(operationId));
+  }
+
+  /** Single-record convenience wrapper around commitRecords(). */
   private commitRecord(
     record: MemoryRecord,
     event: ChangeEvent,
     receipt: CommittedReceipt,
     opts: { hash?: string; actorPrincipalId: string },
   ): void {
-    this.ensureFormat();
-    const actorPrincipalId = opts.actorPrincipalId;
-    const wal: WalEntry = { operation_id: event.operation_id, principal_id: actorPrincipalId, record_after: record, event, receipt };
-    writeJsonAtomic(this.walPath(event.operation_id), wal);
-
-    if (process.env.AR_FAILPOINT === "after_wal") process.exit(137);
-
-    writeJsonAtomic(this.historyPath(record.id, record.revision), record);
-    writeJsonAtomic(this.recordPath(record.id), record);
-    this.writeMarkdownView(record);
-    appendJsonlSync(this.eventsPath(this.monthKeyOf(event.at)), event);
-
-    if (process.env.AR_FAILPOINT === "before_receipt") process.exit(137);
-
-    const key = opKey(actorPrincipalId, event.operation_id);
-    writeJsonAtomic(this.opReceiptPath(key), receipt);
-    if (opts.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
-    removeFileIfExists(this.walPath(event.operation_id));
+    this.commitRecords([{ record, event }], receipt, opts);
   }
 
   /** Recovery on open: replay every WAL entry idempotently (rev1 §5). */
@@ -314,17 +345,26 @@ export class LocalRepository implements MemoryRepository {
           removeFileIfExists(path.join(walDir, file));
           continue;
         }
-        // Was the event already appended (crash_before_receipt: record+event
-        // written, only the receipt is missing)? Check by operation_id so we
-        // never double-append (jsonl append is not otherwise idempotent).
-        const monthPath = this.eventsPath(this.monthKeyOf(entry.event.at));
-        const events = readJsonlTornTolerant<ChangeEvent>(monthPath);
-        const eventAlreadyAppended = events.some((e) => e.operation_id === entry.operation_id);
+        // Complete EVERY record this operation touches before writing the
+        // one receipt — this is what makes a multi-record op (supersede,
+        // confirm-of-proposal) atomic across a crash (B4 fix): a crash
+        // between record 1 and record 2 leaves the WAL entry (with BOTH
+        // record_afters already known) on disk, and recovery finishes both,
+        // never just the first.
+        for (const { record, event } of entry.records) {
+          const monthPath = this.eventsPath(this.monthKeyOf(event.at));
+          // Was this SPECIFIC record's event already appended (crash after
+          // it landed, before the rest)? Matched by event_id (unique per
+          // record-event), not operation_id (which every record in a
+          // multi-record op now shares).
+          const events = readJsonlTornTolerant<ChangeEvent>(monthPath);
+          const eventAlreadyAppended = events.some((e) => e.event_id === event.event_id);
 
-        writeJsonAtomic(this.historyPath(entry.record_after.id, entry.record_after.revision), entry.record_after);
-        writeJsonAtomic(this.recordPath(entry.record_after.id), entry.record_after);
-        this.writeMarkdownView(entry.record_after);
-        if (!eventAlreadyAppended) appendJsonlSync(monthPath, entry.event);
+          writeJsonAtomic(this.historyPath(record.id, record.revision), record);
+          writeJsonAtomic(this.recordPath(record.id), record);
+          this.writeMarkdownView(record);
+          if (!eventAlreadyAppended) appendJsonlSync(monthPath, event);
+        }
         writeJsonAtomic(receiptPath, entry.receipt);
         removeFileIfExists(path.join(walDir, file));
       }
@@ -627,20 +667,35 @@ export class LocalRepository implements MemoryRepository {
     };
   }
 
+  /** One ChangeEvent (allocates its own seq/cursor) — no receipt. Used directly by multi-record ops. */
+  private buildEvent(
+    id: string, operationId: string, op: ChangeEvent["op"], oldRevision: number | null, newRevision: number,
+    actorPrincipalId: string,
+  ): ChangeEvent {
+    const seq = this.nextSeq();
+    return {
+      event_id: newUuid(), cursor: String(seq), record_id: id, operation_id: operationId, op,
+      old_revision: oldRevision, new_revision: newRevision, actor_principal_id: actorPrincipalId, at: new Date().toISOString(),
+    };
+  }
+
+  private buildReceipt(
+    operationId: string, id: string, revision: number, cursor: string,
+    effective: boolean, effectiveAuthority: Authority, effectiveStatus: MemoryRecord["status"],
+  ): CommittedReceipt {
+    return {
+      status: "committed", operation_id: operationId, id, revision, commit_cursor: cursor,
+      replayed: false, effective, effective_authority: effectiveAuthority, effective_status: effectiveStatus,
+    };
+  }
+
+  /** Single-record convenience: one event + its own receipt, same cursor. */
   private buildEventAndReceipt(
     id: string, operationId: string, op: ChangeEvent["op"], oldRevision: number | null, newRevision: number,
     actorPrincipalId: string, effective: boolean, effectiveAuthority: Authority, effectiveStatus: MemoryRecord["status"],
   ): { event: ChangeEvent; receipt: CommittedReceipt } {
-    const now = new Date().toISOString();
-    const seq = this.nextSeq();
-    const event: ChangeEvent = {
-      event_id: newUuid(), cursor: String(seq), record_id: id, operation_id: operationId, op,
-      old_revision: oldRevision, new_revision: newRevision, actor_principal_id: actorPrincipalId, at: now,
-    };
-    const receipt: CommittedReceipt = {
-      status: "committed", operation_id: operationId, id, revision: newRevision, commit_cursor: String(seq),
-      replayed: false, effective, effective_authority: effectiveAuthority, effective_status: effectiveStatus,
-    };
+    const event = this.buildEvent(id, operationId, op, oldRevision, newRevision, actorPrincipalId);
+    const receipt = this.buildReceipt(operationId, id, newRevision, event.cursor, effective, effectiveAuthority, effectiveStatus);
     return { event, receipt };
   }
 
@@ -769,13 +824,21 @@ export class LocalRepository implements MemoryRepository {
       }, "update", now);
       const supersededProposal = this.nextRecordCommon(target, { status: "superseded" }, "update", now);
 
-      const { event: e1, receipt: r1 } = this.buildEventAndReceipt(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id, true, appliedOriginal.authority, appliedOriginal.status);
-      this.commitRecord(appliedOriginal, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
-      if (process.env.AR_FAILPOINT === "between_records") process.exit(137);
-      const innerOpId = newUuid();
-      const { event: e2, receipt: r2 } = this.buildEventAndReceipt(target.id, innerOpId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id, true, supersededProposal.authority, "superseded");
-      this.commitRecord(supersededProposal, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
-      return r1;
+      // B4 fix: BOTH record_afters go into ONE WAL entry + ONE receipt
+      // (keyed to the caller's real operationId, the only durable
+      // idempotency key for this whole two-record operation) — a crash
+      // between the two writes leaves the WAL entry with both already
+      // known, and recoverWal() finishes whichever one didn't land yet,
+      // rather than the caller's retry finding a stale "done" receipt while
+      // the proposal never actually got marked superseded.
+      const eOriginal = this.buildEvent(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id);
+      const eProposal = this.buildEvent(target.id, operationId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id);
+      const receipt = this.buildReceipt(operationId, original.id, appliedOriginal.revision, eProposal.cursor, true, appliedOriginal.authority, appliedOriginal.status);
+      this.commitRecords(
+        [{ record: appliedOriginal, event: eOriginal }, { record: supersededProposal, event: eProposal }],
+        receipt, { hash, actorPrincipalId: ctx.principal.principal_id },
+      );
+      return receipt;
     }
 
     const updated = this.nextRecordCommon(target, { status: "active", authority: "explicit_user" }, "confirm", now);
@@ -808,13 +871,16 @@ export class LocalRepository implements MemoryRepository {
       created_at: now, updated_at: now, expires_at: cmd.replacement.expires_at ?? null,
       supersedes: { id: target.id, revision: target.revision },
     };
-    const { event: e1, receipt: r1 } = this.buildEventAndReceipt(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id, true, superseded.authority, "superseded");
-    this.commitRecord(superseded, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
-    if (process.env.AR_FAILPOINT === "between_records") process.exit(137);
-    const innerOpId = newUuid();
-    const { event: e2, receipt: r2 } = this.buildEventAndReceipt(replacementRecord.id, innerOpId, "supersede", null, 1, ctx.principal.principal_id, true, replacementRecord.authority, "active");
-    this.commitRecord(replacementRecord, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
-    return r1;
+    // B4 fix: one WAL entry + one receipt covering BOTH record_afters (see
+    // the identical reasoning in doConfirm's proposal-apply branch above).
+    const eSuperseded = this.buildEvent(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id);
+    const eReplacement = this.buildEvent(replacementRecord.id, operationId, "supersede", null, 1, ctx.principal.principal_id);
+    const receipt = this.buildReceipt(operationId, target.id, superseded.revision, eReplacement.cursor, true, superseded.authority, "superseded");
+    this.commitRecords(
+      [{ record: superseded, event: eSuperseded }, { record: replacementRecord, event: eReplacement }],
+      receipt, { hash, actorPrincipalId: ctx.principal.principal_id },
+    );
+    return receipt;
   }
 
   private doException(

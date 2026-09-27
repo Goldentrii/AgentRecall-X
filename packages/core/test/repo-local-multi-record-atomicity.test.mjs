@@ -91,4 +91,57 @@ describe("B4: supersede / confirm-of-proposal two-record atomicity across a cras
     await rt1.close();
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it("confirm-of-proposal: crash between the two record commits must apply to the original AND supersede the proposal", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ar-multi-rec-confirm-"));
+    const workspaceId = crypto.randomUUID();
+    const constraintId = crypto.randomUUID();
+    const agent = { principal_id: "agent:bot1", owner_id: "local:owner", kind: "agent", auth: "local" };
+
+    const rt0 = runtimeMod.createMemoryRuntime({ root, mode: "local" }, principal());
+    rt0.repository.saveGrants([{ grantee_principal_id: agent.principal_id, workspace_id: workspaceId, project_ids: null, can_read: true, can_write: true, can_approve: false, personal: false, expires_at: null, revoked_at: null }]);
+    // owner_trusted create -> lands directly at active/explicit_user (R2.1
+    // row 2), already "protected" (kind=constraint + authority=explicit_user)
+    // — no separate confirm step needed to get there.
+    const created = await rt0.run(() => rt0.repository.mutate(
+      { op: "create", id: constraintId, workspace_id: workspaceId, project_id: null, kind: "constraint", visibility: "workspace", content: "forbid X", authority: "explicit_user", applicability: { polarity: "forbid" } },
+      null, crypto.randomUUID(), ownerTrustedCtx("cli"),
+    ));
+    assert.equal(created.effective_status, "active");
+    const proposeReceipt = await rt0.run(() => rt0.repository.mutate(
+      { op: "update", id: constraintId, patch: { content: "forbid X and Y" } }, created.revision, crypto.randomUUID(), { principal: agent, channel: "sdk" },
+    ));
+    assert.equal(proposeReceipt.effective_status, "candidate", "expected a proposal, not a direct apply");
+    await rt0.close();
+
+    const operationId = crypto.randomUUID();
+    const trustedInput = {
+      source: "tty_confirm", host: "test", host_event_id: crypto.randomUUID(),
+      raw_text_hash: crypto.createHash("sha256").update("owner-confirm-proposal").digest("hex"),
+    };
+    const childArgs = {
+      root, principal: principal(), channel: "cli",
+      cmd: { op: "confirm", id: proposeReceipt.id }, expectedRevision: proposeReceipt.revision, operationId, trustedInput,
+    };
+    const result = spawnSync(process.execPath, [CHILD], {
+      env: { ...process.env, AR_FAILPOINT: "between_records", AR_CHILD_ARGS: JSON.stringify(childArgs) },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 137, `child should have crashed at the between_records failpoint; stdout=${result.stdout}`);
+
+    const rt1 = runtimeMod.createMemoryRuntime({ root, mode: "local" }, principal());
+    const retry = await rt1.run(() => rt1.repository.mutate({ op: "confirm", id: proposeReceipt.id }, proposeReceipt.revision, operationId, ownerTrustedCtx("cli")));
+    void retry;
+
+    const originalRead = await rt1.run(() => rt1.repository.get(constraintId, { principal: principal(), channel: "sdk" }));
+    assert.equal(originalRead.items.length, 1);
+    assert.equal(originalRead.items[0].content, "forbid X and Y", "the original must have the proposal's content applied after recovery");
+    assert.equal(originalRead.items[0].authority, "explicit_user");
+
+    const proposalHistory = await rt1.run(() => rt1.repository.history(proposeReceipt.id, { principal: principal(), channel: "sdk" }));
+    assert.equal(proposalHistory[proposalHistory.length - 1].status, "superseded", "the proposal must be marked superseded after recovery, not left dangling as a candidate");
+
+    await rt1.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });
