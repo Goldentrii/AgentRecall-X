@@ -233,4 +233,32 @@ describe("WP-P2 fix round 1 / frozen-suite finding (evaluator v3): getOperation(
     const op = await repo.getOperation(opId, owner.principal);
     assert.equal(op.receipt.status, "committed", "once online, getOperation() must report the REAL server status, not a stale 'queued' guess from the reconcile-only outbox entry");
   });
+
+  it("getOperation() one-shot-replays an undrained queued entry once online (nothing else auto-drains the outbox)", async () => {
+    // Root cause: G-outbox's own test never calls drainOutbox() explicitly —
+    // it just clears the offline fault and polls getOperation() expecting
+    // eventual "committed". Nothing in this architecture auto-drains the
+    // outbox in the background, so without this fix the poll would spin
+    // forever reporting a stale "queued" from the un-replayed local entry.
+    const owner = await harness.newOwner("U-getop-autoreplay");
+    const wsId = await harness.workspace(owner);
+    const repo = await harness.repoFor(owner);
+    const recId = randomUUID();
+    const opId = randomUUID();
+
+    await harness.armFault("offline", owner);
+    const queued = await repo.mutate(
+      { op: "create", id: recId, workspace_id: wsId, project_id: null, kind: "fact", visibility: "private", content: "will auto-replay", authority: "explicit_user" },
+      null, opId, owner.ownerWrite(),
+    );
+    assert.equal(queued.status, "queued");
+    await harness.clearFaults();
+
+    // No explicit drainOutbox() call — matches the frozen suite's own G-outbox test shape exactly.
+    const op = await repo.getOperation(opId, owner.principal);
+    assert.equal(op.receipt.status, "committed", "getOperation() must replay an undrained queued entry itself once the network is reachable, not just report stale 'queued' forever");
+
+    const stored = await repo.get(recId, owner.read());
+    assert.equal(stored.items.length, 1, "the replayed write must actually exist server-side");
+  });
 });

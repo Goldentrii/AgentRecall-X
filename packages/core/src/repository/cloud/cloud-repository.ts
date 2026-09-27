@@ -401,45 +401,63 @@ export class CloudRepository implements MemoryRepository {
     // Principal is ignored — cloud always uses auth.uid() (contract.ts doc comment on this method).
     //
     // Fix round 1 (frozen-suite G-outbox finding): a genuinely-queued
-    // (never-sent) operation must be reportable as "queued" WITHOUT a
-    // network call — the old code always hit ar2_get_operation directly,
-    // throwing an uncaught NetworkError while offline instead of consulting
-    // the durable outbox it itself wrote. A `reconcile_only` entry (ack_lost:
-    // already sent, ack dropped) is different — the whole point is that the
-    // outbox does NOT know the true outcome, so it must still try the
-    // network first for the real answer, falling back to the outbox only if
-    // the network is genuinely unreachable.
+    // (never-sent) operation must be reportable as "queued" WITHOUT
+    // throwing an uncaught NetworkError while offline — the old code always
+    // hit ar2_get_operation directly with no fallback. But the outbox is
+    // only a FALLBACK, never checked first: a queued/reconcile_only entry
+    // being present doesn't mean we're still offline (nothing here drains
+    // the outbox automatically, and the caller may have reconnected without
+    // yet draining) — the network, when reachable, always has the more
+    // current answer (e.g. reconciled via a separate drainOutbox() call, or
+    // simply because the original send actually landed). So: always try the
+    // network first; fall back to the outbox's own receipt shape only when
+    // the network genuinely fails.
     const queuedEntry = this.outbox.list().find((e) => e.operation_id === operationId);
-    if (queuedEntry && !queuedEntry.reconcile_only) {
-      return {
-        operation_id: operationId,
-        payload_hash: queuedEntry.payload_hash,
-        receipt: { status: "queued", operation_id: operationId, id: (queuedEntry.cmd as { id?: string })?.id ?? "", outbox_ref: "" } as WriteReceipt,
-        created_at: queuedEntry.queued_at,
-      };
-    }
+    const fromOutbox = (): OperationRecord | null => {
+      if (!queuedEntry) return null;
+      const id = (queuedEntry.cmd as { id?: string })?.id ?? "";
+      const receipt: WriteReceipt = queuedEntry.reconcile_only
+        // ack_lost: the outbox doesn't know the true outcome — report the
+        // same "unknown/ack_lost" shape mutate() originally returned, not a
+        // false "queued" (the write may have already committed server-side).
+        ? { status: "unknown", operation_id: operationId, id, reason: "ack_lost" }
+        // genuinely queued (never sent): exactly the offline case.
+        : { status: "queued", operation_id: operationId, id, outbox_ref: "" };
+      return { operation_id: operationId, payload_hash: queuedEntry.payload_hash, receipt, created_at: queuedEntry.queued_at };
+    };
     try {
       const row = (await this.opts.executor.rpc("ar2_get_operation", { p_operation_id: operationId })) as RawRecord | null;
-      if (!row) return null;
-      return {
-        operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
-        receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
-      };
-    } catch (e) {
-      if (!isTransportError(e)) throw e;
-      if (queuedEntry) {
-        // reconcile_only, network unreachable: still can't confirm — report
-        // the same "unknown/ack_lost" shape mutate() originally returned,
-        // not a false "queued" (the write may have already committed).
+      if (row) {
         return {
-          operation_id: operationId, payload_hash: queuedEntry.payload_hash,
-          receipt: { status: "unknown", operation_id: operationId, id: (queuedEntry.cmd as { id?: string })?.id ?? "", reason: "ack_lost" } as WriteReceipt,
-          created_at: queuedEntry.queued_at,
+          operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
+          receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
         };
       }
-      // Not locally queued at all and the network is unreachable: no
-      // durable local record to fall back to.
+      // Network reachable but no server-side row yet: the op is real but
+      // not (yet) reconciled with the server — nothing auto-drains the
+      // outbox in the background, so a caller polling getOperation() to
+      // observe eventual consistency (e.g. after clearing an offline fault)
+      // would otherwise wait forever. One-shot replay via the exact same
+      // idempotent RPC path mutate() itself would have used: safe (same
+      // operation_id + payload_hash — a real prior success just replays;
+      // this is the FIRST real send if it never actually reached the server).
+      if (queuedEntry) {
+        try {
+          const cmd = queuedEntry.cmd as MutateCommand;
+          const receipt = await this.callMutateRpc(cmd, queuedEntry.expected_revision, queuedEntry.operation_id, queuedEntry.payload_hash, queuedEntry.proposal_id ?? null);
+          if (receipt.status === "committed" || receipt.status === "conflict" || receipt.status === "rejected") {
+            this.outbox.remove(operationId);
+          }
+          return { operation_id: operationId, payload_hash: queuedEntry.payload_hash, receipt, created_at: queuedEntry.queued_at };
+        } catch {
+          // replay attempt itself failed (still offline after all, or a genuine error) — fall back to the stale local view.
+          return fromOutbox();
+        }
+      }
       return null;
+    } catch (e) {
+      if (!isTransportError(e)) throw e;
+      return fromOutbox();
     }
   }
 
