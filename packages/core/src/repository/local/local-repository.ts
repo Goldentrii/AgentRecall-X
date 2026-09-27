@@ -32,7 +32,7 @@ import type {
   RevisionRef, ExportResult, Authority, ConstraintException, RejectReason,
 } from "../contract.js";
 import {
-  validateCommand, sanitizeSlug, payloadHash, contentHash as sha256Content,
+  validateCommand, isUuid, sanitizeSlug, payloadHash, contentHash as sha256Content,
   ContractValidationError, proposalId, stripReservedMetadata, MAX_DERIVED_CLOSURE,
 } from "../contract.js";
 import { authorize, canRead, ownerTrusted, effectivePermissions, type LocalGrant, isOwnerPrincipal } from "../policy.js";
@@ -418,6 +418,9 @@ export class LocalRepository implements MemoryRepository {
 
   async get(id: string, ctx: ReadContext): Promise<ReadResult<MemoryRecord>> {
     this.assertOpen();
+    // R2.13 / review B1: a bare id must never reach recordPath()/path.join()
+    // unvalidated (indistinguishable from not_found, same as existence-hiding).
+    if (!isUuid(id)) return this.baseReadResult<MemoryRecord>([], 0, ctx.principal.principal_id);
     const grants = this.loadGrants();
     let record = this.loadRecord(id);
     if (record) record = this.checkExternalEdit(record);
@@ -471,6 +474,7 @@ export class LocalRepository implements MemoryRepository {
 
   async history(id: string, ctx: ReadContext): Promise<MemoryRecord[]> {
     this.assertOpen();
+    if (!isUuid(id)) return [];
     const grants = this.loadGrants();
     const dir = this.historyDir(id);
     const revs = listFilesSafe(dir)
@@ -540,6 +544,10 @@ export class LocalRepository implements MemoryRepository {
 
   async getOperation(operationId: string, principal: Principal): Promise<OperationRecord | null> {
     this.assertOpen();
+    // R2.13: opKey() SHA256-hashes this before any path.join (already immune
+    // to traversal), but ids are validated explicitly regardless — no path
+    // is ever built from unvalidated caller input, hashed or not.
+    if (!isUuid(operationId)) return null;
     const key = opKey(principal.principal_id, operationId);
     const receipt = readJsonIfExists<WriteReceipt>(this.opReceiptPath(key));
     if (!receipt) return null;
@@ -853,6 +861,11 @@ export class LocalRepository implements MemoryRepository {
 
   async recordOutcome(ev: OutcomeEvent, operationId: string, ctx: WriteContext): Promise<WriteReceipt> {
     this.assertOpen();
+    // R2.13: every id here (this.loadRecord(ev.memory.id) below) must be
+    // validated BEFORE any path.join use, not merely hashed incidentally.
+    if (!isUuid(operationId) || !isUuid(ev.memory.id) || !isUuid(ev.source_event_id)) {
+      return this.rejectFrom(operationId, ev.memory.id, "schema", "operation_id, memory.id and source_event_id must be UUIDs");
+    }
     return withRepoLock(this.root, () => {
       const found = this.findEventById(ev.source_event_id);
       if (!found) {
