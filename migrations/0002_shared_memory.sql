@@ -19,10 +19,43 @@
 -- availability was verified against grounding rather than assumed.
 --
 -- Identity: auth.uid() = the calling principal's Supabase Auth user id.
--- Owner-trust: auth.uid() = owner_id AND auth.jwt()->>'ar_role' = 'owner'.
--- Agent JWTs carry ar_role='agent' (never 'owner') — R2.1/R2.8.
+-- Owner-trust (fix round 1, B1): auth.uid() = owner_id — agents are ALWAYS
+-- separate Supabase Auth users bound via ar2_grants (R2.1/R2.8), so this is
+-- sufficient on its own and requires no custom JWT claim. A real Supabase
+-- project issues no `ar_role` claim without a Custom Access Token Auth Hook,
+-- which this repo does not ship — gating on `auth.jwt()->>'ar_role'='owner'`
+-- (rev2/2.1's original design) would either always be NULL/false in
+-- production (locking the real owner out) or, worse, silently accidentally
+-- pass owners through via SQL's three-valued NULL logic depending on which
+-- downstream pattern reads it (see ar2_owner_trusted below and
+-- reviews/WP-P2-report.md "Fix round 1" for the exact mechanism). Defense in
+-- depth: ar2_owner_trusted() additionally REFUSES owner-trust if the JWT
+-- explicitly claims ar_role='agent' anywhere (top-level, user_metadata,
+-- app_metadata) — this guards a future custom-hook misconfiguration, it is
+-- never the primary mechanism. See "Runbook: agent credentials" below.
 -- Client-reported owner_id/principal_id fields in RPC payloads are NEVER
 -- trusted; every RPC below derives identity from auth.uid() exclusively.
+--
+-- RUNBOOK — agent credentials (B1, no code enforces this, operational only):
+-- Agent processes (MCP server, CLI running unattended, background workers)
+-- MUST authenticate as their own dedicated Supabase Auth user (one per
+-- agent credential, R2.8) and MUST NEVER hold, load, cache, or be handed the
+-- owner's own Supabase session/JWT. Owner-gated actions (grant/revoke/alias/
+-- confirm/exception/release_dependency/supersede/protected-constraint
+-- retract) are authorized SOLELY by `auth.uid() = owner_id` — if an agent
+-- process is ever given the owner's real session, it inherits full owner
+-- trust with no further gate. `ar login --owner` (CLI-only) is the only
+-- supported way to obtain an owner session; it is interactive, short-lived,
+-- and never persists a refresh token (R2.8) specifically so agent runtimes
+-- have no path to acquire one. If a future Custom Access Token Auth Hook is
+-- added to mint `ar_role`, it must be sourced from a trusted server-side
+-- table (e.g. which Supabase Auth user created the account / has an owner
+-- row), never from client-supplied `user_metadata` (Supabase Auth allows
+-- users to write their own `user_metadata` at signup/update — trusting it
+-- here would let anyone self-issue ar_role='owner'). This migration does
+-- not depend on any such hook existing; ar2_owner_trusted()'s ar_role check
+-- is purely a defense-in-depth negative (ar_role='agent' => refuse), never
+-- a positive requirement.
 
 -- ---------------------------------------------------------------------------
 -- 0. Schema version
@@ -132,6 +165,18 @@ CREATE TABLE IF NOT EXISTS ar2_records (
   content_tsv          tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
   PRIMARY KEY (owner_id, id)
 );
+-- Non-blocking fix (fix round 1): ar2_grants.workspace_id already had this
+-- FK; ar2_records.workspace_id relied solely on a create-time EXISTS check
+-- (application-level only), so a raw/superuser INSERT could orphan a
+-- record against a deleted or nonexistent workspace. ON DELETE CASCADE
+-- matches the intent that a workspace's records don't outlive it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ar2_records_workspace_fk') THEN
+    ALTER TABLE ar2_records ADD CONSTRAINT ar2_records_workspace_fk
+      FOREIGN KEY (workspace_id) REFERENCES ar2_workspaces(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS ar2_records_scope_idx ON ar2_records (owner_id, workspace_id, project_id);
 CREATE INDEX IF NOT EXISTS ar2_records_status_idx ON ar2_records (owner_id, status);
 CREATE INDEX IF NOT EXISTS ar2_records_tsv_idx ON ar2_records USING gin (content_tsv);
@@ -259,6 +304,45 @@ $$;
 REVOKE ALL ON FUNCTION ar2_visible(uuid, uuid, uuid, text, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ar2_visible(uuid, uuid, uuid, text, uuid) TO authenticated;
 
+-- Fix round 1, B1: defense-in-depth negative check only (see header comment
+-- and RUNBOOK). Checked in three locations because a future Custom Access
+-- Token Auth Hook, or a client-writable `user_metadata` field, could place
+-- it in any of them; COALESCE(...,false) is load-bearing — see
+-- ar2_owner_trusted below for why a NULL here must never propagate.
+CREATE OR REPLACE FUNCTION ar2_jwt_claims_agent() RETURNS boolean
+  LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(
+    (auth.jwt() ->> 'ar_role') = 'agent'
+    OR (auth.jwt() -> 'user_metadata' ->> 'ar_role') = 'agent'
+    OR (auth.jwt() -> 'app_metadata' ->> 'ar_role') = 'agent',
+    false
+  );
+$$;
+REVOKE ALL ON FUNCTION ar2_jwt_claims_agent() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_jwt_claims_agent() TO authenticated;
+
+-- Fix round 1, B1: the ONE owner-trust predicate, used everywhere. Both
+-- operands are COALESCEd to a definite boolean — never NULL — because SQL's
+-- three-valued logic silently swallows a NULL owner-trust value in TWO
+-- OPPOSITE, dangerous directions depending on which caller pattern reads it:
+-- `IF NOT (v_owner_trusted AND x) THEN reject` treats NULL as "don't
+-- reject" (fails OPEN — this is what accidentally let a real owner through
+-- under the old ar_role-dependent code, masking the bug); `CASE WHEN
+-- v_owner_trusted THEN 'active' ELSE 'candidate' END` treats NULL as the
+-- ELSE branch (fails CLOSED but silently wrong — this is what the B1 RED
+-- test actually caught: a real owner's create landing as `candidate`).
+-- Returning a guaranteed boolean here makes every downstream `IF NOT
+-- ar2_owner_trusted(...)` and `CASE WHEN ar2_owner_trusted(...)` behave
+-- identically and correctly, with no three-valued-logic footgun left.
+CREATE OR REPLACE FUNCTION ar2_owner_trusted(p_owner_id uuid) RETURNS boolean
+  LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(auth.uid() = p_owner_id, false) AND NOT ar2_jwt_claims_agent();
+$$;
+REVOKE ALL ON FUNCTION ar2_owner_trusted(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_owner_trusted(uuid) TO authenticated;
+
 CREATE OR REPLACE FUNCTION ar2_active_grant(
   p_owner_id uuid, p_workspace_id uuid, p_principal_id uuid
 ) RETURNS ar2_grants
@@ -300,6 +384,15 @@ BEGIN
   IF p_derived_closure IS NULL OR jsonb_array_length(p_derived_closure) = 0 THEN
     RETURN true;
   END IF;
+  -- B6 (fix round 1): R2.11 "cap 256; overflow -> withheld" — MAX_DERIVED_
+  -- CLOSURE (contract.ts) was enforced nowhere. contract.ts's validateRefs
+  -- is FROZEN for P1-P4 and has no length check, so this read-time backstop
+  -- (plus the create-time write gate below) is where it lives instead. An
+  -- over-cap closure is unconditionally invalid/withheld regardless of
+  -- whether every individual entry would otherwise validate.
+  IF jsonb_array_length(p_derived_closure) > 256 THEN
+    RETURN false;
+  END IF;
   released := COALESCE(p_dependency_release -> 'source_revisions', '[]'::jsonb);
   FOR entry IN SELECT * FROM jsonb_array_elements(p_derived_closure)
   LOOP
@@ -334,9 +427,18 @@ GRANT EXECUTE ON FUNCTION ar2_derived_valid(uuid, jsonb, jsonb) TO authenticated
 CREATE OR REPLACE FUNCTION ar2_strip_reserved_metadata(p_meta jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE
 AS $$
+  -- Fix round 1 (non-blocking): mirrors contract.ts:stripReservedMetadata's
+  -- rev2.2 __proto__/constructor/prototype stripping (WP-V finding). jsonb
+  -- itself has no JS prototype semantics, but this function's own header
+  -- comment claims the DB is "the real trust boundary" precisely because
+  -- ar2_mutate is reachable by any holder of a valid JWT, not only through
+  -- CloudRepository — so a future JS consumer that JSON-parses this jsonb
+  -- back into an object (e.g. a driver's mapRecord()) must not inherit a
+  -- polluted prototype from data this function already had a chance to strip.
   SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
   FROM jsonb_each(COALESCE(p_meta, '{}'::jsonb))
-  WHERE key NOT LIKE '\_ar%' ESCAPE '\' AND key NOT LIKE 'dependency\_release%' ESCAPE '\';
+  WHERE key NOT LIKE '\_ar%' ESCAPE '\' AND key NOT LIKE 'dependency\_release%' ESCAPE '\'
+    AND key NOT IN ('__proto__', 'constructor', 'prototype');
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -375,23 +477,41 @@ CREATE POLICY ar2_records_select ON ar2_records FOR SELECT TO authenticated
     AND ar2_visible(owner_id, workspace_id, project_id, visibility, source_principal_id)
   );
 
+-- Fix round 1 (frozen-suite G-retract finding): a naive EXISTS subquery
+-- against `ar2_records` from another table's RLS policy ALSO applies
+-- ar2_records_select's OWN RLS to that subquery (RLS is not bypassed just
+-- because the reference is inside another policy's USING clause) — so the
+-- `status <> 'retracted'` clause above silently zeroed out EVERY lookup
+-- against a retracted record, hiding its entire history/events/outcomes even
+-- from its own owner (contradicting "history shows the retraction as a
+-- tombstone", which is explicitly NOT covered by A16's read-path exclusion —
+-- only current-content reads are). This SECURITY DEFINER helper runs as the
+-- table owner, which is exempt from RLS by default (same reasoning as every
+-- other SECURITY DEFINER function in this file), so it sees retracted rows
+-- too; it then re-applies ar2_visible() explicitly itself (visibility, not
+-- status, is what actually gates it for these three tables).
+CREATE OR REPLACE FUNCTION ar2_record_visible_any_status(p_owner_id uuid, p_id uuid) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY DEFINER
+  SET search_path = pg_catalog, public
+AS $$
+  SELECT COALESCE(
+    (SELECT ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
+     FROM ar2_records r WHERE r.owner_id = p_owner_id AND r.id = p_id),
+    false
+  );
+$$;
+REVOKE ALL ON FUNCTION ar2_record_visible_any_status(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ar2_record_visible_any_status(uuid, uuid) TO authenticated;
+
 DROP POLICY IF EXISTS ar2_record_revisions_select ON ar2_record_revisions;
 CREATE POLICY ar2_record_revisions_select ON ar2_record_revisions FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM ar2_records r
-    WHERE r.owner_id = ar2_record_revisions.owner_id AND r.id = ar2_record_revisions.id
-      AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-  ));
+  USING (ar2_record_visible_any_status(ar2_record_revisions.owner_id, ar2_record_revisions.id));
 
 DROP POLICY IF EXISTS ar2_events_select ON ar2_events;
 CREATE POLICY ar2_events_select ON ar2_events FOR SELECT TO authenticated
   USING (
     owner_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM ar2_records r
-      WHERE r.owner_id = ar2_events.owner_id AND r.id = ar2_events.record_id
-        AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-    )
+    OR ar2_record_visible_any_status(ar2_events.owner_id, ar2_events.record_id)
   );
 
 DROP POLICY IF EXISTS ar2_operations_select ON ar2_operations;
@@ -402,11 +522,7 @@ DROP POLICY IF EXISTS ar2_outcomes_select ON ar2_outcomes;
 CREATE POLICY ar2_outcomes_select ON ar2_outcomes FOR SELECT TO authenticated
   USING (
     owner_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM ar2_records r
-      WHERE r.owner_id = ar2_outcomes.owner_id AND r.id = ar2_outcomes.memory_id
-        AND ar2_visible(r.owner_id, r.workspace_id, r.project_id, r.visibility, r.source_principal_id)
-    )
+    OR ar2_record_visible_any_status(ar2_outcomes.owner_id, ar2_outcomes.memory_id)
   );
 
 DROP POLICY IF EXISTS ar2_access_epochs_select ON ar2_access_epochs;
@@ -517,6 +633,19 @@ DECLARE
   items jsonb;
   withheld integer := 0;
 BEGIN
+  -- Non-blocking fix (fix round 1): LIMIT must apply AFTER ar2_derived_valid
+  -- filtering, not before — a LIMIT-first `scoped` CTE could fill the whole
+  -- page with rows that then get filtered OUT as invalid/withheld, silently
+  -- returning fewer than p_limit valid items and (via CloudRepository.
+  -- list()'s `items.length === limit` check) terminating pagination early.
+  -- `scoped` therefore scans the full remaining scope (from the keyset
+  -- cursor onward, unbounded) and only `valid_page` applies LIMIT, over the
+  -- already-filtered set. Trade-off, documented: a workspace with a very
+  -- long run of withheld derived records between valid ones forces a wider
+  -- scan per page than the old (incorrect) LIMIT-first version — accepted
+  -- here because withheld records are expected to be rare (stale/retracted
+  -- closures), and correctness (never silently dropping a page's worth of
+  -- valid records) matters more than that edge case's performance.
   WITH scoped AS (
     SELECT r.* FROM ar2_records r
     WHERE r.owner_id = p_owner_id
@@ -536,17 +665,18 @@ BEGIN
         OR (r.updated_at, r.id) < (p_after_updated_at, COALESCE(p_after_id, '00000000-0000-0000-0000-000000000000'::uuid))
       )
     ORDER BY r.updated_at DESC, r.id DESC
-    LIMIT GREATEST(p_limit, 0)
   ),
   filtered AS (
     SELECT s.*, ar2_derived_valid(s.owner_id, s.derived_closure, s.dependency_release) AS valid
     FROM scoped s
+  ),
+  valid_page AS (
+    SELECT * FROM filtered WHERE valid ORDER BY updated_at DESC, id DESC LIMIT GREATEST(p_limit, 0)
   )
   SELECT
-    COALESCE(jsonb_agg(to_jsonb(f) - 'valid' ORDER BY f.updated_at DESC, f.id DESC) FILTER (WHERE f.valid), '[]'::jsonb),
-    COUNT(*) FILTER (WHERE NOT f.valid)
-  INTO items, withheld
-  FROM filtered f;
+    COALESCE((SELECT jsonb_agg(to_jsonb(v) - 'valid' ORDER BY v.updated_at DESC, v.id DESC) FROM valid_page v), '[]'::jsonb),
+    (SELECT COUNT(*) FROM filtered WHERE NOT valid)
+  INTO items, withheld;
 
   RETURN jsonb_build_object('items', items, 'withheld_derived', withheld);
 END;
@@ -682,7 +812,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'not_found', 'message', 'workspace not found');
   END IF;
-  v_owner_trusted := (v_caller = v_owner) AND (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_owner);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'grant requires owner trust');
   END IF;
@@ -711,7 +841,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'not_found', 'message', 'workspace not found');
   END IF;
-  v_owner_trusted := (v_caller = v_owner) AND (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_owner);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'revoke requires owner trust');
   END IF;
@@ -738,7 +868,7 @@ BEGIN
   IF v_caller IS NULL THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'unauthenticated', 'message', 'no auth.uid()');
   END IF;
-  v_owner_trusted := (auth.jwt() ->> 'ar_role') = 'owner';
+  v_owner_trusted := ar2_owner_trusted(v_caller);
   IF NOT v_owner_trusted THEN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'reason', 'forbidden', 'message', 'alias requires owner trust');
   END IF;
@@ -843,7 +973,6 @@ CREATE OR REPLACE FUNCTION ar2_mutate(
 AS $$
 DECLARE
   v_caller uuid := auth.uid();
-  v_role text := auth.jwt() ->> 'ar_role';
   v_owner uuid;
   v_owner_trusted boolean;
   v_op text := p_cmd ->> 'op';
@@ -874,7 +1003,7 @@ BEGIN
     RETURN jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', COALESCE(v_id::text, ''), 'reason', 'schema', 'message', 'owner_id is required');
   END IF;
   v_owner := p_owner_id;
-  v_owner_trusted := (v_caller = v_owner) AND (v_role = 'owner');
+  v_owner_trusted := ar2_owner_trusted(v_owner);
 
   -- ---- idempotency (R2.5): operation lookup BEFORE validate/authorize ----
   SELECT * INTO v_existing_op FROM ar2_operations WHERE principal_id = v_caller AND operation_id = p_operation_id;
@@ -909,15 +1038,50 @@ BEGIN
       IF NOT FOUND OR v_grant.grantee_principal_id IS NULL THEN
         v_can_write := false; v_can_approve := false;
       END IF;
+      -- B3 (fix round 1): R2.1 row 1 — "project_ids subset of grant" was
+      -- never checked; a project-scoped grant (project_ids=[A]) let its
+      -- holder can_write=true straight through into ANY project_id in the
+      -- same workspace (cross-project write bypass). A project_ids=NULL
+      -- grant is whole-workspace and unaffected; a create with no
+      -- project_id (workspace/owner_shared visibility, R2.1 row 2) isn't
+      -- gated here at all — that row governs candidate/active status, not
+      -- authorization.
+      IF v_can_write AND (p_cmd ->> 'project_id') IS NOT NULL
+         AND v_grant.project_ids IS NOT NULL
+         AND NOT ((p_cmd ->> 'project_id')::uuid = ANY(v_grant.project_ids))
+      THEN
+        v_can_write := false;
+      END IF;
     END IF;
 
     IF NOT v_can_write THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'no can_write grant on this workspace');
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'no can_write grant on this workspace/project');
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
-    IF EXISTS (SELECT 1 FROM ar2_records WHERE owner_id = v_owner AND id = v_id) THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'id already exists');
+
+    -- B6 (fix round 1): R2.11 cap — reject a create whose derived_from
+    -- exceeds MAX_DERIVED_CLOSURE (256), rather than silently accepting and
+    -- storing an over-cap array (ar2_derived_valid also enforces this at
+    -- read time as a backstop, but a write-time reject is clearer for the
+    -- caller than a silently-withheld record it thought it just created).
+    IF jsonb_array_length(COALESCE(p_cmd -> 'derived_from', '[]'::jsonb)) > 256 THEN
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'derived_from exceeds MAX_DERIVED_CLOSURE (256)');
+      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
+      RETURN v_receipt;
+    END IF;
+
+    -- B4 (fix round 1): an id collision on a row the caller cannot even
+    -- READ must look identical to a nonexistent id (R2.3 existence
+    -- hiding) — the old code did a raw EXISTS with no ar2_visible gate,
+    -- leaking "something exists here" to a caller who can't read it.
+    SELECT * INTO v_target FROM ar2_records WHERE owner_id = v_owner AND id = v_id;
+    IF FOUND THEN
+      IF NOT ar2_visible(v_target.owner_id, v_target.workspace_id, v_target.project_id, v_target.visibility, v_target.source_principal_id) THEN
+        v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'not_found', 'message', 'no such record');
+      ELSE
+        v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'id already exists');
+      END IF;
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
@@ -928,11 +1092,21 @@ BEGIN
       v_effective_authority := 'agent_inference';
     END IF;
 
-    -- R2.1 rows 1/2: constraint kind, workspace/owner_shared visibility, or no
-    -- resolved project -> candidate unless owner_trusted; else straight to active
+    -- R2.1 rows 1/2: constraint kind, or workspace/owner_shared visibility ->
+    -- candidate unless owner_trusted; else straight to active. Fix round 2
+    -- (frozen-suite G-authz "positive control" failure): a plain private/
+    -- project-visibility fact with NO project_id (a perfectly ordinary,
+    -- unremarkable write — most facts/preferences/decisions aren't scoped
+    -- to any one project) must NOT be downgraded to candidate just because
+    -- project_id happens to be null. The original `OR project_id IS NULL`
+    -- clause was a misreading of R2.1 row 2's "project_id != resolved
+    -- project" — that condition is about the create explicitly targeting a
+    -- project outside the caller's grant scope, which B3's project_ids
+    -- check (above) already rejects outright (forbidden), not downgrades to
+    -- candidate. A null project_id is simply "no project scoping", not a
+    -- foreign/mismatched one, and row 1 (direct active) applies.
     IF (p_cmd ->> 'kind') = 'constraint'
        OR (p_cmd ->> 'visibility') IN ('workspace', 'owner_shared')
-       OR (p_cmd ->> 'project_id') IS NULL
     THEN
       v_effective_status := CASE WHEN v_owner_trusted THEN 'active' ELSE 'candidate' END;
     ELSE
@@ -1000,7 +1174,10 @@ BEGIN
     RETURN v_receipt;
   END IF;
 
-  v_is_author := v_target.source_principal_id = v_caller;
+  -- COALESCEd defensively: a NULL here (e.g. a corrupted source jsonb with
+  -- no principal_id) must fail closed (not-author), never silently swallow
+  -- into the "OR v_caller = v_owner" allow branch below via NULL-with-OR.
+  v_is_author := COALESCE(v_target.source_principal_id = v_caller, false);
   v_protected := (v_target.kind = 'constraint') AND (v_target.authority IN ('explicit_user', 'legacy'));
   v_new_revision := v_target.revision + 1;
 
@@ -1021,7 +1198,8 @@ BEGIN
       status = CASE WHEN v_op = 'retract' THEN 'retracted' ELSE 'quarantined' END,
       revision = v_new_revision, updated_at = now(),
       retracted_at = CASE WHEN v_op = 'retract' THEN now() ELSE retracted_at END,
-      retraction_reason = COALESCE(p_cmd ->> 'reason', retraction_reason)
+      retraction_reason = COALESCE(p_cmd ->> 'reason', retraction_reason),
+      exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
     WHERE owner_id = v_owner AND id = v_id;
 
   ELSIF v_op = 'confirm' THEN
@@ -1053,9 +1231,10 @@ BEGIN
         END IF;
         UPDATE ar2_records SET
           content = v_target.content, content_hash = v_target.content_hash,
-          applicability = v_target.applicability, revision = v_ref.revision + 1, updated_at = now()
+          applicability = v_target.applicability, revision = v_ref.revision + 1, updated_at = now(),
+          exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
         WHERE owner_id = v_owner AND id = v_ref_id;
-        UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now()
+        UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
         WHERE owner_id = v_owner AND id = v_id;
 
         INSERT INTO ar2_record_revisions (owner_id, id, revision, snapshot)
@@ -1064,7 +1243,7 @@ BEGIN
           VALUES (v_owner, v_target.workspace_id, v_ref_id, p_operation_id, 'confirm', v_ref_rev, v_ref.revision + 1, v_caller);
       END;
     ELSE
-      UPDATE ar2_records SET status = 'active', authority = 'explicit_user', revision = v_new_revision, updated_at = now()
+      UPDATE ar2_records SET status = 'active', authority = 'explicit_user', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
       WHERE owner_id = v_owner AND id = v_id;
     END IF;
 
@@ -1094,12 +1273,18 @@ BEGIN
         'approved_by', v_caller, 'approved_at', now(),
         'redaction_report_ref', p_cmd ->> 'redaction_report_ref', 'source_revisions', v_target.derived_closure
       ),
-      revision = v_new_revision, updated_at = now()
+      revision = v_new_revision, updated_at = now(),
+      exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
     WHERE owner_id = v_owner AND id = v_id;
 
   ELSIF v_op = 'supersede' THEN
     IF NOT (v_owner_trusted AND v_can_approve) THEN
       v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'requires_owner_approval', 'message', 'supersede requires owner_trusted + can_approve');
+      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
+      RETURN v_receipt;
+    END IF;
+    IF jsonb_array_length(COALESCE(p_cmd -> 'replacement' -> 'derived_from', '[]'::jsonb)) > 256 THEN
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'replacement derived_from exceeds MAX_DERIVED_CLOSURE (256)');
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
@@ -1124,7 +1309,7 @@ BEGIN
       NULLIF(p_cmd -> 'replacement' ->> 'expires_at', '')::timestamptz,
       jsonb_build_object('id', v_id, 'revision', v_target.revision)
     );
-    UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now()
+    UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
     WHERE owner_id = v_owner AND id = v_id;
 
     INSERT INTO ar2_record_revisions (owner_id, id, revision, snapshot)
@@ -1150,7 +1335,7 @@ BEGIN
           visibility = COALESCE(p_cmd -> 'patch' ->> 'visibility', visibility),
           evidence_refs = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_cmd -> 'patch' -> 'evidence_refs') x), evidence_refs),
           expires_at = COALESCE(NULLIF(p_cmd -> 'patch' ->> 'expires_at', '')::timestamptz, expires_at),
-          revision = v_new_revision, updated_at = now()
+          revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb -- B5/rev2.1 D3
         WHERE owner_id = v_owner AND id = v_id;
       ELSE
         -- rev2.1 D2: store as a proposal revision, target unchanged
@@ -1187,7 +1372,7 @@ BEGIN
         metadata = CASE WHEN p_cmd -> 'patch' ? 'metadata' THEN ar2_strip_reserved_metadata(p_cmd -> 'patch' -> 'metadata') ELSE metadata END,
         evidence_refs = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_cmd -> 'patch' -> 'evidence_refs') x), evidence_refs),
         expires_at = COALESCE(NULLIF(p_cmd -> 'patch' ->> 'expires_at', '')::timestamptz, expires_at),
-        revision = v_new_revision, updated_at = now()
+        revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb -- B5/rev2.1 D3
       WHERE owner_id = v_owner AND id = v_id;
     ELSE
       v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'update requires can_write and (author or owner)');

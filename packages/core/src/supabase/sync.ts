@@ -11,6 +11,8 @@ import { scrubForCloud } from "../storage/content-guard.js";
 import { exportCorrections } from "../tools-logic/export-corrections.js";
 import { getRoot } from "../types.js";
 import { readTierCandidates } from "../retrieval/candidates.js";
+import { singletonKey } from "../repository/singleton-key.js";
+import { onRuntimeClose } from "../repository/context-store.js";
 
 // ---------------------------------------------------------------------------
 // Utilities (exported for testing)
@@ -123,14 +125,21 @@ export function logSyncError(message: string, rootAtCall?: string): void {
 // Sync (fire-and-forget)
 // ---------------------------------------------------------------------------
 
-let _embeddingProvider: EmbeddingProvider | null = null;
+// G1 S5: was a single process-global provider pinned to whichever root's
+// config.json (and embedding API key) was read FIRST. Keyed per runtime
+// context (or per legacy root); evicted on the owning runtime's close().
+const _embeddingProviders = new Map<string, EmbeddingProvider>();
+onRuntimeClose((key) => { _embeddingProviders.delete(key); });
 
 function getEmbeddingProvider(): EmbeddingProvider | null {
-  if (_embeddingProvider) return _embeddingProvider;
+  const key = singletonKey();
+  const cached = _embeddingProviders.get(key);
+  if (cached) return cached;
   const config = readSupabaseConfig();
   if (!config?.embedding_api_key) return null;
-  _embeddingProvider = createEmbeddingProvider(config.embedding_provider, config.embedding_api_key);
-  return _embeddingProvider;
+  const provider = createEmbeddingProvider(config.embedding_provider, config.embedding_api_key);
+  _embeddingProviders.set(key, provider);
+  return provider;
 }
 
 export function syncToSupabase(

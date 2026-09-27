@@ -31,7 +31,7 @@ import type {
   CreateCommand, RevisionRef, ConstraintException, DependencyRelease, RecordSource,
 } from "../contract.js";
 import {
-  validateCommand, payloadHash, contentHash, stripReservedMetadata, proposalId, ContractValidationError,
+  validateCommand, payloadHash, contentHash, stripReservedMetadata, proposalId, ContractValidationError, isUuid,
 } from "../contract.js";
 import { scrubForCloud } from "../../storage/content-guard.js";
 import { NetworkError, TimeoutError, PgError, type SqlExecutor } from "./sql-executor.js";
@@ -134,6 +134,18 @@ export class CloudRepository implements MemoryRepository {
   }
 
   async get(id: string, ctx: ReadContext): Promise<ReadResult<MemoryRecord>> {
+    // Fix round 1 (frozen-suite G-validate "path-traversal id" finding): a
+    // malformed id (e.g. "../x") must never reach ar2_get as a raw uuid
+    // cast — Postgres (and, identically, a real PostgREST-fronted Supabase)
+    // raises a hard 22P02 invalid_text_representation error for that, which
+    // propagated as an uncaught PgError out of this method instead of the
+    // graceful "not found" a client expects for a request that couldn't
+    // possibly resolve to a real record. A non-UUID id is unconditionally
+    // unreadable, so this is fresh (not "unverified") — no network call was
+    // needed to know the answer.
+    if (!isUuid(id)) {
+      return { items: [], authority: "cloud", snapshot_cursor: new Date().toISOString(), freshness: "fresh", partial: false, withheld_derived: 0, pending_ops: this.outbox.list().length, overflow: false, access_epoch: this.lastEpoch, errors: [] };
+    }
     const key = `get:${ctx.principal.owner_id}:${id}`;
     const { value, freshness, epoch } = await this.cached(key, async () => {
       const row = await this.opts.executor.rpc("ar2_get", { p_owner_id: ctx.principal.owner_id, p_id: id });
@@ -215,6 +227,7 @@ export class CloudRepository implements MemoryRepository {
   }
 
   async history(id: string, ctx: ReadContext): Promise<MemoryRecord[]> {
+    if (!isUuid(id)) return []; // same reasoning as get() above
     const rows = (await this.opts.executor.rpc("ar2_history", { p_owner_id: ctx.principal.owner_id, p_id: id })) as RawRecord[];
     return (rows ?? []).map(mapRecord);
   }
@@ -310,38 +323,46 @@ export class CloudRepository implements MemoryRepository {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "local_only", message: "local_only records are never uploaded" };
     }
 
-    const cleanCmd: MutateCommand = { ...cmd } as MutateCommand;
-    if (cmd.op === "create") {
-      const c = cleanCmd as CreateCommand;
-      c.content = scrubForCloud(c.content);
-      c.metadata = stripReservedMetadata(c.metadata);
+    // B2 fix (fix round 1): a shallow `{...cmd}` copy shares nested objects
+    // (patch/replacement) BY REFERENCE with the caller's own command —
+    // scrubbing "the copy" then still mutates the caller's object, and using
+    // the ORIGINAL `cmd` (not the copy) for payloadHash/callMutateRpc/outbox
+    // sent the unscrubbed content over the wire for `create` (the copy was
+    // scrubbed but never referenced again). structuredClone() is a true deep
+    // clone (MutateCommand is plain JSON-shaped data — no Date/functions/etc,
+    // same assumption contract.ts's own canonicalJson() makes), and every
+    // downstream use below reads ONLY `cleanCmd`, never the caller's `cmd`.
+    const cleanCmd: MutateCommand = structuredClone(cmd);
+    if (cleanCmd.op === "create") {
+      cleanCmd.content = scrubForCloud(cleanCmd.content);
+      cleanCmd.metadata = stripReservedMetadata(cleanCmd.metadata);
       // contentHash is informational client-side only; the server recomputes
       // it itself from the (already scrubbed) content it receives — see
       // migrations/0002_shared_memory.sql ar2_mutate (NFC-normalized sha256,
       // matching contract.ts:contentHash exactly).
-      void contentHash(c.content);
-    } else if (cmd.op === "update" && cmd.patch.content !== undefined) {
-      cmd.patch.content = scrubForCloud(cmd.patch.content);
-      if (cmd.patch.metadata !== undefined) cmd.patch.metadata = stripReservedMetadata(cmd.patch.metadata);
-    } else if (cmd.op === "supersede") {
-      cmd.replacement.content = scrubForCloud(cmd.replacement.content);
-      cmd.replacement.metadata = stripReservedMetadata(cmd.replacement.metadata);
+      void contentHash(cleanCmd.content);
+    } else if (cleanCmd.op === "update" && cleanCmd.patch.content !== undefined) {
+      cleanCmd.patch.content = scrubForCloud(cleanCmd.patch.content);
+      if (cleanCmd.patch.metadata !== undefined) cleanCmd.patch.metadata = stripReservedMetadata(cleanCmd.patch.metadata);
+    } else if (cleanCmd.op === "supersede") {
+      cleanCmd.replacement.content = scrubForCloud(cleanCmd.replacement.content);
+      cleanCmd.replacement.metadata = stripReservedMetadata(cleanCmd.replacement.metadata);
     }
 
-    const hash = payloadHash(cmd, expectedRevision);
-    const proposal = cmd.op === "update" ? proposalId(this.opts.principal.principal_id, operationId) : null;
+    const hash = payloadHash(cleanCmd, expectedRevision);
+    const proposal = cleanCmd.op === "update" ? proposalId(this.opts.principal.principal_id, operationId) : null;
 
     try {
-      const receipt = await this.callMutateRpc(cmd, expectedRevision, operationId, hash, proposal);
+      const receipt = await this.callMutateRpc(cleanCmd, expectedRevision, operationId, hash, proposal);
       return receipt;
     } catch (e) {
       if (e instanceof NetworkError) {
-        const outboxRef = await this.outbox.enqueue(await this.buildOutboxEntry(cmd, expectedRevision, operationId, hash, proposal, false));
+        const outboxRef = await this.outbox.enqueue(await this.buildOutboxEntry(cleanCmd, expectedRevision, operationId, hash, proposal, false));
         return { status: "queued", operation_id: operationId, id: (cmd as { id: string }).id, outbox_ref: outboxRef };
       }
       if (e instanceof TimeoutError) {
         // Sent, ack lost: reconcile later via the idempotency key (safe replay).
-        await this.outbox.enqueue(await this.buildOutboxEntry(cmd, expectedRevision, operationId, hash, proposal, true));
+        await this.outbox.enqueue(await this.buildOutboxEntry(cleanCmd, expectedRevision, operationId, hash, proposal, true));
         return { status: "unknown", operation_id: operationId, id: (cmd as { id: string }).id, reason: "ack_lost" };
       }
       if (e instanceof PgError) {
@@ -378,12 +399,66 @@ export class CloudRepository implements MemoryRepository {
 
   async getOperation(operationId: string, _principal: Principal): Promise<OperationRecord | null> {
     // Principal is ignored — cloud always uses auth.uid() (contract.ts doc comment on this method).
-    const row = (await this.opts.executor.rpc("ar2_get_operation", { p_operation_id: operationId })) as RawRecord | null;
-    if (!row) return null;
-    return {
-      operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
-      receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
+    //
+    // Fix round 1 (frozen-suite G-outbox finding): a genuinely-queued
+    // (never-sent) operation must be reportable as "queued" WITHOUT
+    // throwing an uncaught NetworkError while offline — the old code always
+    // hit ar2_get_operation directly with no fallback. But the outbox is
+    // only a FALLBACK, never checked first: a queued/reconcile_only entry
+    // being present doesn't mean we're still offline (nothing here drains
+    // the outbox automatically, and the caller may have reconnected without
+    // yet draining) — the network, when reachable, always has the more
+    // current answer (e.g. reconciled via a separate drainOutbox() call, or
+    // simply because the original send actually landed). So: always try the
+    // network first; fall back to the outbox's own receipt shape only when
+    // the network genuinely fails.
+    const queuedEntry = this.outbox.list().find((e) => e.operation_id === operationId);
+    const fromOutbox = (): OperationRecord | null => {
+      if (!queuedEntry) return null;
+      const id = (queuedEntry.cmd as { id?: string })?.id ?? "";
+      const receipt: WriteReceipt = queuedEntry.reconcile_only
+        // ack_lost: the outbox doesn't know the true outcome — report the
+        // same "unknown/ack_lost" shape mutate() originally returned, not a
+        // false "queued" (the write may have already committed server-side).
+        ? { status: "unknown", operation_id: operationId, id, reason: "ack_lost" }
+        // genuinely queued (never sent): exactly the offline case.
+        : { status: "queued", operation_id: operationId, id, outbox_ref: "" };
+      return { operation_id: operationId, payload_hash: queuedEntry.payload_hash, receipt, created_at: queuedEntry.queued_at };
     };
+    try {
+      const row = (await this.opts.executor.rpc("ar2_get_operation", { p_operation_id: operationId })) as RawRecord | null;
+      if (row) {
+        return {
+          operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
+          receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
+        };
+      }
+      // Network reachable but no server-side row yet: the op is real but
+      // not (yet) reconciled with the server — nothing auto-drains the
+      // outbox in the background, so a caller polling getOperation() to
+      // observe eventual consistency (e.g. after clearing an offline fault)
+      // would otherwise wait forever. One-shot replay via the exact same
+      // idempotent RPC path mutate() itself would have used: safe (same
+      // operation_id + payload_hash — a real prior success just replays;
+      // this is the FIRST real send if it never actually reached the server).
+      if (queuedEntry) {
+        try {
+          const cmd = queuedEntry.cmd as MutateCommand;
+          const receipt = await this.callMutateRpc(cmd, queuedEntry.expected_revision, queuedEntry.operation_id, queuedEntry.payload_hash, queuedEntry.proposal_id ?? null);
+          if (receipt.status === "committed" || receipt.status === "conflict" || receipt.status === "rejected") {
+            this.outbox.remove(operationId);
+          }
+          return { operation_id: operationId, payload_hash: queuedEntry.payload_hash, receipt, created_at: queuedEntry.queued_at };
+        } catch {
+          // replay attempt itself failed (still offline after all, or a genuine error) — fall back to the stale local view.
+          return fromOutbox();
+        }
+      }
+      return null;
+    } catch (e) {
+      if (!isTransportError(e)) throw e;
+      return fromOutbox();
+    }
   }
 
   /** Drains the outbox, reusing the same RPC path mutate() would have used (idempotent replay). Not part of MemoryRepository — called by the runtime's background sync loop. */

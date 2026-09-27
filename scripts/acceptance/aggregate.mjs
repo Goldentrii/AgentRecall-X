@@ -27,11 +27,17 @@
  * result objects. A .jsonl file is one result object per non-empty line.
  * Each result object must match PLAN.md §12's required_result_fields.
  *
- * workers.json shape (this repo does not ship one yet -- see WP-V-report.md
- * "known gaps"): either `{ "implementer_ids": ["wp-p1", ...] }` or
- * `{ "workers": [{ "id": "wp-p1", "role": "implementer" }, ...] }`. Missing
- * file => structural violation (cannot verify verified_by independence), by
- * design -- this aggregator never silently downgrades that check.
+ * workers.json shape -- three accepted forms (identifiers compared case-insensitively):
+ *   1. `{ "implementer_ids": ["wp-p1", ...] }`
+ *   2. `{ "workers": [{ "id": "wp-p1", "role": "implementer", "branch": "wp-p1" }, ...] }`
+ *   3. The real shape shipped in this run's orchestration/workers.json:
+ *      `{ "implementers": { "WP-P1": { "branch": "wp-p1", ... }, ... }, "verifiers": {...} }`
+ *      -- ids are the object keys; each entry's "branch" field (if present) is ALSO treated as an
+ *      implementer identifier, since a verified_by field may plausibly carry either form.
+ * Missing file, unparseable file, unrecognized shape, or a recognized-but-empty implementer set are
+ * ALL structural violations (workers_manifest_missing / _unparseable / _unrecognized_shape), and ANY
+ * of them additionally raises a single loud, distinctly-coded `self_review_check_skipped` violation --
+ * this aggregator never lets the anti-self-review check fail silently/softly.
  */
 
 import fs from "node:fs";
@@ -114,6 +120,12 @@ if (catalog) {
   if (catalogIds.size === 0) violate("catalog_empty", "ACCEPTANCE.json has zero cases");
 }
 
+// Identifiers are compared case-insensitively (a `verified_by` field may plausibly carry either the
+// worker id "WP-P1" or its branch name "wp-p1"); normalize everything to lowercase at insertion time.
+function normId(s) {
+  return typeof s === "string" ? s.trim().toLowerCase() : s;
+}
+
 let implementerIds = new Set();
 if (!workersPath || !fs.existsSync(workersPath)) {
   violate(
@@ -124,17 +136,40 @@ if (!workersPath || !fs.existsSync(workersPath)) {
   try {
     const workersDoc = JSON.parse(fs.readFileSync(workersPath, "utf8"));
     if (Array.isArray(workersDoc.implementer_ids)) {
-      implementerIds = new Set(workersDoc.implementer_ids);
+      // Legacy flat-array shape.
+      for (const id of workersDoc.implementer_ids) implementerIds.add(normId(id));
     } else if (Array.isArray(workersDoc.workers)) {
-      implementerIds = new Set(
-        workersDoc.workers.filter((w) => w && (w.role === "implementer" || (Array.isArray(w.roles) && w.roles.includes("implementer")))).map((w) => w.id),
-      );
+      // Legacy {workers:[{id,role|roles}]} shape.
+      for (const w of workersDoc.workers) {
+        if (!w || !(w.role === "implementer" || (Array.isArray(w.roles) && w.roles.includes("implementer")))) continue;
+        if (w.id) implementerIds.add(normId(w.id));
+        if (w.branch) implementerIds.add(normId(w.branch));
+      }
+    } else if (workersDoc.implementers && typeof workersDoc.implementers === "object" && !Array.isArray(workersDoc.implementers)) {
+      // Real shape shipped in this run: {implementers: {<ID>: {..., branch}}, verifiers: {...}}.
+      for (const [id, meta] of Object.entries(workersDoc.implementers)) {
+        implementerIds.add(normId(id));
+        if (meta && typeof meta === "object" && typeof meta.branch === "string") implementerIds.add(normId(meta.branch));
+      }
     } else {
-      violate("workers_manifest_unrecognized_shape", `${workersPath} did not match {implementer_ids:[]} or {workers:[{id,role}]}`);
+      violate(
+        "workers_manifest_unrecognized_shape",
+        `${workersPath} did not match {implementer_ids:[]}, {workers:[{id,role}]}, or {implementers:{<id>:{...}}}`,
+      );
     }
   } catch (e) {
     violate("workers_manifest_unparseable", `${workersPath} failed to parse: ${e.message}`);
   }
+}
+
+// Distinct, loud signal (separate from whatever specific loading problem caused it above): if the
+// implementer set ends up empty for ANY reason, the entire verified_by-!=-implementer / anti-self-review
+// check is a silent no-op for this run. That must never be indistinguishable from "checked, and clean".
+if (implementerIds.size === 0) {
+  violate(
+    "self_review_check_skipped",
+    `implementer id set is EMPTY (from ${workersPath ?? "<no workers.json found>"}) -- the verified_by != implementer / anti-self-review check did not run for ANY result in this aggregation; treat all PASS verdicts below as unverified for self-review`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -239,14 +274,15 @@ for (const { id, result, file } of passResults) {
   }
 }
 
-// 5) verified_by != implementer
-if (workersPath && fs.existsSync(workersPath)) {
-  for (const { id, result, file } of passResults) {
-    if (typeof result.verified_by !== "string" || result.verified_by.length === 0) {
-      violate("pass_missing_verified_by", `${id}: status PASS but verified_by is empty`, { id, file });
-    } else if (implementerIds.has(result.verified_by)) {
-      violate("pass_verified_by_implementer", `${id}: verified_by "${result.verified_by}" is listed as an implementer (self-review)`, { id, file, verified_by: result.verified_by });
-    }
+// 5) verified_by != implementer (case-insensitive; see self_review_check_skipped above for the
+// "implementerIds is empty" case -- that violation already fired unconditionally, so `.has()` on an
+// empty set below simply never matches, which is correct: we don't want a second, redundant complaint
+// per PASS result on top of the one loud skip notice).
+for (const { id, result, file } of passResults) {
+  if (typeof result.verified_by !== "string" || result.verified_by.length === 0) {
+    violate("pass_missing_verified_by", `${id}: status PASS but verified_by is empty`, { id, file });
+  } else if (implementerIds.has(normId(result.verified_by))) {
+    violate("pass_verified_by_implementer", `${id}: verified_by "${result.verified_by}" is listed as an implementer (self-review)`, { id, file, verified_by: result.verified_by });
   }
 }
 
