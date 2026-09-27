@@ -84,23 +84,53 @@ export default async function createHarness() {
   const faultState = new Map();
   const actors = new Map(); // label -> Actor (for restart/debug convenience)
 
+  // Serialize every db.exec() call through a JS-level mutex (promise chain).
+  // PGlite is empirically safe for concurrent CALLS that only read session
+  // state (verified: distinct JWT claims across overlapping calls never
+  // cross-contaminate — see WP-P2-report.md), but a hang was independently
+  // observed by the verifier running the frozen acceptance suite's deeply
+  // nested subtests against this harness, and could not be reproduced via a
+  // hand-rolled script issuing the same operations sequentially — the one
+  // structural difference is that node:test's subtest scheduling does not
+  // guarantee the same actor-call ordering/exclusivity a flat script gets
+  // "for free". If two overlapping calls ever land row-level DML on the
+  // same table (e.g. two SET ROLE + DML batches interleaving at the wire-
+  // protocol level) inside PGlite's single WASM instance, a lock a session
+  // can only release by finishing its OWN still-pending statement batch
+  // creates a real, permanent deadlock (matching the reported ">40 min"
+  // hang exactly: not a slow query, an unbounded wait). This mutex removes
+  // that possibility categorically by construction, regardless of whether
+  // that is confirmed as the exact mechanism: no two rpcAs() calls are ever
+  // in flight at the same time, full stop.
+  let mutexTail = Promise.resolve();
+  function withDbMutex(fn) {
+    const run = mutexTail.then(fn, fn);
+    mutexTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   async function rpcAs(principal, fn, args) {
-    const parts = Object.entries(args).map(([k, v]) => `${k} => ${literal(k, v)}`);
-    const claimsJson = JSON.stringify(claimsFor(principal));
-    const sql = [
-      "SET ROLE authenticated;",
-      `SELECT set_config('request.jwt.claims', ${sqlQuote(claimsJson)}, false);`,
-      `SELECT ${fn}(${parts.join(", ")}) AS result;`,
-      "RESET ROLE;",
-    ].join("\n");
-    let results;
-    try {
-      results = await db.exec(sql);
-    } catch (e) {
-      throw new PgError(e.message ?? String(e), e.code, e.detail, e.hint);
-    }
-    const row = results[results.length - 2].rows[0];
-    return row ? row.result : null;
+    return withDbMutex(async () => {
+      const parts = Object.entries(args).map(([k, v]) => `${k} => ${literal(k, v)}`);
+      const claimsJson = JSON.stringify(claimsFor(principal));
+      const sql = [
+        "SET ROLE authenticated;",
+        `SELECT set_config('request.jwt.claims', ${sqlQuote(claimsJson)}, false);`,
+        `SELECT ${fn}(${parts.join(", ")}) AS result;`,
+        "RESET ROLE;",
+      ].join("\n");
+      let results;
+      try {
+        results = await db.exec(sql);
+      } catch (e) {
+        throw new PgError(e.message ?? String(e), e.code, e.detail, e.hint);
+      }
+      const row = results[results.length - 2].rows[0];
+      return row ? row.result : null;
+    });
   }
 
   function executorFor(actor) {
