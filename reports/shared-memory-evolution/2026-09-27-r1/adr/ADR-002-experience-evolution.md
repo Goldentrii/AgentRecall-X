@@ -103,7 +103,7 @@ owner via owner-trusted admin op. A principal holding `learner` in a workspace c
 
 ## R10 Substance checks (B2)
 `attachValidation` driver checks, in addition to `reportPasses()`: (a) recompute `independentSources(candidate.source_event_ids)`
-and reject on mismatch; (b) `held_in.sha256`/`held_out.sha256` present in the verifier-owned registry; (c)
+and reject unless report.independent_sources == summary.distinct_lineage_roots; (b) `held_in.sha256`/`held_out.sha256` present in the verifier-owned registry; (c)
 `proof_artifact_sha256` (hash of the raw run log for this report) present in the registry's evidence index — the evidence
 index is writable only by the verification owner's principal; (d) verifier principal ≠ candidate author and holds `verifier`
 role and no `learner` role in that workspace; (e) the learner receives only pass/fail, not per-field counts.
@@ -117,10 +117,14 @@ Anything below → owner approval.
 Lease/fencing state lives inside the same store and backup boundary as the repository (local: `<root>/repo/leases/`;
 cloud: `ar2_leases` in the same schema). Every worker mutation records its `fencing_token` in its event. After any restore,
 the per-scope high-water mark = max(lease table, max fencing_token found in events); the first acquire after restore returns
-high-water + 1. PLAN §11.2 drill added: "restore repository from backup while a worker holds a lease → stale worker's
-next mutation rejected:stale_lease".
+high-water + 1. PROPOSED (not yet in PLAN.md — the plan is owner-controlled; listed as an owner decision in FINAL-REPORT)
+addition to PLAN §11.2 drills: "restore repository from backup while a worker holds a lease → stale worker's next
+mutation rejected:stale_lease". The run executes this drill under A41 regardless.
 
 ## R13 Non-blocking adopted
 - Held-out sets are burned per owner (globally), not per lineage; max 3 validation attempts per lineage, then owner review.
 - `ResumeCheckpoint` type added (scope, last processed source cursor, lease, run_id).
 - Mid-flight sessions: rollback guarantees the next fresh read only (same as ADR-001 §4.4); documented.
+
+
+Freeze: ADR-002 rev2 + evolution-contract.ts at the commit carrying this line are FROZEN for P5 (closure review: reviews/ADR-002-closure.md).
