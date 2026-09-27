@@ -771,6 +771,7 @@ export class LocalRepository implements MemoryRepository {
 
       const { event: e1, receipt: r1 } = this.buildEventAndReceipt(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id, true, appliedOriginal.authority, appliedOriginal.status);
       this.commitRecord(appliedOriginal, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
+      if (process.env.AR_FAILPOINT === "between_records") process.exit(137);
       const innerOpId = newUuid();
       const { event: e2, receipt: r2 } = this.buildEventAndReceipt(target.id, innerOpId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id, true, supersededProposal.authority, "superseded");
       this.commitRecord(supersededProposal, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
@@ -809,6 +810,7 @@ export class LocalRepository implements MemoryRepository {
     };
     const { event: e1, receipt: r1 } = this.buildEventAndReceipt(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id, true, superseded.authority, "superseded");
     this.commitRecord(superseded, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
+    if (process.env.AR_FAILPOINT === "between_records") process.exit(137);
     const innerOpId = newUuid();
     const { event: e2, receipt: r2 } = this.buildEventAndReceipt(replacementRecord.id, innerOpId, "supersede", null, 1, ctx.principal.principal_id, true, replacementRecord.authority, "active");
     this.commitRecord(replacementRecord, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
