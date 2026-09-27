@@ -608,7 +608,12 @@ GRANT EXECUTE ON FUNCTION ar2_feed_lag_seconds() TO authenticated;
 CREATE OR REPLACE FUNCTION ar2_get(p_owner_id uuid, p_id uuid) RETURNS jsonb
   LANGUAGE sql STABLE
 AS $$
-  SELECT to_jsonb(r) FROM ar2_records r WHERE r.owner_id = p_owner_id AND r.id = p_id;
+  -- R2.11 applies to EVERY read path: an invalid derived record is withheld
+  -- (id-level reads report the withholding without leaking content).
+  SELECT CASE WHEN ar2_derived_valid(r.owner_id, r.derived_closure, r.dependency_release)
+              THEN to_jsonb(r)
+              ELSE jsonb_build_object('_ar_withheld', true) END
+  FROM ar2_records r WHERE r.owner_id = p_owner_id AND r.id = p_id;
 $$;
 REVOKE ALL ON FUNCTION ar2_get(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION ar2_get(uuid, uuid) TO authenticated;
@@ -1065,11 +1070,8 @@ BEGIN
     -- storing an over-cap array (ar2_derived_valid also enforces this at
     -- read time as a backstop, but a write-time reject is clearer for the
     -- caller than a silently-withheld record it thought it just created).
-    IF jsonb_array_length(COALESCE(p_cmd -> 'derived_from', '[]'::jsonb)) > 256 THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'derived_from exceeds MAX_DERIVED_CLOSURE (256)');
-      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
-      RETURN v_receipt;
-    END IF;
+    -- Orchestrator ruling (ADR R2.11 wins): over-cap derived_from is ACCEPTED and withheld on
+    -- every read by ar2_derived_valid; no write-time reject.
 
     -- B4 (fix round 1): an id collision on a row the caller cannot even
     -- READ must look identical to a nonexistent id (R2.3 existence
@@ -1280,11 +1282,6 @@ BEGIN
   ELSIF v_op = 'supersede' THEN
     IF NOT (v_owner_trusted AND v_can_approve) THEN
       v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'requires_owner_approval', 'message', 'supersede requires owner_trusted + can_approve');
-      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
-      RETURN v_receipt;
-    END IF;
-    IF jsonb_array_length(COALESCE(p_cmd -> 'replacement' -> 'derived_from', '[]'::jsonb)) > 256 THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'replacement derived_from exceeds MAX_DERIVED_CLOSURE (256)');
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
