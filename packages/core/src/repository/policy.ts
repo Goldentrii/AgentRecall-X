@@ -168,12 +168,21 @@ export function recomputeAuthority(
   return requested;
 }
 
-function statusForCreate(kind: MemoryKind, effectiveAuthority: Authority, isOwnerTrusted: boolean): RecordStatus {
-  if (effectiveAuthority === "explicit_user" || effectiveAuthority === "legacy") return "active";
-  if (kind === "constraint") return isOwnerTrusted ? "active" : "candidate";
-  // fact/decision/preference/experience/handoff via agent_inference: active,
-  // non-gating (rev2 R2.1 MCP row).
-  return "active";
+/**
+ * Review B2 fix (WP-P1-review.md #2): R2.1 row 2 is an OR of THREE triggers
+ * — kind=constraint, OR visibility in {workspace, owner_shared}, OR project
+ * mismatch — landing on ONE cell: "can_write -> status candidate;
+ * owner_trusted -> active", with NO kind-based carve-out. The previous
+ * version only gated `kind === "constraint"`; every other kind fell through
+ * to an unconditional "active" even when isRow2 (e.g. visibility="workspace")
+ * — silently bypassing the owner-review gate rev2 requires for that
+ * visibility class. `isRow2` (computed once by the caller from the same
+ * three triggers) is now the ONLY thing that decides row-1-vs-row-2 status;
+ * kind plays no special role here anymore.
+ */
+function statusForCreate(isRow2: boolean, isOwnerTrusted: boolean): RecordStatus {
+  if (!isRow2) return "active"; // row 1: can_write already checked by the caller; no candidate-gating.
+  return isOwnerTrusted ? "active" : "candidate";
 }
 
 // ---------------------------------------------------------------------------
@@ -224,16 +233,18 @@ export function authorize(input: AuthorizeInput): AuthorizeOutcome {
     if (!isRow2) {
       if (!perm.can_write) return { kind: "reject", reason: "forbidden", message: "create: can_write required" };
       const effectiveAuthority = recomputeAuthority(c.requestedAuthority, { channel: c.channel }, trusted);
-      return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(c.kind, effectiveAuthority, trusted) };
+      return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(isRow2, trusted) };
     }
-    // Row 2: constraint, or workspace/owner_shared visibility.
+    // Row 2: constraint, OR visibility in {workspace, owner_shared}, OR
+    // project mismatch (not implemented — see module doc-comment) — for
+    // EVERY kind, not just constraint (B2 fix).
     if (trusted) {
       const effectiveAuthority = recomputeAuthority(c.requestedAuthority, { channel: c.channel }, trusted);
-      return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(c.kind, effectiveAuthority, trusted) };
+      return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(isRow2, trusted) };
     }
     if (!perm.can_write) return { kind: "reject", reason: "forbidden", message: "create: can_write required" };
     const effectiveAuthority = recomputeAuthority(c.requestedAuthority, { channel: c.channel }, trusted);
-    return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(c.kind, effectiveAuthority, trusted) };
+    return { kind: "allow", effectiveAuthority, effectiveStatus: statusForCreate(isRow2, trusted) };
   }
 
   const target = input.target;
