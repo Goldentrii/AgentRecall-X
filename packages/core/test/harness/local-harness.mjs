@@ -28,7 +28,7 @@ const FAULT_TO_FAILPOINT = {
   crash_before_receipt: "before_receipt",
 };
 
-const MEMORY_REPOSITORY_READ_METHODS = ["get", "query", "readSnapshot", "history", "export", "latestHandoff", "readChanges", "getOperation"];
+const MEMORY_REPOSITORY_READ_METHODS = ["get", "query", "readSnapshot", "list", "history", "export", "latestHandoff", "readChanges", "getOperation", "recordOutcome"];
 
 export default async function createHarness() {
   const baseTmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-local-harness-"));

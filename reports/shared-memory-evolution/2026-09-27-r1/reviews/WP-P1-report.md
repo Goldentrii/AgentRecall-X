@@ -119,5 +119,85 @@ This was necessary because `packages/sdk` is a **separate npm workspace package*
 
 SUCCESS_WHEN checklist: Case B passes ✅ · isolation test ≥50 interleaved calls/instance passes (60 used) ✅ · LocalRepository compiles against contract.ts with no casts to `any` (verified: `grep -n "as any"` over `repository/{local/*,policy,runtime,context-store,singleton-key}.ts` → zero hits; one pre-existing `as any` in `tools-logic/recall-backend.ts` predates this work and is outside the files I own for edits) ✅ · no new baseline failures (fuzzy-matched, zero) ✅ · report written ✅.
 
+---
+
+## Fix round 1 (independent review NEEDS_FIXES, 5 blockers + non-blocking)
+
+Reviewed: `reports/shared-memory-evolution/2026-09-27-r1/reviews/WP-P1-review.md`. First merged `feat/shared-memory-evolution` twice (contract rev2.2 `__proto__` guard + frozen suite v2/v3, then again mid-round for evaluator v3's per-test timeouts/watchdog) — `git merge --no-edit feat/shared-memory-evolution`, both clean, no conflicts. `git config user.name/user.email` set locally (repo-scoped, not `--global`) since the merge commit needed an identity.
+
+### Method (per blocker): RED first, then fix
+
+For every blocker B1–B5 I wrote the reproduction test against the **pre-fix** code, ran it, captured the failing output, committed the RED test alone, then implemented the fix in a separate commit. For B2 and B3 (where the fix was already staged in my working tree before I could cleanly re-derive a pre-fix state) I used `git stash push -- <file>` to isolate just that file back to its pre-fix content, ran the test to confirm RED, then `git stash pop` to restore the fix and confirmed GREEN — same effect as a true pre-fix checkout, verified in the actual commit transcript below.
+
+| blocker | RED commit | RED result (captured) | fix commit | GREEN result |
+|---|---|---|---|---|
+| B1 path traversal | `80de036` | `get()` traversal case: `1 !== 0` (planted file's content returned) | `150e214` | `repo-local-path-traversal.test.mjs` 3/3 |
+| B2 policy.ts R2.1 row2 | `a9fe11e` | 20/22 pass, 2 REGRESSION cases: `expected 'candidate', got 'active'` (fact@workspace, decision@owner_shared) | `8a32180` | `repo-policy.test.mjs` 22/22 |
+| B3 lock liveness | `cce89b2` | slow-holder case: waited only 2056ms of a 4000ms hold (reclaimed mid-critical-section) | `f7d0ad4` | `repo-local-lock-race.test.mjs` 2/2 |
+| B4 two-record atomicity | `7cb45c3` | supersede retry after crash: `{status:"committed",replayed:true}` (stale receipt), replacement `0 !== 1` items | `65af8b5` | `repo-local-multi-record-atomicity.test.mjs` 2/2 |
+| B5 history() retracted leak | `77a7ae7` | owner's own retracted record: history() returned `content:"secret v1"` to the same owner `get()` told "doesn't exist" | `03ed8c1` | `repo-local-history-retracted.test.mjs` 1/1 (later refined — see below) |
+| non-blocking (access_epoch + 3 mutation-kills) | — (regression tests only, no pre-existing bug) | n/a | `509fa04` | `repo-local-nonblocking.test.mjs` 4/4 |
+
+Full raw failing-test output for each RED commit is in that commit's message (`git show <sha>`); representative excerpts are quoted in each fix commit's message too.
+
+### B1 — path traversal (CRITICAL)
+
+`get(id)`/`history(id)` now return not_found/empty for a non-UUID `id` before it ever reaches `recordPath()`/`historyDir()`. `getOperation()`/`recordOutcome()` gated too (their SHA256-hashed key derivation already absorbed traversal chars harmlessly, but R2.13's "ids only via isUuid()" is a stated invariant regardless of exploitability, per the review's explicit ask to check `latestHandoff`/`getOperation`/`recordOutcome` too — `latestHandoff`'s `taskKey` was checked and found to never reach a path at all, no fix needed there).
+
+### B2 — policy.ts row-2 gating (HIGH)
+
+`statusForCreate(kind, ...)` → `statusForCreate(isRow2, ...)`: the row-2 candidate-gate (R2.1: kind=constraint OR visibility∈{workspace,owner_shared} OR project-mismatch → `can_write`→candidate, `owner_trusted`→active) now applies to **every** kind, not just `constraint`. Added `packages/core/test/repo-policy.test.mjs`: one case per R2.1 row (11) and R2.2 row (5), direct unit tests against `policy.ts`'s pure functions (no I/O) — the exact "zero-test module" gap the review's compound lesson #2 named.
+
+### B3 — lock liveness (HIGH)
+
+Lock file now carries an owner token (`pid:nonce`). `reclaimIfStale()` only removes it if `process.kill(pid, 0)` proves the holder is dead (ESRCH), or the lock is ≥60s old regardless (failsafe for an orphaned/unparseable token). Release only unlinks if the file still holds this acquirer's own token — never a different (possibly newer) holder's lock. `LOCK_MAX_WAIT_MS` 8s→15s. Test spawns a **real child process** holding the lock 4s (must not be reclaimed) plus a **real 2-process** 100-round CAS race (single winner per round, no corruption) — the review's explicit "not just 2 promises" ask.
+
+### B4 — two-record atomicity (HIGH)
+
+`WalEntry.records` is now an array; `commitRecord()` is a 1-element wrapper around the new `commitRecords()`, which writes ONE WAL intent covering every record an operation touches, commits each in order (new `AR_FAILPOINT=between_records`, fires after the first of >1 records), and writes exactly ONE receipt only after ALL records are durably committed. `doSupersede`/`doConfirm`'s proposal-apply branch each build both events via a new `buildEvent()` (no receipt) and call `commitRecords()` once. Recovery replays every record in `entry.records`, matching per-record completion by `event_id` (unique per record-event, since every record in a multi-record op now correctly shares one `operation_id`). Tests cover both supersede and confirm-of-proposal crashing at the gap and recovering both sides.
+
+### B5 — history() (HIGH), refined twice
+
+First pass: excluded retracted revisions from `history()` entirely (matching `readAll()`'s "retracted never returned"). The frozen suite's own `G-retract` group ("history shows the retraction as a tombstone, not silently omitted") requires the **opposite** choice from the two the review offered — refined to: retracted revisions are always included (status/metadata/timestamps visible — the tombstone) with `content: ""` (A16's actual wording is "content not returned", not "the revision never appears"). Updated the B5 test to match.
+
+### Non-blocking items
+
+`access_epoch` now bumps for the owner + every live grantee of the record's workspace on a visibility change (not on content-only updates). Added direct regression tests for the review's 3 named surviving mutations (`policy.ts` `verified_observation`/worker-channel, `doException`'s `target_revision`, `isClosureValid`'s partial-`source_revisions` exemption) — none needed a code fix, each already implemented the contract correctly; the tests close the "no test exercises this" gap.
+
+### Frozen suite v2/v3 compatibility (beyond the 5 named blockers)
+
+Running the actual `scripts/acceptance/contract-suite.mjs` against `local-harness.mjs` (not just my own unit tests) surfaced real bugs the review's own reproduction scripts didn't reach:
+
+1. **R2.3 existence-hiding was gated by `canRead()`, too strict.** `G-existence`'s own "write-only" case (can_write grant, can_read=false) expects a real CAS comparison (`status:"conflict"`), not `not_found`. Added `policy.ts`'s `hasAnyStanding()` (author/owner/any grant with can_read OR can_write on the record's scope) as the mutation-side existence gate; `canRead()` stays the separate, narrower gate for `ConflictReceipt.current`.
+2. **`__proto__` in metadata crashed the whole commit.** `mutateLocked()` called `payloadHash()` (which throws on a literal `__proto__` key anywhere in the payload, per rev2.2) before stripping reserved metadata. New `stripCmdReservedMetadata()` sanitizes create/update/supersede metadata before hashing; `mutate()` also gained a defense-in-depth catch mapping any `ContractValidationError` to `rejected:schema`.
+3. **`readableStatusSet()` hid "superseded" from a plain owner read.** The suite requires a plain `owner.read()` to see a just-superseded record's status; only "quarantined" still requires management+`include_non_active` scope now (retracted is unaffected, still never returned via any path).
+4. **`local-harness.mjs` never forwarded `list()`/`recordOutcome()`** — `TypeError: repo.list is not a function` broke `G-visibility` and `G-cursor` outright. Added both to the forwarded-methods list.
+5. **`derived_closure` silently truncated at 256 with no overflow record.** `G-derived`'s 257-source case requires the record be withheld entirely once created (create still succeeds). `computeClosure()` now returns `{refs, overflowed}`; overflow sets a server-set `_ar_closure_overflow` metadata flag (no contract.ts field exists for this — reused the existing reserved-metadata-key mechanism) that `isClosureValid()` checks unconditionally.
+6. **Recovery minted a receipt for a `before_receipt`-shaped crash.** `G-durability`'s 1000-write `crash_before_receipt` run failed with 10 violations: "reported committed after restart despite no client-visible receipt." Per the suite, a crash strictly at the "record+event already durable, only receipt missing" gap must **never** retroactively resolve to committed via `getOperation()` — the client never saw a receipt, so it stays unresolved forever, even though the record's real effects are visible via `get()`/`history()` like any other commit. `recoverWal()` now checks, per WAL entry, whether every record+event was **already** fully durable before the recovery pass touched anything; if so it cleans up the WAL without writing a receipt. Only a genuinely incomplete entry (after_wal: nothing written yet; or a B4 partial multi-record op) gets completed-and-receipted. Updated my own `repo-local-wal-recovery.test.mjs`'s `before_receipt` case to assert `getOperation() === null` instead of a committed receipt.
+
+### Diagnosed: the reported ">10 min hang in G-authz"
+
+Reproduced with a **minimal, driver-free** `node:test` file (zero imports beyond `node:test`/`node:assert`) using the exact 3-level nesting shape `contract-suite.mjs` uses at that point (`test() → t.test() → t.test()`): it hangs indefinitely on Node v24.11.1 with **no involvement of my code at all** — confirmed by removing every import and still reproducing it, and by confirming (via `console.error` markers) that the actual test-body logic completes in milliseconds while Node's own subtest-scheduling bookkeeping never lets the framework report it as done. This is a Node.js `node:test` runtime defect in deeply-nested subtest scheduling, not a `LocalRepository`/harness bug. Evaluator v3's per-test timeout already contains it to a single ~60s timeout + 1 reported FAIL (matching the coordinator's own description exactly) rather than a true hang. Not fixable from my side without editing `scripts/acceptance/**` (forbidden) or the suite's test-nesting shape (not mine to restructure) — flagging for WP-V/orchestrator awareness. Confirmed via a **filtered** frozen-suite run (`--test-name-pattern`) that every other subtest in that same group passes; the group-level 240s ceiling and per-subtest 60s ceiling both correctly self-recover.
+
+### Verification (final, this round)
+
+| command | exit | notes |
+|---|---|---|
+| `npm run build` (4 packages) | 0 | |
+| `npm run lint` (`tsc --noEmit` x4) | 0 | |
+| `npm test -w packages/core` (temp HOME/USERPROFILE/AGENT_RECALL_ROOT) | 1 (expected) | 1915 total / ~1884 pass / ~31 fail — fuzzy-matched by name against baseline's 46 named failures across two separate fresh-tmp-dir runs: **zero new failure names** both times. One run showed 2 apparently-new names (`sync-errors-root.test.mjs`'s two setRoot()-path cases) that did NOT reproduce on rerun with fresh temp dirs — traced to `node --test`'s parallel per-file child processes racing on the ONE shared fake-HOME temp dir this verification step itself sets up (pre-existing test-suite characteristic: several already-baseline-flaky `sync-errors.log`-touching tests live in that same shared-HOME hazard zone; confirmed by a DIFFERENT already-known-baseline pair replacing them on rerun, and by the SAME file passing cleanly in isolation with the identical env). Not a P1 regression. |
+| `npm test -w packages/sdk` | 0 | 40/40 (unchanged) |
+| `npm test -w packages/mcp-server` | 1 (expected) | 79/76/3 (matches baseline exactly) |
+| `npm test -w packages/cli` | 1 (expected) | 293/291/2 (matches baseline exactly) |
+| `AGENT_RECALL_STRICT_CONTEXT=1 AR_HARNESS=<abs local-harness.mjs> node --test scripts/acceptance/contract-suite.mjs` | 1 (expected) | **59/61 pass.** The only failure is the diagnosed Node.js nesting-defect timeout above (+ its 1 cascaded "cancelled" nested subtest). Every G-group is green: G-validate, G-cas, G-idem, G-visibility, G-existence, G-retract, G-derived, G-handoff, G-cursor, G-durability (both crash kinds, 1000 writes each). N/A groups (G-outbox, G-ackloss) correctly report not-applicable for local mode's capabilities. |
+
+### Baseline failure names that disappeared, one-line cause each
+
+None of this fix round's changes closed any additional baseline-failing names beyond the 5 already reported in the original WP-P1 report (the decay-class/KPI cluster, cause unknown/incidental, not re-investigated this round). No NEW baseline names disappeared or appeared as a result of fix-round changes specifically — the two runs' small count deltas (46 vs 48 raw matched names across two fresh-tmp-dir attempts) are fully attributable to the shared-HOME test-file race described above, not to any code change in this round.
+
+### Files changed this round
+
+`packages/core/src/repository/local/local-repository.ts`, `lock.ts`; `packages/core/src/repository/policy.ts`; `packages/core/test/harness/local-harness.mjs`; new: `repo-local-path-traversal.test.mjs`, `repo-policy.test.mjs`, `repo-local-lock-race.test.mjs`, `repo-local-multi-record-atomicity.test.mjs`, `repo-local-nonblocking.test.mjs`, `fixtures/{lock-slow-holder-child,cas-race-child,multi-record-crash-child}.mjs`; edited: `repo-local-history-retracted.test.mjs`, `repo-local-wal-recovery.test.mjs`. 13 commits this round (5 RED + 5 fix + 1 non-blocking + 3 suite-compatibility), no forbidden files touched by any of them (re-verified: filtered `git log --name-only` to only my own `sme-p1`-tagged commits against the ASSERT_INVARIANT list — clean; the two `feat/shared-memory-evolution` merges legitimately bring in WP-V's own commits touching `contract.ts`/`scripts/acceptance/**`, which I did not author or edit).
+
 SOP_ID: WP-P1
 FEEDBACK_HINTS: outcome=success challenge_fired=false

@@ -32,10 +32,10 @@ import type {
   RevisionRef, ExportResult, Authority, ConstraintException, RejectReason,
 } from "../contract.js";
 import {
-  validateCommand, sanitizeSlug, payloadHash, contentHash as sha256Content,
+  validateCommand, isUuid, sanitizeSlug, payloadHash, contentHash as sha256Content,
   ContractValidationError, proposalId, stripReservedMetadata, MAX_DERIVED_CLOSURE,
 } from "../contract.js";
-import { authorize, canRead, ownerTrusted, effectivePermissions, type LocalGrant, isOwnerPrincipal } from "../policy.js";
+import { authorize, canRead, hasAnyStanding, ownerTrusted, effectivePermissions, type LocalGrant, isOwnerPrincipal } from "../policy.js";
 import { runWithRoot } from "../context-store.js";
 import { projectSubPath } from "../../storage/paths.js";
 import { withRepoLock } from "./lock.js";
@@ -58,11 +58,25 @@ function outcomeKey(ownerId: string, memoryId: string, memoryRevision: number, s
 
 type CommittedReceipt = Extract<WriteReceipt, { status: "committed" }>;
 
+interface WalRecordEntry {
+  record: MemoryRecord;
+  event: ChangeEvent;
+}
+
 interface WalEntry {
   operation_id: string;
   principal_id: string;
-  record_after: MemoryRecord;
-  event: ChangeEvent;
+  /**
+   * B4 fix (WP-P1-review.md #4): ALL record_afters a single logical
+   * operation touches, in ONE WAL entry — supersede/confirm-of-proposal
+   * write two records (the superseded/applied original + the replacement/
+   * proposal-turned-superseded); every other op writes exactly one. Only
+   * one receipt is ever written for the whole entry, and only after every
+   * record in this array is durably committed — R2.5's "commit (record +
+   * event + operation in one transaction)" now literally holds for
+   * multi-record ops too, not just single-record ones.
+   */
+  records: WalRecordEntry[];
   receipt: CommittedReceipt;
 }
 
@@ -145,6 +159,15 @@ export class LocalRepository implements MemoryRepository {
     const m = this.loadAccessEpochs();
     for (const id of principalIds) m[id] = (m[id] ?? 0) + 1;
     this.saveAccessEpochs(m);
+  }
+
+  /** Owner + every principal with a live grant on this workspace (R2.10's "all active grantees + the owner"). */
+  private workspaceGranteeIds(workspaceId: string): Set<string> {
+    const ids = new Set<string>([this.ownerId]);
+    for (const g of this.loadGrants()) {
+      if (g.workspace_id === workspaceId && !g.revoked_at) ids.add(g.grantee_principal_id);
+    }
+    return ids;
   }
 
   private accessEpochFor(principalId: string): number {
@@ -263,35 +286,52 @@ export class LocalRepository implements MemoryRepository {
   // -------------------------------------------------------------------------
 
   /**
-   * Full commit: WAL intent (fsync) -> record tmp+rename -> markdown view ->
-   * append event (fsync) -> op receipt [+ hash] (fsync) -> delete WAL. Caller
-   * MUST already hold the repo lock (every public entry point above acquires
-   * it before reaching here).
+   * Full commit: WAL intent covering EVERY record this operation touches
+   * (fsync) -> for each record in order: history+record tmp+rename ->
+   * markdown view -> append event (fsync) [-> AR_FAILPOINT=between_records
+   * after the FIRST of >1 records, before the rest] -> once ALL records are
+   * durably written, op receipt [+ hash] (fsync) -> delete WAL. Caller MUST
+   * already hold the repo lock (every public entry point above acquires it
+   * before reaching here). Single-record callers just pass a 1-element array.
    */
+  private commitRecords(
+    records: WalRecordEntry[],
+    receipt: CommittedReceipt,
+    opts: { hash?: string; actorPrincipalId: string },
+  ): void {
+    this.ensureFormat();
+    const actorPrincipalId = opts.actorPrincipalId;
+    const operationId = receipt.operation_id;
+    const wal: WalEntry = { operation_id: operationId, principal_id: actorPrincipalId, records, receipt };
+    writeJsonAtomic(this.walPath(operationId), wal);
+
+    if (process.env.AR_FAILPOINT === "after_wal") process.exit(137);
+
+    for (let i = 0; i < records.length; i++) {
+      const { record, event } = records[i];
+      writeJsonAtomic(this.historyPath(record.id, record.revision), record);
+      writeJsonAtomic(this.recordPath(record.id), record);
+      this.writeMarkdownView(record);
+      appendJsonlSync(this.eventsPath(this.monthKeyOf(event.at)), event);
+      if (i === 0 && records.length > 1 && process.env.AR_FAILPOINT === "between_records") process.exit(137);
+    }
+
+    if (process.env.AR_FAILPOINT === "before_receipt") process.exit(137);
+
+    const key = opKey(actorPrincipalId, operationId);
+    writeJsonAtomic(this.opReceiptPath(key), receipt);
+    if (opts.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
+    removeFileIfExists(this.walPath(operationId));
+  }
+
+  /** Single-record convenience wrapper around commitRecords(). */
   private commitRecord(
     record: MemoryRecord,
     event: ChangeEvent,
     receipt: CommittedReceipt,
     opts: { hash?: string; actorPrincipalId: string },
   ): void {
-    this.ensureFormat();
-    const actorPrincipalId = opts.actorPrincipalId;
-    const wal: WalEntry = { operation_id: event.operation_id, principal_id: actorPrincipalId, record_after: record, event, receipt };
-    writeJsonAtomic(this.walPath(event.operation_id), wal);
-
-    if (process.env.AR_FAILPOINT === "after_wal") process.exit(137);
-
-    writeJsonAtomic(this.historyPath(record.id, record.revision), record);
-    writeJsonAtomic(this.recordPath(record.id), record);
-    this.writeMarkdownView(record);
-    appendJsonlSync(this.eventsPath(this.monthKeyOf(event.at)), event);
-
-    if (process.env.AR_FAILPOINT === "before_receipt") process.exit(137);
-
-    const key = opKey(actorPrincipalId, event.operation_id);
-    writeJsonAtomic(this.opReceiptPath(key), receipt);
-    if (opts.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
-    removeFileIfExists(this.walPath(event.operation_id));
+    this.commitRecords([{ record, event }], receipt, opts);
   }
 
   /** Recovery on open: replay every WAL entry idempotently (rev1 §5). */
@@ -314,17 +354,52 @@ export class LocalRepository implements MemoryRepository {
           removeFileIfExists(path.join(walDir, file));
           continue;
         }
-        // Was the event already appended (crash_before_receipt: record+event
-        // written, only the receipt is missing)? Check by operation_id so we
-        // never double-append (jsonl append is not otherwise idempotent).
-        const monthPath = this.eventsPath(this.monthKeyOf(entry.event.at));
-        const events = readJsonlTornTolerant<ChangeEvent>(monthPath);
-        const eventAlreadyAppended = events.some((e) => e.operation_id === entry.operation_id);
+        // Was EVERY record+event already durable before this recovery pass
+        // touched anything? If so, the crash happened strictly at the
+        // "before_receipt" gap (rev1 §5: record -> event -> RECEIPT) —
+        // everything the operation actually DID is already durable and
+        // visible via get()/history() like any other commit; only the
+        // receipt bookkeeping is missing. Per the frozen acceptance suite's
+        // G-durability group, recovery must NOT retroactively mint a receipt
+        // the client never saw for this shape — getOperation() keeps
+        // reporting this operation_id as unresolved forever. Only when
+        // something is GENUINELY incomplete (after_wal: nothing written yet;
+        // or a partial multi-record op, B4: some but not all records landed)
+        // does recovery complete the remaining work AND mint the receipt —
+        // that's the only shape where "replay every WAL entry idempotently"
+        // (rev1 §5) means finishing an in-flight write, not resurrecting an
+        // already-finished one's bookkeeping.
+        const alreadyFullyLanded = entry.records.every(({ record, event }) => {
+          const onDisk = readJsonIfExists<MemoryRecord>(this.recordPath(record.id));
+          if (!onDisk || onDisk.revision !== record.revision) return false;
+          const events = readJsonlTornTolerant<ChangeEvent>(this.eventsPath(this.monthKeyOf(event.at)));
+          return events.some((e) => e.event_id === event.event_id);
+        });
+        if (alreadyFullyLanded) {
+          removeFileIfExists(path.join(walDir, file));
+          continue;
+        }
 
-        writeJsonAtomic(this.historyPath(entry.record_after.id, entry.record_after.revision), entry.record_after);
-        writeJsonAtomic(this.recordPath(entry.record_after.id), entry.record_after);
-        this.writeMarkdownView(entry.record_after);
-        if (!eventAlreadyAppended) appendJsonlSync(monthPath, entry.event);
+        // Complete EVERY record this operation touches before writing the
+        // one receipt — this is what makes a multi-record op (supersede,
+        // confirm-of-proposal) atomic across a crash (B4 fix): a crash
+        // between record 1 and record 2 leaves the WAL entry (with BOTH
+        // record_afters already known) on disk, and recovery finishes both,
+        // never just the first.
+        for (const { record, event } of entry.records) {
+          const monthPath = this.eventsPath(this.monthKeyOf(event.at));
+          // Was this SPECIFIC record's event already appended (crash after
+          // it landed, before the rest)? Matched by event_id (unique per
+          // record-event), not operation_id (which every record in a
+          // multi-record op now shares).
+          const events = readJsonlTornTolerant<ChangeEvent>(monthPath);
+          const eventAlreadyAppended = events.some((e) => e.event_id === event.event_id);
+
+          writeJsonAtomic(this.historyPath(record.id, record.revision), record);
+          writeJsonAtomic(this.recordPath(record.id), record);
+          this.writeMarkdownView(record);
+          if (!eventAlreadyAppended) appendJsonlSync(monthPath, event);
+        }
         writeJsonAtomic(receiptPath, entry.receipt);
         removeFileIfExists(path.join(walDir, file));
       }
@@ -341,16 +416,27 @@ export class LocalRepository implements MemoryRepository {
    * retracted content is never returned (A16).
    */
   private readableStatusSet(ctx: ReadContext, grants: LocalGrant[]): Set<MemoryRecord["status"]> {
+    // "superseded" is ordinary lineage information (frozen suite: a plain
+    // owner get() must see a just-superseded record's status), unlike
+    // "quarantined" (a moderation action) and "retracted" (A16: never
+    // returned via ANY read path, regardless of scope — never added here).
+    const base: MemoryRecord["status"][] = ["active", "candidate", "superseded"];
     if (ctx.include_non_active && ctx.channel === "management") {
       const isOwner = isOwnerPrincipal(ctx.principal, this.ownerId);
       const canApprove = isOwner || (ctx.workspace_id !== undefined
         && effectivePermissions(ctx.principal, this.ownerId, ctx.workspace_id, ctx.project_id ?? null, grants).can_approve);
-      if (canApprove) return new Set(["active", "candidate", "superseded", "quarantined"]);
+      if (canApprove) return new Set([...base, "quarantined"]);
     }
-    return new Set(["active", "candidate"]);
+    return new Set(base);
   }
 
   private isClosureValid(record: MemoryRecord, ctx: ReadContext, grants: LocalGrant[]): boolean {
+    // R2.11: "cap 256; overflow -> withheld" — a closure that had to be
+    // truncated at create/supersede time can never be fully re-verified
+    // (some transitive sources are simply not tracked), so it is
+    // unconditionally withheld rather than shown as if the visible 256
+    // were the whole truth.
+    if (record.metadata?._ar_closure_overflow === true) return false;
     if (record.derived_closure.length === 0) return true;
     const released = new Set((record.dependency_release?.source_revisions ?? []).map((r) => `${r.id}@${r.revision}`));
     for (const ref of record.derived_closure) {
@@ -418,6 +504,9 @@ export class LocalRepository implements MemoryRepository {
 
   async get(id: string, ctx: ReadContext): Promise<ReadResult<MemoryRecord>> {
     this.assertOpen();
+    // R2.13 / review B1: a bare id must never reach recordPath()/path.join()
+    // unvalidated (indistinguishable from not_found, same as existence-hiding).
+    if (!isUuid(id)) return this.baseReadResult<MemoryRecord>([], 0, ctx.principal.principal_id);
     const grants = this.loadGrants();
     let record = this.loadRecord(id);
     if (record) record = this.checkExternalEdit(record);
@@ -471,7 +560,16 @@ export class LocalRepository implements MemoryRepository {
 
   async history(id: string, ctx: ReadContext): Promise<MemoryRecord[]> {
     this.assertOpen();
+    if (!isUuid(id)) return [];
     const grants = this.loadGrants();
+    // B5 fix (WP-P1-review.md #5), refined per the frozen suite's G-retract
+    // group ("history shows the retraction as a tombstone, not silently
+    // omitted"): history() applies the SAME status scoping readAll() applies
+    // for every OTHER status (superseded/quarantined/etc, per
+    // readableStatusSet), but "retracted" is handled specially — always
+    // included (the tombstone: status/metadata/timestamps), never with its
+    // CONTENT (A16 — content redacted, not the whole revision omitted).
+    const statusSet = this.readableStatusSet(ctx, grants);
     const dir = this.historyDir(id);
     const revs = listFilesSafe(dir)
       .filter((f) => f.endsWith(".json"))
@@ -481,7 +579,12 @@ export class LocalRepository implements MemoryRepository {
     const out: MemoryRecord[] = [];
     for (const rev of revs) {
       const record = readJsonIfExists<MemoryRecord>(this.historyPath(id, rev));
-      if (record && canRead(record, ctx, this.ownerId, grants)) out.push(record);
+      if (!record || !canRead(record, ctx, this.ownerId, grants)) continue;
+      if (record.status === "retracted") {
+        out.push({ ...record, content: "" });
+        continue;
+      }
+      if (statusSet.has(record.status)) out.push(record);
     }
     return out;
   }
@@ -540,6 +643,10 @@ export class LocalRepository implements MemoryRepository {
 
   async getOperation(operationId: string, principal: Principal): Promise<OperationRecord | null> {
     this.assertOpen();
+    // R2.13: opKey() SHA256-hashes this before any path.join (already immune
+    // to traversal), but ids are validated explicitly regardless — no path
+    // is ever built from unvalidated caller input, hashed or not.
+    if (!isUuid(operationId)) return null;
     const key = opKey(principal.principal_id, operationId);
     const receipt = readJsonIfExists<WriteReceipt>(this.opReceiptPath(key));
     if (!receipt) return null;
@@ -561,7 +668,20 @@ export class LocalRepository implements MemoryRepository {
       }
       throw err;
     }
-    return withRepoLock(this.root, () => this.mutateLocked(cmd, expectedRevision, operationId, ctx));
+    try {
+      return withRepoLock(this.root, () => this.mutateLocked(stripCmdReservedMetadata(cmd), expectedRevision, operationId, ctx));
+    } catch (err) {
+      // canonicalJson (contract.ts, rev2.2) throws on a literal __proto__ key
+      // ANYWHERE in the payload — stripCmdReservedMetadata above removes it
+      // from metadata before payloadHash() ever sees it, but this is a
+      // defense-in-depth catch-all: a validation-shaped throw from anywhere
+      // in the commit path must surface as rejected:schema, never as an
+      // uncaught rejection (contract R2.13's own driver invariant).
+      if (err instanceof ContractValidationError) {
+        return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "schema", message: err.message };
+      }
+      throw err;
+    }
   }
 
   private mutateLocked(cmd: MutateCommand, expectedRevision: number | null, operationId: string, ctx: WriteContext): WriteReceipt {
@@ -585,16 +705,22 @@ export class LocalRepository implements MemoryRepository {
     }
 
     const target = this.loadRecord(cmd.id);
-    if (!target || !canRead(target, ctx, this.ownerId, grants)) {
+    // R2.3 existence-hiding (mutation side, frozen suite G-existence): gated
+    // by hasAnyStanding (author/owner/any grant), NOT canRead() — a
+    // can_write-only grant (no can_read) must still reach a real CAS/
+    // authorize decision, not be existence-hidden. canRead() is a SEPARATE,
+    // narrower gate used below only for ConflictReceipt.current.
+    if (!target || !hasAnyStanding(target, ctx, this.ownerId, grants)) {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "not_found", message: "no such record" };
     }
     if (target.status === "retracted" && cmd.op !== "confirm") {
       return { status: "rejected", operation_id: operationId, id: cmd.id, reason: "retracted", message: "record is retracted" };
     }
     if (target.revision !== expectedRevision) {
+      const canSeeCurrent = canRead(target, ctx, this.ownerId, grants);
       return {
         status: "conflict", operation_id: operationId, id: cmd.id, expected_revision: expectedRevision as number,
-        current: { revision: target.revision, status: target.status, updated_at: target.updated_at },
+        current: canSeeCurrent ? { revision: target.revision, status: target.status, updated_at: target.updated_at } : null,
       };
     }
 
@@ -619,20 +745,35 @@ export class LocalRepository implements MemoryRepository {
     };
   }
 
+  /** One ChangeEvent (allocates its own seq/cursor) — no receipt. Used directly by multi-record ops. */
+  private buildEvent(
+    id: string, operationId: string, op: ChangeEvent["op"], oldRevision: number | null, newRevision: number,
+    actorPrincipalId: string,
+  ): ChangeEvent {
+    const seq = this.nextSeq();
+    return {
+      event_id: newUuid(), cursor: String(seq), record_id: id, operation_id: operationId, op,
+      old_revision: oldRevision, new_revision: newRevision, actor_principal_id: actorPrincipalId, at: new Date().toISOString(),
+    };
+  }
+
+  private buildReceipt(
+    operationId: string, id: string, revision: number, cursor: string,
+    effective: boolean, effectiveAuthority: Authority, effectiveStatus: MemoryRecord["status"],
+  ): CommittedReceipt {
+    return {
+      status: "committed", operation_id: operationId, id, revision, commit_cursor: cursor,
+      replayed: false, effective, effective_authority: effectiveAuthority, effective_status: effectiveStatus,
+    };
+  }
+
+  /** Single-record convenience: one event + its own receipt, same cursor. */
   private buildEventAndReceipt(
     id: string, operationId: string, op: ChangeEvent["op"], oldRevision: number | null, newRevision: number,
     actorPrincipalId: string, effective: boolean, effectiveAuthority: Authority, effectiveStatus: MemoryRecord["status"],
   ): { event: ChangeEvent; receipt: CommittedReceipt } {
-    const now = new Date().toISOString();
-    const seq = this.nextSeq();
-    const event: ChangeEvent = {
-      event_id: newUuid(), cursor: String(seq), record_id: id, operation_id: operationId, op,
-      old_revision: oldRevision, new_revision: newRevision, actor_principal_id: actorPrincipalId, at: now,
-    };
-    const receipt: CommittedReceipt = {
-      status: "committed", operation_id: operationId, id, revision: newRevision, commit_cursor: String(seq),
-      replayed: false, effective, effective_authority: effectiveAuthority, effective_status: effectiveStatus,
-    };
+    const event = this.buildEvent(id, operationId, op, oldRevision, newRevision, actorPrincipalId);
+    const receipt = this.buildReceipt(operationId, id, newRevision, event.cursor, effective, effectiveAuthority, effectiveStatus);
     return { event, receipt };
   }
 
@@ -650,14 +791,16 @@ export class LocalRepository implements MemoryRepository {
     if (this.loadRecord(cmd.id)) return this.rejectFrom(operationId, cmd.id, "schema", "id already exists");
 
     const now = new Date().toISOString();
+    const closure = computeClosure(cmd.derived_from ?? [], (id) => this.loadRecord(id));
     const record: MemoryRecord = {
       id: cmd.id, owner_id: this.ownerId, workspace_id: cmd.workspace_id, project_id: cmd.project_id,
       kind: cmd.kind, visibility: cmd.visibility, applicability: cmd.applicability ?? {}, content: cmd.content,
-      content_hash: sha256Content(cmd.content), metadata: stripReservedMetadata(cmd.metadata),
+      content_hash: sha256Content(cmd.content),
+      metadata: closure.overflowed ? { ...stripReservedMetadata(cmd.metadata), _ar_closure_overflow: true } : stripReservedMetadata(cmd.metadata),
       authority: outcome.effectiveAuthority, status: outcome.effectiveStatus, revision: 1,
       source: { principal_id: ctx.principal.principal_id, session_id: ctx.session_id, captured_at: now, channel: ctx.channel },
       evidence_refs: cmd.evidence_refs ?? [], derived_from: cmd.derived_from ?? [],
-      derived_closure: computeClosure(cmd.derived_from ?? [], (id) => this.loadRecord(id)),
+      derived_closure: closure.refs,
       dependency_release: null, exceptions: [], proposal_of: null,
       created_at: now, updated_at: now, expires_at: cmd.expires_at ?? null,
     };
@@ -712,6 +855,12 @@ export class LocalRepository implements MemoryRepository {
     }, "update", now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "update", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
     this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
+    // R2.10 (non-blocking review item): bump access_epoch for the owner plus
+    // every grantee of this record's workspace on a visibility change, so
+    // clients drop their cache and re-snapshot.
+    if (updated.visibility !== target.visibility) {
+      this.bumpAccessEpoch(this.workspaceGranteeIds(updated.workspace_id));
+    }
     return receipt;
   }
 
@@ -761,12 +910,21 @@ export class LocalRepository implements MemoryRepository {
       }, "update", now);
       const supersededProposal = this.nextRecordCommon(target, { status: "superseded" }, "update", now);
 
-      const { event: e1, receipt: r1 } = this.buildEventAndReceipt(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id, true, appliedOriginal.authority, appliedOriginal.status);
-      this.commitRecord(appliedOriginal, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
-      const innerOpId = newUuid();
-      const { event: e2, receipt: r2 } = this.buildEventAndReceipt(target.id, innerOpId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id, true, supersededProposal.authority, "superseded");
-      this.commitRecord(supersededProposal, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
-      return r1;
+      // B4 fix: BOTH record_afters go into ONE WAL entry + ONE receipt
+      // (keyed to the caller's real operationId, the only durable
+      // idempotency key for this whole two-record operation) — a crash
+      // between the two writes leaves the WAL entry with both already
+      // known, and recoverWal() finishes whichever one didn't land yet,
+      // rather than the caller's retry finding a stale "done" receipt while
+      // the proposal never actually got marked superseded.
+      const eOriginal = this.buildEvent(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id);
+      const eProposal = this.buildEvent(target.id, operationId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id);
+      const receipt = this.buildReceipt(operationId, original.id, appliedOriginal.revision, eProposal.cursor, true, appliedOriginal.authority, appliedOriginal.status);
+      this.commitRecords(
+        [{ record: appliedOriginal, event: eOriginal }, { record: supersededProposal, event: eProposal }],
+        receipt, { hash, actorPrincipalId: ctx.principal.principal_id },
+      );
+      return receipt;
     }
 
     const updated = this.nextRecordCommon(target, { status: "active", authority: "explicit_user" }, "confirm", now);
@@ -786,25 +944,31 @@ export class LocalRepository implements MemoryRepository {
 
     const now = new Date().toISOString();
     const superseded = this.nextRecordCommon(target, { status: "superseded" }, "supersede", now);
+    const replacementClosure = computeClosure(cmd.replacement.derived_from ?? [], (id) => this.loadRecord(id));
     const replacementRecord: MemoryRecord = {
       id: cmd.replacement.id, owner_id: this.ownerId, workspace_id: cmd.replacement.workspace_id,
       project_id: cmd.replacement.project_id, kind: cmd.replacement.kind, visibility: cmd.replacement.visibility,
       applicability: cmd.replacement.applicability ?? {}, content: cmd.replacement.content,
-      content_hash: sha256Content(cmd.replacement.content), metadata: stripReservedMetadata(cmd.replacement.metadata),
+      content_hash: sha256Content(cmd.replacement.content),
+      metadata: replacementClosure.overflowed ? { ...stripReservedMetadata(cmd.replacement.metadata), _ar_closure_overflow: true } : stripReservedMetadata(cmd.replacement.metadata),
       authority: target.authority, status: "active", revision: 1,
       source: { principal_id: ctx.principal.principal_id, session_id: ctx.session_id, captured_at: now, channel: ctx.channel },
       evidence_refs: cmd.replacement.evidence_refs ?? [], derived_from: cmd.replacement.derived_from ?? [],
-      derived_closure: computeClosure(cmd.replacement.derived_from ?? [], (id) => this.loadRecord(id)),
+      derived_closure: replacementClosure.refs,
       dependency_release: null, exceptions: [], proposal_of: null,
       created_at: now, updated_at: now, expires_at: cmd.replacement.expires_at ?? null,
       supersedes: { id: target.id, revision: target.revision },
     };
-    const { event: e1, receipt: r1 } = this.buildEventAndReceipt(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id, true, superseded.authority, "superseded");
-    this.commitRecord(superseded, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
-    const innerOpId = newUuid();
-    const { event: e2, receipt: r2 } = this.buildEventAndReceipt(replacementRecord.id, innerOpId, "supersede", null, 1, ctx.principal.principal_id, true, replacementRecord.authority, "active");
-    this.commitRecord(replacementRecord, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
-    return r1;
+    // B4 fix: one WAL entry + one receipt covering BOTH record_afters (see
+    // the identical reasoning in doConfirm's proposal-apply branch above).
+    const eSuperseded = this.buildEvent(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id);
+    const eReplacement = this.buildEvent(replacementRecord.id, operationId, "supersede", null, 1, ctx.principal.principal_id);
+    const receipt = this.buildReceipt(operationId, target.id, superseded.revision, eReplacement.cursor, true, superseded.authority, "superseded");
+    this.commitRecords(
+      [{ record: superseded, event: eSuperseded }, { record: replacementRecord, event: eReplacement }],
+      receipt, { hash, actorPrincipalId: ctx.principal.principal_id },
+    );
+    return receipt;
   }
 
   private doException(
@@ -853,6 +1017,11 @@ export class LocalRepository implements MemoryRepository {
 
   async recordOutcome(ev: OutcomeEvent, operationId: string, ctx: WriteContext): Promise<WriteReceipt> {
     this.assertOpen();
+    // R2.13: every id here (this.loadRecord(ev.memory.id) below) must be
+    // validated BEFORE any path.join use, not merely hashed incidentally.
+    if (!isUuid(operationId) || !isUuid(ev.memory.id) || !isUuid(ev.source_event_id)) {
+      return this.rejectFrom(operationId, ev.memory.id, "schema", "operation_id, memory.id and source_event_id must be UUIDs");
+    }
     return withRepoLock(this.root, () => {
       const found = this.findEventById(ev.source_event_id);
       if (!found) {
@@ -895,16 +1064,48 @@ export class LocalRepository implements MemoryRepository {
   }
 }
 
-function computeClosure(derivedFrom: RevisionRef[], load: (id: string) => MemoryRecord | null): RevisionRef[] {
-  if (derivedFrom.length === 0) return [];
+/**
+ * Strip reserved/dangerous metadata keys BEFORE payloadHash() ever sees the
+ * command — canonicalJson (contract.ts, rev2.2) throws ContractValidationError
+ * on a literal `__proto__` own-key ANYWHERE in the payload, so a legitimate
+ * create/update whose metadata happens to carry one (attacker-supplied or
+ * not) must be sanitized first, not merely rejected outright. Applied once
+ * here so the hash, the stored record, and every reject path all see the
+ * SAME (stripped) view.
+ */
+function stripCmdReservedMetadata(cmd: MutateCommand): MutateCommand {
+  if (cmd.op === "create" && cmd.metadata) {
+    return { ...cmd, metadata: stripReservedMetadata(cmd.metadata) };
+  }
+  if (cmd.op === "update" && cmd.patch?.metadata) {
+    return { ...cmd, patch: { ...cmd.patch, metadata: stripReservedMetadata(cmd.patch.metadata) } };
+  }
+  if (cmd.op === "supersede" && cmd.replacement?.metadata) {
+    return { ...cmd, replacement: { ...cmd.replacement, metadata: stripReservedMetadata(cmd.replacement.metadata) } };
+  }
+  return cmd;
+}
+
+/**
+ * R2.11: "flattened transitive RevisionRef[] (cap 256; overflow -> withheld)".
+ * `overflowed` is true iff there was at least one MORE unique transitive
+ * source beyond the 256th — the caller stores this as a server-set
+ * `_ar_closure_overflow` metadata flag so isClosureValid() can unconditionally
+ * withhold the record (a truncated closure can never be fully verified, so
+ * showing it truncated-but-"valid" would be silently wrong, not conservative).
+ */
+function computeClosure(derivedFrom: RevisionRef[], load: (id: string) => MemoryRecord | null): { refs: RevisionRef[]; overflowed: boolean } {
+  if (derivedFrom.length === 0) return { refs: [], overflowed: false };
   const seen = new Map<string, number>();
   const stack = [...derivedFrom];
-  while (stack.length > 0 && seen.size < MAX_DERIVED_CLOSURE) {
+  let overflowed = false;
+  while (stack.length > 0) {
     const ref = stack.pop()!;
     if (seen.has(ref.id)) continue;
+    if (seen.size >= MAX_DERIVED_CLOSURE) { overflowed = true; continue; }
     seen.set(ref.id, ref.revision);
     const source = load(ref.id);
     if (source) for (const nested of source.derived_from) stack.push(nested);
   }
-  return Array.from(seen.entries()).map(([id, revision]) => ({ id, revision })).slice(0, MAX_DERIVED_CLOSURE);
+  return { refs: Array.from(seen.entries()).map(([id, revision]) => ({ id, revision })), overflowed };
 }

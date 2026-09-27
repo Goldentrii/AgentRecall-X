@@ -1,0 +1,20 @@
+▶ G-validate
+  ✔ non-UUID record id -> rejected:schema (0.916ms)
+  ✔ non-UUID operation id -> rejected:schema (0.1198ms)
+  ✔ non-UUID workspace_id -> rejected:schema (0.1212ms)
+  ✔ update with expectedRevision null -> schema (7.1919ms)
+  ✖ path-traversal id ("../x") rejected before any effect is observable (2.4485ms)
+✖ G-validate (17.9383ms)
+✔ G-cas (225.5762ms)
+▶ G-idem
+  ✔ create replayed 10x same payload -> one change, replayed=true after first (4.9868ms)
+  ✔ update replayed 10x same payload -> one change (5.5799ms)
+  ✔ retract replayed 10x same payload -> one change (5.2301ms)
+  ✔ same operation id, different payload -> idempotency_mismatch (2.3884ms)
+  ✔ different principal reusing the same operation id is independent (4.5991ms)
+✔ G-idem (24.2379ms)
+▶ G-authz
+  ✖ positive control: agent create of a plain private fact is directly effective (1.8091ms)
+  ✔ agent cannot retract an explicit_user constraint (2.1259ms)
+  ✔ agent cannot quarantine an explicit_user constraint (1.8103ms)
+  ✔ agent 'narrowing' (updating applicability of) an explicit_user constraint yields a proposal, not a mutation (2.2144ms)

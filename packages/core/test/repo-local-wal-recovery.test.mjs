@@ -62,12 +62,24 @@ describe("LocalRepository WAL crash recovery (R2.15 N5)", () => {
       const rt2 = runtimeMod.createMemoryRuntime({ root, mode: "local" }, principal());
       const receipt = rt2.run(() => rt2.repository.getOperation(operationId, principal()));
       return receipt.then(async (op) => {
-        assert.ok(op, "operation receipt should exist after recovery");
-        assert.equal(op.receipt.status, "committed");
-        assert.equal(op.receipt.id, id);
+        if (failpoint === "after_wal") {
+          // Nothing was durable yet when the crash hit — recovery is
+          // completing genuinely in-flight work, so it mints the receipt too.
+          assert.ok(op, "operation receipt should exist after recovery (after_wal: nothing was durable pre-crash)");
+          assert.equal(op.receipt.status, "committed");
+          assert.equal(op.receipt.id, id);
+        } else {
+          // before_receipt: the record+event were ALREADY fully durable when
+          // the crash hit — only the receipt bookkeeping was missing. Per
+          // the frozen acceptance suite's G-durability group, recovery must
+          // NOT retroactively mint a receipt the client never saw —
+          // getOperation() keeps reporting this operation_id as unresolved
+          // forever, even though the record's effects are real (below).
+          assert.equal(op, null, "before_receipt: getOperation() must never resolve to committed for an operation_id the client never saw a receipt for");
+        }
 
         const read = await rt2.run(() => rt2.repository.get(id, { principal: principal(), channel: "sdk" }));
-        assert.equal(read.items.length, 1, "the record itself should be readable after recovery");
+        assert.equal(read.items.length, 1, "the record itself should be readable after recovery regardless of receipt state");
         assert.equal(read.items[0].content, childArgs.content);
         assert.equal(read.items[0].revision, 1);
 
