@@ -1119,7 +1119,8 @@ BEGIN
       status = CASE WHEN v_op = 'retract' THEN 'retracted' ELSE 'quarantined' END,
       revision = v_new_revision, updated_at = now(),
       retracted_at = CASE WHEN v_op = 'retract' THEN now() ELSE retracted_at END,
-      retraction_reason = COALESCE(p_cmd ->> 'reason', retraction_reason)
+      retraction_reason = COALESCE(p_cmd ->> 'reason', retraction_reason),
+      exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
     WHERE owner_id = v_owner AND id = v_id;
 
   ELSIF v_op = 'confirm' THEN
@@ -1151,9 +1152,10 @@ BEGIN
         END IF;
         UPDATE ar2_records SET
           content = v_target.content, content_hash = v_target.content_hash,
-          applicability = v_target.applicability, revision = v_ref.revision + 1, updated_at = now()
+          applicability = v_target.applicability, revision = v_ref.revision + 1, updated_at = now(),
+          exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
         WHERE owner_id = v_owner AND id = v_ref_id;
-        UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now()
+        UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
         WHERE owner_id = v_owner AND id = v_id;
 
         INSERT INTO ar2_record_revisions (owner_id, id, revision, snapshot)
@@ -1162,7 +1164,7 @@ BEGIN
           VALUES (v_owner, v_target.workspace_id, v_ref_id, p_operation_id, 'confirm', v_ref_rev, v_ref.revision + 1, v_caller);
       END;
     ELSE
-      UPDATE ar2_records SET status = 'active', authority = 'explicit_user', revision = v_new_revision, updated_at = now()
+      UPDATE ar2_records SET status = 'active', authority = 'explicit_user', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
       WHERE owner_id = v_owner AND id = v_id;
     END IF;
 
@@ -1192,7 +1194,8 @@ BEGIN
         'approved_by', v_caller, 'approved_at', now(),
         'redaction_report_ref', p_cmd ->> 'redaction_report_ref', 'source_revisions', v_target.derived_closure
       ),
-      revision = v_new_revision, updated_at = now()
+      revision = v_new_revision, updated_at = now(),
+      exceptions = '[]'::jsonb -- B5/rev2.1 D3: clear on every non-exception revision
     WHERE owner_id = v_owner AND id = v_id;
 
   ELSIF v_op = 'supersede' THEN
@@ -1222,7 +1225,7 @@ BEGIN
       NULLIF(p_cmd -> 'replacement' ->> 'expires_at', '')::timestamptz,
       jsonb_build_object('id', v_id, 'revision', v_target.revision)
     );
-    UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now()
+    UPDATE ar2_records SET status = 'superseded', revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb
     WHERE owner_id = v_owner AND id = v_id;
 
     INSERT INTO ar2_record_revisions (owner_id, id, revision, snapshot)
@@ -1248,7 +1251,7 @@ BEGIN
           visibility = COALESCE(p_cmd -> 'patch' ->> 'visibility', visibility),
           evidence_refs = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_cmd -> 'patch' -> 'evidence_refs') x), evidence_refs),
           expires_at = COALESCE(NULLIF(p_cmd -> 'patch' ->> 'expires_at', '')::timestamptz, expires_at),
-          revision = v_new_revision, updated_at = now()
+          revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb -- B5/rev2.1 D3
         WHERE owner_id = v_owner AND id = v_id;
       ELSE
         -- rev2.1 D2: store as a proposal revision, target unchanged
@@ -1285,7 +1288,7 @@ BEGIN
         metadata = CASE WHEN p_cmd -> 'patch' ? 'metadata' THEN ar2_strip_reserved_metadata(p_cmd -> 'patch' -> 'metadata') ELSE metadata END,
         evidence_refs = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_cmd -> 'patch' -> 'evidence_refs') x), evidence_refs),
         expires_at = COALESCE(NULLIF(p_cmd -> 'patch' ->> 'expires_at', '')::timestamptz, expires_at),
-        revision = v_new_revision, updated_at = now()
+        revision = v_new_revision, updated_at = now(), exceptions = '[]'::jsonb -- B5/rev2.1 D3
       WHERE owner_id = v_owner AND id = v_id;
     ELSE
       v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'update requires can_write and (author or owner)');
