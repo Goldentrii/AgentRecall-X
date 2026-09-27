@@ -43,10 +43,39 @@ export interface ValidationReport {
     hard_safety_failures: number;
   };
   independent_sources: number;
+  /** sha256 of the raw run log backing this report; must be in the verifier-owned evidence index (rev2 R10). */
+  proof_artifact_sha256: string;
   scope_leak: boolean;
   secret_leak: boolean;
   created_at: string;
 }
+
+export type EvolutionRole = "learner" | "verifier";
+
+/** Owner-issued role grant (rev2 R9). learner and verifier are mutually exclusive per workspace. */
+export interface RoleGrant {
+  principal_id: string;
+  workspace_id: string;
+  role: EvolutionRole;
+  issued_by: string;
+  issued_at: string;
+  revoked_at?: string | null;
+}
+
+/** Additional floor for AUTO-activation only (rev2 R11); not a statistical guarantee. */
+export interface AutoActivationFloor {
+  distinct_lineage_roots: number;
+  distinct_authoring_principals: number;
+  distinct_task_ids: number;
+}
+
+export const AUTO_ACTIVATION_FLOOR: AutoActivationFloor = {
+  distinct_lineage_roots: 3,
+  distinct_authoring_principals: 2,
+  distinct_task_ids: 3,
+};
+
+export const MAX_VALIDATION_ATTEMPTS_PER_LINEAGE = 3;
 
 export interface EvolutionThresholds {
   held_in_min: 10;
@@ -104,7 +133,22 @@ export interface ProposeExperience {
   workspace_id: string;
   project_id: string | null;
   source_event_ids: string[];
+  task_ids: string[];
   derived_from: RevisionRef[];
+}
+
+export interface ResumeCheckpoint {
+  run_id: string;
+  scope: string;
+  last_source_cursor: string | null;
+  lease: Lease | null;
+  updated_at: string;
+}
+
+export interface IndependenceSummary {
+  distinct_lineage_roots: number;
+  distinct_authoring_principals: number;
+  distinct_task_ids: number;
 }
 
 export interface RunReport {
@@ -131,6 +175,9 @@ export interface ExperienceRepository {
   activate(candidate: RevisionRef, operationId: string, ctx: WriteContext): Promise<WriteReceipt>;
   rollback(lineageId: string, toVersion: number, operationId: string, ctx: WriteContext): Promise<WriteReceipt>;
   lineage(lineageId: string, ctx: ReadContext): Promise<Array<{ ref: RevisionRef; meta: EvolutionMeta }>>;
-  /** Distinct lineage roots among the given source events (A35 independence). */
-  independentSources(sourceEventIds: string[], principal: Principal): Promise<number>;
+  /** Recomputed by the driver from real events; attachValidation rejects on mismatch with the report (rev2 R10). */
+  independentSources(sourceEventIds: string[], principal: Principal): Promise<IndependenceSummary>;
+  grantRole(g: Omit<RoleGrant, "issued_by" | "issued_at">, operationId: string, ctx: WriteContext): Promise<WriteReceipt>;
+  saveCheckpoint(c: ResumeCheckpoint, ctx: WriteContext): Promise<void>;
+  loadCheckpoint(runId: string, ctx: ReadContext): Promise<ResumeCheckpoint | null>;
 }

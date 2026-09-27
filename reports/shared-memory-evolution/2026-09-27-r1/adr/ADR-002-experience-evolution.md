@@ -1,12 +1,13 @@
 # ADR-002 — Experience evolution, outcome ledger, leases (P5 freeze candidate)
 
 Status: PROPOSED. Author: orchestrator. Depends on ADR-001 rev2.2 (frozen). Normative TS: `packages/core/src/repository/evolution-contract.ts`.
-Scope: PLAN §6 (6.1–6.4), cases A09 (outcome part), A22 (worker egress), A28, A29, A34–A37. It does NOT claim uplift (A42–A45).
+Scope: PLAN §6 (6.1–6.4), cases A09 (outcome part), A22 (worker egress), A28, A34–A37. A29 (correction authority + legacy p0 migration) is governed by ADR-001 R2.7/R2.8, not here. It does NOT claim uplift (A42–A45).
 
 ## 1. Two paths, never mixed
 - **User-control path**: explicit_user constraints/preferences (ADR-001). The evolution machinery can READ them, never
-  change their authority, status, applicability, expiry or rank. Decay/retier/activation code paths filter
-  `authority ∈ {explicit_user, legacy}` out of every mutation they perform (A28).
+  change their authority, status, applicability, expiry or rank. This is a REQUIREMENT on P5 work (rev2 §R8), not a
+  description of current code: at db6338a the legacy modules operate only on the corrections.ts model and have no
+  authority concept at all.
 - **Learning path**: `kind=experience` records only, with lifecycle below. A learned experience never becomes a
   constraint; promoting a lesson into a constraint is an owner `create kind=constraint` with owner trust.
 
@@ -77,3 +78,49 @@ outcomes audit, implicit miner, association, activation, retier stay; changes:
 ## 9. Not claimed
 Mechanism acceptance (A34–A37) proves the loop is correct and safe. It does not prove agents improve; that is A42–A45
 under PLAN §10, which requires owner-approved budget and an independent task set.
+
+---
+
+# ADR-002 rev 2 — closes reviews/ADR-002-review.md (NEEDS_FIXES, 6 blockers)
+
+## R8 A28 porting requirement (B3)
+In local/cloud mode (ADR-001 R2.7) the legacy corrections ledger is no longer written; the legacy modules are ported, with
+one authority guard per write call site, owned by the P5 worker:
+| module | legacy mode (unchanged, baseline) | local/cloud mode (P5) |
+|---|---|---|
+| implicit-harvest | writes p1 corrections | `ExperienceRepository.propose()` only; never creates constraints |
+| retier --write | persists tier (tier never gates, R2.6) | read-only report over repo records; ANY write attempt on kind=constraint → refused |
+| activation / association | flag-gated rerank | rerank only non-constraint records; all applicable constraints are injected before ranking and never cut (R2.6/N8) |
+| session-end promoteConfirmedInsights | promotes insights | `propose()` experience candidate |
+| decay passes | as baseline | skip records with authority ∈ {explicit_user, legacy} |
+Exit criterion = A28 test that runs each module in repo mode against explicit_user and legacy constraints (90/180 days, no
+evidence, over budget, repeated contrary summaries) and asserts identical revision/status/applicability afterwards.
+
+## R9 Roles (B1)
+`EvolutionRole = "learner" | "verifier"` stored in a role grant (evolution-contract.ts `RoleGrant`). Issued/revoked only by the
+owner via owner-trusted admin op. A principal holding `learner` in a workspace cannot hold `verifier` in the same workspace
+(driver rejects issuance). Learners never receive `can_approve`.
+
+## R10 Substance checks (B2)
+`attachValidation` driver checks, in addition to `reportPasses()`: (a) recompute `independentSources(candidate.source_event_ids)`
+and reject on mismatch; (b) `held_in.sha256`/`held_out.sha256` present in the verifier-owned registry; (c)
+`proof_artifact_sha256` (hash of the raw run log for this report) present in the registry's evidence index — the evidence
+index is writable only by the verification owner's principal; (d) verifier principal ≠ candidate author and holds `verifier`
+role and no `learner` role in that workspace; (e) the learner receives only pass/fail, not per-field counts.
+
+## R11 Independence floor (B6)
+For AUTO-activation the ≥3 distinct lineage roots must additionally span ≥2 distinct authoring principals and ≥3 distinct
+task_ids. PLAN §6.3 caveat applies verbatim: three sources is a conservative engineering gate, not statistical proof.
+Anything below → owner approval.
+
+## R12 Leases and restore (B5)
+Lease/fencing state lives inside the same store and backup boundary as the repository (local: `<root>/repo/leases/`;
+cloud: `ar2_leases` in the same schema). Every worker mutation records its `fencing_token` in its event. After any restore,
+the per-scope high-water mark = max(lease table, max fencing_token found in events); the first acquire after restore returns
+high-water + 1. PLAN §11.2 drill added: "restore repository from backup while a worker holds a lease → stale worker's
+next mutation rejected:stale_lease".
+
+## R13 Non-blocking adopted
+- Held-out sets are burned per owner (globally), not per lineage; max 3 validation attempts per lineage, then owner review.
+- `ResumeCheckpoint` type added (scope, last processed source cursor, lease, run_id).
+- Mid-flight sessions: rollback guarantees the next fresh read only (same as ADR-001 §4.4); documented.
