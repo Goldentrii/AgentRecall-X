@@ -12,7 +12,7 @@ export { NoRuntimeContextError };
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.4.51";
+export const VERSION = "3.5.0-beta.0";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)
