@@ -1,0 +1,7 @@
+{"label":"dirty","step":"install","cmd":"npm ci --no-audit --no-fund","exit_code":0,"secs":37,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"build","cmd":"npm run build","exit_code":0,"secs":7,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"lint","cmd":"npm run lint","exit_code":0,"secs":3,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"test-core","cmd":"npm test -w packages/core","exit_code":1,"secs":71,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"test-mcp-server","cmd":"npm test -w packages/mcp-server","exit_code":1,"secs":20,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"test-sdk","cmd":"npm test -w packages/sdk","exit_code":0,"secs":2,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}
+{"label":"dirty","step":"test-cli","cmd":"npm test -w packages/cli","exit_code":1,"secs":60,"head":"db6338a5d60a36ea9c38a58e1d22e8037d75f095"}

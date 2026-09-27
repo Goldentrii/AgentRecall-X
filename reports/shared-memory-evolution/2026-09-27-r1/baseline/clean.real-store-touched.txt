@@ -1,0 +1,3 @@
+/c/Users/tong/.agent-recall/projects/cli/palace/sops/7f39f9e3.md
+/c/Users/tong/.agent-recall/projects/cli/palace/sops/8101cf42.md
+/c/Users/tong/.agent-recall/projects/cli/palace/sops/a874e987.md

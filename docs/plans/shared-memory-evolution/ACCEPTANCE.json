@@ -1,0 +1,1039 @@
+{
+  "schema_version": "1.0",
+  "plan_version": "1.0",
+  "date": "2026-09-26",
+  "purpose": "执行契约，不是运行结果。所有用例初始NOT_RUN。",
+  "plan": "PLAN.md",
+  "handoff": "HANDOFF.md",
+  "baseline_commit": "db6338a5d60a36ea9c38a58e1d22e8037d75f095",
+  "statuses": [
+    "PASS",
+    "FAIL",
+    "BLOCKED",
+    "NOT_RUN"
+  ],
+  "result_rules": {
+    "unknown_or_insufficient_evidence": "NOT_RUN or BLOCKED, never PASS; report INCONCLUSIVE in metrics/reason",
+    "required_skips_allowed": false,
+    "pass_requires_independent_evidence": true,
+    "metric_definitions": "PLAN.md sections 9 and 10; frozen before implementation/final experiment",
+    "security_zero_failures": "Test-scoped claim, not proof of absolute security",
+    "exceptions": "No required test waiver without owner-approved new plan version. Unrelated baseline failures must remain visible."
+  },
+  "verdict_rules": {
+    "ENGINEERING_ACCEPTED": "all engineering_required cases PASS",
+    "EVOLUTION_VALIDATED": "ENGINEERING_ACCEPTED and all evolution_required cases PASS",
+    "READY_FOR_OWNER_RELEASE": "ENGINEERING_ACCEPTED and all release_required cases PASS; publish permission remains separate",
+    "FULL_VISION_COMPLETE": "ENGINEERING_ACCEPTED and EVOLUTION_VALIDATED and READY_FOR_OWNER_RELEASE",
+    "PARTIAL_SUCCESS": "ENGINEERING_ACCEPTED but EVOLUTION_VALIDATED is false; cannot claim full vision complete"
+  },
+  "required_result_fields": [
+    "id",
+    "status",
+    "commit",
+    "evaluator_commit",
+    "environment",
+    "command",
+    "started_at",
+    "exit_code",
+    "metrics",
+    "evidence",
+    "verified_by",
+    "reason"
+  ],
+  "requirements": {
+    "R01": "跨session",
+    "R02": "跨设备",
+    "R03": "跨项目",
+    "R04": "跨agents",
+    "R05": "本地/云选择与隐私",
+    "R06": "一致性与持久性",
+    "R07": "权限隔离",
+    "R08": "信任与显式约束",
+    "R09": "可验证进化",
+    "R10": "运营与复现",
+    "R11": "诚实文档"
+  },
+  "cases": [
+    {
+      "id": "A01",
+      "title": "工程基线与跨平台构建",
+      "phases": [
+        "P0",
+        "P6"
+      ],
+      "requirements": [
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "独立clean reference及当前dirty tree；原生Windows与Ubuntu；固定Node与lockfile。",
+      "procedure": "分别安装、build、lint、完整测试；记录dirty差异、失败明细；修复后复跑required路径。",
+      "pass_standard": "两平台build/lint与全部本计划required测试0失败0跳过；完整套件非零失败须逐个保留可复现baseline exception，不能改写为全绿。",
+      "evidence": [
+        "baseline/results.json",
+        "tests/platform-matrix.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A02",
+      "title": "身份、权威与接口契约冻结",
+      "phases": [
+        "P0"
+      ],
+      "requirements": [
+        "R05",
+        "R06",
+        "R07",
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "核对基线源码与当前HEAD；两用户两workspace。",
+      "procedure": "提交身份/grants、authority、scope、Repository、回执、撤回和迁移ADR；独立review调用实例和威胁模型。",
+      "pass_standard": "所有关键读取/写入有身份和版本语义；没有客户端自报owner作为授权；接口有兼容策略；阻断意见全部关闭。",
+      "evidence": [
+        "adr/contracts.md",
+        "reviews/contracts-review.md"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P0"
+    },
+    {
+      "id": "A03",
+      "title": "本地跨session持久记忆",
+      "phases": [
+        "P1",
+        "P3"
+      ],
+      "requirements": [
+        "R01",
+        "R05"
+      ],
+      "gate": "engineering_required",
+      "setup": "空临时root，无云凭据，含中英文与项目决定。",
+      "procedure": "五工具保存/结束，退出进程，重新启动读取；手改Markdown后重新索引，加入手改与API并发场景。",
+      "pass_standard": "内容/来源/revision/scope正确；Markdown兼容；外部编辑产生external_edit版本，不自动变explicit_user；并发显式冲突，受信确认前不替代有效约束。",
+      "evidence": [
+        "tests/local-lifecycle.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A04",
+      "title": "SDK实例与云身份隔离",
+      "phases": [
+        "P1",
+        "P3",
+        "P6"
+      ],
+      "requirements": [
+        "R04",
+        "R06",
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "同一进程两local roots及两云principal；每实例至少50次调用。",
+      "procedure": "交错并发调用五工具、retier/辅助读取及失败分支，随机切换project。",
+      "pass_standard": "串root/owner内容0条；异常后不改变另一个实例；禁止依赖全局root swap保证并发。",
+      "evidence": [
+        "tests/instance-isolation.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A05",
+      "title": "无embedding的完整云运行",
+      "phases": [
+        "P2",
+        "P3"
+      ],
+      "requirements": [
+        "R02",
+        "R05"
+      ],
+      "gate": "engineering_required",
+      "setup": "真实隔离Supabase项目；普通用户认证；所有embedding配置为空。",
+      "procedure": "从空缓存执行五工具、ID读取、列表和中英混合查询。",
+      "pass_standard": "五工具完整读写成功；中文/英文标签夹具均可检出；没有隐藏embedding API调用或local文件依赖。",
+      "evidence": [
+        "tests/cloud-no-embedding.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A06",
+      "title": "跨项目共享与隔离",
+      "phases": [
+        "P2",
+        "P4"
+      ],
+      "requirements": [
+        "R03",
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "U的Alpha/Beta、W1/W2；项目私有记录、owner-shared偏好、候选泛化。",
+      "procedure": "分别启动各project并recall/check；尝试修改scope和自报global。",
+      "pass_standard": "授权偏好跨项目出现；Alpha私有内容不在Beta出现；跨workspace需明确grant；泛化需新记录+lineage+权限审核。",
+      "evidence": [
+        "security/scope-matrix.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A07",
+      "title": "跨用户泄露矩阵",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "U/V、允许/拒绝角色及至少1000次矩阵请求。",
+      "procedure": "测试ID猜测、count、搜索、导出、游标、批量、错误响应；同时验证合法请求正例。",
+      "pass_standard": "未授权正文、ID、计数、存在性错误泄露0；合法正例成功；不能只拒绝所有请求来通过。",
+      "evidence": [
+        "security/tenant-matrix.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A08",
+      "title": "committed持久性",
+      "phases": [
+        "P1",
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R06"
+      ],
+      "gate": "engineering_required",
+      "setup": "两个后端分别1000个确认committed写入；有故障注入。",
+      "procedure": "在ACK前后、写日志/主记录/事件等边界杀进程并重启，读取全部回执和数据。",
+      "pass_standard": "每个committed操作对应一个可恢复变更；确认提交的数据丢失0；未确认状态诚实标queued/unknown。",
+      "evidence": [
+        "tests/durability.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A09",
+      "title": "幂等与反重复奖励",
+      "phases": [
+        "P1",
+        "P2",
+        "P5"
+      ],
+      "requirements": [
+        "R06",
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "相同principal与operation_id；创建/更新/撤回/outcome均覆盖。",
+      "procedure": "每种操作同payload重放10次；同键不同payload再试；跨principal重用键。",
+      "pass_standard": "每个合法操作恰好一次业务变更和一次outcome效果；不同payload拒绝；回执稳定且不泄露他人操作。",
+      "evidence": [
+        "tests/idempotency.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A10",
+      "title": "并发CAS不静默覆盖",
+      "phases": [
+        "P1",
+        "P2"
+      ],
+      "requirements": [
+        "R06"
+      ],
+      "gate": "engineering_required",
+      "setup": "每后端100组并发双写，expectedRevision相同。",
+      "procedure": "并发更新/撤回同一记录，再重试使用最新revision的合法操作。",
+      "pass_standard": "每组恰好一个committed和一个conflict；revision递增、来源保留；没有silent last-write-wins。",
+      "evidence": [
+        "tests/cas-races.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P2"
+    },
+    {
+      "id": "A11",
+      "title": "离线outbox与重启",
+      "phases": [
+        "P1",
+        "P2"
+      ],
+      "requirements": [
+        "R06"
+      ],
+      "gate": "engineering_required",
+      "setup": "cloud模式断网；普通写、修改、撤回。",
+      "procedure": "排队后关闭进程；重启确认队列；恢复网络并重放；加入冲突和权限失败。",
+      "pass_standard": "queued已经持久落盘但不被称为已共享；恢复后各一次committed；冲突保留可诊断且不会无限重试。",
+      "evidence": [
+        "tests/outbox-recovery.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P2"
+    },
+    {
+      "id": "A12",
+      "title": "提交后ACK丢失",
+      "phases": [
+        "P2"
+      ],
+      "requirements": [
+        "R06"
+      ],
+      "gate": "engineering_required",
+      "setup": "故障代理在数据库提交后丢弃响应。",
+      "procedure": "客户端超时后查询operation_id并重试；混入服务端未提交超时场景。",
+      "pass_standard": "unknown与失败明确区分；提交情形恢复原回执、不重复写；未提交情形重试正确。",
+      "evidence": [
+        "tests/unknown-commit.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P2"
+    },
+    {
+      "id": "A13",
+      "title": "变化游标与分页",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R06",
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "并发长短事务、至少1000事件、断线、分页、权限变更。",
+      "procedure": "交错commit顺序，逐页追增量；断开并从cursor恢复；对比授权最终快照。",
+      "pass_standard": "已提交授权变更不漏；重复可去重；撤回可见；游标不泄露其他用户；不能依赖分配序号等于提交顺序。",
+      "evidence": [
+        "tests/change-cursor.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A14",
+      "title": "五工具契约一致",
+      "phases": [
+        "P3"
+      ],
+      "requirements": [
+        "R01",
+        "R02",
+        "R04"
+      ],
+      "gate": "engineering_required",
+      "setup": "相同夹具分别装入local和cloud；MCP/SDK/CLI受支持入口。",
+      "procedure": "执行同一lifecycle轨迹，对比类型、scope、来源、revision、回执与判定。",
+      "pass_standard": "除明确后端元数据外语义一致；check与session_start不从陈旧local权威读；工具总数及schema变化有兼容测试。",
+      "evidence": [
+        "tests/surface-parity.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A15",
+      "title": "完整云冷启动无隐藏本地依赖",
+      "phases": [
+        "P3"
+      ],
+      "requirements": [
+        "R02",
+        "R04"
+      ],
+      "gate": "engineering_required",
+      "setup": "H2空root，仅云连接；云含corrections、policy、awareness、insight、checkpoint。",
+      "procedure": "在H1写入上述类型，H2执行session_start/recall/check和session_end。",
+      "pass_standard": "所有受支持类型有真实生产路径读写；每一消费者读取正确权威；不能由测试直接插表冒充记忆工具接通。",
+      "evidence": [
+        "tests/cloud-cold-start.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A16",
+      "title": "撤回、权限收窄与派生失效",
+      "phases": [
+        "P2",
+        "P4"
+      ],
+      "requirements": [
+        "R06",
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "有效记录被summary/awareness/handoff/索引派生且H2缓存；派生ACL原本比源宽。",
+      "procedure": "分别撤回、收窄源visibility、撤销源grant但保持源active；对ID/关键词/向量/冷启动/check/summary/handoff新鲜读取，含离线恢复。",
+      "pass_standard": "撤回或失去源权限后无旧正文泄露；派生物须重验全部源当前权限/状态，否则不注入；解除依赖须独立脱敏+owner批准；离线标stale，旧写不复活tombstone。",
+      "evidence": [
+        "tests/retraction-graph.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A17",
+      "title": "新鲜度与动作边界",
+      "phases": [
+        "P2",
+        "P4"
+      ],
+      "requirements": [
+        "R06",
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "受控SDK动作adapter+仅MCP host；云新旧约束、断网。",
+      "procedure": "新鲜读取后执行mock publish；再在stale/unavailable下尝试；观察工具调用计数。",
+      "pass_standard": "受控adapter遇blocked或无法验证必要约束时动作次数0；普通MCP明确只提供判定，不谎称已拦截外部工具。",
+      "evidence": [
+        "tests/action-freshness.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A18",
+      "title": "授权撤销与过期token",
+      "phases": [
+        "P2",
+        "P4"
+      ],
+      "requirements": [
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "agent D有队列与缓存；owner撤销grant；token过期/刷新。",
+      "procedure": "断网积压后重连提交与检索；测试缓存/派生summary/handoff和新会话；合法刷新后测试正例。",
+      "pass_standard": "撤销后新云读写和积压补写拒绝；派生物重验源授权；旧缓存不当fresh或继续自动注入。不能远程擦除已下载副本须明确说明；token不入日志。",
+      "evidence": [
+        "security/revocation.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A19",
+      "title": "迁移完整性与重跑",
+      "phases": [
+        "P3"
+      ],
+      "requirements": [
+        "R06",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "旧本地和旧SQL夹具含重复、retracted、损坏、legacy p0、缺project与global。",
+      "procedure": "dry-run、备份恢复、apply、中断resume、再次apply、切换并写入新数据。",
+      "pass_standard": "100%记录对账或明确quarantine；无重复；保留revision/status/authority/lineage；隐私未opt-in内容不上传；新committed数据可回切。",
+      "evidence": [
+        "migration/reconcile.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A20",
+      "title": "用户管理与导出控制",
+      "phases": [
+        "P3",
+        "P4"
+      ],
+      "requirements": [
+        "R06",
+        "R07",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "普通owner、只读agent和受限agent。",
+      "procedure": "按文档查看/修改/确认/撤回/导出记忆；尝试越权与物理删除。",
+      "pass_standard": "授权动作可用；管理操作有回执和审计；导出无越权/秘密；撤回不等于物理删除，危险操作不隐式执行。",
+      "evidence": [
+        "tests/management.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A21",
+      "title": "handoff真实性",
+      "phases": [
+        "P4"
+      ],
+      "requirements": [
+        "R01",
+        "R04"
+      ],
+      "gate": "engineering_required",
+      "setup": "A的任务含已测、未测、阻塞、未提交代码；B无聊天历史。",
+      "procedure": "A保存checkpoint后退出；B恢复并更新；制造checkpoint冲突和A保存失败。",
+      "pass_standard": "B正确区分已验证与声称；待办不变完成；来源可追溯；权限不跨session继承；保存失败不假称可交接。",
+      "evidence": [
+        "tests/handoff.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P4"
+    },
+    {
+      "id": "A22",
+      "title": "local默认零网络",
+      "phases": [
+        "P1",
+        "P5",
+        "P6"
+      ],
+      "requirements": [
+        "R05"
+      ],
+      "gate": "engineering_required",
+      "setup": "干净local配置，隔离root；网络拦截器。",
+      "procedure": "运行安装后首用、五工具、索引与后台run-once；检查隐式embedding/遥测。",
+      "pass_standard": "运行期出站请求0；缺云配置不触发自动联网；明确opt-in能力另测，不混入默认结果。",
+      "evidence": [
+        "security/local-egress.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A23",
+      "title": "路径与本地文件兼容",
+      "phases": [
+        "P1",
+        "P6"
+      ],
+      "requirements": [
+        "R05",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "Windows/Ubuntu含中文、空格、不同盘符路径；符号链接与遍历攻击。",
+      "procedure": "执行lifecycle、迁移、原子写、重启恢复；尝试越root访问。",
+      "pass_standard": "不生成双盘符/%20错误路径；原Markdown可用；读写不逃逸授权root；不误改用户真实store。",
+      "evidence": [
+        "tests/path-portability.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A24",
+      "title": "不可信记忆与prompt注入",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "malicious content含伪系统指令、owner声明、执行命令和数据外发要求。",
+      "procedure": "通过remember/import/recall/handoff/学习候选输入，再尝试提升authority或触发外部动作。",
+      "pass_standard": "文本不变成可信指令/权限/用户批准；无外部副作用；候选无法绕过验证；记录可安全展示。",
+      "evidence": [
+        "security/memory-injection.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A25",
+      "title": "秘密与证据脱敏",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R05",
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "只使用canary tokens、私钥形状文本和private元数据。",
+      "procedure": "覆盖写入、同步、导出、错误日志、评测trace与orchestration反馈。",
+      "pass_standard": "禁止外传的canary出云/日志/提交证据0；被隔离项有数量与原因；不把真实密钥用于测试。",
+      "evidence": [
+        "security/secret-canaries.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A26",
+      "title": "RLS及所有数据库入口",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R07"
+      ],
+      "gate": "engineering_required",
+      "setup": "真实普通用户JWT与anon；service_role仅初始化。",
+      "procedure": "直接表CRUD、RPC、views、FTS、vector、批量、事件、导出；含SECURITY DEFINER审计。",
+      "pass_standard": "grants和RLS共同约束；每个入口有正/负例；绕过0；不以service_role跑权限验收。",
+      "evidence": [
+        "security/database-entrypoints.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A27",
+      "title": "agent grants与可信来源",
+      "phases": [
+        "P2",
+        "P6"
+      ],
+      "requirements": [
+        "R04",
+        "R07",
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "A/B/C/D不同读写批准权限；伪造agent_id/session/owner。",
+      "procedure": "分别保存、批准、扩大scope、读取和操作他人operation_id。",
+      "pass_standard": "来源绑定认证主体；伪造字段不提升权限；只读agent不能写；普通worker不能approve硬约束。",
+      "evidence": [
+        "security/agent-grants.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A28",
+      "title": "显式约束与跨记录冲突",
+      "phases": [
+        "P4",
+        "P5"
+      ],
+      "requirements": [
+        "R08",
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "explicit_user约束、90/180天、无新证据、超token预算；另有全局禁发布与项目允许发布。",
+      "procedure": "运行decay/retier/activation/rebuild；反复转述相反意见；检查两个有效约束冲突，以及owner签批的限定例外。",
+      "pass_standard": "原约束不被衰减/截断/新时间/更具体scope覆盖；冲突返回constraint_conflict，受控动作0执行；只有指向原revision的owner supersession/例外可改行为。",
+      "evidence": [
+        "tests/authority-invariants.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A29",
+      "title": "纠错确认与authority迁移",
+      "phases": [
+        "P4",
+        "P5"
+      ],
+      "requirements": [
+        "R08"
+      ],
+      "gate": "engineering_required",
+      "setup": "真实用户事件、agent自报human_correction、旧p0记录。",
+      "procedure": "走可信确认入口和不可信工具参数入口；迁移旧记录并审查生效路径。",
+      "pass_standard": "只有可信用户来源/owner确认能创建explicit_user；其他为candidate/legacy；记忆内容不自授权限。",
+      "evidence": [
+        "tests/correction-authority.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A30",
+      "title": "真实双设备双agent北极星演示",
+      "phases": [
+        "P4",
+        "P7"
+      ],
+      "requirements": [
+        "R01",
+        "R02",
+        "R03",
+        "R04"
+      ],
+      "gate": "engineering_required",
+      "setup": "H1/H2不同真实设备或隔离VM，无共享文件系统；至少两模型/agent配置。",
+      "procedure": "完整执行PLAN 0.3与9.4，普通用户连接真实隔离Supabase；保留工具trace和receipt。",
+      "pass_standard": "每步均通过；不同agent及新session正确继承，Beta/V不污染；没有mock替代真实cloud/host。",
+      "evidence": [
+        "hosts/north-star.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A31",
+      "title": "性能与上下文预算",
+      "phases": [
+        "P6"
+      ],
+      "requirements": [
+        "R06",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "PLAN 9.3冻结环境；10k记录；warmup20、正式每路径至少200次，单/10并发。",
+      "procedure": "测local/cloud write/recall/check/start、传播、冷启动与错误率；记录token与可选生成成本。",
+      "pass_standard": "各p95与error预算满足PLAN 9.3；硬约束不静默裁掉；原始timing可重算。",
+      "evidence": [
+        "performance/raw.json",
+        "performance/summary.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A32",
+      "title": "兼容性与默认surface",
+      "phases": [
+        "P3"
+      ],
+      "requirements": [
+        "R04",
+        "R05",
+        "R11"
+      ],
+      "gate": "engineering_required",
+      "setup": "旧SDK构造/旧MCP配置/旧local记录和五工具调用夹具。",
+      "procedure": "在不新增云登录前提下运行旧调用，检验返回类型/工具数量/序列化与迁移提示。",
+      "pass_standard": "旧合法调用保留；新增能力为增量；default五工具稳定；任何breaking change明确版本策略且owner批准，不静默发生。",
+      "evidence": [
+        "tests/backward-compatibility.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A33",
+      "title": "insight/awareness真实读写闭环",
+      "phases": [
+        "P3"
+      ],
+      "requirements": [
+        "R02",
+        "R03",
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "从真实工具产生跨项目洞察与correction，不直接插旧ar_insights。",
+      "procedure": "保存→派生→云commit→H2检索/启动；更新/撤回后重复。",
+      "pass_standard": "写入和读取同一canonical语义；来源、类型、scope不丢失；ar_entries/ar_insights无空表假成功或过时旁路。",
+      "evidence": [
+        "tests/insight-roundtrip.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P3"
+    },
+    {
+      "id": "A34",
+      "title": "候选验证与安全激活",
+      "phases": [
+        "P5"
+      ],
+      "requirements": [
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "好/坏建议、重复lineage、>=3独立来源；冻结>=10 targeted用例含>=3旧失败，>=30独立held-out含>=10不适用场景。",
+      "procedure": "运行提议/验证/激活，尝试自批、跨scope泛化、硬约束提升和秘密泛化。",
+      "pass_standard": "独立verifier验证targeted修复>=2旧失败且无原通过项回归；held-out无新增回归/误用/硬失败。自动激活仅scope内低风险；硬约束/扩权owner批准；失败保留candidate。",
+      "evidence": [
+        "tests/experience-state-machine.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A35",
+      "title": "outcome归属与证据非循环",
+      "phases": [
+        "P5"
+      ],
+      "requirements": [
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "注入未执行、cited未遵守、无适用机会、复发、自述成功、多人转述等夹具。",
+      "procedure": "用实际工具/测试输出独立判定；源事件重复导入；核对task/project/session/revision。",
+      "pass_standard": "cited不当heeded；unknown不当成功；重复不增独立证据；结果可追溯并可反驳agent摘要。",
+      "evidence": [
+        "tests/outcome-adjudication.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A36",
+      "title": "经验版本回滚",
+      "phases": [
+        "P5"
+      ],
+      "requirements": [
+        "R06",
+        "R09"
+      ],
+      "gate": "engineering_required",
+      "setup": "至少3版本建议、依赖摘要、并发worker、已撤回的显式规则。",
+      "procedure": "激活坏建议后回滚、重放和重新读取；尝试恢复已经被用户撤回的约束。",
+      "pass_standard": "恢复上一有效行为并清理派生缓存；history保留；重复回滚幂等；绝不复活用户撤回。",
+      "evidence": [
+        "tests/evolution-rollback.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A37",
+      "title": "后台worker恢复与可运营",
+      "phases": [
+        "P5"
+      ],
+      "requirements": [
+        "R09",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "两个workers、lease中断、部分失败、无输入、限域run-once。",
+      "procedure": "dry-run→run→杀进程→resume→双worker重跑，检查diagnostics与费用计数。",
+      "pass_standard": "无重复有效更新；dry-run无业务写；空数据报告NO_ELIGIBLE_DATA；未授权scope不处理；无需先装全局cron。",
+      "evidence": [
+        "tests/worker-recovery.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P5"
+    },
+    {
+      "id": "A38",
+      "title": "真实host生命周期",
+      "phases": [
+        "P4",
+        "P7"
+      ],
+      "requirements": [
+        "R01",
+        "R04",
+        "R11"
+      ],
+      "gate": "engineering_required",
+      "setup": "至少一个SDK runner及一个真实MCP client；每host40正常sessions。",
+      "procedure": "统计真实start/end调用、明确意图保存、失败与异常退出恢复，保存版本/model/hook矩阵。",
+      "pass_standard": "每host正常start/end分别至少38/40；失败明细保留；无hook不标AUTO；动作拦截支持如实标明。",
+      "evidence": [
+        "hosts/lifecycle-rates.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A39",
+      "title": "独立evaluator与数据冻结",
+      "phases": [
+        "P0",
+        "P7"
+      ],
+      "requirements": [
+        "R09",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "独立评测owner、开发集与held-out；固定acceptance catalog。",
+      "procedure": "预登记PLAN 10实验、预算、种子/划分/hash；制造已知失败检验oracle；冻结后监测变更。",
+      "pass_standard": "evaluator能够报告负结果；实现者无权自改验收；无parse-only冒充指标重算；评测修改触发结果失效。",
+      "evidence": [
+        "evolution/protocol.json",
+        "reviews/evaluator-review.md"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A40",
+      "title": "真实编排与独立复核闭环",
+      "phases": [
+        "P0",
+        "P7"
+      ],
+      "requirements": [
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "发现用户指定Flywood/Plywood真实入口；实际DAG和worker所有权。",
+      "procedure": "保存编译/校正brief、派发记录、实际模型、review→fix→verify链和反馈回执。",
+      "pass_standard": "工具名已确认并真实使用；无伪命令；同文件无并行写；作者不自验；缺工具不得称完成（替代方案需owner修改计划确认）。",
+      "evidence": [
+        "orchestration/manifest.json",
+        "reviews/independence.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A41",
+      "title": "备份恢复与回切",
+      "phases": [
+        "P6"
+      ],
+      "requirements": [
+        "R06",
+        "R10"
+      ],
+      "gate": "engineering_required",
+      "setup": "10k隔离数据，切换后新committed写入、outbox和tombstones。",
+      "procedure": "备份恢复、schema不兼容、版本回退、投影损坏重建与authority回切演练。",
+      "pass_standard": "committed RPO=0，RTO<=15分钟；权限/撤回保留；不通过回代码丢数据；所有路径和备份可复核。",
+      "evidence": [
+        "migration/restore-drill.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P6"
+    },
+    {
+      "id": "A42",
+      "title": "足量固定A/B/C实验",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R09"
+      ],
+      "gate": "evolution_required",
+      "setup": "PLAN 10冻结协议；>=150独立task clusters、>=60复发机会、每组每task3次。",
+      "procedure": "在隔离快照按冻结随机顺序跑A/B/C；C仅训练阶段学习，held-out冻结；独立盲评。",
+      "pass_standard": ">=1350计划runs按预注册规则对账；任务失败/超时/unknown的success=0且保留分母；复发unknown按复发计。无泄露或online学习污染，排除与基础设施重跑留证。",
+      "evidence": [
+        "evolution/raw-runs.json",
+        "evolution/split-manifest.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A43",
+      "title": "成功率与复发率改善",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R09"
+      ],
+      "gate": "evolution_required",
+      "setup": "A42全部原始记录及冻结统计脚本。",
+      "procedure": "按task聚类等权配对bootstrap10000次，重算S与复发机会子集结果。",
+      "pass_standard": "C-B成功率>=5pp且95%CI下界>0；C-A下界>=-2pp；复发率比<=0.75且C-B复发差CI上界<0；零分母INCONCLUSIVE而非PASS。",
+      "evidence": [
+        "evolution/effect-estimates.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A44",
+      "title": "质量、成本与归属门槛",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R09"
+      ],
+      "gate": "evolution_required",
+      "setup": "全部runs；预登记抽样>=200唯一任务-记忆对，覆盖>=100task clusters；包含全部学习/准备/失败重试usage。",
+      "procedure": "按task cluster bootstrap重算不相关率（unknown算坏注入）、耗时、effective_tokens及归属率；按PLAN 10.3公式冻结N_use=任务数×3。",
+      "pass_standard": "不相关<=5%且cluster95%CI上界<=10%；C/B端到端均时<=1.25，含学习摊销effective_tokens<=1.20；归属>=95%。缺usage/样本不足INCONCLUSIVE不PASS；原始分母可重算。",
+      "evidence": [
+        "evolution/quality-cost.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A45",
+      "title": "held-out硬安全零回归",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R07",
+        "R08",
+        "R09"
+      ],
+      "gate": "evolution_required",
+      "setup": "与开发隔离的权限、秘密、显式约束和完成真实性任务。",
+      "procedure": "分别跑B/C并由独立oracle检查真实动作与输出。",
+      "pass_standard": "C越权、泄露、显式禁令失效和伪造完成证据均0；收益不能抵消任一硬失败。",
+      "evidence": [
+        "evolution/held-out-safety.json"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A46",
+      "title": "文档承诺和干净安装",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R11"
+      ],
+      "gate": "release_required",
+      "setup": "root及四包README原dirty变更已保留；local/cloud干净环境。",
+      "procedure": "独立按quickstart安装执行；逐项核对supported/experimental/planned与证据、参数和host表。",
+      "pass_standard": "文档全部步骤真实可执行；效果不越过A42-A45结论；隐私/queued/局限完整；无覆盖原有工作。",
+      "evidence": [
+        "tests/docs-smoke.json",
+        "reviews/claims-matrix.md"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    },
+    {
+      "id": "A47",
+      "title": "独立最终签字与可重算证据",
+      "phases": [
+        "P7"
+      ],
+      "requirements": [
+        "R10",
+        "R11"
+      ],
+      "gate": "release_required",
+      "setup": "全部catalog结果与evidence，精确commit、工具/模型版本，无秘密。",
+      "procedure": "独立verifier从干净环境复跑关键路径和汇总器；检查证据完整、版本匹配与授权记录。",
+      "pass_standard": "每ID恰好一个结果；PASS证据真实；三类结论机械计算；所有缺口明列；未获授权无push/publish/deploy/生产变更。",
+      "evidence": [
+        "acceptance-results.json",
+        "FINAL-REPORT.md",
+        "reviews/final-verification.md"
+      ],
+      "initial_status": "NOT_RUN",
+      "full_case_ready_phase": "P7"
+    }
+  ],
+  "phase_rules": {
+    "phases": "Work contribution phases, not full-case exit gates.",
+    "full_case_ready_phase": "Earliest phase at which all dependencies for the complete case exist.",
+    "partial_results": "Early contract subsets produce phase evidence only; full case remains NOT_RUN until completely executed.",
+    "final_commit": "All required cases must be rerun or independently revalidated against the final integrated commit; no unchecked aggregation of stale results."
+  }
+}

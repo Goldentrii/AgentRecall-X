@@ -1,0 +1,81 @@
+{
+ "run_id": "2026-09-27-r1",
+ "started": "2026-09-27",
+ "orchestrator": {
+  "host": "Claude Code CLI",
+  "model": "claude-opus-5-5 (1M context)",
+  "os": "Windows 11 Pro 10.0.26220",
+  "cpu_threads": 24,
+  "ram_gb": 31.7
+ },
+ "repo": {
+  "remote": "https://github.com/Goldentrii/AgentRecall-X",
+  "default_branch": "main",
+  "remote_main_sha_initial": "db6338a5d60a36ea9c38a58e1d22e8037d75f095",
+  "local_head": "db6338a5d60a36ea9c38a58e1d22e8037d75f095",
+  "plan_baseline": "db6338a5d60a36ea9c38a58e1d22e8037d75f095",
+  "diverged": false,
+  "user_uncommitted": [
+   "README.md",
+   "packages/cli/README.md",
+   "packages/core/README.md",
+   "packages/mcp-server/README.md",
+   "packages/sdk/README.md"
+  ],
+  "user_untracked": [
+   "docs/plans/"
+  ],
+  "user_tree_modified_by_run": false
+ },
+ "worktrees": {
+  "dev": "E:/Users/tong/Documents/New project/arx-sme (branch feat/shared-memory-evolution from db6338a)",
+  "clean_ref": "E:/Users/tong/Documents/New project/arx-clean-ref (detached db6338a)",
+  "dirty_ref": "E:/Users/tong/Documents/New project/arx-dirty-ref (db6338a + user README patch)"
+ },
+ "plan_files_sha256": {
+  "PLAN.md": "e2c898b1...8192a0",
+  "ACCEPTANCE.json": "72c407d1...4faa7e",
+  "HANDOFF.md": "238453fc...511314",
+  "REVIEW.md": "44862699...b1083",
+  "matches_REVIEW_fingerprints": true
+ },
+ "toolchain": {
+  "node": "v24.11.1",
+  "npm": "11.6.2",
+  "python": "3.14.0",
+  "docker": "installed, daemon NOT running",
+  "wsl": "no distributions",
+  "supabase_cli": "absent",
+  "psql": "absent"
+ },
+ "plywood": {
+  "name": "Plywood (user says Flywood; same project)",
+  "repo": "Goldentrii/agent-craft (private)",
+  "commit": "c11d05b87ed6fe8caaab8cc60fc7a238bf72ee16",
+  "version": "0.5.1 (plugin/skills/plywood/SKILL.md)",
+  "path": "E:/tools/agent-craft/cli/plywood",
+  "interfaces_used": [
+   "plywood compile --force-level 0 --goal --role --context --constraint --output-to -o",
+   "plywood feedback"
+  ],
+  "not_installed": "MCP server and hooks are not registered on this PC; CLI invoked directly",
+  "scope_note": "Plywood compiles briefs and records feedback; dispatch is performed by the Claude Code Agent tool",
+  "side_effect": "plywood compile mirrors each SOP into C:/Users/tong/.agent-recall/projects/cli/palace/sops/<id>.md (real store). 3 files written: 8101cf42, 7f39f9e3, a874e987."
+ },
+ "live_memory_stores_protected": [
+  "C:/Users/tong/.agent-recall",
+  "E:/AI-Agent-Data/agent-recall (AGENT_RECALL_ROOT)"
+ ],
+ "credentials_present": {
+  "supabase": false,
+  "embedding": false,
+  "anthropic": "ANTHROPIC_AUTH_TOKEN via ANTHROPIC_BASE_URL gateway (values not read)"
+ },
+ "external_actions": {
+  "pushed": false,
+  "published": false,
+  "deployed": false,
+  "paid_resources": false,
+  "production_db": false
+ }
+}
