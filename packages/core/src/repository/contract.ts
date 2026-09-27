@@ -69,6 +69,18 @@ export interface RevisionRef {
   revision: number;
 }
 
+export interface ConstraintException {
+  exception_id: string;
+  /** Revision of the constraint this exception was approved against. */
+  target_revision: number;
+  /** Must be a subset of the constraint's applicability. */
+  applicability: Applicability;
+  valid_until: string;
+  approved_by: string;
+  approved_at: string;
+  reason: string;
+}
+
 /** Server-set only (R2.1): drivers strip client attempts to set it. */
 export interface DependencyRelease {
   approved_by: string;
@@ -98,6 +110,10 @@ export interface MemoryRecord {
   /** Flattened transitive sources (cap 256). Empty for non-derived records. */
   derived_closure: RevisionRef[];
   dependency_release: DependencyRelease | null;
+  /** Server-set: owner-approved exceptions attached to this constraint (rev2.1 D3). */
+  exceptions: ConstraintException[];
+  /** Server-set: this record is a pending proposal to change the referenced revision (rev2.1 D2). */
+  proposal_of: RevisionRef | null;
   created_at: string;
   updated_at: string;
   expires_at?: string | null;
@@ -436,6 +452,43 @@ const VISIBILITIES: ReadonlySet<string> = new Set(["local_only", "private", "pro
 export const MAX_CONTENT_CHARS = 64_000;
 export const MAX_DERIVED_CLOSURE = 256;
 
+function validateContent(content: unknown): void {
+  if (typeof content !== "string" || content.length === 0 || content.length > MAX_CONTENT_CHARS) {
+    throw new ContractValidationError(`content must be 1..${MAX_CONTENT_CHARS} chars`);
+  }
+}
+
+function validateRefs(refs: unknown, field: string): void {
+  if (refs === undefined || refs === null) return;
+  if (!Array.isArray(refs)) throw new ContractValidationError(`${field} must be an array`);
+  for (const r of refs as RevisionRef[]) {
+    if (!r || !isUuid(r.id) || !Number.isInteger(r.revision) || r.revision < 1) {
+      throw new ContractValidationError(`invalid ${field} ref`);
+    }
+  }
+}
+
+/** Full create-shape validation; shared by create and supersede.replacement. */
+function validateCreateShape(c: Omit<CreateCommand, "op">): void {
+  if (!c || typeof c !== "object") throw new ContractValidationError("create payload must be an object");
+  if (!isUuid(c.id)) throw new ContractValidationError("id must be a UUID");
+  if (!isUuid(c.workspace_id)) throw new ContractValidationError("workspace_id must be a UUID");
+  if (c.project_id !== null && !isUuid(c.project_id)) throw new ContractValidationError("project_id must be a UUID or null");
+  if (!KINDS.has(c.kind)) throw new ContractValidationError("invalid kind");
+  if (!VISIBILITIES.has(c.visibility)) throw new ContractValidationError("invalid visibility");
+  validateContent(c.content);
+  validateRefs(c.derived_from, "derived_from");
+  if (c.kind === "handoff") validateHandoffPayload(parseHandoff(c.content));
+}
+
+function parseHandoff(content: string): HandoffPayload {
+  try {
+    return JSON.parse(content) as HandoffPayload;
+  } catch {
+    throw new ContractValidationError("handoff content must be JSON");
+  }
+}
+
 /** Throws ContractValidationError; drivers map it to rejected:schema before any path/SQL use. */
 export function validateCommand(cmd: MutateCommand, expectedRevision: number | null, operationId: string): void {
   if (!isUuid(operationId)) throw new ContractValidationError("operation_id must be a UUID");
@@ -443,32 +496,48 @@ export function validateCommand(cmd: MutateCommand, expectedRevision: number | n
   if (!isUuid(cmd.id)) throw new ContractValidationError("id must be a UUID");
   if (cmd.op === "create") {
     if (expectedRevision !== null) throw new ContractValidationError("create requires expectedRevision null");
-    if (!isUuid(cmd.workspace_id)) throw new ContractValidationError("workspace_id must be a UUID");
-    if (cmd.project_id !== null && !isUuid(cmd.project_id)) throw new ContractValidationError("project_id must be a UUID or null");
-    if (!KINDS.has(cmd.kind)) throw new ContractValidationError("invalid kind");
-    if (!VISIBILITIES.has(cmd.visibility)) throw new ContractValidationError("invalid visibility");
-    if (typeof cmd.content !== "string" || cmd.content.length === 0 || cmd.content.length > MAX_CONTENT_CHARS) {
-      throw new ContractValidationError("content must be 1..64000 chars");
+    validateCreateShape(cmd);
+    return;
+  }
+  if (!Number.isInteger(expectedRevision) || (expectedRevision as number) < 1) {
+    throw new ContractValidationError(`${cmd.op} requires a positive integer expectedRevision`);
+  }
+  switch (cmd.op) {
+    case "update": {
+      const p = cmd.patch;
+      if (!p || typeof p !== "object") throw new ContractValidationError("update requires a patch object");
+      if (p.content !== undefined) validateContent(p.content);
+      if (p.visibility !== undefined && !VISIBILITIES.has(p.visibility)) throw new ContractValidationError("invalid visibility");
+      break;
     }
-    for (const r of cmd.derived_from ?? []) {
-      if (!isUuid(r.id) || !Number.isInteger(r.revision) || r.revision < 1) throw new ContractValidationError("invalid derived_from ref");
-    }
-    if (cmd.kind === "handoff") validateHandoffPayload(JSON.parse(cmd.content));
-  } else {
-    if (!Number.isInteger(expectedRevision) || (expectedRevision as number) < 1) {
-      throw new ContractValidationError(`${cmd.op} requires a positive integer expectedRevision`);
-    }
-    if (cmd.op === "exception" && !isUuid(cmd.exception_id)) throw new ContractValidationError("exception_id must be a UUID");
-    if (cmd.op === "supersede") {
-      if (typeof cmd.replacement?.content !== "string" || cmd.replacement.content.length === 0) {
-        throw new ContractValidationError("supersede requires replacement content");
+    case "supersede":
+      validateCreateShape(cmd.replacement);
+      if (cmd.replacement.id === cmd.id) throw new ContractValidationError("replacement needs a new id");
+      break;
+    case "exception":
+      if (!isUuid(cmd.exception_id)) throw new ContractValidationError("exception_id must be a UUID");
+      if (typeof cmd.valid_until !== "string" || Number.isNaN(Date.parse(cmd.valid_until))) {
+        throw new ContractValidationError("exception requires an ISO valid_until");
       }
-    }
+      break;
+    case "retract":
+    case "quarantine":
+      if (typeof cmd.reason !== "string" || cmd.reason.length === 0) throw new ContractValidationError(`${cmd.op} requires a reason`);
+      break;
+    case "release_dependency":
+      if (typeof cmd.redaction_report_ref !== "string" || cmd.redaction_report_ref.length === 0) {
+        throw new ContractValidationError("release_dependency requires redaction_report_ref");
+      }
+      break;
+    case "confirm":
+      break;
   }
 }
 
 export function validateHandoffPayload(p: HandoffPayload): void {
-  if (!p || typeof p.task_key !== "string" || !Array.isArray(p.items)) throw new ContractValidationError("invalid handoff payload");
+  if (!p || typeof p !== "object" || typeof p.task_key !== "string" || !Array.isArray(p.items)) {
+    throw new ContractValidationError("invalid handoff payload");
+  }
   for (const it of p.items) {
     if (it.status === "verified_done" && (!Array.isArray(it.evidence_refs) || it.evidence_refs.length === 0)) {
       throw new ContractValidationError("verified_done requires evidence_refs");
@@ -480,7 +549,8 @@ export function validateHandoffPayload(p: HandoffPayload): void {
 export function stripReservedMetadata(meta: Record<string, unknown> | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(meta ?? {})) {
-    if (k.startsWith("_ar") || k === "dependency_release") continue;
+    // Covers rev1's repealed `dependency_released_by` key too (rev2.1 D4).
+    if (k.startsWith("_ar") || k.startsWith("dependency_release")) continue;
     out[k] = v;
   }
   return out;
@@ -516,4 +586,11 @@ export function payloadHash(cmd: MutateCommand | OutcomeEvent, expectedRevision:
 
 export function contentHash(content: string): string {
   return createHash("sha256").update(content.normalize("NFC")).digest("hex");
+}
+
+/** Deterministic proposal record id (rev2.1 D2): UUID-shaped sha256(principal|operation). */
+export function proposalId(principalId: string, operationId: string): string {
+  const h = createHash("sha256").update(`${principalId}|${operationId}`).digest("hex");
+  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }

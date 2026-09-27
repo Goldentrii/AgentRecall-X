@@ -127,3 +127,46 @@ fsync on Windows (documented). N6 singleton key includes a config hash; entries 
 N11 new MCP params in legacy mode return `unsupported_in_legacy_mode`. N14 CJK: ILIKE plus a bigram column.
 N15 scrubForCloud applied before any ar2 payload leaves the process, and in outbox and error logs.
 N9 accepted as documented. N10 listed for owner.
+
+---
+
+# rev 2.1 — closes R0b re-review defects (reviews/contracts-rereview.md)
+
+Reading rule for implementers: rev1 sections SUPERSEDED by rev2/2.1 are rev1 §4.3 (-> R2.6), rev1 §7 last sentence
+about `metadata.dependency_released_by` (REPEALED -> R2.11 + D4 below), rev1 §4.2 table (-> R2.1 where they differ).
+
+D1 (nested validation): validateCommand recurses into supersede.replacement with full create-shape checks,
+validates update.patch content cap and visibility enum, and wraps handoff JSON.parse as ContractValidationError.
+
+D2 (proposal revisions): a protected update without owner trust creates a NEW record:
+id = uuidv5-style deterministic from sha256(principal_id|operation_id) formatted as UUID (drivers share helper
+`proposalId()` in contract.ts), same kind/workspace/project as T, content/applicability = T with the patch applied,
+status = candidate, authority = recomputed, server-set proposal_of = {T.id, T.revision}. Receipt: committed,
+id/revision = the proposal's, effective = false. Owner `confirm` on a proposal applies it to T with CAS on
+proposal_of.revision (T revision+1, proposal status -> superseded); if T moved on -> conflict.
+
+D3 (exceptions): stored on the target constraint as server-set `exceptions[]` (ConstraintException). An owner
+`exception` op is itself a revision of T (revision+1, event op "exception", exception.target_revision = the new
+revision). Validity rule: an exception is valid iff now < valid_until AND no non-exception revision of T happened
+after it — drivers enforce this by clearing exceptions[] on every non-exception revision of T. readSnapshot returns
+constraints with their exceptions; the decision evaluator skips a constraint for a request whose applicability lies
+inside a valid exception.
+
+D4 (dependency release): rev1's metadata clause is repealed. stripReservedMetadata drops keys starting with `_ar` or
+`dependency_release` (covers `dependency_released_by`). A record with server-set dependency_release != null skips the
+R2.11 equality check ONLY for closure entries listed in dependency_release.source_revisions; unlisted closure
+entries are still checked.
+
+Implementability clarifications (R0b risks):
+- Local grants: the local owner principal implicitly holds can_read/can_write/can_approve on everything; local agent
+  principals hold what `<root>/repo/grants.json` states (default can_read+can_write, never can_approve).
+- payload_hash: computed client-side and transmitted; ar2_mutate stores it verbatim as the idempotency comparison
+  value (no plpgsql re-canonicalization). A hostile client can only confuse its OWN idempotency namespace.
+- access_epoch (cloud): bump for all active grantees of the record's workspace plus the owner on any visibility/
+  project change of a record and on any grant change in that workspace (coarse, sanctioned).
+- effective=false receipts must be rendered by P3 surfaces as "proposal, not in force".
+- R2.6 rule 2 approval evidence: the decision API takes `approval_refs: string[]` (ids of explicit_user decision
+  records or owner-confirmed handoff items); typed in decision.ts (P4 owner). P1/P2 need not implement.
+- R2.15 N5 items are required tests for P1, not notes.
+
+Freeze: contract.ts + trust.ts + harness.d.ts at the commit carrying this section are FROZEN for P1-P4.

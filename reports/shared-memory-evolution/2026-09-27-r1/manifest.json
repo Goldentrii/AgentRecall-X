@@ -77,5 +77,52 @@
   "deployed": false,
   "paid_resources": false,
   "production_db": false
- }
+ },
+ "model_alias_mapping_observed": {
+  "env": {
+   "ANTHROPIC_MODEL": "claude-opus-5-5[1m]",
+   "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-fable-5[1M]",
+   "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8[1M]",
+   "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-7",
+   "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-sonnet-5[1M]"
+  },
+  "consequence": "Agent(model='sonnet') runs claude-fable-5; to run Sonnet 5 request model='fable'. Verified from subagent transcripts."
+ },
+ "agents": [
+  {
+   "id": "G1",
+   "role": "grounding scout",
+   "requested": "sonnet",
+   "actual": "claude-fable-5",
+   "sop": "8101cf42"
+  },
+  {
+   "id": "G2",
+   "role": "grounding scout",
+   "requested": "sonnet",
+   "actual": "claude-fable-5",
+   "sop": "7f39f9e3"
+  },
+  {
+   "id": "G3",
+   "role": "grounding scout",
+   "requested": "sonnet",
+   "actual": "claude-fable-5",
+   "sop": "a874e987"
+  },
+  {
+   "id": "R0",
+   "role": "contract reviewer (architect)",
+   "requested": "(agent default)",
+   "actual": "claude-opus-5-5",
+   "sop": "b171091c"
+  },
+  {
+   "id": "R0b",
+   "role": "contract re-reviewer (code-reviewer)",
+   "requested": "sonnet",
+   "actual": "claude-fable-5",
+   "sop": "ded3608d"
+  }
+ ]
 }
