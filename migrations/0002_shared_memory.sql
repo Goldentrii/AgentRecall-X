@@ -980,15 +980,39 @@ BEGIN
       IF NOT FOUND OR v_grant.grantee_principal_id IS NULL THEN
         v_can_write := false; v_can_approve := false;
       END IF;
+      -- B3 (fix round 1): R2.1 row 1 — "project_ids subset of grant" was
+      -- never checked; a project-scoped grant (project_ids=[A]) let its
+      -- holder can_write=true straight through into ANY project_id in the
+      -- same workspace (cross-project write bypass). A project_ids=NULL
+      -- grant is whole-workspace and unaffected; a create with no
+      -- project_id (workspace/owner_shared visibility, R2.1 row 2) isn't
+      -- gated here at all — that row governs candidate/active status, not
+      -- authorization.
+      IF v_can_write AND (p_cmd ->> 'project_id') IS NOT NULL
+         AND v_grant.project_ids IS NOT NULL
+         AND NOT ((p_cmd ->> 'project_id')::uuid = ANY(v_grant.project_ids))
+      THEN
+        v_can_write := false;
+      END IF;
     END IF;
 
     IF NOT v_can_write THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'no can_write grant on this workspace');
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'forbidden', 'message', 'no can_write grant on this workspace/project');
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
-    IF EXISTS (SELECT 1 FROM ar2_records WHERE owner_id = v_owner AND id = v_id) THEN
-      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'id already exists');
+
+    -- B4 (fix round 1): an id collision on a row the caller cannot even
+    -- READ must look identical to a nonexistent id (R2.3 existence
+    -- hiding) — the old code did a raw EXISTS with no ar2_visible gate,
+    -- leaking "something exists here" to a caller who can't read it.
+    SELECT * INTO v_target FROM ar2_records WHERE owner_id = v_owner AND id = v_id;
+    IF FOUND THEN
+      IF NOT ar2_visible(v_target.owner_id, v_target.workspace_id, v_target.project_id, v_target.visibility, v_target.source_principal_id) THEN
+        v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'not_found', 'message', 'no such record');
+      ELSE
+        v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'id already exists');
+      END IF;
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
