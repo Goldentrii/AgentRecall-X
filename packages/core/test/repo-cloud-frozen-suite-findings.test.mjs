@@ -175,3 +175,62 @@ describe("WP-P2 fix round 1 / frozen-suite finding (evaluator v3): history() mus
     assert.equal(stillDenied.items.length, 0, "get() must still deny retracted content (A16) after this fix");
   });
 });
+
+describe("WP-P2 fix round 1 / frozen-suite finding (evaluator v3): getOperation() must not throw while offline", () => {
+  // Root cause: getOperation() always called the remote RPC directly, so a
+  // genuinely-queued (never-sent) operation threw an uncaught NetworkError
+  // while offline instead of being reported from the durable outbox
+  // getOperation() itself could already see (G-outbox: "queued op must
+  // survive a restart while still offline"). A `reconcile_only` entry
+  // (ack_lost) is different: the outbox doesn't know the true outcome, so
+  // it must still try the network first, falling back to the outbox's own
+  // "unknown" shape only if the network is genuinely unreachable.
+  let harness;
+
+  before(async () => {
+    harness = await createHarness();
+    await harness.setup();
+  });
+
+  after(async () => {
+    await harness.teardown();
+  });
+
+  it("a genuinely-queued (offline, never-sent) operation is reported queued without a network call", async () => {
+    const owner = await harness.newOwner("U-getop-offline-queued");
+    const wsId = await harness.workspace(owner);
+    const repo = await harness.repoFor(owner);
+    const opId = randomUUID();
+
+    await harness.armFault("offline", owner);
+    const receipt = await repo.mutate(
+      { op: "create", id: randomUUID(), workspace_id: wsId, project_id: null, kind: "fact", visibility: "private", content: "queued", authority: "explicit_user" },
+      null, opId, owner.ownerWrite(),
+    );
+    assert.equal(receipt.status, "queued");
+
+    // still offline — getOperation() must not throw, and must report queued from the durable outbox.
+    const op = await repo.getOperation(opId, owner.principal);
+    assert.ok(op, "getOperation() must not throw/return undefined while offline for a queued op");
+    assert.equal(op.receipt.status, "queued");
+    await harness.clearFaults();
+  });
+
+  it("an ack_lost (reconcile_only) operation still resolves the real server status once online (regression guard)", async () => {
+    const owner = await harness.newOwner("U-getop-acklost-online");
+    const wsId = await harness.workspace(owner);
+    const repo = await harness.repoFor(owner);
+    const opId = randomUUID();
+
+    await harness.armFault("ack_lost", owner);
+    const receipt = await repo.mutate(
+      { op: "create", id: randomUUID(), workspace_id: wsId, project_id: null, kind: "fact", visibility: "private", content: "ack lost", authority: "explicit_user" },
+      null, opId, owner.ownerWrite(),
+    );
+    assert.equal(receipt.status, "unknown");
+    await harness.clearFaults();
+
+    const op = await repo.getOperation(opId, owner.principal);
+    assert.equal(op.receipt.status, "committed", "once online, getOperation() must report the REAL server status, not a stale 'queued' guess from the reconcile-only outbox entry");
+  });
+});

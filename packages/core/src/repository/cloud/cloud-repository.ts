@@ -399,12 +399,48 @@ export class CloudRepository implements MemoryRepository {
 
   async getOperation(operationId: string, _principal: Principal): Promise<OperationRecord | null> {
     // Principal is ignored — cloud always uses auth.uid() (contract.ts doc comment on this method).
-    const row = (await this.opts.executor.rpc("ar2_get_operation", { p_operation_id: operationId })) as RawRecord | null;
-    if (!row) return null;
-    return {
-      operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
-      receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
-    };
+    //
+    // Fix round 1 (frozen-suite G-outbox finding): a genuinely-queued
+    // (never-sent) operation must be reportable as "queued" WITHOUT a
+    // network call — the old code always hit ar2_get_operation directly,
+    // throwing an uncaught NetworkError while offline instead of consulting
+    // the durable outbox it itself wrote. A `reconcile_only` entry (ack_lost:
+    // already sent, ack dropped) is different — the whole point is that the
+    // outbox does NOT know the true outcome, so it must still try the
+    // network first for the real answer, falling back to the outbox only if
+    // the network is genuinely unreachable.
+    const queuedEntry = this.outbox.list().find((e) => e.operation_id === operationId);
+    if (queuedEntry && !queuedEntry.reconcile_only) {
+      return {
+        operation_id: operationId,
+        payload_hash: queuedEntry.payload_hash,
+        receipt: { status: "queued", operation_id: operationId, id: (queuedEntry.cmd as { id?: string })?.id ?? "", outbox_ref: "" } as WriteReceipt,
+        created_at: queuedEntry.queued_at,
+      };
+    }
+    try {
+      const row = (await this.opts.executor.rpc("ar2_get_operation", { p_operation_id: operationId })) as RawRecord | null;
+      if (!row) return null;
+      return {
+        operation_id: row.operation_id as string, payload_hash: row.payload_hash as string,
+        receipt: row.receipt as WriteReceipt, created_at: row.created_at as string,
+      };
+    } catch (e) {
+      if (!isTransportError(e)) throw e;
+      if (queuedEntry) {
+        // reconcile_only, network unreachable: still can't confirm — report
+        // the same "unknown/ack_lost" shape mutate() originally returned,
+        // not a false "queued" (the write may have already committed).
+        return {
+          operation_id: operationId, payload_hash: queuedEntry.payload_hash,
+          receipt: { status: "unknown", operation_id: operationId, id: (queuedEntry.cmd as { id?: string })?.id ?? "", reason: "ack_lost" } as WriteReceipt,
+          created_at: queuedEntry.queued_at,
+        };
+      }
+      // Not locally queued at all and the network is unreachable: no
+      // durable local record to fall back to.
+      return null;
+    }
   }
 
   /** Drains the outbox, reusing the same RPC path mutate() would have used (idempotent replay). Not part of MemoryRepository — called by the runtime's background sync loop. */
