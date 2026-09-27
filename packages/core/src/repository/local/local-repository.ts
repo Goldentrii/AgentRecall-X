@@ -272,10 +272,10 @@ export class LocalRepository implements MemoryRepository {
     record: MemoryRecord,
     event: ChangeEvent,
     receipt: CommittedReceipt,
-    opts?: { hash?: string; actorPrincipalId?: string },
+    opts: { hash?: string; actorPrincipalId: string },
   ): void {
     this.ensureFormat();
-    const actorPrincipalId = opts?.actorPrincipalId ?? this.principal.principal_id;
+    const actorPrincipalId = opts.actorPrincipalId;
     const wal: WalEntry = { operation_id: event.operation_id, principal_id: actorPrincipalId, record_after: record, event, receipt };
     writeJsonAtomic(this.walPath(event.operation_id), wal);
 
@@ -290,7 +290,7 @@ export class LocalRepository implements MemoryRepository {
 
     const key = opKey(actorPrincipalId, event.operation_id);
     writeJsonAtomic(this.opReceiptPath(key), receipt);
-    if (opts?.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
+    if (opts.hash) writeJsonAtomic(this.opMetaPath(key), { hash: opts.hash });
     removeFileIfExists(this.walPath(event.operation_id));
   }
 
@@ -400,7 +400,7 @@ export class LocalRepository implements MemoryRepository {
     return { items, withheld };
   }
 
-  private baseReadResult<T>(items: T[], withheld: number, extra?: Partial<ReadResult<T>>): ReadResult<T> {
+  private baseReadResult<T>(items: T[], withheld: number, principalId: string, extra?: Partial<ReadResult<T>>): ReadResult<T> {
     return {
       items,
       authority: "local",
@@ -410,7 +410,7 @@ export class LocalRepository implements MemoryRepository {
       withheld_derived: withheld,
       pending_ops: 0,
       overflow: false,
-      access_epoch: this.accessEpochFor(this.principal.principal_id),
+      access_epoch: this.accessEpochFor(principalId),
       errors: [],
       ...extra,
     };
@@ -423,12 +423,12 @@ export class LocalRepository implements MemoryRepository {
     if (record) record = this.checkExternalEdit(record);
     const statusSet = this.readableStatusSet(ctx, grants);
     if (!record || !statusSet.has(record.status) || !canRead(record, ctx, this.ownerId, grants)) {
-      return this.baseReadResult<MemoryRecord>([], 0); // existence hiding (R2.3)
+      return this.baseReadResult<MemoryRecord>([], 0, ctx.principal.principal_id); // existence hiding (R2.3)
     }
     if (!this.isClosureValid(record, ctx, grants)) {
-      return this.baseReadResult<MemoryRecord>([], 1);
+      return this.baseReadResult<MemoryRecord>([], 1, ctx.principal.principal_id);
     }
-    return this.baseReadResult<MemoryRecord>([record], 0);
+    return this.baseReadResult<MemoryRecord>([record], 0, ctx.principal.principal_id);
   }
 
   async query(q: MemoryQuery, ctx: ReadContext): Promise<ReadResult<MemoryRecord>> {
@@ -449,13 +449,13 @@ export class LocalRepository implements MemoryRepository {
       finalItems = [...constraints, ...kept];
     }
     if (q.limit !== undefined) finalItems = finalItems.slice(0, q.limit);
-    return this.baseReadResult<MemoryRecord>(finalItems, withheld, { overflow });
+    return this.baseReadResult<MemoryRecord>(finalItems, withheld, ctx.principal.principal_id, { overflow });
   }
 
   async readSnapshot(ctx: ReadContext, q?: MemoryQuery): Promise<ReadResult<MemoryRecord>> {
     this.assertOpen();
     const { items, withheld } = this.readAll(ctx, q);
-    return this.baseReadResult<MemoryRecord>(items, withheld);
+    return this.baseReadResult<MemoryRecord>(items, withheld, ctx.principal.principal_id);
   }
 
   async list(q: MemoryQuery, ctx: ReadContext, pageCursor: string | null): Promise<Page<MemoryRecord>> {
@@ -510,7 +510,7 @@ export class LocalRepository implements MemoryRepository {
     });
     matching.sort((a, b) => b.revision - a.revision || Date.parse(b.updated_at) - Date.parse(a.updated_at));
     const latest = matching[0];
-    return this.baseReadResult<MemoryRecord>(latest ? [latest] : [], 0);
+    return this.baseReadResult<MemoryRecord>(latest ? [latest] : [], 0, ctx.principal.principal_id);
   }
 
   async readChanges(cursor: string | null, ctx: ReadContext, limit?: number): Promise<ChangePage> {
@@ -662,7 +662,7 @@ export class LocalRepository implements MemoryRepository {
       created_at: now, updated_at: now, expires_at: cmd.expires_at ?? null,
     };
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "create", null, 1, ctx.principal.principal_id, true, record.authority, record.status);
-    this.commitRecord(record, event, receipt, { hash });
+    this.commitRecord(record, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 
@@ -698,7 +698,7 @@ export class LocalRepository implements MemoryRepository {
         created_at: now, updated_at: now,
       };
       const { event, receipt } = this.buildEventAndReceipt(pid, operationId, "update", null, 1, ctx.principal.principal_id, false, proposal.authority, "candidate");
-      this.commitRecord(proposal, event, receipt, { hash });
+      this.commitRecord(proposal, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
       return receipt;
     }
     // outcome.kind === "allow"
@@ -711,7 +711,7 @@ export class LocalRepository implements MemoryRepository {
       expires_at: cmd.patch.expires_at !== undefined ? cmd.patch.expires_at : target.expires_at,
     }, "update", now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "update", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
-    this.commitRecord(updated, event, receipt, { hash });
+    this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 
@@ -730,7 +730,7 @@ export class LocalRepository implements MemoryRepository {
       : { status: "quarantined", retraction_reason: reason };
     const updated = this.nextRecordCommon(target, patch, cmd.op, now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, cmd.op, target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
-    this.commitRecord(updated, event, receipt, { hash });
+    this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 
@@ -762,16 +762,16 @@ export class LocalRepository implements MemoryRepository {
       const supersededProposal = this.nextRecordCommon(target, { status: "superseded" }, "update", now);
 
       const { event: e1, receipt: r1 } = this.buildEventAndReceipt(original.id, operationId, "confirm", original.revision, appliedOriginal.revision, ctx.principal.principal_id, true, appliedOriginal.authority, appliedOriginal.status);
-      this.commitRecord(appliedOriginal, e1, r1, { hash });
+      this.commitRecord(appliedOriginal, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
       const innerOpId = newUuid();
       const { event: e2, receipt: r2 } = this.buildEventAndReceipt(target.id, innerOpId, "confirm", target.revision, supersededProposal.revision, ctx.principal.principal_id, true, supersededProposal.authority, "superseded");
-      this.commitRecord(supersededProposal, e2, r2);
+      this.commitRecord(supersededProposal, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
       return r1;
     }
 
     const updated = this.nextRecordCommon(target, { status: "active", authority: "explicit_user" }, "confirm", now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "confirm", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
-    this.commitRecord(updated, event, receipt, { hash });
+    this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 
@@ -800,10 +800,10 @@ export class LocalRepository implements MemoryRepository {
       supersedes: { id: target.id, revision: target.revision },
     };
     const { event: e1, receipt: r1 } = this.buildEventAndReceipt(target.id, operationId, "supersede", target.revision, superseded.revision, ctx.principal.principal_id, true, superseded.authority, "superseded");
-    this.commitRecord(superseded, e1, r1, { hash });
+    this.commitRecord(superseded, e1, r1, { hash, actorPrincipalId: ctx.principal.principal_id });
     const innerOpId = newUuid();
     const { event: e2, receipt: r2 } = this.buildEventAndReceipt(replacementRecord.id, innerOpId, "supersede", null, 1, ctx.principal.principal_id, true, replacementRecord.authority, "active");
-    this.commitRecord(replacementRecord, e2, r2);
+    this.commitRecord(replacementRecord, e2, r2, { actorPrincipalId: ctx.principal.principal_id });
     return r1;
   }
 
@@ -823,7 +823,7 @@ export class LocalRepository implements MemoryRepository {
     const base = this.nextRecordCommon(target, {}, "exception", now);
     const updated: MemoryRecord = { ...base, exceptions: [...target.exceptions, newException] };
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "exception", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
-    this.commitRecord(updated, event, receipt, { hash });
+    this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 
@@ -843,7 +843,7 @@ export class LocalRepository implements MemoryRepository {
       },
     }, "release_dependency", now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "release_dependency", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
-    this.commitRecord(updated, event, receipt, { hash });
+    this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
     return receipt;
   }
 

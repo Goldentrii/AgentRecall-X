@@ -13,7 +13,11 @@
  *   by an fsync in the commit protocol below; any non-last torn line is a
  *   real corruption and throws.
  */
-import * as fs from "node:fs";
+// Default import (not `import * as fs`): node:test's mocking pattern (and
+// this file's own renameWithRetry unit test) needs a plain, reassignable
+// object — a `* as fs` namespace import is a read-only ESM binding and
+// cannot be monkey-patched from a test.
+import fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 

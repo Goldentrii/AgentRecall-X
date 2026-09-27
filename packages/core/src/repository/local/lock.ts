@@ -12,8 +12,14 @@ import { ensureDir } from "./fsutil.js";
 
 const LOCK_RETRY_MS = 20;
 const LOCK_MAX_WAIT_MS = 8_000;
-/** A lock older than this is presumed abandoned by a crashed process. */
-const STALE_LOCK_MS = 15_000;
+/**
+ * A lock older than this is presumed abandoned by a crashed process. MUST be
+ * comfortably shorter than LOCK_MAX_WAIT_MS — recovery from a crash (the
+ * fault-injection tests intentionally leave a lock file behind via a bare
+ * process.exit(), which skips this module's `finally` release) needs to
+ * reclaim it within one caller's wait window, not just eventually.
+ */
+const STALE_LOCK_MS = 2_000;
 
 function lockPath(root: string): string {
   return path.join(root, "repo", ".lock");
