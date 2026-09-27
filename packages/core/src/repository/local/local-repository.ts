@@ -405,6 +405,12 @@ export class LocalRepository implements MemoryRepository {
   }
 
   private isClosureValid(record: MemoryRecord, ctx: ReadContext, grants: LocalGrant[]): boolean {
+    // R2.11: "cap 256; overflow -> withheld" — a closure that had to be
+    // truncated at create/supersede time can never be fully re-verified
+    // (some transitive sources are simply not tracked), so it is
+    // unconditionally withheld rather than shown as if the visible 256
+    // were the whole truth.
+    if (record.metadata?._ar_closure_overflow === true) return false;
     if (record.derived_closure.length === 0) return true;
     const released = new Set((record.dependency_release?.source_revisions ?? []).map((r) => `${r.id}@${r.revision}`));
     for (const ref of record.derived_closure) {
@@ -530,11 +536,13 @@ export class LocalRepository implements MemoryRepository {
     this.assertOpen();
     if (!isUuid(id)) return [];
     const grants = this.loadGrants();
-    // B5 fix (WP-P1-review.md #5): apply the SAME status filter readAll()
-    // applies everywhere else — retracted content is never returned (A16),
-    // regardless of include_non_active/management scoping, and this must
-    // hold per-REVISION here (an early revision can be active/candidate
-    // while only the LATEST is retracted).
+    // B5 fix (WP-P1-review.md #5), refined per the frozen suite's G-retract
+    // group ("history shows the retraction as a tombstone, not silently
+    // omitted"): history() applies the SAME status scoping readAll() applies
+    // for every OTHER status (superseded/quarantined/etc, per
+    // readableStatusSet), but "retracted" is handled specially — always
+    // included (the tombstone: status/metadata/timestamps), never with its
+    // CONTENT (A16 — content redacted, not the whole revision omitted).
     const statusSet = this.readableStatusSet(ctx, grants);
     const dir = this.historyDir(id);
     const revs = listFilesSafe(dir)
@@ -545,7 +553,12 @@ export class LocalRepository implements MemoryRepository {
     const out: MemoryRecord[] = [];
     for (const rev of revs) {
       const record = readJsonIfExists<MemoryRecord>(this.historyPath(id, rev));
-      if (record && statusSet.has(record.status) && canRead(record, ctx, this.ownerId, grants)) out.push(record);
+      if (!record || !canRead(record, ctx, this.ownerId, grants)) continue;
+      if (record.status === "retracted") {
+        out.push({ ...record, content: "" });
+        continue;
+      }
+      if (statusSet.has(record.status)) out.push(record);
     }
     return out;
   }
@@ -752,14 +765,16 @@ export class LocalRepository implements MemoryRepository {
     if (this.loadRecord(cmd.id)) return this.rejectFrom(operationId, cmd.id, "schema", "id already exists");
 
     const now = new Date().toISOString();
+    const closure = computeClosure(cmd.derived_from ?? [], (id) => this.loadRecord(id));
     const record: MemoryRecord = {
       id: cmd.id, owner_id: this.ownerId, workspace_id: cmd.workspace_id, project_id: cmd.project_id,
       kind: cmd.kind, visibility: cmd.visibility, applicability: cmd.applicability ?? {}, content: cmd.content,
-      content_hash: sha256Content(cmd.content), metadata: stripReservedMetadata(cmd.metadata),
+      content_hash: sha256Content(cmd.content),
+      metadata: closure.overflowed ? { ...stripReservedMetadata(cmd.metadata), _ar_closure_overflow: true } : stripReservedMetadata(cmd.metadata),
       authority: outcome.effectiveAuthority, status: outcome.effectiveStatus, revision: 1,
       source: { principal_id: ctx.principal.principal_id, session_id: ctx.session_id, captured_at: now, channel: ctx.channel },
       evidence_refs: cmd.evidence_refs ?? [], derived_from: cmd.derived_from ?? [],
-      derived_closure: computeClosure(cmd.derived_from ?? [], (id) => this.loadRecord(id)),
+      derived_closure: closure.refs,
       dependency_release: null, exceptions: [], proposal_of: null,
       created_at: now, updated_at: now, expires_at: cmd.expires_at ?? null,
     };
@@ -903,15 +918,17 @@ export class LocalRepository implements MemoryRepository {
 
     const now = new Date().toISOString();
     const superseded = this.nextRecordCommon(target, { status: "superseded" }, "supersede", now);
+    const replacementClosure = computeClosure(cmd.replacement.derived_from ?? [], (id) => this.loadRecord(id));
     const replacementRecord: MemoryRecord = {
       id: cmd.replacement.id, owner_id: this.ownerId, workspace_id: cmd.replacement.workspace_id,
       project_id: cmd.replacement.project_id, kind: cmd.replacement.kind, visibility: cmd.replacement.visibility,
       applicability: cmd.replacement.applicability ?? {}, content: cmd.replacement.content,
-      content_hash: sha256Content(cmd.replacement.content), metadata: stripReservedMetadata(cmd.replacement.metadata),
+      content_hash: sha256Content(cmd.replacement.content),
+      metadata: replacementClosure.overflowed ? { ...stripReservedMetadata(cmd.replacement.metadata), _ar_closure_overflow: true } : stripReservedMetadata(cmd.replacement.metadata),
       authority: target.authority, status: "active", revision: 1,
       source: { principal_id: ctx.principal.principal_id, session_id: ctx.session_id, captured_at: now, channel: ctx.channel },
       evidence_refs: cmd.replacement.evidence_refs ?? [], derived_from: cmd.replacement.derived_from ?? [],
-      derived_closure: computeClosure(cmd.replacement.derived_from ?? [], (id) => this.loadRecord(id)),
+      derived_closure: replacementClosure.refs,
       dependency_release: null, exceptions: [], proposal_of: null,
       created_at: now, updated_at: now, expires_at: cmd.replacement.expires_at ?? null,
       supersedes: { id: target.id, revision: target.revision },
@@ -1043,16 +1060,26 @@ function stripCmdReservedMetadata(cmd: MutateCommand): MutateCommand {
   return cmd;
 }
 
-function computeClosure(derivedFrom: RevisionRef[], load: (id: string) => MemoryRecord | null): RevisionRef[] {
-  if (derivedFrom.length === 0) return [];
+/**
+ * R2.11: "flattened transitive RevisionRef[] (cap 256; overflow -> withheld)".
+ * `overflowed` is true iff there was at least one MORE unique transitive
+ * source beyond the 256th — the caller stores this as a server-set
+ * `_ar_closure_overflow` metadata flag so isClosureValid() can unconditionally
+ * withhold the record (a truncated closure can never be fully verified, so
+ * showing it truncated-but-"valid" would be silently wrong, not conservative).
+ */
+function computeClosure(derivedFrom: RevisionRef[], load: (id: string) => MemoryRecord | null): { refs: RevisionRef[]; overflowed: boolean } {
+  if (derivedFrom.length === 0) return { refs: [], overflowed: false };
   const seen = new Map<string, number>();
   const stack = [...derivedFrom];
-  while (stack.length > 0 && seen.size < MAX_DERIVED_CLOSURE) {
+  let overflowed = false;
+  while (stack.length > 0) {
     const ref = stack.pop()!;
     if (seen.has(ref.id)) continue;
+    if (seen.size >= MAX_DERIVED_CLOSURE) { overflowed = true; continue; }
     seen.set(ref.id, ref.revision);
     const source = load(ref.id);
     if (source) for (const nested of source.derived_from) stack.push(nested);
   }
-  return Array.from(seen.entries()).map(([id, revision]) => ({ id, revision })).slice(0, MAX_DERIVED_CLOSURE);
+  return { refs: Array.from(seen.entries()).map(([id, revision]) => ({ id, revision })), overflowed };
 }

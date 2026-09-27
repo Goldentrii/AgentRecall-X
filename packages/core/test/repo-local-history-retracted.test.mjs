@@ -11,10 +11,18 @@ import * as crypto from "node:crypto";
 // returned", even for a management-channel owner read). history() bypassed
 // readAll() entirely and filtered ONLY by canRead(), with no status filter
 // at all -- so the exact owner who gets 0 items from get() (existence
-// hiding) got the full retracted content (plus the retraction reason) back
+// hiding) got the full retracted CONTENT (plus the retraction reason) back
 // from history().
+//
+// Refined per the frozen acceptance suite's G-retract group ("history shows
+// the retraction as a tombstone, not silently omitted"): the fix is NOT to
+// omit the retracted revision from history() (that lost real audit-trail
+// information the suite requires), it's to keep the tombstone (status/
+// metadata/timestamps) but redact its CONTENT specifically (A16's actual
+// wording is "content not returned by any read path", not "the revision
+// itself never appears").
 
-describe("B5: history() must not return retracted-revision content", () => {
+describe("B5: history() shows a retracted revision as a content-redacted tombstone", () => {
   let runtimeMod;
   let root;
   let rt;
@@ -50,8 +58,9 @@ describe("B5: history() must not return retracted-revision content", () => {
     assert.equal(getResult.items.length, 0, "sanity: get() already correctly hides a retracted record");
 
     const hist = await rt.run(() => rt.repository.history(id, ctx()));
-    for (const rev of hist) {
-      assert.notEqual(rev.status, "retracted", `history() returned a retracted revision (content: ${JSON.stringify(rev.content)}) to the same owner get() just told "this doesn't exist"`);
-    }
+    assert.ok(hist.length > 0, "history must still report the record existed (a tombstone, not silent omission)");
+    const last = hist[hist.length - 1];
+    assert.equal(last.status, "retracted", "the final revision's tombstone status must still be visible");
+    assert.equal(last.content, "", "the retracted revision's CONTENT must be redacted (A16), even though its tombstone metadata is visible");
   });
 });
