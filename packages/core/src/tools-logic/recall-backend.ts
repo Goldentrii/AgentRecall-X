@@ -2,6 +2,8 @@
 import type { SmartRecallResultItem } from "./smart-recall.js";
 import { readSupabaseConfig } from "../supabase/config.js";
 import { LocalVectorRecallBackend } from "../vector/local-vector-backend.js";
+import { singletonKey } from "../repository/singleton-key.js";
+import { onRuntimeClose } from "../repository/context-store.js";
 
 /**
  * RecallBackend — thin read abstraction for recall search.
@@ -59,17 +61,34 @@ export class LocalRecallBackend implements RecallBackend {
  * Logged once to stderr so operators can see it; reset with resetRecallBackend().
  */
 const BREAKER_THRESHOLD = 2;
-let _consecutiveRemoteFailures = 0;
-let _breakerTripped = false;
+
+// G1 S3/S4: was a single process-global cache + breaker, pinned to whichever
+// root/config was seen FIRST — failures against root A's cloud silently
+// disabled remote recall for root B for the rest of the process, and A's
+// cloud config served every later root's queries (privacy breach). Keyed per
+// runtime context (or per legacy root); evicted on the owning runtime's close().
+interface Breaker { consecutiveFailures: number; tripped: boolean }
+const _breakers = new Map<string, Breaker>();
+
+function breakerFor(key: string): Breaker {
+  let b = _breakers.get(key);
+  if (!b) {
+    b = { consecutiveFailures: 0, tripped: false };
+    _breakers.set(key, b);
+  }
+  return b;
+}
 
 /** Record a remote search failure. Returns true if the breaker just tripped. */
 export function recordRemoteFailure(): boolean {
-  _consecutiveRemoteFailures += 1;
-  if (!_breakerTripped && _consecutiveRemoteFailures >= BREAKER_THRESHOLD) {
-    _breakerTripped = true;
+  const key = singletonKey();
+  const b = breakerFor(key);
+  b.consecutiveFailures += 1;
+  if (!b.tripped && b.consecutiveFailures >= BREAKER_THRESHOLD) {
+    b.tripped = true;
     process.stderr.write(
       "[agent-recall] recall circuit breaker tripped: remote backend failed " +
-      `${_consecutiveRemoteFailures}x in a row — using local backend for this process\n`
+      `${b.consecutiveFailures}x in a row — using local backend for this context\n`
     );
     return true;
   }
@@ -78,15 +97,21 @@ export function recordRemoteFailure(): boolean {
 
 /** Record a successful remote search (resets the consecutive counter). */
 export function recordRemoteSuccess(): void {
-  _consecutiveRemoteFailures = 0;
+  const b = breakerFor(singletonKey());
+  b.consecutiveFailures = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Backend factory
 // ---------------------------------------------------------------------------
 
-/** Cached backend instance. Reset via resetRecallBackend() in tests. */
-let _cachedBackend: RecallBackend | null = null;
+/** Cached backend instances, keyed per context. Reset via resetRecallBackend() in tests. */
+const _cachedBackends = new Map<string, RecallBackend>();
+
+onRuntimeClose((key) => {
+  _cachedBackends.delete(key);
+  _breakers.delete(key);
+});
 
 /**
  * Get the configured RecallBackend.
@@ -96,12 +121,15 @@ let _cachedBackend: RecallBackend | null = null;
  * via dynamic import (avoids pulling Supabase client when not configured).
  */
 export async function getRecallBackend(): Promise<RecallBackend> {
-  // If the breaker is tripped, always return local immediately.
-  if (_breakerTripped) {
+  const key = singletonKey();
+
+  // If this context's breaker is tripped, always return local immediately.
+  if (breakerFor(key).tripped) {
     return new LocalRecallBackend();
   }
 
-  if (_cachedBackend) return _cachedBackend;
+  const cached = _cachedBackends.get(key);
+  if (cached) return cached;
 
   try {
     const config = readSupabaseConfig();
@@ -113,7 +141,7 @@ export async function getRecallBackend(): Promise<RecallBackend> {
       const mod = await import("../supabase/recall-backend.js" as any) as any;
       const backend = new mod.SupabaseRecallBackend(config) as RecallBackend;
       if (backend.available()) {
-        _cachedBackend = backend;
+        _cachedBackends.set(key, backend);
         return backend;
       }
     }
@@ -124,17 +152,17 @@ export async function getRecallBackend(): Promise<RecallBackend> {
   // If OPENAI_API_KEY is set and no Supabase config, use local vector backend.
   const vectorBackend = new LocalVectorRecallBackend();
   if (vectorBackend.available()) {
-    _cachedBackend = vectorBackend;
+    _cachedBackends.set(key, vectorBackend);
     return vectorBackend;
   }
 
-  _cachedBackend = new LocalRecallBackend();
-  return _cachedBackend;
+  const local = new LocalRecallBackend();
+  _cachedBackends.set(key, local);
+  return local;
 }
 
-/** Reset cached backend instance and circuit breaker (for testing). */
+/** Reset all cached backend instances and circuit breakers (for testing). */
 export function resetRecallBackend(): void {
-  _cachedBackend = null;
-  _consecutiveRemoteFailures = 0;
-  _breakerTripped = false;
+  _cachedBackends.clear();
+  _breakers.clear();
 }

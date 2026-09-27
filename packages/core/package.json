@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./repository/runtime.js": {
+      "types": "./dist/repository/runtime.d.ts",
+      "import": "./dist/repository/runtime.js"
     }
   },
   "files": [

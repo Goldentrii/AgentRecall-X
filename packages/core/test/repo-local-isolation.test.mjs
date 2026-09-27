@@ -81,7 +81,7 @@ describe("RuntimeContext isolation", () => {
     // ALS in a bad state for whatever runs next (Node's ALS restores the
     // outer store on throw same as a normal return).
     calls.push(
-      rtA.run(() => { throw new Error("intentional isolation-test throw"); })
+      rtA.run(async () => { throw new Error("intentional isolation-test throw"); })
         .then(() => { throw new Error("expected the run() call to reject"); })
         .catch((err) => {
           assert.equal(err.message, "intentional isolation-test throw");
@@ -142,8 +142,8 @@ describe("RuntimeContext isolation", () => {
     assert.ok(clientA, "rootA has a supabase config and should produce a client");
     assert.ok(clientB, "rootB has a supabase config and should produce a client");
     assert.notStrictEqual(clientA, clientB, "each context must get its OWN client instance");
-    assert.equal(clientA.supabaseUrl, "https://fake-a.supabase.co/");
-    assert.equal(clientB.supabaseUrl, "https://fake-b.supabase.co/");
+    assert.equal(clientA.supabaseUrl, "https://fake-a.supabase.co");
+    assert.equal(clientB.supabaseUrl, "https://fake-b.supabase.co");
     // Re-fetching under the SAME context returns the cached instance (no
     // needless reconstruction) — proves this is a real per-context cache,
     // not "construct fresh every time" (which would also pass the
