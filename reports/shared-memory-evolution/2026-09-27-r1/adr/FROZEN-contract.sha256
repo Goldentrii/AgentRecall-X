@@ -1,0 +1,3 @@
+043cb053b7e86da8ff512b9ba6a13860094138d009e1be36f0a624ab3b854881 *packages/core/src/repository/contract.ts
+c7181b7aa5d17181d3c92b2e628ce198acdc8a081c0d5d9600f0258ef9cf1aed *packages/core/src/repository/trust.ts
+e9d925298b75e5e60e117469f24c2885fc1f100bf57d86ab2338619b8818b727 *scripts/acceptance/harness.d.ts

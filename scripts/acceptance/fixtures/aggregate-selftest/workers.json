@@ -1,0 +1,9 @@
+{
+  "workers": [
+    { "id": "wp-p1", "role": "implementer" },
+    { "id": "wp-p2", "role": "implementer" },
+    { "id": "wp-p3", "role": "implementer" },
+    { "id": "wp-v-verifier", "role": "verifier" },
+    { "id": "orchestrator", "role": "orchestrator" }
+  ]
+}

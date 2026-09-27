@@ -1,0 +1,16 @@
+{
+  "id": "A23",
+  "status": "PASS",
+  "commit": "deadbeefcafedeadbeefcafedeadbeefcafedead",
+  "evaluator_commit": "82e1157feedfacefeedfacefeedfacefeedface0",
+  "environment": "fixture-env",
+  "command": "node scripts/acceptance/contract-suite.mjs --case A23",
+  "started_at": "2026-09-27T00:00:00.000Z",
+  "exit_code": 0,
+  "metrics": {},
+  "evidence": [
+    "evidence/e1.txt"
+  ],
+  "verified_by": "wp-v-verifier",
+  "reason": "fixture pass"
+}

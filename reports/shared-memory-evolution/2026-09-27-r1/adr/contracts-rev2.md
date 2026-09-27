@@ -170,3 +170,6 @@ Implementability clarifications (R0b risks):
 - R2.15 N5 items are required tests for P1, not notes.
 
 Freeze: contract.ts + trust.ts + harness.d.ts at the commit carrying this section are FROZEN for P1-P4.
+
+## rev 2.2 (post-freeze security patch)
+stripReservedMetadata drops __proto__/constructor/prototype and defines properties via defineProperty; canonicalJson rejects own __proto__ keys. Source: WP-V step-0 finding (reviews/WP-V-report.md). Signature unchanged; drivers need no change.
