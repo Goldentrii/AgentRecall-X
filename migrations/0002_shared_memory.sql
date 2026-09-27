@@ -372,6 +372,15 @@ BEGIN
   IF p_derived_closure IS NULL OR jsonb_array_length(p_derived_closure) = 0 THEN
     RETURN true;
   END IF;
+  -- B6 (fix round 1): R2.11 "cap 256; overflow -> withheld" — MAX_DERIVED_
+  -- CLOSURE (contract.ts) was enforced nowhere. contract.ts's validateRefs
+  -- is FROZEN for P1-P4 and has no length check, so this read-time backstop
+  -- (plus the create-time write gate below) is where it lives instead. An
+  -- over-cap closure is unconditionally invalid/withheld regardless of
+  -- whether every individual entry would otherwise validate.
+  IF jsonb_array_length(p_derived_closure) > 256 THEN
+    RETURN false;
+  END IF;
   released := COALESCE(p_dependency_release -> 'source_revisions', '[]'::jsonb);
   FOR entry IN SELECT * FROM jsonb_array_elements(p_derived_closure)
   LOOP
@@ -1002,6 +1011,17 @@ BEGIN
       RETURN v_receipt;
     END IF;
 
+    -- B6 (fix round 1): R2.11 cap — reject a create whose derived_from
+    -- exceeds MAX_DERIVED_CLOSURE (256), rather than silently accepting and
+    -- storing an over-cap array (ar2_derived_valid also enforces this at
+    -- read time as a backstop, but a write-time reject is clearer for the
+    -- caller than a silently-withheld record it thought it just created).
+    IF jsonb_array_length(COALESCE(p_cmd -> 'derived_from', '[]'::jsonb)) > 256 THEN
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'derived_from exceeds MAX_DERIVED_CLOSURE (256)');
+      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
+      RETURN v_receipt;
+    END IF;
+
     -- B4 (fix round 1): an id collision on a row the caller cannot even
     -- READ must look identical to a nonexistent id (R2.3 existence
     -- hiding) — the old code did a raw EXISTS with no ar2_visible gate,
@@ -1201,6 +1221,11 @@ BEGIN
   ELSIF v_op = 'supersede' THEN
     IF NOT (v_owner_trusted AND v_can_approve) THEN
       v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'requires_owner_approval', 'message', 'supersede requires owner_trusted + can_approve');
+      INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
+      RETURN v_receipt;
+    END IF;
+    IF jsonb_array_length(COALESCE(p_cmd -> 'replacement' -> 'derived_from', '[]'::jsonb)) > 256 THEN
+      v_receipt := jsonb_build_object('status', 'rejected', 'operation_id', p_operation_id, 'id', v_id::text, 'reason', 'schema', 'message', 'replacement derived_from exceeds MAX_DERIVED_CLOSURE (256)');
       INSERT INTO ar2_operations (principal_id, operation_id, payload_hash, receipt) VALUES (v_caller, p_operation_id, p_payload_hash, v_receipt);
       RETURN v_receipt;
     END IF;
