@@ -161,6 +161,15 @@ export class LocalRepository implements MemoryRepository {
     this.saveAccessEpochs(m);
   }
 
+  /** Owner + every principal with a live grant on this workspace (R2.10's "all active grantees + the owner"). */
+  private workspaceGranteeIds(workspaceId: string): Set<string> {
+    const ids = new Set<string>([this.ownerId]);
+    for (const g of this.loadGrants()) {
+      if (g.workspace_id === workspaceId && !g.revoked_at) ids.add(g.grantee_principal_id);
+    }
+    return ids;
+  }
+
   private accessEpochFor(principalId: string): number {
     return this.loadAccessEpochs()[principalId] ?? 0;
   }
@@ -781,6 +790,12 @@ export class LocalRepository implements MemoryRepository {
     }, "update", now);
     const { event, receipt } = this.buildEventAndReceipt(cmd.id, operationId, "update", target.revision, updated.revision, ctx.principal.principal_id, true, updated.authority, updated.status);
     this.commitRecord(updated, event, receipt, { hash, actorPrincipalId: ctx.principal.principal_id });
+    // R2.10 (non-blocking review item): bump access_epoch for the owner plus
+    // every grantee of this record's workspace on a visibility change, so
+    // clients drop their cache and re-snapshot.
+    if (updated.visibility !== target.visibility) {
+      this.bumpAccessEpoch(this.workspaceGranteeIds(updated.workspace_id));
+    }
     return receipt;
   }
 
