@@ -470,5 +470,157 @@ not by me).
 
 ---
 
+## Fix round 2 (small): hang -> FAIL, not a stuck verifier
+
+Trigger: running suite v1 (pre-fix-round-2) against both real drivers (wp-p1's `local-harness.mjs`,
+wp-p2's `pglite-harness.mjs`) hung indefinitely inside G-authz, right after the "narrowing" subtest,
+in BOTH independently-built drivers (`reports/shared-memory-evolution/2026-09-27-r1/tests/prelim-p{1,2}/
+contract-suite.tap`, both partial TAP files end mid-G-authz, no further subtest lines). Killed after
+>40 minutes. `feat/shared-memory-evolution` had nothing new to merge this round (`git merge --no-edit` ->
+"Already up to date"; my worktree was already at the tip). Neither real harness exists in my worktree
+(same constraint as the original brief), so root-causing the specific driver hang is out of my scope --
+this round is purely about making the SUITE itself incapable of hanging silently, verified with a new
+adversarial fixture, per the ask.
+
+**Observation for the orchestrator (not fixed by me, out of scope):** both real, independently-built
+drivers hung at the *exact same point* (right after the same subtest, in both prelim logs). That's
+suspicious enough to be worth a look on the driver/orchestration side -- either both drivers share a
+latent assumption my "narrowing" subtest violates, or there's a shared dependency/lock pattern at play.
+Flagging, not diagnosing.
+
+### Timeout infrastructure added to `contract-suite.mjs`
+
+- A local `test()` wrapper shadows node:test's own `test` import (renamed to `nodeTest`), applying a
+  default group-level timeout (`AR_DEFAULT_GROUP_TIMEOUT_MS`, default 120s) to every top-level group
+  test with zero changes needed at most of the ~13 call sites.
+- `armGroupTimeouts(t, groupName, subtestTimeoutMs)` mutates a group's `t.test` in place so every
+  `await t.test(...)` inside that group's closure -- at any nesting depth, since nested subtests that
+  don't take their own `t` parameter close over the same outer `t` -- picks up a default subtest timeout
+  (`AR_DEFAULT_TEST_TIMEOUT_MS`, default 60s) automatically. Called once at the top of every group that
+  has subtests (G-validate, G-idem, G-authz, G-existence, G-retract, G-derived, G-handoff, G-durability,
+  G-outbox, G-ackloss).
+- 1000-op groups get explicit, larger overrides: G-visibility and G-cursor (flat, no subtests) get
+  `{ timeout: AR_BIG_GROUP_TIMEOUT_MS }` (default 600s / 10 min) at the group level; G-durability gets
+  its own group timeout (`AR_DURABILITY_GROUP_TIMEOUT_MS`, default 1260s, covering both fault kinds) plus
+  a 600s (`AR_DURABILITY_SUBTEST_TIMEOUT_MS`) per-fault-kind subtest timeout; G-authz's group timeout is
+  bumped to 240s (15 subtests); G-derived's 257-source closure-cap subtest gets a 120s allowance.
+- Every timeout constant is overridable via an env var, specifically so verification (below) doesn't
+  have to wait out realistic production durations to prove the mechanism works.
+- **Process-level watchdog**: a plain, `unref()`'d `setTimeout` (`AR_SUITE_WATCHDOG_MS`, default 15 min)
+  is the backstop for the case node:test's own per-test recovery can't fully cover: a hung operation that
+  holds a real leaked handle (open socket/timer), which would keep the event loop alive indefinitely even
+  after node:test itself has moved past the timed-out test. On fire, it: (1) prints every test name still
+  present in an internal `runningNow` tracking map (populated/cleared around every group and subtest via
+  a `trackRunning()` wrapper) with how long each has been running -- this is what "names the hung test";
+  (2) attempts `harness.teardown()` with its own 5s deadline (`withDeadline()`) so a broken teardown can't
+  re-hang the watchdog itself; (3) forces `process.exit(1)` after a brief flush delay.
+- **Teardown on timeout**: replaced the old "`zzz-harness-teardown` test registered last" convention
+  (which only ran if execution linearly reached it) with node:test's `after()` lifecycle hook, which is
+  guaranteed to fire once the run is exhausted regardless of failures/timeouts (verified empirically --
+  see below). A single `teardownOnce()` helper guards against calling `harness.teardown()` twice (once
+  from `after()`, once from the watchdog, whichever path gets there first).
+
+### Empirical verification of node:test's own timeout semantics (before wiring anything in)
+
+Probed in isolation first, since this is load-bearing and not obviously documented behavior:
+- A child `t.test()` with `{timeout: 500}` whose body never resolves: the parent's `await t.test(...)`
+  call returns control ~500ms later (not never), a sibling `t.test()` registered after it still runs, and
+  the failure is reported as `failureType: 'testTimeoutFailure', error: 'test timed out after 500ms'` --
+  i.e. individually named.
+- Same result when the entire TOP-LEVEL test (not a nested child) hangs: a sibling top-level test still
+  runs afterward, and a registered `after()` hook still fires.
+- These two probes are why the design above uses per-test timeouts as the primary mechanism and treats
+  the process-level watchdog as a secondary backstop, not the primary detector.
+
+### New adversarial fixture: `scripts/acceptance/fixtures/hang-harness.mjs`
+
+Every `mutate()` (and `recordOutcome()`/admin write) returns `new Promise(() => {})` -- never resolves,
+never rejects. All read paths resolve normally so the isolated failure mode under test is exactly "mutate
+hangs", matching the reported real-driver symptom. Not a production driver template; exists purely to
+prove the timeout/watchdog mechanism mechanically, matching the "new adversarial fixture harness" ask.
+
+**Verification 1 -- watchdog is a genuine independent backstop, not just "wait for the last per-test
+timeout":** ran with all per-test timeouts set large (120s, i.e. not expected to fire) and
+`AR_SUITE_WATCHDOG_MS=4000`:
+```
+AR_HARNESS=.../fixtures/hang-harness.mjs AR_DEFAULT_TEST_TIMEOUT_MS=120000 AR_DEFAULT_GROUP_TIMEOUT_MS=120000 \
+AR_BIG_GROUP_TIMEOUT_MS=120000 AR_DURABILITY_SUBTEST_TIMEOUT_MS=120000 AR_DURABILITY_GROUP_TIMEOUT_MS=120000 \
+AR_SUITE_WATCHDOG_MS=4000 node --test --test-reporter=tap scripts/acceptance/contract-suite.mjs
+```
+-> **exit 1 in 5 seconds** (not 120s, not 40 minutes), with:
+```
+=== CONTRACT-SUITE WATCHDOG FIRED ===
+Suite did not complete within 4000ms.
+Still in flight per internal tracking (this is very likely the hung test):
+  - G-validate (running 4005ms)
+  - G-validate > non-UUID record id -> rejected:schema (running 4005ms)
+Forcing process exit(1). A hanging driver must produce a FAIL, not a stuck verifier.
+```
+-- names both the group AND the exact subtest.
+
+**Verification 2 -- teardown runs even when the watchdog (not node:test's natural completion) ends the
+process:** same run as above but with `AR_SUITE_WATCHDOG_MS=3000` and a diagnostic marker added to
+`hang-harness.mjs`'s `teardown()`. Output includes, in order: `Attempting harness.teardown() before
+forcing exit...` -> `hang-harness: teardown() called` -> `teardown attempt finished...` -> forced exit.
+Total time: 3 seconds. (This caught a real gap during development: my first implementation had the
+watchdog call `process.exit(1)` directly without ever invoking teardown at all -- confirmed via this same
+diagnostic marker showing *no* teardown call -- fixed by making the watchdog `await` a
+deadline-bounded `teardownOnce()` before exiting.)
+
+**Verification 3 -- per-test timeout cascade (the primary mechanism) correctly names every hang and
+degrades gracefully without needing the watchdog:** ran with small per-test timeouts (300ms/1500ms/3000ms)
+and a generous watchdog (60s) as a safety net. Result: 12 distinct `testTimeoutFailure` entries logged
+across G-validate/G-cas/G-idem/G-authz before the 60s watchdog eventually fired (this run's group-level
+timeouts were deliberately set tight relative to their subtest counts for this probe, so the group-level
+timeout and the watchdog both got exercised in the same run) -- confirms the cascade produces individually
+named failures rather than one opaque group-level timeout, and confirms no uncaught exceptions/crashes
+occur anywhere in the process (`grep -c "TypeError\|ReferenceError\|Unhandled"` -> 0 matches in all three
+verification logs).
+
+**Regression check -- naive-harness self-test still green after the restructuring:** all 13 groups still
+`not ok` (0 N/A), 61 tests / 7 pass / 54 fail (one fewer test than fix round 1's 62/8 -- exactly the
+removed `zzz-harness-teardown` test, now superseded by `after()`; no coverage lost). `npm run build`
+clean across all 4 workspace packages.
+
+### Two additional fixes (per the coordinator's follow-up message, same round)
+
+- **G-handoff**: removed the `commit_cursor` lexicographic `String` comparison assertion (`"100" <=
+  "99"` is `false` in string comparison -- contract.ts types `commit_cursor` as an opaque `string` with
+  no sortability guarantee; closure re-review correctly caught this as a latent false-failure risk against
+  a real driver whose cursor happens to cross a digit-length boundary). The test now relies solely on
+  strictly sequential `await`s (a real happens-before, independent of any cursor format) plus the
+  `latestHandoff` identity check that was already there.
+- **egress-guard.mjs**: `fetch()` and `undici.fetch()`/`undici.request()` are spec'd/conventionally
+  promise-returning APIs that must never throw synchronously. `guard()` itself still throws (correct for
+  the callback/EventEmitter-style APIs: net, dgram, dns, http(s).request/get), but the three
+  promise-returning wrappers now catch that throw and return `Promise.reject(e)` instead. Verified: `const
+  p = fetch("http://example.com"); await p.catch(e => ...)` now sees the rejection with zero synchronous
+  throw at the call site (previously: `fetch(...)` itself threw, which a `.then/.catch`-only caller would
+  never observe -- an uncaught exception instead of a clean rejection).
+
+### Full fix-round-2 re-verification commands
+
+```bash
+git -c user.name=goldentree -c user.email=tongwu0824@gmail.com merge --no-edit feat/shared-memory-evolution
+# -> "Already up to date."
+
+export TMPROOT=$(mktemp -d) HOME=$TMPROOT USERPROFILE=$TMPROOT AGENT_RECALL_ROOT=$TMPROOT/ar-root
+export AGENT_RECALL_STRICT_CONTEXT=1
+export AR_HARNESS="$(pwd)/scripts/acceptance/fixtures/naive-harness.mjs"
+node --test --test-reporter=tap scripts/acceptance/contract-suite.mjs
+# -> exit 1, all 13 groups not-ok, 0 N/A, 61 tests / 7 pass / 54 fail
+
+export AR_HARNESS="$(pwd)/scripts/acceptance/fixtures/hang-harness.mjs"
+export AR_DEFAULT_TEST_TIMEOUT_MS=120000 AR_DEFAULT_GROUP_TIMEOUT_MS=120000 AR_BIG_GROUP_TIMEOUT_MS=120000 \
+       AR_DURABILITY_SUBTEST_TIMEOUT_MS=120000 AR_DURABILITY_GROUP_TIMEOUT_MS=120000 AR_SUITE_WATCHDOG_MS=4000
+node --test --test-reporter=tap scripts/acceptance/contract-suite.mjs
+# -> exit 1 in ~5s, watchdog names "G-validate > non-UUID record id -> rejected:schema" as the hung test
+
+(cd scripts/acceptance && sha256sum -c FROZEN.sha256)   # expect: all 103 entries OK
+npm run build   # expect: clean, all 4 packages
+```
+
+---
+
 SOP_ID: WP-V
 FEEDBACK_HINTS: outcome=success challenge_fired=false
