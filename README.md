@@ -246,7 +246,8 @@ ar embeddings status    # flag / model / index diagnostics
 | Packaging | Neither runtime nor model ships in the npm package — installed self-contained under `~/.agent-recall/embeddings/` on opt-in |
 | Degradation | Missing/corrupt index or model → keyword results, unchanged, with the reason in `semantic_leg` metadata — never an error |
 | Security | Semantic candidates pass the same trust/scope/fence stages as keyword ones; the index stores content-hash→vector only (no text), so a stale or tampered index cannot inject content |
-| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report) |
+| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report). Measured on the owner's private store; not regenerable from this repo — see the fixture row below for the reproducible number |
+| Reproducible | Golden retrieval, fixture v1 (synthetic, 26 queries, hash-locked): hit@5 **73.1%** keyword [53.9%, 86.3%], **80.8%** with local embeddings [62.1%, 91.5%] (hit@1 15.4% → 69.2%). Every remaining miss is a committed structural trap case (pipeline-dir, loose rooms file, cross-project silo). Regenerate: `npm run bench:golden` (keyword leg; embeddings leg needs `ar embeddings setup` + `AGENT_RECALL_EMBEDDINGS_HOME`) |
 
 Chinese/English cross-lingual queries work (the model is multilingual — a zh question finds an en rule and vice versa). Re-run `ar embeddings rebuild` occasionally (or after writing a lot); content-hash keying makes it cheap, and un-indexed new content simply stays keyword-searchable until then.
 

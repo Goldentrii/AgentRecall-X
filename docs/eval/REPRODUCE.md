@@ -155,6 +155,45 @@ and fail the CI lane.
 
 ---
 
+## Step 8 — Golden retrieval (fixture v1, 26 queries)
+
+```sh
+node scripts/eval/fixtures/validate-golden-fixture.mjs   # lock hash + shape
+npm run bench:golden                                     # double run + byte-diff
+```
+
+Expected output shape (numbers are REPORTED, never gated — the printed values
+on an unmodified checkout at core 3.4.51 were hit@5 19/26 = 73.1% keyword):
+
+```
+golden fixture lock verified (42 files, 26 queries, hash 3aac650d…)
+  category          hit@1          hit@5          Wilson95(hit@5)
+  A known-decision  …/10 …%        …/10 …%        [… , …]
+  …
+  OVERALL           …/26 …%        …/26 …%        [… , …]
+determinism: PASS (byte-identical after stripping generated_utc)
+```
+
+The harness copies `scripts/eval/fixtures/golden-v1/` to a temp
+`AGENT_RECALL_ROOT`, scrubs every remote-capable env key, redirects
+HOME/USERPROFILE, and calls `core.smartRecall()` — the same function the MCP
+`recall` tool and `ar recall` route to. A single run (writes a dated artifact
+under `scripts/eval/baselines/`):
+
+```sh
+node scripts/eval/golden-retrieval.mjs
+```
+
+Optional embeddings leg (local ONNX; NEVER downloads — absent model prints
+`SKIPPED` and exits 0):
+
+```sh
+AGENT_RECALL_EMBEDDINGS_HOME=<dir with installed runtime+model> \
+  node scripts/eval/golden-retrieval.mjs --embeddings
+```
+
+---
+
 ## Notes on reproducibility
 
 - **TZ=UTC** must be set for fixture runs. Day bucketing uses
