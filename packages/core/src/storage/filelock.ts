@@ -255,7 +255,19 @@ function tryReclaim(dir: string): boolean {
  * Only EEXIST means "contended"; ENOENT (store root vanished) is repaired and
  * retried; any OTHER error (EACCES/EROFS/EMFILE, …) is rethrown immediately —
  * spinning 5 s on a read-only store and then reporting "held by a live
- * process" would misdiagnose an environment problem as contention. */
+ * process" would misdiagnose an environment problem as contention.
+ *
+ * win32 EXCEPTION (A10, 2026-10-11): on Windows, mkdir of a name whose
+ * previous incarnation is DELETE-PENDING (another process's release/reclaim
+ * rmSync has started but the handle isn't fully closed) fails with EPERM,
+ * not EEXIST — a transient contention artefact of NTFS delete semantics,
+ * observed crashing audit-outcome-concurrency workers once the
+ * progress-aware deadline increased acquire/release churn. On win32 ONLY,
+ * EPERM is therefore treated as "contended" (retry); a genuinely
+ * permission-denied store on Windows now surfaces as LockContentionError
+ * after the timeout instead of an immediate EPERM — a diagnostics tradeoff
+ * confined to the one platform where EPERM is routinely transient. POSIX
+ * behavior is unchanged. */
 function tryAcquire(dir: string): (() => void) | null {
   try {
     fs.mkdirSync(dir, { recursive: false });
@@ -275,6 +287,8 @@ function tryAcquire(dir: string): (() => void) | null {
       }
     } else if (code === "EEXIST") {
       return null;
+    } else if (code === "EPERM" && process.platform === "win32") {
+      return null; // delete-pending collision — see doc comment above
     } else {
       throw err;
     }
