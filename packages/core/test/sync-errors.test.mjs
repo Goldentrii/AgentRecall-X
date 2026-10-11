@@ -4,14 +4,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { logSyncError } from "agent-recall-core";
+import { logSyncError, setRoot, resetRoot } from "agent-recall-core";
 
 describe("sync error logging", () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "ar-test-"));
   const origHome = process.env.HOME;
 
-  before(() => { process.env.HOME = tmpHome; });
+  before(() => {
+    process.env.HOME = tmpHome;
+    // Hermeticity (A10 Linux-CI fix, 2026-10-11): logSyncError resolves its
+    // target via getRoot() — AGENT_RECALL_ROOT / setRoot() override FIRST,
+    // homedir fallback LAST (the 2026-07-31 root-fix in supabase/sync.ts).
+    // The HOME override above only covers the fallback branch, so any runner
+    // that exports AGENT_RECALL_ROOT (CI containers, isolated local runs —
+    // the documented way to keep tests out of the real ~/.agent-recall)
+    // silently redirected the log elsewhere and failed the assertions below.
+    // Pin the root explicitly; the assertions' tmpHome-based path is now the
+    // resolved root regardless of ambient environment.
+    setRoot(path.join(tmpHome, ".agent-recall"));
+  });
   after(() => {
+    resetRoot();
     process.env.HOME = origHome;
     fs.rmSync(tmpHome, { recursive: true });
   });
