@@ -213,7 +213,10 @@ describe("transcript-reader (F1 + F1b, continuity wave 2026-07-31)", () => {
       const projectsHome = path.join(FAKE_HOME, "Projects", "brand-new-real");
       fs.mkdirSync(projectsHome, { recursive: true });
       const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      // os.homedir() reads USERPROFILE on Windows, HOME on POSIX - set both.
       process.env.HOME = FAKE_HOME;
+      process.env.USERPROFILE = FAKE_HOME;
       try {
         const tailLines = [
           line({ type: "user", message: { content: "working in /Users/tongwu/Projects/brand-new-real today" } }),
@@ -225,12 +228,17 @@ describe("transcript-reader (F1 + F1b, continuity wave 2026-07-31)", () => {
         assert.equal(result.slug, "brand-new-real", `must mint the corroborated new slug; got ${JSON.stringify(result)}`);
       } finally {
         process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
       }
     });
 
     it("new-slug gate REJECTS a candidate with only 1-2 mentions (no ~/Projects dir either)", () => {
       const originalHome = process.env.HOME;
-      process.env.HOME = FAKE_HOME; // brand-new-real dir from the previous test may or may not exist; use a fresh name
+      const originalUserProfile = process.env.USERPROFILE;
+      // os.homedir() reads USERPROFILE on Windows, HOME on POSIX - set both.
+      process.env.HOME = FAKE_HOME;
+      process.env.USERPROFILE = FAKE_HOME; // brand-new-real dir from the previous test may or may not exist; use a fresh name
       try {
         const tailLines = [
           line({ type: "user", message: { content: "quick one-off mention of /Users/tongwu/Projects/weak-signal-project" } }),
@@ -240,6 +248,8 @@ describe("transcript-reader (F1 + F1b, continuity wave 2026-07-31)", () => {
         assert.equal(result.confidence, 0);
       } finally {
         process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
       }
     });
 

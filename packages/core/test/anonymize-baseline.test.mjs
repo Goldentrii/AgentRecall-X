@@ -23,14 +23,16 @@ import * as path from "node:path";
 import * as url from "node:url";
 import * as os from "node:os";
 
-const SCRIPT = url.fileURLToPath(new url.URL(
+// Keep this a URL: dynamic import() cannot take a bare Windows absolute path
+// ("protocol 'e:'" ESM error); a file:// URL works on every platform.
+const SCRIPT_URL = new url.URL(
   "../../../scripts/eval/anonymize-baseline.mjs",
   import.meta.url,
-));
+);
 
 // Dynamic import of the ESM script
 const { GLOBAL_SLUG_TABLE, ALIAS_MAP, anonymizeSlugs, transformFile } =
-  await import(SCRIPT);
+  await import(SCRIPT_URL.href);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
