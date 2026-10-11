@@ -1,5 +1,20 @@
 name: CI
 
+# ── What runs where ──────────────────────────────────────────────────────────
+# build-and-test is a 2-lane matrix: ubuntu-latest + windows-latest.
+#   - ubuntu-latest  — THE gate for POSIX-only behavior. 5 tests exercise POSIX
+#                      signals / symlinks / mode bits and only run here.
+#   - windows-latest — exists because the owner develops on Windows; bench and
+#                      test suites are portable since the fix/windows-paths
+#                      work. The POSIX-only tests self-skip on win32 with named
+#                      reasons, so no step needs `if: runner.os`.
+# Both lanes run the same steps: build → typecheck → 4 regression suites →
+# full test suite. fail-fast is off so one lane's failure never cancels the
+# other lane's verdict.
+# Expected state: the Windows lane goes green once fix/linux-core-tests lands
+# (it fixes a recordOutcome read-modify-write race); until then the Windows
+# lane fails on that one race test.
+#
 # Runs on every PR into main (incl. from forks) and on pushes to main.
 # SECURITY: uses `pull_request` (NOT `pull_request_target`), so PRs from forks
 # run with a READ-ONLY token and NO access to repository secrets. A fork PR can
@@ -20,11 +35,27 @@ concurrency:              # cancel superseded runs on the same ref
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
-    # Measured local floor (build+lint+test+regression, warm cache): ~34s.
-    # 10 min gives generous headroom for a cold npm cache + slower shared
-    # runners without masking a genuine hang for an unreasonable time.
-    timeout-minutes: 10
+    name: build-and-test (${{ matrix.os }})
+    strategy:
+      fail-fast: false    # keep the ubuntu gate's verdict even when Windows fails (and vice versa)
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Measured local floor (build+lint+test+regression, warm cache): ~34s on
+    # Linux, ~3-4 min on a Windows dev box. 30 min covers the slower Windows
+    # runner + a cold npm cache without masking a genuine hang forever.
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash       # Git Bash on windows-latest; `tee` + pipes behave identically on both lanes
+    env:
+      # On Windows, npm runs package scripts through cmd.exe by default, which
+      # does not expand the `test/*.test.mjs` glob in the per-package test
+      # scripts — and the pinned Node 20 test runner has no built-in glob
+      # support (added in Node 21). Forcing npm's script shell to bash
+      # (present on both runner images) keeps script behavior identical
+      # across lanes.
+      npm_config_script_shell: bash
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -43,7 +74,6 @@ jobs:
       # mcp-server/sdk/cli resolve the `agent-recall-core` workspace package by
       # its built dist output, so this cannot run before `npm run build`.
       - name: Typecheck (lint)
-        shell: bash
         run: npm run lint 2>&1 | tee lint-output.log
 
       - name: Regression suites
@@ -56,17 +86,18 @@ jobs:
       # Full suite across all 4 packages, run last (slowest, most comprehensive
       # — everything cheaper already had to pass first).
       - name: Full test suite (all packages)
-        shell: bash
         run: npm test 2>&1 | tee test-output.log
 
       # SECURITY: only upload the specific log files this job wrote (synthetic
       # local stdout/stderr captures) — never glob node_modules or unrelated
       # directories. Mirrors bench-fixture.yml's upload-artifact posture.
+      # The artifact name carries the OS: upload-artifact v4 rejects duplicate
+      # artifact names, so the two matrix lanes must not collide.
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ci-failure-logs-${{ github.sha }}
+          name: ci-failure-logs-${{ matrix.os }}-${{ github.sha }}
           path: |
             lint-output.log
             test-output.log
