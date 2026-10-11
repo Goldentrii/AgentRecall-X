@@ -1,0 +1,30 @@
+
+[funnel] AR_ROOT=C:\Users\tong\AppData\Local\Temp\ar-funnel-ahlD0Y
+
+[T0] normalizeTitle + tokenOverlap unit
+  ✅ near-duplicate titles overlap >= 0.6
+  ✅ clearly-different titles overlap < 0.6
+[T1] near-duplicate insight confirms existing entry
+  ✅ T1: exactly ONE entry for multi-agent review insight
+  ✅ T1: confirmed_count === 2
+  ✅ T1: applies_when merged (has both 'code-review' and 'ternary')
+[T2] clearly-different insight creates a new entry
+  ✅ T2: Supabase insight added as separate entry
+  ✅ T2: Supabase insight confirmed_count === 1
+  ✅ T2: total index has 2 entries
+[T3] SessionEndResult.insights_confirmed / insights_added fields
+  ✅ T3: insights_confirmed === 1 (near-dup confirmed)
+  ✅ T3: insights_added === 0 (no new entry)
+  ✅ T3: insights_added === 1 (new entry)
+  ✅ T3: insights_confirmed === 0 (no confirmation)
+[T4] cap eviction — count>=2 entries survive count-1 flood
+  ✅ T4: ANCHOR-INSIGHT (count=3) survived the count-1 flood
+  ✅ T4: ANCHOR-INSIGHT still has confirmed_count >= 3
+  ✅ T4: index size stays at or below 200
+  ✅ T4: all count>=2 entries are preserved (anchor in count>=2 group)
+[T5] malformed insights-index.json — graceful degradation
+  ✅ T5: session_end does not throw on corrupted insights-index.json
+  ✅ T5: session_end reports success despite corrupted index
+
+[funnel] PASS 18 / FAIL 0
+
