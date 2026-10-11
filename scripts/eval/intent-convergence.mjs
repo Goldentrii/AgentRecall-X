@@ -72,6 +72,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { tokenize, overlap } from "../../packages/core/dist/tools-logic/check-action.js";
 
@@ -478,5 +479,5 @@ function main() {
 }
 
 const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (invokedDirectly) main();

@@ -98,7 +98,7 @@ describe("continuity wave — hook-end round-trip (unified naming + card + recen
     const home = isolatedHome();
     // Deliberately NO --project flag — this exercises resolveSessionProject's
     // own resolution end-to-end, not the explicit-override path.
-    const { code, stderr } = await runCli(["hook-end"], { stdin: payload, env: { HOME: home } });
+    const { code, stderr } = await runCli(["hook-end"], { stdin: payload, env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
     const today = new Date().toISOString().slice(0, 10);
@@ -143,7 +143,7 @@ describe("continuity wave — hook-end round-trip (unified naming + card + recen
 
     const payload = JSON.stringify({ transcript_path: transcriptPath, session_id: sid });
     const home = isolatedHome();
-    const { code, stderr } = await runCli(["--project", overrideSlug, "hook-end"], { stdin: payload, env: { HOME: home } });
+    const { code, stderr } = await runCli(["--project", overrideSlug, "hook-end"], { stdin: payload, env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
     const rawDir = path.join(TEST_ROOT, "projects", overrideSlug, "journal", "archive", "raw");
@@ -173,7 +173,7 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
 
     const home = isolatedHome();
     const { code, stdout, stderr } = await runCli(["--project", "health-warn-test", "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "hook-start-health-test-1" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-1" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.match(stdout, /⚠️ AgentRecall: 2 hook failures \(24h\)/, `expected health warning line; stdout=${stdout}`);
@@ -187,7 +187,7 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", cleanRoot, "--project", "health-clean-test", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
+        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
       });
       let stdout = "";
       let stderr = "";
@@ -220,7 +220,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l1-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
+        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
       });
       let stdout = "";
       let stderr = "";
@@ -259,7 +259,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l2-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
+        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
       });
       let stdout = "";
       let stderr = "";
