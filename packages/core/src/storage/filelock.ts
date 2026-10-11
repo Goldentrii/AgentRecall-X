@@ -320,14 +320,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Acquire a named lock. Retries with async (event-loop-friendly) backoff
- * until LOCK_TIMEOUT_MS; reclaims dead-holder / legacy-stale locks; throws
- * LockContentionError if the holder is alive at timeout.
+ * Acquire a named lock. Retries with async (event-loop-friendly) backoff;
+ * reclaims dead-holder / legacy-stale locks; throws LockContentionError only
+ * when the lock makes NO PROGRESS for LOCK_TIMEOUT_MS (same holder the whole
+ * time — a wedged process), or after MAX_TOTAL_WAIT_MS outright.
+ *
+ * PROGRESS-AWARE DEADLINE (A10 Linux-CI fix, 2026-10-11): the old fixed
+ * `now + 5s` deadline measured TOTAL wait, so under heavy-but-healthy
+ * contention (N processes serializing short critical sections through one
+ * lock — the audit-outcome-concurrency stress shape) a waiter near the back
+ * of the herd timed out even though the lock was changing hands every few
+ * milliseconds. Callers like recordOutcome treat LockContentionError as
+ * "skip the materialized-counter update" (by design: ledger stays lossless),
+ * so every such spurious timeout became a silently lost counter increment
+ * (reproduced: 480-event stress runs materialized 461-476). The timeout's
+ * actual job is detecting a WEDGED holder, so the deadline now resets every
+ * time the observed owner (pid + acquired_at) changes: a live, churning lock
+ * is waited on; a holder that sits on the lock for LOCK_TIMEOUT_MS without
+ * releasing still times out exactly as before (the "never steal from a live
+ * holder" filelock test is unchanged). MAX_TOTAL_WAIT_MS bounds the absolute
+ * worst case so a hot path can never hang indefinitely behind a pathological
+ * ping-pong.
  * Returns a release function (idempotent).
  */
+const MAX_TOTAL_WAIT_MS = 60_000;
+
 export async function acquireLock(name: string): Promise<() => void> {
   const dir = lockDir(name);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const hardDeadline = Date.now() + MAX_TOTAL_WAIT_MS;
+  let lastOwnerKey: string | null = null;
 
   // Ensure root dir exists before attempting lock
   ensureDir(path.dirname(dir));
@@ -337,10 +359,21 @@ export async function acquireLock(name: string): Promise<() => void> {
     const release = tryAcquire(dir);
     if (release) return release;
 
-    // Deadline is checked BEFORE the reclaim-retry shortcut so the loop is
+    // Progress detection: a change of owner (pid or acquired_at) since the
+    // last look means the lock is live — reset the no-progress deadline.
+    // An unreadable owner.json (legacy/crash lock) never counts as progress,
+    // so that branch keeps the original fixed-timeout behavior.
+    const owner = readOwner(dir);
+    const ownerKey = owner ? `${owner.pid}:${owner.acquired_at}` : null;
+    if (ownerKey !== null && ownerKey !== lastOwnerKey) {
+      if (lastOwnerKey !== null) deadline = Date.now() + LOCK_TIMEOUT_MS;
+      lastOwnerKey = ownerKey;
+    }
+
+    // Deadlines are checked BEFORE the reclaim-retry shortcut so the loop is
     // always bounded — a pathological reclaim-always-true state (e.g. the
     // store root being deleted out from under us) can never spin forever.
-    if (Date.now() >= deadline) {
+    if (Date.now() >= deadline || Date.now() >= hardDeadline) {
       throw contentionError(name, dir);
     }
 
