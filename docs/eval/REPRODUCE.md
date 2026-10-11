@@ -129,7 +129,9 @@ TZ=UTC node scripts/eval/run-bench.mjs --verify-baselines
 For each file under `scripts/eval/baselines/` it recomputes every headline metric
 from `per_item` and asserts equality with the stored `metrics`, and recomputes
 `corpus_hash` from the embedded manifest (`generated_utc` and `environment` are
-excluded from comparison).
+excluded from comparison). A4's `injection-*.json` / `latency-*.json` baselines
+are verified the same way: headline stats recomputed from `per_project` /
+`samples_ms` (internal consistency — latency values themselves are never gated).
 
 Expected: exits 0 with `all baselines verified`.
 
@@ -152,6 +154,60 @@ caught at runtime by the guard, not by this static check.
 
 Any `Math.random()` invocation in `scripts/eval/**` causes this to exit non-zero
 and fail the CI lane.
+
+---
+
+## Step 8 — Injection-size and latency benches (A4)
+
+These two commands regenerate the README's session_start injection-size and
+latency rows from the committed fixture (golden-v1 if present, else corpus-v1;
+override with `--store <path>`). Neither ever touches `~/.agent-recall` — the
+fixture is copied into a temp `AGENT_RECALL_ROOT` and all network env vars
+(Supabase / embedding keys) are scrubbed before any core function runs.
+
+```sh
+npm run bench:injection
+```
+
+Expected output shape (exact sizes depend on the store; exits 0):
+
+```
+artifact: scripts/eval/baselines/injection-<YYYY-MM-DD>.json
+session-start-size — store: scripts/eval/fixtures/corpus-v1 (hash …)
+project                 chars   tokens  cjk-adj  P0 store  P0 payload  survival
+alpha-platform          …       …       …        6         6           OK
+…
+median <N> tokens | p95 <N> | max <N> (estimator: chars/4, over 4 projects)
+```
+
+The measured payload is the MCP `session_start` tool's default response text
+(`formatTerse(sessionStart({project}))`, mode=full, verbose=false). Sizes on a
+fixed store are deterministic — `--check-determinism` double-runs and
+byte-diffs the artifact (excluding `generated_utc`) and is a CI gate. A P0
+correction missing from the payload fails the run (budget logic guarantees
+P0 survival).
+
+```sh
+npm run bench:latency -- --n 200 --n-session 50
+```
+
+Expected output shape (values are TIMING — machine-dependent, never gated):
+
+```
+artifact: scripts/eval/baselines/latency-<YYYY-MM-DD>.json
+latency — store: scripts/eval/fixtures/corpus-v1 (hash …) on <machine> (<cpu>)
+recall        n=200 errors=0  p50 … ms  p95 … ms  p99 … ms  mean … ms  min …  max …
+session_start n=50 errors=0  p50 … ms  p95 … ms  p99 … ms  mean … ms  min …  max …
+(non-deterministic: timing — values are never CI-gated; schema + sample-recompute only)
+```
+
+`recall` times `smartRecall({query, project, limit:10})` (the MCP `recall`
+tool's function) over a fixed query list after 20 warm-up calls;
+`session_start` times `sessionStart({project})` after 5 warm-ups. The artifact
+carries the raw `samples_ms` arrays, so `--verify-baselines` (Step 6) recomputes
+every percentile from the samples — internal consistency, never a value gate.
+
+Tests: `node --test scripts/eval/session-start-size.test.mjs scripts/eval/latency.test.mjs`
 
 ---
 
