@@ -77,8 +77,8 @@ Here is what our own instrument found on our own live corpus (2026-07-03):
 | Heed rate, pre-2026-07-03 (instrument-biased upper bound — do not cite) | 92.5% [Wilson 60.1–100] | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | Heed rate, evidence-grounded (post-reset) | **0/3** events | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | Correction transfer recall (offline bench, achievable) | **0/4** [Wilson 0–49%] | `scripts/eval/baselines/correction-transfer-real-2026-07-03.json` |
-| Median session_start injection (fixture corpus v1, synthetic) | **197 tokens** (chars/4) — measured on owner-pc-2026, `npm run bench:injection` | `scripts/eval/baselines/injection-2026-10-11.json` |
-| p95 session_start latency, warm (fixture corpus v1, synthetic) | **115 ms** (recall p95: 347 ms) — measured on owner-pc-2026 under concurrent load, `npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
+| Median session_start injection (fixture golden-v1, synthetic) | **244 tokens** (chars/4) — measured on owner-pc-2026, `npm run bench:injection` | `scripts/eval/baselines/injection-2026-10-11.json` |
+| p95 session_start latency, warm (fixture golden-v1, synthetic) | **97 ms** (recall p95: 209 ms) — measured on owner-pc-2026 under concurrent load, `npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
 
 *The 1,489-token median injection / 363 ms p95 warm latency figures previously cited here (was 2,010 tokens / 1,132 ms; Mem0 anchor ~7K) come from `UPDATE-LOG.md` §C2 and were measured on the owner's private store — they are not regenerable from this repo. The fixture rows above are the reproducible replacements: smaller numbers because the committed fixture (4 projects, corrections-only) is far thinner than a lived-in store. Latency values are machine- and run-dependent (timing is non-deterministic); CI gates only schema and injection-size determinism, never the values.*
 
@@ -248,7 +248,8 @@ ar embeddings status    # flag / model / index diagnostics
 | Packaging | Neither runtime nor model ships in the npm package — installed self-contained under `~/.agent-recall/embeddings/` on opt-in |
 | Degradation | Missing/corrupt index or model → keyword results, unchanged, with the reason in `semantic_leg` metadata — never an error |
 | Security | Semantic candidates pass the same trust/scope/fence stages as keyword ones; the index stores content-hash→vector only (no text), so a stale or tampered index cannot inject content |
-| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report) |
+| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report). Measured on the owner's private store; not regenerable from this repo — see the fixture row below for the reproducible number |
+| Reproducible | Golden retrieval, fixture v1 (synthetic, 26 queries, hash-locked): hit@5 **73.1%** keyword [53.9%, 86.3%], **80.8%** with local embeddings [62.1%, 91.5%] (hit@1 15.4% → 69.2%). Every remaining miss is a committed structural trap case (pipeline-dir, loose rooms file, cross-project silo). Regenerate: `npm run bench:golden` (keyword leg; embeddings leg needs `ar embeddings setup` + `AGENT_RECALL_EMBEDDINGS_HOME`) |
 
 Chinese/English cross-lingual queries work (the model is multilingual — a zh question finds an en rule and vice versa). Re-run `ar embeddings rebuild` occasionally (or after writing a lot); content-hash keying makes it cheap, and un-indexed new content simply stays keyword-searchable until then.
 

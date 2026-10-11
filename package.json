@@ -14,6 +14,7 @@
     "lint": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli",
     "bench": "node scripts/eval/run-bench.mjs",
     "bench:latency": "node scripts/eval/latency.mjs",
-    "bench:injection": "node scripts/eval/session-start-size.mjs"
+    "bench:injection": "node scripts/eval/session-start-size.mjs",
+    "bench:golden": "node scripts/eval/golden-retrieval.mjs --check-determinism"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "id": "2026-06-18-always-set-cache-ttl-explicitly",
+  "date": "2026-06-18",
+  "severity": "p1",
+  "project": "alpha-platform",
+  "rule": "Always set a cache TTL explicitly — never rely on the client library default",
+  "context": "The ioredis default of no expiry pinned a stale catalog page for a week. Every SET on the cache path must carry an explicit EX.",
+  "tags": ["cache", "ttl", "redis"],
+  "kind": "correction",
+  "active": true,
+  "retrieved_count": 2,
+  "heeded_count": 2,
+  "recurrence_count": 0
+}
