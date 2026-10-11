@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 import { setRoot, resetRoot } from "agent-recall-core";
 
 describe("archiveSession (Wave 2)", () => {
@@ -158,7 +159,7 @@ describe("archiveSession (Wave 2)", () => {
     // Structural privacy guarantee: the compiled module text must not reference
     // the sync surface. This is the cheapest reliable check that archive-write
     // cannot leak the lossless tier to Supabase.
-    const here = path.dirname(new URL(import.meta.url).pathname);
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const compiled = path.join(here, "..", "dist", "storage", "archive-write.js");
     const src = fs.readFileSync(compiled, "utf-8");
     // Strip block + line comments so a doc-comment mentioning the forbidden

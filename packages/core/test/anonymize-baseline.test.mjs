@@ -23,10 +23,10 @@ import * as path from "node:path";
 import * as url from "node:url";
 import * as os from "node:os";
 
-const SCRIPT = new url.URL(
+const SCRIPT = url.fileURLToPath(new url.URL(
   "../../../scripts/eval/anonymize-baseline.mjs",
   import.meta.url,
-).pathname;
+));
 
 // Dynamic import of the ESM script
 const { GLOBAL_SLUG_TABLE, ALIAS_MAP, anonymizeSlugs, transformFile } =
@@ -226,10 +226,10 @@ describe("anonymize-baseline: transformFile", () => {
 
 describe("anonymize-baseline: fixture baseline is clean", () => {
   it("correction-transfer-fixture-baseline.json contains no real slugs", () => {
-    const fixturePath = new url.URL(
+    const fixturePath = url.fileURLToPath(new url.URL(
       "../../../scripts/eval/baselines/correction-transfer-fixture-baseline.json",
       import.meta.url,
-    ).pathname;
+    ));
 
     if (!fs.existsSync(fixturePath)) {
       // Not a failure — file may not exist in all environments

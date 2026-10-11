@@ -23,6 +23,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { scrubForExport, SecretScanError } from "../../packages/core/dist/storage/content-guard.js";
 
@@ -646,7 +647,7 @@ function runSelfTest() {
 
 const invokedDirectly =
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   const args = process.argv.slice(2);
