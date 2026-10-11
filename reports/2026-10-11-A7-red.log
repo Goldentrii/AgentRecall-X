@@ -1,0 +1,96 @@
+
+> agent-recall-sdk@3.4.51 test
+> node --test test/*.test.mjs
+
+▶ AgentRecall SDK
+  ✔ constructor sets root and project (0.8592ms)
+  ✔ capture creates a Q&A entry (12.7609ms)
+  ✔ journalWrite creates an entry (10.1765ms)
+  ✔ journalRead reads the latest entry (1.8834ms)
+  ✔ journalList returns entries (1.3859ms)
+  ✔ journalSearch finds content (3.7546ms)
+  ✔ state write and read (3.7376ms)
+  ✔ palaceWrite creates a room and memory (69.2431ms)
+  ✔ palaceRead lists rooms (7.3401ms)
+  ✔ palaceRead reads specific room (8.6249ms)
+  ✔ walk returns context (8.5393ms)
+  ✔ palaceSearch finds content (18.6695ms)
+  ✔ lint returns health report (11.2859ms)
+  ✔ awarenessUpdate adds insights (24.5078ms)
+  ✔ readAwareness returns markdown (0.3442ms)
+  ✔ recallInsight returns insights (1.0157ms)
+  ✔ projects lists tracked projects (0.9071ms)
+  ✔ coldStart returns palace-first context (25.3222ms)
+  ✔ palace low-level access works (4.4495ms)
+  ✔ synthesize generates context (7.5221ms)
+  ✔ archive with high threshold archives nothing (3.3408ms)
+  ✔ rollup dry run previews (1.2758ms)
+  ✔ alignmentCheck records alignment (14.0968ms)
+  ✔ nudge records contradiction (1.0504ms)
+  ✔ knowledgeWrite creates a lesson (28.9403ms)
+  ✔ knowledgeRead returns lessons (0.7292ms)
+  ✔ readAwarenessState returns structured state (0.3048ms)
+  ✔ graph accessor exposes graph functions (0.0728ms)
+✔ AgentRecall SDK (941.146ms)
+▶ SDK audit contract (Phase 0 regression fixtures)
+  ✔ Case A: README Quick Start's memory.recall(...) exists and works on AgentRecall (705.7346ms)
+  ✖ Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance (10.062ms)
+  ✖ Case C: interleaved calls on two instances each write under their own root; a throwing scope does not leak (19.3974ms)
+✖ SDK audit contract (Phase 0 regression fixtures) (735.9562ms)
+▶ AgentRecall SDK — modern composite API
+  ✔ sessionStart returns a SessionStartResult for the project (58.2803ms)
+  ✔ sessionStart accepts an optional context hint (26.7656ms)
+  ✔ remember routes content to a store and reports success (120.6814ms)
+  ✔ remember accepts a routing context hint (145.019ms)
+  ✔ recall finds previously remembered content without throwing (57.8404ms)
+  ✔ recall accepts limit/since opts alongside project override (18.0562ms)
+  ✔ sessionEnd writes a journal summary and returns a SessionEndResult (68.3973ms)
+  ✔ sessionEnd accepts trajectory and insights via opts (93.4496ms)
+  ✔ check records an alignment check and returns a CheckResult (14.0196ms)
+  ✔ check accepts a human_correction and records it without throwing (17.982ms)
+✔ AgentRecall SDK — modern composite API (1282.6259ms)
+ℹ tests 41
+ℹ suites 3
+ℹ pass 39
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1426.772
+
+✖ failing tests:
+
+test at test\audit-sdk-contract.test.mjs:62:3
+✖ Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance (10.062ms)
+  AssertionError [ERR_ASSERTION]: TOW2-324 regression: instanceA.capture() should write under tmpA (C:\Users\tong\AppData\Local\Temp\ar-sdk-audit-caseB-A-xUmz0t) since instanceA made the call, but it actually wrote to C:\Users\tong\AppData\Local\Temp\ar-sdk-audit-caseB-B-f0G420\projects\isotest\journal\2026-10-11--capture--general.md (under tmpB: true). This proves constructing instanceB silently redirected the shared global root out from under instanceA.
+      at TestContext.<anonymous> (file:///E:/tools/AgentRecall-X-a7/packages/sdk/test/audit-sdk-contract.test.mjs:85:14)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\audit-sdk-contract.test.mjs:107:3
+✖ Case C: interleaved calls on two instances each write under their own root; a throwing scope does not leak (19.3974ms)
+  AssertionError [ERR_ASSERTION]: A's capture must land under tmpA (C:\Users\tong\AppData\Local\Temp\ar-sdk-audit-caseC-A-bUByzr), got C:\Users\tong\AppData\Local\Temp\ar-sdk-audit-caseC-B-7SYufS\projects\isotest\journal\2026-10-11--capture--instance-wrote-answer.md
+      at TestContext.<anonymous> (file:///E:/tools/AgentRecall-X-a7/packages/sdk/test/audit-sdk-contract.test.mjs:127:14)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path E:\tools\AgentRecall-X-a7\packages\sdk
+npm error workspace agent-recall-sdk@3.4.51
+npm error location E:\tools\AgentRecall-X-a7\packages\sdk
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c node --test test/*.test.mjs
