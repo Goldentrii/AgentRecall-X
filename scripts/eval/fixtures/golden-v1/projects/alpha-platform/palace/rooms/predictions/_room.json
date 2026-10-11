@@ -1,0 +1,12 @@
+{
+  "slug": "predictions",
+  "name": "Predictions",
+  "description": "Standing gates and predicted failure modes",
+  "created": "2026-06-20",
+  "updated": "2026-09-02",
+  "salience": 0.55,
+  "access_count": 12,
+  "last_accessed": "2026-09-02",
+  "tags": ["gates", "predictions"],
+  "connections": ["decisions"]
+}

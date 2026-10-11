@@ -1,0 +1,12 @@
+{
+  "slug": "alignment",
+  "name": "Alignment",
+  "description": "Naming maps and cross-team alignment records for alpha-platform",
+  "created": "2026-06-15",
+  "updated": "2026-07-22",
+  "salience": 0.6,
+  "access_count": 9,
+  "last_accessed": "2026-08-30",
+  "tags": ["naming", "alignment"],
+  "connections": ["decisions"]
+}
