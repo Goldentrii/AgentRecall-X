@@ -4,6 +4,7 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -18,9 +19,22 @@ export const VERSION = "3.4.51";
 let _root: string | null = null;
 
 /**
+ * Per-call root scope (TOW2-324). withRoot() runs a (possibly async)
+ * function with an explicit root that takes precedence over the
+ * process-global `_root` for the duration of that call chain only.
+ * AsyncLocalStorage propagates the scope across awaits/promises/timers
+ * created inside the callback, and restores the outer context when the
+ * callback returns, throws, or rejects — a failed call can never leak
+ * its root onto subsequent unscoped calls.
+ */
+const _rootScope = new AsyncLocalStorage<string>();
+
+/**
  * Set the storage root directory. This is process-global state —
  * only one root is active at a time. Call before any other operations.
  * Use resetRoot() to revert to environment/default resolution.
+ * For per-instance/per-call scoping (e.g. multiple SDK instances in one
+ * process), use withRoot() instead.
  */
 export function setRoot(root: string): void {
   _root = root;
@@ -28,14 +42,30 @@ export function setRoot(root: string): void {
 
 /**
  * Clear the explicitly-set root, reverting to AGENT_RECALL_ROOT env var
- * or the default ~/.agent-recall.
+ * or the default ~/.agent-recall. Does not affect active withRoot() scopes.
  */
 export function resetRoot(): void {
   _root = null;
 }
 
+/**
+ * Run `fn` with `root` as the effective storage root for the duration of
+ * the call (including its entire async continuation chain). Concurrent
+ * scopes with different roots do not interfere: each interleaved call chain
+ * sees its own root. Code outside any scope (CLI, MCP server) keeps
+ * resolving via setRoot()/env/default exactly as before.
+ *
+ * Note: the scope propagates through promises, awaits, timers, and
+ * callbacks REGISTERED inside `fn`. It does not follow manually detached
+ * continuations (e.g. an EventEmitter whose listeners were registered
+ * outside the scope) — bind those explicitly if ever needed.
+ */
+export function withRoot<T>(root: string, fn: () => T): T {
+  return _rootScope.run(root, fn);
+}
+
 export function getRoot(): string {
-  return _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
+  return _rootScope.getStore() ?? _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }
 
 export function getLegacyRoot(): string {
