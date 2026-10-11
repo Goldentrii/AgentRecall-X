@@ -1,0 +1,29 @@
+(c1) counts are correct and exhaustively partition `total`
+(c2) every DecayClass/Confidence key is present even at zero (no `?? 0` needed by callers)
+(c3) breakdown does not perturb any pre-existing KPI field (precision/heeded/recurred/verdict_coverage/etc unchanged)
+(review fix) a corrupted/out-of-union decay_class_override or confidence on disk does not mint a stray Record key — exhaustive-partition invariant holds even on garbage input
+CRITICAL-2 regression fix (2026-08-20): a SUBDIRECTORY of an overridden root inherits the override, not raw git identity
+P0-a rework (2026-08-18): a CLAUDE.md discussing 'ignore all previous instructions' as bare prose survives verbatim (no phrase-mangling); a structural <system-reminder> tag is still stripped
+a genuinely DIFFERENT nested repo under an overridden root still wins on its own identity (directory-identity fix does not reopen CRITICAL-3)
+a project root with only package.json (no git) can still be registered
+a rescue-tagged file planted directly in the legacy journal root never surfaces via queryMemory(), while a genuine (tagless, pre-package-shaped) legacy sibling still does
+ab-report --json: exits 0 and emits valid JSON on empty ledger
+ab-report: correct counts on seeded ledger (3 ON, 2 OFF, no forced)
+ab-report: exits 0 on empty ledger (no A/B data)
+ab-report: forced sessions are excluded from arm counts
+ab-report: recurred outcomes attribute to the nearest prior session's arm only
+bootstrapImport skips items whose realpath resolves outside the repo's scan root
+defense in depth: a PRE-EXISTING broad allowlist entry (predating this fix) must still yield to a nested repo's own git identity
+deriveSlug handles palace paths
+every ALLOWLIST_B entry is still flagged by the scanner (stale entries are not silently ignored)
+every ALLOWLIST_C entry is still flagged by the scanner (stale entries are not silently ignored)
+every journal-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason
+every palace-room-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason
+failing tests:
+legit case preserved: an EXACT allowlist registration (explicit write from a real project root) still wins outright
+never imports / calls syncToSupabase (raw tier is local-only)
+scrubForCloud on content with no secrets returns content unchanged (modulo injection scrub)
+scrubForCloud redacts AKIA key from content that would be uploaded
+scrubForCloud redacts PEM header AND base64 body
+the blind-spots file and the whole personal/ dir classify as personal
+writeBlindSpots persists ONLY to personalDir/blind-spots.json (0600), classifyPath===personal
