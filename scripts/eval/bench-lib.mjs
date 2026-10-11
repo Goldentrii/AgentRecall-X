@@ -153,12 +153,16 @@ function walkFiles(dir, out = []) {
  * corrections, ...), not just the corrections corpus.
  */
 export const STORE_HASH_BASIS =
-  "sha256 over sorted '<relpath>\\n<sha256(bytes)>' lines for every file under the store root (forward-slash relpaths)";
+  "sha256 over sorted '<relpath>\\n<sha256(LF-normalized bytes)>' lines for every file under the store root (forward-slash relpaths; CRLF->LF so git autocrlf checkouts hash identically)";
 
 export function hashStoreTree(root) {
   const lines = walkFiles(root).map((f) => {
     const rel = path.relative(root, f).split(path.sep).join("/");
-    return `${rel}\n${sha256hex(fs.readFileSync(f))}`;
+    // LF-normalize: a git autocrlf checkout on Windows yields CRLF fixture
+    // bytes while Linux yields LF — the Linux-container cross-check caught
+    // the raw-bytes hash drifting between byte-identical logical stores.
+    const bytes = fs.readFileSync(f).toString("latin1").replaceAll("\r\n", "\n");
+    return `${rel}\n${sha256hex(Buffer.from(bytes, "latin1"))}`;
   });
   lines.sort();
   return sha256hex(lines.join("\n"));

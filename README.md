@@ -78,7 +78,7 @@ Here is what our own instrument found on our own live corpus (2026-07-03):
 | Heed rate, evidence-grounded (post-reset) | **0/3** events | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | Correction transfer recall (offline bench, achievable) | **0/4** [Wilson 0–49%] | `scripts/eval/baselines/correction-transfer-real-2026-07-03.json` |
 | Median session_start injection (fixture corpus v1, synthetic) | **197 tokens** (chars/4) — measured on owner-pc-2026, `npm run bench:injection` | `scripts/eval/baselines/injection-2026-10-11.json` |
-| p95 session_start latency, warm (fixture corpus v1, synthetic) | **62 ms** (recall p95: 104 ms) — measured on owner-pc-2026, `npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
+| p95 session_start latency, warm (fixture corpus v1, synthetic) | **115 ms** (recall p95: 347 ms) — measured on owner-pc-2026 under concurrent load, `npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
 
 *The 1,489-token median injection / 363 ms p95 warm latency figures previously cited here (was 2,010 tokens / 1,132 ms; Mem0 anchor ~7K) come from `UPDATE-LOG.md` §C2 and were measured on the owner's private store — they are not regenerable from this repo. The fixture rows above are the reproducible replacements: smaller numbers because the committed fixture (4 projects, corrections-only) is far thinner than a lived-in store. Latency values are machine- and run-dependent (timing is non-deterministic); CI gates only schema and injection-size determinism, never the values.*
 
