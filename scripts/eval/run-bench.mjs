@@ -91,7 +91,7 @@ const CORPUS_HASH_BASIS =
 function gitCommit() {
   try {
     return childProcess
-      .execSync("git rev-parse --short HEAD 2>/dev/null", { encoding: "utf-8" })
+      .execSync("git rev-parse --short HEAD", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
       .trim();
   } catch {
     return null;
