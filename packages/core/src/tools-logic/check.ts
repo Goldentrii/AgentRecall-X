@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveProject } from "../storage/project.js";
-import { ensureDir, todayISO, writeTextAtomic } from "../storage/fs-utils.js";
+import { todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
 import { writeCorrection, splitSentences, detectSeverity } from "../storage/corrections.js";
@@ -17,19 +17,18 @@ import {
   resolvePendingCorrection,
   validateStructuredCorrection,
 } from "../storage/pending.js";
-import { scrubForCloud } from "../storage/content-guard.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
   readAlignmentLog as readLog,
+  appendAlignmentRecord,
   extractWatchPatterns,
   type AlignmentRecord,
   type WatchForPattern,
 } from "../helpers/alignment-patterns.js";
 import { awarenessUpdate } from "./awareness-update.js";
-import { projectSubPath } from "../storage/paths.js";
 import { listRooms } from "../palace/rooms.js";
 import { readTierCandidates } from "../retrieval/candidates.js";
 import { palaceWrite } from "./palace-write.js";
@@ -173,26 +172,11 @@ export interface CheckResult {
   action_check?: CheckActionResult;
 }
 
-function alignmentLogPath(project: string): string {
-  // F2 fix (independent review, 2026-07-20): was a naive local sanitizer (no
-  // lowercase, no existing-dir reuse), duplicated from
-  // helpers/alignment-patterns.ts's own copy — routes through paths.ts now.
-  return projectSubPath(project, "alignment-log.json");
-}
-
-function writeAlignmentLog(project: string, records: AlignmentRecord[]): void {
-  const p = alignmentLogPath(project);
-  ensureDir(path.dirname(p));
-  // Scrub BEFORE the local write — session-start.ts reads this file directly
-  // (readAlignmentLog) into every session_start briefing, and check() itself
-  // re-reads it into similar_past_deltas on every future call. goal/
-  // human_correction/delta/assumptions are all free-text check() params that
-  // previously reached disk completely unscrubbed (this store has never had
-  // any scrub, cloud or local).
-  // Atomic: readAlignmentLog callers (session-start briefing, check() itself)
-  // are lock-free — never let them observe a truncated file.
-  writeTextAtomic(p, scrubForCloud(JSON.stringify(records, null, 2)));
-}
+// A14 (2026-10-12): the local writeAlignmentLog (locked whole-file RMW) is
+// gone — alignment-log.json is append-only NDJSON now, owned by
+// helpers/alignment-patterns.ts (appendAlignmentRecord: scrub-per-line,
+// legacy-array migration, size-gated compaction). See that module's header
+// for why the RMW could not be made robust on a starved runner.
 
 // Severity classification: Fix #2 review fix (2026-09-11, code-review MEDIUM)
 // — this file used to carry its own inline p0Patterns copy, documented as
@@ -409,35 +393,48 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   // hard cap or on a crash lock whose owner record stays unreadable; it is
   // kept as a loud last resort because throwing there would lose the whole
   // check() result on top of the record.
-  let trimmed: AlignmentRecord[];
+  // A14 (2026-10-12, CI run 38255969731): run #4 lost 28/40 records AGAIN —
+  // waitForLiveHolder was not enough. Root cause was one layer down: a
+  // swallowed lock-RELEASE failure (NTFS: an external dir pin makes rmdir
+  // fail EPERM) left a stale lock dir; every waiter then threw
+  // LockContentionError (ownerless wreckage gives waitForLiveHolder nothing
+  // to wait on) and this catch's old skip branch dropped each record. Two
+  // structural changes close the CLASS, not the instance:
+  //   1. filelock: release retries + tombstones wreckage (released: true →
+  //      immediately reclaimable), so the lock self-heals in ms, not 30s.
+  //   2. THIS WRITE IS AN APPEND (NDJSON, appendAlignmentRecord): even if
+  //      the lock still times out, the fallback below appends WITHOUT the
+  //      lock — append-vs-append is lossless by construction, and the only
+  //      writer that could race it (migration/compaction, a whole-file
+  //      rewrite) runs behind the very lock that just reported contention,
+  //      i.e. is not running. A record is lost only if the append itself
+  //      throws (disk full/EACCES) — surfaced via alignment_log_skipped.
+  // The lock (waitForLiveHolder, as A12) stays on the primary path so
+  // migration/compaction stay exclusive and holds stay bounded-tiny.
+  const priorLog = readLog(slug);
   let alignmentLogSkipped = false;
   try {
-    trimmed = await withLock(`alignment-${slug}`, () => {
-      const log = readLog(slug);
-      log.push(record);
-      const t = log.slice(-50);
-      writeAlignmentLog(slug, t);
-      return t;
+    await withLock(`alignment-${slug}`, () => {
+      appendAlignmentRecord(slug, record);
     }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
-      // Best-effort skip, loudly — pathological-contention last resort only
-      // (see the waitForLiveHolder note above): one alignment record lost
-      // past the 60s hard cap beats stealing the lock mid-write (old
-      // behavior) or failing the whole check() call. Downstream analysis
-      // still sees the in-memory record so this call's result is unaffected.
-      // The skip is surfaced BOTH on stderr (host log) and in the result
-      // (alignment_log_skipped — review LOW-3: a success-shaped result must
-      // not hide a persistence failure from the calling agent).
-      console.error(`[agent-recall] check(): ${err.message} — this alignment record was NOT persisted.`);
-      alignmentLogSkipped = true;
-      const log = readLog(slug);
-      log.push(record);
-      trimmed = log.slice(-50);
+      console.error(
+        `[agent-recall] check(): ${err.message} — appending the alignment record WITHOUT the lock (lossless fallback).`,
+      );
+      try {
+        appendAlignmentRecord(slug, record);
+      } catch (appendErr) {
+        console.error(
+          `[agent-recall] check(): lock-free alignment append failed too (${(appendErr as Error).message}) — this record was NOT persisted.`,
+        );
+        alignmentLogSkipped = true;
+      }
     } else {
       throw err;
     }
   }
+  const trimmed: AlignmentRecord[] = [...priorLog, record].slice(-50);
 
   // 2. Find similar past goals — check BOTH alignment-log AND palace alignment room
   const goalKeywords = extractKeywords(input.goal, 5);

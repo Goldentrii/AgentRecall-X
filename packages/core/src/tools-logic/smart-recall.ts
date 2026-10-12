@@ -107,7 +107,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir, writeTextAtomic } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomic, isLegacyJsonArrayFile } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { getConnectedRooms } from "../palace/graph.js";
@@ -427,10 +427,74 @@ function feedbackLogPath(): string {
   return path.join(getRoot(), "feedback-log.json");
 }
 
+/**
+ * A14 (2026-10-12): feedback-log.json is append-only NDJSON now, same
+ * structural reasoning as alignment-log.json (helpers/alignment-patterns.ts
+ * header): the locked whole-file RMW lost entries whenever the lock
+ * misbehaved on a starved runner (feedback-log-concurrency reproduced
+ * 118/120 under 2-core starvation even AFTER the filelock release fix — the
+ * skip branch is one misdiagnosed 5s deadline away from silent loss, and
+ * this file is the only store). An append cannot lose other writers'
+ * entries. Legacy array files still parse; the first locked writer migrates.
+ * Parse either format; dedupe id-carrying entries by query+id+date at READ
+ * time (keep-first — mirrors mergeFeedback's write-time rule, which
+ * append-only writers can no longer enforce exclusively); cap 1000.
+ * Exported for the CLI stats counter and tests — no hand-rolled parsers.
+ */
+export function parseFeedbackLogText(text: string): FeedbackEntry[] {
+  const trimmed = text.trimStart();
+  let entries: FeedbackEntry[];
+  if (trimmed.startsWith("[")) {
+    try { entries = JSON.parse(trimmed) as FeedbackEntry[]; } catch { return []; }
+    if (!Array.isArray(entries)) return [];
+  } else {
+    entries = [];
+    for (const line of trimmed.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line) as FeedbackEntry); } catch { /* torn tail */ }
+    }
+  }
+  const seen = new Set<string>();
+  const deduped: FeedbackEntry[] = [];
+  for (const e of entries) {
+    if (e && e.id) {
+      const key = `${e.query}\u0000${e.id}\u0000${e.date}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    deduped.push(e);
+  }
+  return deduped.slice(-1000);
+}
+
 function readFeedbackLog(): FeedbackEntry[] {
   const p = feedbackLogPath();
   if (!fs.existsSync(p)) return [];
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return []; }
+  try { return parseFeedbackLogText(fs.readFileSync(p, "utf-8")); } catch { return []; }
+}
+
+/** Append entries — THE writer for feedback-log.json. Hold the
+ * "feedback-log" lock on the normal path (migration/compaction rewrite the
+ * file); the contention fallback calls it lock-free, which is append-safe
+ * against every other append (the only racing rewriter sits behind the very
+ * lock that just timed out). */
+const FEEDBACK_COMPACT_BYTES = 2 * 1024 * 1024;
+function appendFeedbackEntries(entries: FeedbackEntry[]): void {
+  if (entries.length === 0) return;
+  const p = feedbackLogPath();
+  ensureDir(path.dirname(p));
+  if (fs.existsSync(p) && isLegacyJsonArrayFile(p)) {
+    const merged = [...readFeedbackLog(), ...entries].slice(-1000);
+    writeTextAtomic(p, merged.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    return;
+  }
+  fs.appendFileSync(p, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+  try {
+    if (fs.statSync(p).size > FEEDBACK_COMPACT_BYTES) {
+      const newest = readFeedbackLog();
+      writeTextAtomic(p, newest.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    }
+  } catch { /* compaction is best-effort; appends stay lossless without it */ }
 }
 
 /**
@@ -442,18 +506,26 @@ function readFeedbackLog(): FeedbackEntry[] {
  * read, and smartRecall applies it to a lock-free read so ranking reflects
  * this call's feedback immediately without waiting on the lock.
  */
-function mergeFeedback(log: FeedbackEntry[], feedback: RecallFeedback[], query: string): FeedbackEntry[] {
+function newFeedbackEntries(log: FeedbackEntry[], feedback: RecallFeedback[], query: string): FeedbackEntry[] {
   const date = new Date().toISOString().slice(0, 10);
-  const merged = log.slice();
+  const out: FeedbackEntry[] = [];
   for (const f of feedback) {
     const isDuplicate = f.id
-      ? merged.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
+      ? log.some((existing) => existing.query === query && existing.id === f.id && existing.date === date) ||
+        out.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
       : false;
     if (!isDuplicate) {
-      merged.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
+      out.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
     }
   }
-  return merged.slice(-1000);
+  return out;
+}
+
+function mergeFeedback(log: FeedbackEntry[], feedback: RecallFeedback[], query: string): FeedbackEntry[] {
+  // A14: delegates to newFeedbackEntries so the dedupe rule stays ONE
+  // implementation — the ranking merge here, and the append writer in
+  // processFeedback, can never drift apart.
+  return [...log, ...newFeedbackEntries(log, feedback, query)].slice(-1000);
 }
 
 async function processFeedback(
@@ -483,23 +555,34 @@ async function processFeedback(
     // are ready (feedback_log_pending when it loses the race; the lock wait's
     // ref'd backoff timers keep a naturally-exiting process alive until the
     // write lands, so losslessness holds — feedback-log-concurrency pins it).
+    // A14: APPEND, don't rewrite — the dedupe read stays inside the lock on
+    // the normal path (strict cross-process dedupe), and the write itself can
+    // no longer lose other writers' entries (see parseFeedbackLogText's
+    // header). The lock now guards only migration/compaction exclusivity.
     return await withLock("feedback-log", () => {
-      const updated = mergeFeedback(readFeedbackLog(), feedback, query);
-      // Atomic: readers (readFeedbackLog in every smartRecall call) are
-      // lock-free — never let them observe a truncated file.
-      writeTextAtomic(feedbackLogPath(), JSON.stringify(updated, null, 2));
+      appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query));
       return { persistenceSkipped: false };
     }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
-      // Pathological-cap last resort (see the waitForLiveHolder note above):
-      // never fail a recall because the feedback log is contended past the
-      // 60s hard cap — log the skip explicitly. The entries are lost,
-      // loudly: stderr for the host log AND persistenceSkipped for the
-      // caller when the race was won in time
-      // (surfaced as SmartRecallResult.feedback_log_skipped — review LOW-3).
-      console.error(`[agent-recall] smart_recall feedback: ${err.message} — this call's feedback entries were NOT persisted.`);
-      return { persistenceSkipped: true };
+      // A14 lossless fallback (was: drop the entries with a skip flag —
+      // reproduced losing 2/120 under 2-core starvation): append WITHOUT the
+      // lock. Append-vs-append is lossless; the only racing rewriter
+      // (migration/compaction) sits behind the lock that just timed out.
+      // Residual: the dedupe read is lock-free here, so a same-id duplicate
+      // can land — collapsed by parseFeedbackLogText's read-time dedupe.
+      console.error(
+        `[agent-recall] smart_recall feedback: ${err.message} — appending the entries WITHOUT the lock (lossless fallback).`,
+      );
+      try {
+        appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query));
+        return { persistenceSkipped: false };
+      } catch (appendErr) {
+        console.error(
+          `[agent-recall] smart_recall feedback: lock-free append failed too (${(appendErr as Error).message}) — this call's feedback entries were NOT persisted.`,
+        );
+        return { persistenceSkipped: true };
+      }
     }
     throw err;
   }

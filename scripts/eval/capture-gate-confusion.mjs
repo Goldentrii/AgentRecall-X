@@ -30,6 +30,7 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { isLikelyRealCorrection as gateV3 } from "../../packages/core/dist/storage/corrections.js";
+import { parseAlignmentLogText } from "../../packages/core/dist/helpers/alignment-patterns.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const asJson = process.argv.includes("--json");
@@ -121,7 +122,9 @@ function evalCorpus() {
       const f = path.join(root, e.name, "alignment-log.json");
       if (!fs.existsSync(f)) continue;
       let arr;
-      try { arr = JSON.parse(fs.readFileSync(f, "utf-8")); } catch { continue; }
+      // A14: alignment-log.json is append-only NDJSON (legacy array files
+      // still parse) — shared dual-format parser.
+      try { arr = parseAlignmentLogText(fs.readFileSync(f, "utf-8")); } catch { continue; }
       if (!Array.isArray(arr)) continue;
       for (const rec of arr) {
         if (!rec || !Array.isArray(rec.corrections)) continue;

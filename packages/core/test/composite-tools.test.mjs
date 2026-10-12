@@ -218,7 +218,7 @@ describe("Relevance feedback", () => {
 
     const logPath = path.join(TEST_ROOT_FB, "feedback-log.json");
     assert.ok(fs.existsSync(logPath), "Feedback log should be created");
-    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    const log = core.parseFeedbackLogText(fs.readFileSync(logPath, "utf-8"));
     assert.ok(log.length >= 1);
     assert.equal(log[0].useful, true);
   });
@@ -246,7 +246,7 @@ describe("Relevance feedback", () => {
       });
     }
     const logPath = path.join(TEST_ROOT_FB, "feedback-log.json");
-    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    const log = core.parseFeedbackLogText(fs.readFileSync(logPath, "utf-8"));
     const positives = log.filter((f) => f.title === "goals/auth" && f.useful).length;
     assert.ok(positives >= 3, `Expected 3+ positives, got ${positives}`);
   });
@@ -291,7 +291,7 @@ describe("Stable IDs and query-aware feedback", () => {
     });
 
     const logPath = path.join(TEST_ROOT_IDS, "feedback-log.json");
-    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    const log = core.parseFeedbackLogText(fs.readFileSync(logPath, "utf-8"));
     assert.ok(log.some((f) => f.id === firstId), "Feedback should store ID");
   });
 
@@ -303,7 +303,7 @@ describe("Stable IDs and query-aware feedback", () => {
     });
 
     const logPath = path.join(TEST_ROOT_IDS, "feedback-log.json");
-    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    const log = core.parseFeedbackLogText(fs.readFileSync(logPath, "utf-8"));
     const entry = log.find((f) => f.query === "database schema");
     assert.ok(entry, "Feedback should store the query");
   });
@@ -413,7 +413,9 @@ describe("Correction capture via check", () => {
       project,
     });
     const logPath = path.join(TEST_ROOT_CORR, "projects", project, "alignment-log.json");
-    const log = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    // A14: alignment-log.json is append-only NDJSON now — parse via the
+    // shared dual-format parser, never a hand-rolled JSON.parse.
+    const log = core.parseAlignmentLogText(fs.readFileSync(logPath, "utf-8"));
     assert.equal(log.length, 1);
     assert.equal(log[0].corrections, undefined, "alignment-log corrections field must stay untouched by the string form");
     const corrDir = path.join(TEST_ROOT_CORR, "projects", project, "corrections");

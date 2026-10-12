@@ -58,6 +58,7 @@ import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { isLikelyRealCorrection } from "../../packages/core/dist/storage/corrections.js";
+import { parseAlignmentLogText } from "../../packages/core/dist/helpers/alignment-patterns.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -103,7 +104,9 @@ function loadCandidates(root) {
   for (const { project, file } of logs) {
     let arr;
     try {
-      arr = JSON.parse(fs.readFileSync(file, "utf-8"));
+      // A14: alignment-log.json is append-only NDJSON (legacy array files
+      // still parse) — use the shared dual-format parser.
+      arr = parseAlignmentLogText(fs.readFileSync(file, "utf-8"));
     } catch {
       continue;
     }

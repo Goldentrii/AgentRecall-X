@@ -29,6 +29,21 @@ export function safeIsoDateOrToday(date: string | undefined | null): string {
   return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayISO();
 }
 
+/** True when the file's content starts with a JSON array bracket — the
+ * legacy whole-array format of the append-only NDJSON stores (A14:
+ * alignment-log.json, feedback-log.json). Reads 16 bytes, not the file. */
+export function isLegacyJsonArrayFile(p: string): boolean {
+  let fd: number;
+  try { fd = fs.openSync(p, "r"); } catch { return false; }
+  try {
+    const buf = Buffer.alloc(16);
+    const n = fs.readSync(fd, buf, 0, 16, 0);
+    return buf.subarray(0, n).toString("utf-8").trimStart().startsWith("[");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function readJsonSafe<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {

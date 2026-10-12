@@ -40,6 +40,7 @@ import * as path from "node:path";
 import { tmpdir } from "node:os";
 
 import { check } from "../dist/tools-logic/check.js";
+import { parseAlignmentLogText } from "../dist/helpers/alignment-patterns.js";
 import { sessionStart } from "../dist/tools-logic/session-start.js";
 import { readInsightsIndex } from "../dist/palace/insights-index.js";
 import {
@@ -86,7 +87,8 @@ afterEach(() => {
 function alignmentLog(project) {
   const p = path.join(testRoot, "projects", project, "alignment-log.json");
   if (!fs.existsSync(p)) return [];
-  return JSON.parse(fs.readFileSync(p, "utf-8"));
+  // A14: append-only NDJSON (legacy array still parsed) — shared parser.
+  return parseAlignmentLogText(fs.readFileSync(p, "utf-8"));
 }
 
 function rejectedLines(project) {
