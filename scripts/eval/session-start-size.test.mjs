@@ -114,6 +114,64 @@ test("assertNoHomeLeak: catches POSIX and Windows home paths", () => {
   assert.doesNotThrow(() => assertNoHomeLeak('{"store":"scripts/eval/fixtures/corpus-v1"}'));
 });
 
+// GitHub runners check the repo out UNDER the home dir (/home/runner/work/
+// <repo>/<repo>), so every repo-internal absolute path is a prefix-match of
+// HOME. The guard must allow the repo root itself — and ONLY the repo root —
+// while any other path under a home dir (the real ~/.agent-recall above all)
+// stays FATAL. Simulated here with a fake "home" layout under a temp dir so
+// the test is meaningful on Windows (temp = C:\Users\...) AND Linux (the
+// fake /home/runner segment inside the temp path triggers the POSIX marker).
+test("assertNoHomeLeak: allows repo-internal paths when the checkout lives under HOME, still fatal for anything else under HOME", () => {
+  const fakeHome = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ar-fakehome-")), "home", "runner");
+  const repoRoot = path.join(fakeHome, "work", "AgentRecall-X", "AgentRecall-X");
+  const inRepoStore = path.join(repoRoot, "scripts", "eval", "fixtures", "corpus-v1");
+  try {
+    fs.mkdirSync(inRepoStore, { recursive: true });
+
+    // repo-internal absolute paths (store, fixture, the root itself) → allowed
+    const ok = JSON.stringify({ store: inRepoStore, git_root: repoRoot }, null, 2);
+    assert.doesNotThrow(() => assertNoHomeLeak(ok, { repoRoot }));
+
+    // the real leak the gate exists for: ~/.agent-recall → still FATAL
+    const leak = JSON.stringify({ store: path.join(fakeHome, ".agent-recall", "projects") }, null, 2);
+    assert.throws(() => assertNoHomeLeak(leak, { repoRoot }), /home-path leak/);
+
+    // sibling dir that merely shares the repo root as a string prefix → FATAL
+    const sibling = JSON.stringify({ p: `${repoRoot}-evil/x` }, null, 2);
+    assert.throws(() => assertNoHomeLeak(sibling, { repoRoot }), /home-path leak/);
+
+    // ../ escape that starts inside the repo but resolves outside → FATAL
+    const escape = JSON.stringify({ p: `${repoRoot}${path.sep}..${path.sep}..${path.sep}.agent-recall` }, null, 2);
+    assert.throws(() => assertNoHomeLeak(escape, { repoRoot }), /home-path leak/);
+
+    // default repoRoot (this repo) never allows the fake-home paths
+    assert.throws(() => assertNoHomeLeak(leak), /home-path leak/);
+  } finally {
+    fs.rmSync(path.dirname(path.dirname(fakeHome)), { recursive: true, force: true });
+  }
+});
+
+test("resolveStore: absolute --store inside the repo yields a repo-relative label, never an absolute path", () => {
+  const { root, label } = resolveStore(CORPUS_V1); // CORPUS_V1 is absolute
+  assert.equal(path.resolve(root), path.resolve(CORPUS_V1));
+  assert.equal(label, "scripts/eval/fixtures/corpus-v1");
+  assert.doesNotThrow(() => assertNoHomeLeak(JSON.stringify({ store: label })));
+});
+
+test("resolveStore: --store outside the repo labels by basename, never an absolute path", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-extstore-"));
+  try {
+    fs.mkdirSync(path.join(tmp, "projects", "p1"), { recursive: true });
+    const { root, label } = resolveStore(tmp);
+    assert.equal(path.resolve(root), path.resolve(tmp));
+    assert.equal(label, path.basename(tmp));
+    assert.ok(!path.isAbsolute(label));
+    assert.ok(!label.includes("/") && !label.includes("\\"));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Artifact schema guard
 // ---------------------------------------------------------------------------

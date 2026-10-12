@@ -15,10 +15,13 @@
  *   hashStoreTree(root)            → sha256 tree hash over the store files
  *   prepareTempStore(src)          → copy store into a fresh mkdtemp root
  *   resolveStore(cliStore)         → --store > golden-v1 > corpus-v1, FATAL else
+ *                                    (label repo-relative/basename, never absolute)
  *   listProjects(root)             → sorted project slugs under <root>/projects/
  *   machineLabel()                 → BENCH_MACHINE env or os.hostname()
  *   gitCommitShort() / coreVersion() / utcNowIso() / utcDateStamp()
- *   assertNoHomeLeak(jsonString)   → throws on /Users/, /home/, C:\Users
+ *   assertNoHomeLeak(json, opts?)  → throws on /Users/, /home/, <drive>:\Users
+ *                                    paths OUTSIDE the repo root (runner
+ *                                    checkouts live under $HOME)
  *
  * Determinism: no Math.random anywhere (CI grep gate applies to this file).
  * Node stdlib only — no new dependencies.
@@ -196,8 +199,27 @@ const GOLDEN_V1 = path.join(HERE, "fixtures", "golden-v1");
 const CORPUS_V1 = path.join(HERE, "fixtures", "corpus-v1");
 
 /**
+ * Artifact-safe label for a store root: repo-relative (forward slashes) when
+ * the store lives inside this repo, else the bare basename. NEVER an absolute
+ * path — artifacts are committed/uploaded, and on GitHub runners the checkout
+ * lives UNDER $HOME (/home/runner/work/<repo>/<repo>), so an absolute store
+ * path is exactly the home-path leak assertNoHomeLeak() guards against.
+ * store_hash disambiguates same-named external stores.
+ */
+function storeLabel(root) {
+  const repo = realpathOrNull(REPO_ROOT) ?? REPO_ROOT;
+  const real = realpathOrNull(root) ?? path.resolve(root);
+  const rel = path.relative(repo, real);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    return rel.split(path.sep).join("/");
+  }
+  return path.basename(real);
+}
+
+/**
  * Resolve the store to bench against:
- *   --store <path>  → that path (label = the string the caller passed)
+ *   --store <path>  → that path (label = storeLabel(): repo-relative or
+ *                     basename, never absolute)
  *   (absent)        → fixtures/golden-v1 if present (A3's full synthetic
  *                     store: journal + palace + pipeline + corrections),
  *                     else fixtures/corpus-v1 (corrections-only, 26 records).
@@ -209,7 +231,7 @@ export function resolveStore(cliStore) {
     if (!fs.existsSync(path.join(root, "projects"))) {
       throw new Error(`FATAL: store not found or has no projects/ dir: ${cliStore}`);
     }
-    return { root, label: cliStore.split(path.sep).join("/") };
+    return { root, label: storeLabel(root) };
   }
   if (fs.existsSync(path.join(GOLDEN_V1, "projects"))) {
     return { root: GOLDEN_V1, label: "scripts/eval/fixtures/golden-v1" };
@@ -273,13 +295,76 @@ export function utcDateStamp() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ── Home-path leak gate ────────────────────────────────────────────────────
+
+/** Repo root this library runs from (scripts/eval/ → two levels up). */
+const REPO_ROOT = path.resolve(HERE, "..", "..");
+
+/** realpath when the path exists (resolves junctions/symlinks), else null. */
+function realpathOrNull(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize a path string for prefix comparison: collapse every separator run
+ * to a single "/", resolve "." / ".." segments, and lowercase drive-lettered
+ * (Windows) paths — NTFS compares case-insensitively; POSIX paths stay
+ * case-sensitive.
+ */
+function normForCompare(p) {
+  const slashed = String(p).replace(/[\\/]+/g, "/");
+  const normalized = (/^[A-Za-z]:\//.test(slashed) ? path.win32 : path.posix)
+    .normalize(slashed)
+    .replace(/\\/g, "/");
+  return /^[A-Za-z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+/** Characters that end a path-ish token inside a (JSON) artifact string. */
+const TOKEN_STOP = new Set(['"', "'", " ", "\t", "\n", "\r", ","]);
+
+/**
+ * Expand a home-marker hit to the whole surrounding token. Truncation (a path
+ * containing a space/comma) only ever fails CLOSED: a truncated candidate
+ * cannot gain the allowed repo-root prefix, so the gate still throws.
+ */
+function expandToken(text, idx) {
+  let s = idx;
+  while (s > 0 && !TOKEN_STOP.has(text[s - 1])) s--;
+  let e = idx;
+  while (e < text.length && !TOKEN_STOP.has(text[e])) e++;
+  return text.slice(s, e);
+}
+
 /**
  * Home-path leak gate — mirrors run-bench.mjs's assertNoHomeLeak (security
  * review 2b) with the Windows variant added. Throws instead of process.exit
  * so library callers (tests) can assert it.
+ *
+ * A home-looking path is only a LEAK when it points outside the repo: GitHub
+ * runners check the repo out UNDER $HOME (/home/runner/work/<repo>/<repo>),
+ * which made every repo-internal absolute path a false positive of the old
+ * pure-regex gate (post-3.5.0 CI, bench-fixture ubuntu lane). So: extract
+ * each path token around a home marker (/Users/, /home/, <drive>:\Users),
+ * realpath it where it exists (symlink/junction safe), and allow it ONLY if
+ * it is the repo root or below. ANY other path under a home dir — above all
+ * the real ~/.agent-recall — still throws. opts.repoRoot is injectable for
+ * tests; callers inside this repo use the default.
  */
-export function assertNoHomeLeak(jsonString) {
-  if (/\/Users\/|\/home\/|[A-Z]:\\+Users/.test(jsonString)) {
-    throw new Error("FATAL: home-path leak detected in bench artifact");
+export function assertNoHomeLeak(jsonString, { repoRoot = REPO_ROOT } = {}) {
+  const text = String(jsonString);
+  const allowed = normForCompare(realpathOrNull(repoRoot) ?? repoRoot);
+  const allowedPrefix = allowed.endsWith("/") ? allowed : `${allowed}/`;
+
+  for (const m of text.matchAll(/\/(?:Users|home)\/|[A-Za-z]:[\\/]+Users/g)) {
+    const token = expandToken(text, m.index);
+    const collapsed = token.replace(/[\\/]+/g, "/");
+    const cand = normForCompare(realpathOrNull(collapsed) ?? collapsed);
+    if (cand !== allowed && !cand.startsWith(allowedPrefix)) {
+      throw new Error("FATAL: home-path leak detected in bench artifact");
+    }
   }
 }
