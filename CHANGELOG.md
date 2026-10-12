@@ -6,7 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## Unreleased (branch `integration-2026-10`, 2026-10-11/12)
+## [3.5.1] — 2026-10-12
+
+Hardening found by the first real `windows-latest` + 2-vCPU CI runs after 3.5.0 (tag `v3.5.0` does not contain these). All four packages 3.5.1 in lockstep.
 
 Version: TBD — owner decides (3.5.0 proposed, see `reports/RELEASE-3.5.0-draft.md`). No package versions were bumped on this branch.
 
