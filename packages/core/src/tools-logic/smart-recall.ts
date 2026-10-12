@@ -441,6 +441,9 @@ function feedbackLogPath(): string {
  * append-only writers can no longer enforce exclusively); cap 1000.
  * Exported for the CLI stats counter and tests — no hand-rolled parsers.
  */
+/** Read cap, exported so tests derive it from the real value. */
+export const FEEDBACK_READ_CAP = 1000;
+
 export function parseFeedbackLogText(text: string): FeedbackEntry[] {
   const trimmed = text.trimStart();
   let entries: FeedbackEntry[];
@@ -464,7 +467,7 @@ export function parseFeedbackLogText(text: string): FeedbackEntry[] {
     }
     deduped.push(e);
   }
-  return deduped.slice(-1000);
+  return deduped.slice(-FEEDBACK_READ_CAP);
 }
 
 function readFeedbackLog(): FeedbackEntry[] {
@@ -478,13 +481,14 @@ function readFeedbackLog(): FeedbackEntry[] {
  * file); the contention fallback calls it lock-free, which is append-safe
  * against every other append (the only racing rewriter sits behind the very
  * lock that just timed out). */
-const FEEDBACK_COMPACT_BYTES = 2 * 1024 * 1024;
-function appendFeedbackEntries(entries: FeedbackEntry[]): void {
+/** Exported so the compaction tests derive the gate from the real value. */
+export const FEEDBACK_COMPACT_BYTES = 2 * 1024 * 1024;
+export function appendFeedbackEntries(entries: FeedbackEntry[], opts: { locked?: boolean } = {}): void {
   if (entries.length === 0) return;
   const p = feedbackLogPath();
   ensureDir(path.dirname(p));
   if (fs.existsSync(p) && isLegacyJsonArrayFile(p)) {
-    const merged = [...readFeedbackLog(), ...entries].slice(-1000);
+    const merged = [...readFeedbackLog(), ...entries].slice(-FEEDBACK_READ_CAP);
     writeTextAtomic(p, merged.map((e) => JSON.stringify(e)).join("\n") + "\n");
     return;
   }
@@ -525,7 +529,7 @@ function mergeFeedback(log: FeedbackEntry[], feedback: RecallFeedback[], query: 
   // A14: delegates to newFeedbackEntries so the dedupe rule stays ONE
   // implementation — the ranking merge here, and the append writer in
   // processFeedback, can never drift apart.
-  return [...log, ...newFeedbackEntries(log, feedback, query)].slice(-1000);
+  return [...log, ...newFeedbackEntries(log, feedback, query)].slice(-FEEDBACK_READ_CAP);
 }
 
 async function processFeedback(
@@ -560,7 +564,7 @@ async function processFeedback(
     // no longer lose other writers' entries (see parseFeedbackLogText's
     // header). The lock now guards only migration/compaction exclusivity.
     return await withLock("feedback-log", () => {
-      appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query));
+      appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query), { locked: true });
       return { persistenceSkipped: false };
     }, { waitForLiveHolder: true });
   } catch (err) {

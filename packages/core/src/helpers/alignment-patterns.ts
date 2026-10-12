@@ -56,7 +56,8 @@ export function alignmentLogPath(project: string): string {
  * exceeds COMPACT_BYTES.
  */
 export const ALIGNMENT_READ_CAP = 50;
-const COMPACT_BYTES = 1024 * 1024;
+/** Exported so the compaction tests derive the gate from the real value. */
+export const ALIGNMENT_COMPACT_BYTES = 1024 * 1024;
 
 /** Parse either format: legacy JSON array, or NDJSON (one record per line —
  * unparsable lines, e.g. a torn tail mid-append, are skipped). Returns the
@@ -101,7 +102,11 @@ function toLine(record: AlignmentRecord): string {
  * behind the very lock that just timed out, i.e. not running — could race
  * it; that residual corner is documented at the call site).
  */
-export function appendAlignmentRecord(project: string, record: AlignmentRecord): void {
+export function appendAlignmentRecord(
+  project: string,
+  record: AlignmentRecord,
+  opts: { locked?: boolean } = {},
+): void {
   const p = alignmentLogPath(project);
   ensureDir(path.dirname(p));
 
@@ -118,7 +123,7 @@ export function appendAlignmentRecord(project: string, record: AlignmentRecord):
   // Compaction: rare (file-size gated), and the ONLY remaining whole-file
   // rewrite on this path. Still inside the caller's lock on the normal path.
   try {
-    if (fs.statSync(p).size > COMPACT_BYTES) {
+    if (fs.statSync(p).size > ALIGNMENT_COMPACT_BYTES) {
       const newest = readAlignmentLog(project);
       writeTextAtomic(p, newest.map(toLine).join("\n") + "\n");
     }
