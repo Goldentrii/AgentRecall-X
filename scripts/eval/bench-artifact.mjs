@@ -416,11 +416,49 @@ export function verifyBaseline(file) {
   if (
     schema !== BENCH_ARTIFACT_VERSION &&
     schema !== "rmr-baseline/v1" &&
-    schema !== "rmr-baseline/v2"
+    schema !== "rmr-baseline/v2" &&
+    schema !== "golden-retrieval/v1"
   ) {
     throw new Error(
       `verifyBaseline: unknown schema_version "${schema}" in ${file}`,
     );
+  }
+
+  // golden-retrieval/v1 (A3, 2026-10-11 — scripts/eval/golden-retrieval.mjs):
+  // genuinely recomputable, so it gets a REAL verification, not parse-only:
+  //   (a) corpus_hash recompute from the embedded corpus_manifest (same
+  //       sorted-per-file-hash aggregation as branch (a) below);
+  //   (b) overall hit@1/hit@5 num/den recompute from per_query.
+  if (schema === "golden-retrieval/v1") {
+    const gManifest = result.corpus_manifest ?? [];
+    if (gManifest.length > 0) {
+      const recomputed = sha256hex(gManifest.map((m) => m.sha256).sort().join("\n"));
+      if (recomputed !== result.corpus_hash) {
+        throw new Error(
+          `verifyBaseline: corpus_hash mismatch in ${file}\n` +
+          `  stored:     ${result.corpus_hash}\n` +
+          `  recomputed: ${recomputed}`,
+        );
+      }
+    }
+    const pq = result.per_query ?? [];
+    const overall = result.aggregates?.overall ?? {};
+    const goldenDrifts = [];
+    const h1 = pq.filter((r) => r.hit1 === true).length;
+    const h5 = pq.filter((r) => r.hit5 === true).length;
+    for (const [key, num] of [["hit1", h1], ["hit5", h5]]) {
+      const m = overall[key];
+      if (!m) {
+        goldenDrifts.push(`aggregates.overall.${key} missing`);
+        continue;
+      }
+      if (m.num !== num) goldenDrifts.push(`overall.${key}.num: stored=${m.num}, recomputed=${num}`);
+      if (m.den !== pq.length) goldenDrifts.push(`overall.${key}.den: stored=${m.den}, recomputed=${pq.length}`);
+    }
+    if (goldenDrifts.length > 0) {
+      throw new Error(`verifyBaseline: golden-retrieval drift in ${file}:\n  ${goldenDrifts.join("\n  ")}`);
+    }
+    return { ok: true, benchmark: "golden-retrieval", mode: "recomputed" };
   }
 
   // rmr-baseline/v1|v2 have a different structure — verify what we can.
