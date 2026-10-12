@@ -12,6 +12,7 @@
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
   <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
+  <a href="https://mcpvault.io/servers/agentrecall-x/health?utm_source=external_badge&amp;utm_medium=referral&amp;utm_campaign=mcp_health_report"><img src="https://mcpvault.io/badge/agentrecall-x.svg" alt="MCPVault: claimed"></a>
   <img src="https://img.shields.io/badge/tools-5_default-orange?style=flat-square" alt="Tools">
   <img src="https://img.shields.io/badge/memory_layers-5-7C3AED?style=flat-square" alt="5 layers">
   <img src="https://img.shields.io/badge/cloud-zero_by_default-blue?style=flat-square" alt="Zero cloud by default">
@@ -76,12 +77,28 @@ Here is what our own instrument found on our own live corpus (2026-07-03):
 | Heed rate, pre-2026-07-03 (instrument-biased upper bound — do not cite) | 92.5% [Wilson 60.1–100] | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | Heed rate, evidence-grounded (post-reset) | **0/3** events | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | Correction transfer recall (offline bench, achievable) | **0/4** [Wilson 0–49%] | `scripts/eval/baselines/correction-transfer-real-2026-07-03.json` |
-| Median session_start injection | **1,489 tokens** (was 2,010; Mem0 anchor ~7K) | `UPDATE-LOG.md` §C2 |
-| p95 session_start latency (warm) | **363 ms** (was 1,132) | `UPDATE-LOG.md` §C2 |
+| Median session_start injection (fixture golden-v1, synthetic) | **244 tokens** (chars/4) — measured on owner-pc-2026, `npm run bench:injection` | `scripts/eval/baselines/injection-2026-10-11.json` |
+| p95 session_start latency, warm (fixture golden-v1, synthetic) | **97 ms** (recall p95: 209 ms) — measured on owner-pc-2026 under concurrent load, `npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
+
+*The 1,489-token median injection / 363 ms p95 warm latency figures previously cited here (was 2,010 tokens / 1,132 ms) come from `UPDATE-LOG.md` §C2 and were self-measured on the owner's private store — they are not regenerable from this repo. Mem0 publishes ~7k tokens/query (their figure; not measured side-by-side here). The fixture rows above are the reproducible replacements: smaller numbers because the committed golden-v1 fixture (3 projects, synthetic journal + palace + pipeline + corrections; the benches fall back to the corrections-only corpus-v1 when it is absent) is far thinner than a lived-in store. Latency values are machine- and run-dependent (timing is non-deterministic); CI gates only schema and injection-size determinism, never the values.*
 
 *The heed instrument defaulted to "heeded" absent evidence before 2026-07-03; the reset default is "unknown" — the honest 0/3 is the correct starting point, not a regression. Transfer recall cannot support a point-estimate claim below 39 classes (claim-gate ledger, [benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6).*
 
-**Verify it yourself:** every number above regenerates from the committed artifacts — see [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md).
+**Verify it yourself** — see [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md). Every number in this README falls into one of two classes.
+
+*Regenerates from this repo (script + committed artifact):*
+
+- Correction-transfer fixture gate — `npm run bench` (exact-match vs `scripts/eval/baselines/correction-transfer-fixture-baseline.json`)
+- Golden retrieval fixture v1: hit@5 **73.1%** keyword / **80.8%** local embeddings — `npm run bench:golden` + `scripts/eval/baselines/golden-v1-2026-10-11.json`
+- session_start injection median **244 tokens** — `npm run bench:injection` + `scripts/eval/baselines/injection-2026-10-11.json`
+- session_start p95 warm **97 ms** / recall p95 **209 ms** — `npm run bench:latency` + `scripts/eval/baselines/latency-2026-10-11.json` (timing values are machine-dependent; CI gates schema and injection-size determinism, never timing values)
+
+*Self-measured on the owner's private store — not regenerable from this repo:*
+
+- **35.3%** correction capture recall (dual-blind, n=59) — raw ratings are not committed (privacy)
+- **92.5%** instrument-biased upper bound and **0/3** evidence-grounded heed — frozen in `scripts/eval/baselines/rmr-baseline-2026-07-03.json`, not re-runnable
+- **0/4** correction transfer recall — frozen in `scripts/eval/baselines/correction-transfer-real-2026-07-03.json`, not re-runnable (the owner's corpus is not in this repo)
+- **1,489 tokens** / **363 ms** (`UPDATE-LOG.md` §C2) and the 75% → **90%** golden eval of 2026-09-12
 
 **What this means:** we captured 35% of real corrections in our own live use. The heed instrument was biased and we reset it. The offline transfer benchmark scores 0 on our own corpus — which is a density problem (32 active corrections across 19 projects is too sparse to front-run mistakes), not a retrieval architecture problem (confirmed 5× by internal experiments).
 
@@ -100,7 +117,7 @@ AgentRecall owns two pieces of the unclaimed ground:
 - **The corrections ledger** — a governed data model (`corrections-export/v1`, scrubbed egress, retraction, severity, proof-confidence) that any engine can integrate against.
 - **The measurement harness** — `predict-loo` (leave-one-out, anti-self-confirming, dual denominators) and the correction-transfer benchmark spec (`HeedBench v1` — provisional name), which implements the missing pipeline: capture → persist → fresh session → measure recurrence.
 
-Benchmark numbers in agent memory are typically self-reported and hard to reproduce. Ours regenerate from a fixed, hash-locked corpus with one command (`npm run bench`) — including the scores that make us look bad.
+Benchmark numbers in agent memory are typically self-reported and hard to reproduce. Every number we label reproducible regenerates from fixed, hash-locked fixtures with four commands (`npm run bench`, `npm run bench:golden`, `npm run bench:injection`, `npm run bench:latency`) — including the scores that make us look bad. The rest are explicitly labelled self-measured on the owner's private store.
 
 ---
 
@@ -240,12 +257,13 @@ ar embeddings status    # flag / model / index diagnostics
 | Property | Guarantee |
 |---|---|
 | Default | **OFF** — flag off is byte-identical to keyword-only recall |
-| Inference | Local ONNX (transformers.js), CPU, ~5-10ms per query warm |
+| Inference | Local ONNX (transformers.js), CPU, ~5-10 ms per query warm (self-measured; machine-dependent) |
 | Network | Only `ar embeddings setup` ever downloads (one-time, cached, never re-fetched). Recall and `rebuild` run with remote fetch hard-disabled — offline you get a clean actionable error, never a hang |
 | Packaging | Neither runtime nor model ships in the npm package — installed self-contained under `~/.agent-recall/embeddings/` on opt-in |
 | Degradation | Missing/corrupt index or model → keyword results, unchanged, with the reason in `semantic_leg` metadata — never an error |
 | Security | Semantic candidates pass the same trust/scope/fence stages as keyword ones; the index stores content-hash→vector only (no text), so a stale or tampered index cannot inject content |
-| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report) |
+| Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report). Self-measured on the owner's private store — not regenerable from this repo; see the fixture row below for the reproducible number |
+| Reproducible | Golden retrieval, fixture v1 (synthetic, 26 queries, hash-locked): hit@5 **73.1%** keyword [53.9%, 86.3%], **80.8%** with local embeddings [62.1%, 91.5%] (hit@1 15.4% → 69.2%). Every remaining miss is a committed structural trap case (pipeline-dir, loose rooms file, cross-project silo). Regenerate: `npm run bench:golden` (keyword leg; embeddings leg needs `ar embeddings setup` + `AGENT_RECALL_EMBEDDINGS_HOME`) |
 
 Chinese/English cross-lingual queries work (the model is multilingual — a zh question finds an en rule and vice versa). Re-run `ar embeddings rebuild` occasionally (or after writing a lot); content-hash keying makes it cheap, and un-indexed new content simply stays keyword-searchable until then.
 
@@ -308,6 +326,8 @@ Retrieval: keyword + RRF (Cormack 2009). FSRS-lite decay (Ebbinghaus → SuperMe
 | Cursor · Windsurf · VS Code (Copilot) · Codex | MCP server | Supported |
 | Any JS/TS app | SDK (`agent-recall-sdk`) | Supported |
 | Terminal / CI | CLI (`ar`) | Supported |
+
+CI runs the full build + regression + test pipeline on both `ubuntu-latest` and `windows-latest`. On Windows, four POSIX-only tests self-skip with named reasons (signals, symlink) and one mode-bit assertion is guarded in-test. The benches and the full test suite run natively on Windows as of the pending integration (post-3.4.51, unreleased). Git Bash is required for the `sh`-fenced shell steps in the docs; the npm scripts themselves are cross-platform.
 
 ---
 
