@@ -21,3 +21,18 @@ What the CV can now say truthfully (A5 report has the one-liner): correction-fir
 Incidents: relay outages (403 insufficient balance; 503 no available accounts ×2) killed agents three times — all resumed from transcripts. No gate crossed: nothing pushed, published, bumped, deleted (except the temp scratch clone the handoff authorised), or posted to GitHub.
 
 Suggested next step: `git checkout main && git merge --no-ff integration-2026-10` → push → watch `build-and-test` on both lanes → then `gh pr` the community merges and post the A6 comments → decide 3.5.0.
+
+## Post-release (2026-10-12, owner-approved push/merge/version)
+
+- Real-store cleanup done (backup `E:/tools/ar-store-backup-2026-10-12.tgz`); Agent Craft `main` @ 005ee2f pushed; AgentRecall-X **v3.5.0** tagged + pushed (lockstep bump, CHANGELOG 3.4.51 stub + 3.5.0 entry); the pre-existing `release.yml` auto-created the GitHub Release (War Room zip); notes replaced with `reports/RELEASE-NOTES-v3.5.0.md`. **npm publish NOT done** (owner call).
+- First Actions runs exposed starved-runner defects; fixed on `main` after the tag (each reviewed, see table):
+
+| Task | Branch @ head | Reviewer | CI effect |
+|---|---|---|---|
+| A11 | `fix/ci-post-release` @ a6c9653 | PASS (ITEM 1 + ITEM 2) | bench lane green (home-leak guard); windows: recordOutcome counters from ledger, 8.3 path keys, NTFS rename retry |
+| A12 | `fix/alignment-log-rmw` @ da57a4d | PASS after 1 fix round | check()/feedback-log waitForLiveHolder; recall never stalls on the feedback write (≤1 s grace, `feedback_log_pending`) |
+| A13 | `fix/rename-retry-budget` @ 3d5d7d6 | PASS | renameAtomic 5 s budget; deterministic rename-retry test |
+| A14 | `fix/alignment-log-lock-robustness` @ 38ab632 | PASS after 1 fix round | lock release tombstone (NTFS pin); alignment/feedback logs append-only NDJSON; 17 new format tests |
+
+- **CI run 38266476493 on `main` @ 9b84e68: `test (ubuntu-latest)`, `test (windows-latest)`, `build-and-test`, and the bench-fixture lane all GREEN** — the first fully green main since 2026-07-27, now on two platforms.
+- Follow-ups (INFO, not blocking): cli spawned-process timeout flakes on heavily loaded local machines (runner unaffected); `.json` files holding NDJSON kept for path compatibility; recordOutcome replay cost grows linearly with ledger size (prefilter later); 3.5.1 could carry the post-tag fixes; npm publish of 3.5.0 (core → mcp → cli → sdk).

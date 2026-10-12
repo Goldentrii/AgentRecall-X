@@ -40,3 +40,7 @@ Known-good on Windows 11 + Git Bash (the shell steps need bash); CI runs `ubuntu
     npm run bench:latency    # warm recall / session_start latency (non-deterministic; schema-only in CI)
 
 Engineering record for this release: `reports/2026-10-12-HANDOFF-STATUS.md`, `reports/RELEASE-3.5.0-draft.md` (semver rationale).
+
+## Post-release hardening on `main` (after the v3.5.0 tag; candidates for 3.5.1)
+
+The first real Actions runs of the new Windows lane surfaced four starved-runner defects, all fixed on `main` with reviews (`reports/2026-10-12-A11…A14-review.md`): bench home-leak guard false positive when the checkout lives under `$HOME`; `recordOutcome` counters re-derived from the lossless ledger; Windows 8.3 short-name path identity; filelock release tombstone when NTFS pins the lock directory; `alignment-log.json` / `feedback-log.json` append-only NDJSON (lossless by construction); `renameAtomic` 5 s retry budget. CI run 38266476493 on `main` @ 9b84e68: ubuntu + windows + bench lanes all green.
