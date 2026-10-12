@@ -111,48 +111,63 @@ describe("live-holder lock contention never drops RMW data (A12; was: LOW-3 skip
     );
   });
 
-  it("smartRecall(): feedback-log lock held live past the old 5s deadline → waits it out, entries persisted, no skip flag", async () => {
+  it("smartRecall(): feedback-log lock held live past the old 5s deadline → recall returns FAST with feedback_log_pending; entries persist in the background once the holder releases", async () => {
+    // Reviewer-A12 FIX 2: recall carries BOTH contracts — lossless under
+    // contention AND never blocked by the feedback write. The holder releases
+    // at HOLD_MS via the timer; the recall itself must return well before the
+    // old 5s deadline (persist races a <=1s grace, then continues in the
+    // background), and the entry must land on disk after the release.
     const release = await core.acquireLock("feedback-log");
-    const timer = setTimeout(release, HOLD_MS);
+    setTimeout(release, HOLD_MS); // release() is idempotent; fires exactly once here
 
     const t0 = Date.now();
-    let res;
-    try {
-      res = await core.smartRecall({
-        query: "contention pin query",
-        project: "contention-pin",
-        feedback: [{ id: "pin-contended-1", title: "x", useful: true }],
-      });
-    } finally {
-      clearTimeout(timer);
-      release(); // idempotent
-    }
+    const res = await core.smartRecall({
+      query: "contention pin query",
+      project: "contention-pin",
+      feedback: [{ id: "pin-contended-1", title: "x", useful: true }],
+    });
     const elapsed = Date.now() - t0;
 
+    assert.ok(
+      elapsed < 5000,
+      `a recall must never be blocked by the feedback write (returned after ${elapsed}ms; holder held ${HOLD_MS}ms)`,
+    );
     assert.equal(
       res.feedback_log_skipped,
       undefined,
-      "a live holder must be waited out, never skipped (pre-A12 behavior lost the entries)",
+      "pending is not a skip — nothing was dropped",
     );
-    assert.ok(
-      elapsed >= HOLD_MS - 100,
-      `smartRecall() must have waited out the live holder (~${HOLD_MS}ms), returned after ${elapsed}ms`,
+    assert.equal(
+      res.feedback_log_pending,
+      true,
+      "the still-running background persist must be visible in the result (never silent)",
     );
 
     const logPath = path.join(TEST_ROOT, "feedback-log.json");
     const entries = () =>
       fs.existsSync(logPath) ? JSON.parse(fs.readFileSync(logPath, "utf-8")) : [];
+
+    // Losslessness: once the holder releases (HOLD_MS), the background
+    // persist acquires the lock and lands the entry. Poll with a generous
+    // deadline — the claim is "eventually persisted", not a latency bound.
+    const deadline = Date.now() + HOLD_MS + 20000;
+    while (Date.now() < deadline && !entries().some((e) => e.id === "pin-contended-1")) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
     assert.ok(
       entries().some((e) => e.id === "pin-contended-1"),
-      "the contended feedback entry must be persisted — nothing re-derives a dropped entry",
+      "the contended feedback entry must be persisted once the holder releases — nothing re-derives a dropped entry",
     );
 
+    // Uncontended control: the persist settles inside the grace window — no
+    // pending flag, no skip flag, entry on disk synchronously.
     const res2 = await core.smartRecall({
       query: "contention pin query",
       project: "contention-pin",
       feedback: [{ id: "pin-clean-1", title: "y", useful: false }],
     });
-    assert.equal(res2.feedback_log_skipped, undefined, "no flag on the uncontended path");
+    assert.equal(res2.feedback_log_skipped, undefined, "no skip flag on the uncontended path");
+    assert.equal(res2.feedback_log_pending, undefined, "no pending flag when the persist settled within the grace window");
     assert.ok(
       entries().some((e) => e.id === "pin-clean-1"),
       "uncontended feedback entry must be persisted",
