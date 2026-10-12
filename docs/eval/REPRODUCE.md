@@ -22,7 +22,7 @@ All commands below run from the repo root (`agentrecall/` after cloning).
 ## Step 1 — Clone and install
 
 ```sh
-git clone https://github.com/Goldentrii/AgentRecall-MCP.git agentrecall
+git clone https://github.com/Goldentrii/AgentRecall-X.git agentrecall
 cd agentrecall
 npm ci
 ```
