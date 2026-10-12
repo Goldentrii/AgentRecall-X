@@ -60,7 +60,9 @@ export function parseMemoryFile(content: string): ParsedMemoryFile {
 }
 
 export function deriveSlug(filePath: string): string {
-  const parts = filePath.split(path.sep);
+  // Normalise to forward slashes so this works on both Windows and POSIX
+  const normalised = filePath.replace(/\\/g, "/");
+  const parts = normalised.split("/");
   const fileName = path.basename(filePath, ".md");
 
   const journalIdx = parts.indexOf("journal");

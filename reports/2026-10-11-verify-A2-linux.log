@@ -1,0 +1,46 @@
+sha=aac6dbf
+== npm ci ==
+npm notice
+== build ==
+
+== lint ==
+
+lint_exit=0
+== consistency ==
+consistency_exit=0
+== funnel ==
+funnel_exit=0
+== heeded ==
+[heeded-guard] PASS 9 / FAIL 0
+
+heeded_exit=0
+== room-slug ==
+roomslug_exit=0
+== bench ==
+bench_exit=0
+== tests packages/core ==
+test_exit=1
+# tests 1859 # suites 417 # pass 1849 # fail 10 # cancelled 0 # skipped 0 # todo 0 
+5718:        not ok 1 - config true enables; env 0 overrides off; env 1 needs no config
+5742:    not ok 5 - (g) config.json embeddings_enabled
+5752:not ok 195 - fix7 — opt-in local embeddings
+6514:    not ok 8 - palaceWalk depth="all" (readRoomContent) never surfaces a rescue-tagged room file's content, but still surfaces genuine siblings
+6530:    not ok 9 - palaceWalk depth="relevant" (README direct read) never surfaces a rescue-tagged README, but still surfaces a genuine one
+6545:    not ok 10 - journalSearch's include_palace branch never surfaces a rescue-tagged room file, but still surfaces a genuine one
+6566:    not ok 12 - fetchVerbatim's palace branch never returns a rescue-tagged room file's content for a resurrect()-style verbatim fetch (STEP 2 fix)
+6582:    not ok 13 - palaceSearch never surfaces a rescue-tagged room file's content, but still surfaces a genuine sibling
+6604:    not ok 15 - check() never surfaces a rescue-tagged alignment-room correction, but still surfaces a genuine sibling
+6626:    not ok 17 - journalColdStart never surfaces a rescue-tagged room README's entries in top_rooms, but still surfaces a genuine README's entries
+6647:    not ok 19 - palaceLint never echoes a rescue-tagged room file's raw content into its issues (structural-only, evidence for the SAFE reclassification)
+6663:not ok 216 - destination-proof — a hijacked rescue card cannot outrank/impersonate genuine memory at ANY surface
+7233:    not ok 3 - DOES re-read a file whose mtime is newer than the index's last-write time
+7291:not ok 244 - updateIndex — incremental journal index rebuild
+== tests packages/mcp-server ==
+test_exit=0
+# tests 79 # suites 32 # pass 79 # fail 0 # cancelled 0 # skipped 0 # todo 0 
+== tests packages/sdk ==
+test_exit=0
+# tests 41 # suites 3 # pass 41 # fail 0 # cancelled 0 # skipped 0 # todo 0 
+== tests packages/cli ==
+test_exit=0
+# tests 293 # suites 77 # pass 293 # fail 0 # cancelled 0 # skipped 0 # todo 0 

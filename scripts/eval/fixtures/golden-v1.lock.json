@@ -1,0 +1,9 @@
+{
+  "schema_version": "golden-fixture/v1",
+  "corpus_hash": "3aac650d7558d317a89fb2de562e2a00076c64f1241d92690eca6b2564b1f666",
+  "corpus_hash_basis": "sha256 over the SORTED per-file hashes of every file under fixtures/golden-v1/, each file hashed as sha256(relPath + NUL + CRLF-normalized content)",
+  "n_files": 42,
+  "n_queries": 26,
+  "queries_hash": "bc8d77a4d6f752a5d309a0577a42f6065c29c34d3f6fb92ddede6c6bb6bfc251",
+  "provenance": "synthetic, hand-audited, secrets-free"
+}

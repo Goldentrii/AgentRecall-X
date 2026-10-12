@@ -79,7 +79,7 @@ describe("working-memory wave — hook-ambient capture", () => {
     const home = isolatedHome();
     const { code, stderr } = await runCli(
       ["--project", "wm-ambient-test", "hook-ambient"],
-      { stdin: ambientPayload("how do I fix the checkout bug in the payment service", sid, "/Users/testuser/Projects/wm-ambient-test"), env: { HOME: home } },
+      { stdin: ambientPayload("how do I fix the checkout bug in the payment service", sid, "/Users/testuser/Projects/wm-ambient-test"), env: { HOME: home, USERPROFILE: home } },
     );
     assert.equal(code, 0, `hook must exit 0, stderr=${stderr}`);
 
@@ -96,7 +96,7 @@ describe("working-memory wave — hook-ambient capture", () => {
     const home = isolatedHome();
     await runCli(
       ["--project", "wm-ambient-test", "hook-ambient"],
-      { stdin: ambientPayload("<task-notification>\n<task-id>abc</task-id>\n</task-notification>", sid), env: { HOME: home } },
+      { stdin: ambientPayload("<task-notification>\n<task-id>abc</task-id>\n</task-notification>", sid), env: { HOME: home, USERPROFILE: home } },
     );
     const wmFile = path.join(TEST_ROOT, "working-memory", `${sid}.jsonl`);
     assert.ok(!fs.existsSync(wmFile), "a harness-artifact prompt must never be captured to working memory");
@@ -124,7 +124,7 @@ describe("working-memory wave — hook-ambient capture", () => {
       ["--project", "wm-ambient-test", "hook-ambient"],
       {
         stdin: JSON.stringify({ prompt: "how do I fix the checkout bug in the payment service today" }),
-        env: { HOME: home, CLAUDE_SESSION_ID: "", SESSION_ID: "" },
+        env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "", SESSION_ID: "" },
       },
     );
     assert.equal(code, 0, `hook must still exit 0, stderr=${stderr}`);
@@ -144,7 +144,7 @@ describe("working-memory wave — hook-end cleanup (sleep consolidation)", () =>
     // Build up some working memory for this exact sid first (real capture path).
     await runCli(["--project", slug, "hook-ambient"], {
       stdin: ambientPayload("working on the wm hook-end cleanup test", sid, `/Users/testuser/Projects/${slug}`),
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     const wmFile = path.join(TEST_ROOT, "working-memory", `${sid}.jsonl`);
     assert.ok(fs.existsSync(wmFile), "precondition: working-memory file must exist before hook-end");
@@ -163,7 +163,7 @@ describe("working-memory wave — hook-end cleanup (sleep consolidation)", () =>
 
     const { code, stderr } = await runCli(["hook-end"], {
       stdin: JSON.stringify({ transcript_path: transcriptPath, session_id: sid }),
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
@@ -192,7 +192,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
 
     const home = isolatedHome();
     const { code, stderr } = await runCli(["--project", "some-other-current-project", "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "rescuer-session-1" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "rescuer-session-1" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
@@ -258,7 +258,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     try {
       const home1 = isolatedHome();
       const first = await runCli(["--project", "unrelated-current-project", "hook-start"], {
-        env: { HOME: home1, CLAUDE_SESSION_ID: "m1-rescuer-1" },
+        env: { HOME: home1, USERPROFILE: home1, CLAUDE_SESSION_ID: "m1-rescuer-1" },
       });
       assert.equal(first.code, 0, `first (faulted) hook-start should still exit 0; stderr=${first.stderr}`);
 
@@ -290,7 +290,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
 
     const home2 = isolatedHome();
     const second = await runCli(["--project", "unrelated-current-project", "hook-start"], {
-      env: { HOME: home2, CLAUDE_SESSION_ID: "m1-rescuer-2" },
+      env: { HOME: home2, USERPROFILE: home2, CLAUDE_SESSION_ID: "m1-rescuer-2" },
     });
     assert.equal(second.code, 0, `retry hook-start should exit 0; stderr=${second.stderr}`);
 
@@ -311,7 +311,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
 
     await runCli(["--project", slug, "hook-ambient"], {
       stdin: ambientPayload(`API key check: ${secret} ${injectionTag} then fix the checkout race`, sid, `/Users/testuser/Projects/${slug}`),
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     const wmFilePath = path.join(TEST_ROOT, "working-memory", `${sid}.jsonl`);
     assert.ok(fs.existsSync(wmFilePath), "precondition: WM file must exist");
@@ -353,7 +353,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
 
     const home1 = isolatedHome();
     const first = await runCli(["--project", "irrelevant-current-project", "hook-start"], {
-      env: { HOME: home1, CLAUDE_SESSION_ID: "idempotent-rescuer-1" },
+      env: { HOME: home1, USERPROFILE: home1, CLAUDE_SESSION_ID: "idempotent-rescuer-1" },
     });
     assert.equal(first.code, 0, `first hook-start should exit 0; stderr=${first.stderr}`);
 
@@ -376,7 +376,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
 
     const home2 = isolatedHome();
     const second = await runCli(["--project", "irrelevant-current-project", "hook-start"], {
-      env: { HOME: home2, CLAUDE_SESSION_ID: "idempotent-rescuer-2" },
+      env: { HOME: home2, USERPROFILE: home2, CLAUDE_SESSION_ID: "idempotent-rescuer-2" },
     });
     assert.equal(second.code, 0, `second hook-start should exit 0; stderr=${second.stderr}`);
 
@@ -398,11 +398,11 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     // Simulate a real session: several prompts, no hook-end ever fires (crash).
     await runCli(["--project", slug, "hook-ambient"], {
       stdin: ambientPayload("investigating the E2E_CRASH_RESCUE_UNIQUE_TERM bug", sid, `/Users/testuser/Projects/${slug}`),
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     await runCli(["--project", slug, "hook-ambient"], {
       stdin: ambientPayload("found it — the timeout was too short", sid, `/Users/testuser/Projects/${slug}`),
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
 
     const wmFilePath = path.join(TEST_ROOT, "working-memory", `${sid}.jsonl`);

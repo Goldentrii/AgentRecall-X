@@ -164,7 +164,7 @@ async function scanForUnchokedJournalReaders(srcRoot, effectiveWrappers) {
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(RISK_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (RISK_PATTERN.test(u.text) && READ_PATTERN.test(u.text)) {
@@ -313,7 +313,7 @@ async function scanForUnchokedPalaceRoomReaders(srcRoot, effectiveWrappers) {
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(PALACE_RISK_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (PALACE_RISK_PATTERN.test(u.text) && READ_PATTERN.test(u.text)) {
@@ -877,8 +877,8 @@ describe("identity-trust completeness — includeUntrusted escape-hatch guard (2
       const srcRoot = path.join(packagesRoot, pkg, "src");
       if (!fs.existsSync(srcRoot)) continue;
       for (const full of walkTsFiles(srcRoot)) {
-        const rel = path.relative(packagesRoot, full);
-        if (rel === path.join("core", "src", "retrieval", "query-memory.ts")) continue; // the sanctioned sole call site
+        const rel = path.relative(packagesRoot, full).split(path.sep).join("/");
+        if (rel === "core/src/retrieval/query-memory.ts") continue; // the sanctioned sole call site (rel is slash-normalized above)
         const cleaned = stripComments(fs.readFileSync(full, "utf-8"));
         if (pattern.test(cleaned)) violations.push(rel);
       }
@@ -1081,7 +1081,7 @@ async function scanForHardcodedUntrustedFalseReaders(srcRoot, effectiveWrappers)
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(HARDCODED_UNTRUSTED_FALSE_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (
@@ -1217,6 +1217,25 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
     fs.rmSync(path.join(TEST_ROOT, "working-memory"), { recursive: true, force: true });
     fs.rmSync(path.join(TEST_ROOT, "recent-sessions.jsonl"), { force: true });
   });
+
+  // Case-hermetic palace init (A10 Linux-CI fix, 2026-10-11). REAL_SLUG is
+  // deliberately mixed-case ("AgentRecall"); sanitizeProject lowercases, and
+  // the resolver's existing-dir reuse rule (naming-v2 §2) picks the raw-case
+  // directory ONLY when it already exists on disk. After beforeEach wipes
+  // projects/, a bare core.ensurePalaceInitialized(REAL_SLUG) scaffolds the
+  // SANITIZED "agentrecall" directory instead — one inode on a
+  // case-insensitive filesystem (Windows/macOS, where this suite always
+  // passed), but a silently-diverging SECOND tree on case-sensitive Linux,
+  // where every hand-joined raw-case fixture path below then pointed at a
+  // palace the readers never resolve (ENOENT on write, or genuine siblings
+  // invisible to the surface under test). Pre-creating the raw-case project
+  // dir pins resolution to it on every platform — exactly the state the
+  // journal-writing subtests already reach implicitly via writeGenuineCard's
+  // own mkdirSync.
+  function initPalaceRaw(slug) {
+    fs.mkdirSync(path.join(TEST_ROOT, "projects", slug), { recursive: true });
+    core.ensurePalaceInitialized(slug);
+  }
 
   function backdateOrphan(wmFilePath) {
     const past = (Date.now() - (core.WM_ORPHAN_WINDOW_MS + 10 * 60 * 1000)) / 1000;
@@ -1503,7 +1522,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
     // the real API (ensurePalaceInitialized creates the default rooms,
     // including "decisions") rather than hand-rolling an unregistered
     // directory that would be silently invisible to the reader.
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     const roomDir = path.join(TEST_ROOT, "projects", REAL_SLUG, "palace", "rooms", "decisions");
     fs.writeFileSync(path.join(roomDir, "genuine-topic.md"), `# ${GENUINE_TERM}\n`, "utf-8");
     fs.writeFileSync(path.join(roomDir, "hijacked-topic.md"), `---\nsource: working-memory-rescue\n---\n\n# ${HIJACK_TERM_2}\n`, "utf-8");
@@ -1515,14 +1534,14 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   function writeRescueTaggedRoomFile(slug, room, filename, title) {
-    core.ensurePalaceInitialized(slug);
+    initPalaceRaw(slug);
     const roomDir = path.join(TEST_ROOT, "projects", slug, "palace", "rooms", room);
     fs.writeFileSync(path.join(roomDir, filename), `---\nsource: working-memory-rescue\n---\n\n# ${title}\n`, "utf-8");
     return roomDir;
   }
 
   it("palaceWalk depth=\"all\" (readRoomContent) never surfaces a rescue-tagged room file's content, but still surfaces genuine siblings", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     const roomDir = writeRescueTaggedRoomFile(REAL_SLUG, "decisions", "hijacked-decision.md", HIJACK_TERM_2);
     fs.writeFileSync(path.join(roomDir, "genuine-decision.md"), `# ${GENUINE_TERM}\n`, "utf-8");
 
@@ -1532,7 +1551,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   it("palaceWalk depth=\"relevant\" (README direct read) never surfaces a rescue-tagged README, but still surfaces a genuine one", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     // "knowledge" is a default room whose name/description/tags contain
     // "learning" — matches focus="learning-focus-term" below via its own
     // description text, independent of the README content being tested.
@@ -1544,7 +1563,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   it("journalSearch's include_palace branch never surfaces a rescue-tagged room file, but still surfaces a genuine one", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     const roomDir = writeRescueTaggedRoomFile(REAL_SLUG, "decisions", "hijacked-decision.md", `${HIJACK_TERM_2} unique_search_marker`);
     fs.writeFileSync(path.join(roomDir, "genuine-decision.md"), `# ${GENUINE_TERM} unique_search_marker\n`, "utf-8");
 
@@ -1568,7 +1587,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   // after (null, the same "nothing genuine found" contract a missing file
   // already gets), with a genuine sibling proving the null isn't vacuous.
   it("fetchVerbatim's palace branch never returns a rescue-tagged room file's content for a resurrect()-style verbatim fetch (STEP 2 fix)", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     writeRescueTaggedRoomFile(REAL_SLUG, "decisions", "solo-verbatim-hijack.md", "SOLO_PALACE_VERBATIM_HIJACK");
     const hijackResult = core.fetchVerbatim(REAL_SLUG, { kind: "palace", room: "decisions", file: "solo-verbatim-hijack" });
     assert.equal(hijackResult, null, `fetchVerbatim({kind:"palace"}) must return null for a rescue-tagged room file, never fabricate a verbatim source; got ${JSON.stringify(hijackResult)}`);
@@ -1589,7 +1608,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   // destination-proofs above.
 
   it("palaceSearch never surfaces a rescue-tagged room file's content, but still surfaces a genuine sibling", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     // Body (non-heading) lines — palaceSearch deliberately skips lines that
     // look like markdown headings (`^#{1,6}\s`), so the query term must live
     // in a real body line for either file to be eligible to match at all.
@@ -1612,7 +1631,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   it("palaceSearch returns total_matches=0 gracefully (no crash) when a room's ONLY file is rescue-tagged", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     // Body (non-heading) line, hand-written (not writeRescueTaggedRoomFile,
     // which always wraps its title in a `# heading` palaceSearch would skip
     // regardless of trust — that would make this test pass "by accident",
@@ -1638,7 +1657,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   function writeAlignmentRoomEntry(slug, filename, dateStr, goal, correction, source) {
-    core.ensurePalaceInitialized(slug);
+    initPalaceRaw(slug);
     const roomDir = path.join(TEST_ROOT, "projects", slug, "palace", "rooms", "alignment");
     fs.mkdirSync(roomDir, { recursive: true });
     const frontmatter = source ? `---\nsource: ${source}\n---\n\n` : "";
@@ -1664,7 +1683,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   it("journalColdStart never surfaces a rescue-tagged room README's entries in top_rooms, but still surfaces a genuine README's entries", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
 
     // Make "knowledge" non-empty (countRoomEntries scans ALL room .md files
     // for "### " headers) so it outranks the still-empty default rooms and
@@ -1709,7 +1728,7 @@ describe("destination-proof — a hijacked rescue card cannot outrank/impersonat
   });
 
   it("palaceLint never echoes a rescue-tagged room file's raw content into its issues (structural-only, evidence for the SAFE reclassification)", async () => {
-    core.ensurePalaceInitialized(REAL_SLUG);
+    initPalaceRaw(REAL_SLUG);
     writeRescueTaggedRoomFile(REAL_SLUG, "blockers", "hijacked.md", HIJACK_TERM_2);
     const result = await core.palaceLint({ project: REAL_SLUG });
     assert.ok(!JSON.stringify(result).includes(HIJACK_TERM_2), `palaceLint must never echo raw room content into its output (it is structural-only, no content read at all); got ${JSON.stringify(result)}`);

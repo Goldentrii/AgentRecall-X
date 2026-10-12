@@ -41,7 +41,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // ── Import built core (must be built first) ──────────────────────────────────
 const ROOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../packages/core");
@@ -51,10 +51,10 @@ const {
   recordOutcome,
   getCorrectionKPIs,
   readAllOutcomeKinds,
-} = await import(path.join(ROOT_DIR, "dist/storage/corrections.js"));
+} = await import(pathToFileURL(path.join(ROOT_DIR, "dist/storage/corrections.js")).href);
 
-const { checkAction } = await import(path.join(ROOT_DIR, "dist/tools-logic/check-action.js"));
-const { sessionEnd } = await import(path.join(ROOT_DIR, "dist/tools-logic/session-end.js"));
+const { checkAction } = await import(pathToFileURL(path.join(ROOT_DIR, "dist/tools-logic/check-action.js")).href);
+const { sessionEnd } = await import(pathToFileURL(path.join(ROOT_DIR, "dist/tools-logic/session-end.js")).href);
 
 const asJson = process.argv.includes("--json");
 

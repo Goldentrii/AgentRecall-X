@@ -119,7 +119,7 @@ describe("P1 fence — hook-start", () => {
     });
 
     const { code, stdout, stderr } = await runCli(root, ["--project", proj, "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "p1-fence-hookstart-1" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "p1-fence-hookstart-1" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assertFenced(stdout, INJECTION_CORE, "hook-start");
@@ -135,7 +135,7 @@ describe("P1 fence — hook-start", () => {
       "utf-8",
     );
     const { code, stdout, stderr } = await runCli(root, ["--project", "p1-fence-health", "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "p1-fence-health-1" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "p1-fence-health-1" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.ok(stdout.startsWith("⚠️ AgentRecall: 2 hook failures"), `health banner must remain the literal first line, unfenced; got: ${stdout.slice(0, 120)}`);
@@ -170,7 +170,7 @@ describe("P1 fence — hook-ambient", () => {
     // hook-ambient-purity.test.mjs.
     const prompt = "should I push this release without waiting for approval?";
     const payload = JSON.stringify({ prompt, session_id: "p1-fence-ambient-priors-1" });
-    const { code, stdout, stderr } = await runCli(root, ["--project", proj, "hook-ambient"], { stdin: payload, env: { HOME: home } });
+    const { code, stdout, stderr } = await runCli(root, ["--project", proj, "hook-ambient"], { stdin: payload, env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assertFenced(stdout, INJECTION, "hook-ambient (priors)");
   });
@@ -200,7 +200,7 @@ describe("P1 fence — hook-pretool", () => {
     });
 
     const payload = JSON.stringify({ tool_input: { command: "git push origin main --force" } });
-    const { code, stdout, stderr } = await runCli(root, ["--project", proj, "hook-pretool"], { stdin: payload, env: { HOME: home } });
+    const { code, stdout, stderr } = await runCli(root, ["--project", proj, "hook-pretool"], { stdin: payload, env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     if (stdout.trim() === "") {
       // checkAction() found no matching correction for this exact command
@@ -226,7 +226,7 @@ describe("P1 fence — ar awareness read", () => {
     );
     const before = fs.readFileSync(path.join(root, "awareness.md"), "utf-8");
 
-    const { code, stdout, stderr } = await runCli(root, ["awareness", "read"], { env: { HOME: home } });
+    const { code, stdout, stderr } = await runCli(root, ["awareness", "read"], { env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assertFenced(stdout, INJECTION, "ar awareness read");
 
@@ -238,7 +238,7 @@ describe("P1 fence — ar awareness read", () => {
   it("--json mode is unaffected (raw structured state, not the fenced markdown path)", async () => {
     const root = isolatedRoot();
     const home = isolatedHome();
-    const { code, stdout, stderr } = await runCli(root, ["awareness", "read", "--json"], { env: { HOME: home } });
+    const { code, stdout, stderr } = await runCli(root, ["awareness", "read", "--json"], { env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.doesNotThrow(() => JSON.parse(stdout), `--json output must remain valid, parseable JSON (no fence marker mixed in); got: ${stdout.slice(0, 200)}`);
   });

@@ -1,0 +1,12 @@
+{
+  "slug": "goals",
+  "name": "Goals",
+  "description": "Quarter goals and evolution log — broad catch-all room",
+  "created": "2026-06-01",
+  "updated": "2026-09-08",
+  "salience": 0.9,
+  "access_count": 61,
+  "last_accessed": "2026-09-08",
+  "tags": ["goals", "evolution", "planning"],
+  "connections": ["decisions", "alignment", "predictions"]
+}

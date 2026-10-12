@@ -1,0 +1,85 @@
+
+run-bench: registry=[predict-loo, rmr-report, correction-transfer, harvest]
+  corpus mode: fixture
+  benchmark_version: correction-transfer-v1-2026-07-02
+
+  fixture lock verified (26 records, hash a59af49114e5a889…)
+  exact-match gate: PASS (metrics + denominators + per_item deep)
+  verifyBaseline: OK correction-transfer-fixture-baseline.json
+  verifyBaseline: OK correction-transfer-real-2026-07-03.json
+  verifyBaseline: OK golden-v1-2026-10-11.json
+  verifyBaseline: OK injection-2026-10-11.json
+  verifyBaseline: OK injection-2026-10-12.json
+  verifyBaseline: OK latency-2026-10-11.json
+  verifyBaseline: OK latency-2026-10-12.json
+  verifyBaseline: PARSE-ONLY (schema has no recomputable metrics) rmr-baseline-2026-07-02.json
+  verifyBaseline: PARSE-ONLY (schema has no recomputable metrics) rmr-baseline-2026-07-03.json
+══════════════════════════════════════════════════════════════
+  AgentRecall — Correction-Transfer Benchmark v1
+  (HONEST numbers — a low score is a valid result, not a bug)
+══════════════════════════════════════════════════════════════
+  benchmark_version  correction-transfer-v1-2026-07-02
+  generated_utc      2026-10-12T08:16:06.436Z
+  corpus_hash        a59af49114e5a8899d7b8c02fbac4486181d271af7f5cad54df1c495d98089f5
+  node               v24.11.1   tz UTC
+  repo_commit        cae060a   core 3.4.51
+
+  ── ACCOUNTING CHAIN (§2.2 — every drop itemized in excluded[]) ──
+  n_on_disk            26  (export records; raw files=26)
+  n_counted            23  (= 26 − 3 dropped_from_corpus: missing rule/date)
+  n_retracted_counted  2  (prior_only — in prior universe, never scored)
+  per_item (scored)    21  (= 23 − 2 prior_only; the active-counted set)
+  n_scoreable          20  (= 21 − 1 counted_not_fired: lead-in unusable, still in denominators)
+
+  DENOMINATORS
+    theoretical (all predictable)     15
+    achievable  (active priors only)  14
+  predictions_fired  2
+  hits               2
+
+  RECALL*  (achievable)  14.3%  (2/14)
+           Wilson 95%    [4.0%, 39.9%]
+  RECALL   (theoretical) 13.3%  (2/15)
+           Wilson 95%    [3.7%, 37.9%]
+  PRECISION              100.0%  (2/2)
+  FFR (lead-in level)    9.1%  (1/11)
+      Wilson 95%         [1.6%, 37.7%]
+  FFR (pair level)       2.7%  (1/37)
+      Wilson 95%         [0.5%, 13.8%]
+  anti_self_confirm_hits 2
+  LEAD-TIME  n/a (need ≥5 hits)
+
+  ── CLAIM GATES (§2.6) ─────────────────────────────────────
+  ✗  transfer_recall point estimate ±15pp         n=14 gate=39         → CANNOT CLAIM (n=14 < gate 39)
+  ✗  transfer_recall point estimate ±10pp         n=14 gate=93         → CANNOT CLAIM (n=14 < gate 93)
+  ✗  transfer_recall point estimate ±5pp          n=14 gate=381        → CANNOT CLAIM (n=14 < gate 381)
+  ✗  FFR ≤ 5%                                     n=11 gate=59         → CANNOT CLAIM (n=11 < gate 59)
+  ✗  FFR ≤ 2%                                     n=11 gate=149        → CANNOT CLAIM (n=11 < gate 149)
+  ✗  FFR ≤ 1%                                     n=11 gate=299        → CANNOT CLAIM (n=11 < gate 299)
+  ✗  memory ON beats OFF                          n=0 gate=6           → CANNOT CLAIM (n=0 < gate 6)
+  ✓  matcher A beats matcher B                    n=14 gate=1          → n/a
+  ✗  lead-time summary                            n=2 gate=5           → CANNOT CLAIM (n=2 < gate 5)
+  ✗  80%-power detectable 10%→50% uplift (unpaired) n=14 gate=20         → CANNOT CLAIM (n=14 < gate 20)
+  ✗  80%-power detectable 30%→60% uplift (unpaired) n=14 gate=42         → CANNOT CLAIM (n=14 < gate 42)
+
+  ── WHAT THIS CORPUS CAN AND CANNOT CLAIM (§2.7) ───────────
+  CANNOT CLAIM at current density:
+    • any transfer-recall point estimate as a headline
+    • any system/matcher ranking
+    • any RMR trend over time
+    • any marketing percentage ('X% fewer repeated mistakes')
+    • any cross-surface transfer claim (OQ-6 unmeasured)
+    • FFR below any marketing threshold (n below every FFR gate at current density — see gate rows above; live Wilson bound printed below)
+
+  CAN CLAIM:
+    • the pipeline exists and is anti-gamed by construction
+    • metric definitions are frozen and versioned
+    • the FFR Wilson upper bound at the printed n (an instrument reading, not a marketing number)
+    • achievable recall as a diagnostic of corpus density (a low number is a valid result)
+    • Fisher exact two-sided p = 0.48 for semantic vs keyword (historical; no evidence of matcher difference; independently corroborates embeddings-declined decision)
+
+  (This run: fired=2 hits=2 achievable=14; FFR 1/11 lead-in units → Wilson [1.6%, 37.7%].)
+══════════════════════════════════════════════════════════════
+
+  ── determinism check (double full-pipeline run) ──
+  PASS: byte-identical after stripping generated_utc/environment

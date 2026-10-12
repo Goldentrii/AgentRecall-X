@@ -1,0 +1,12 @@
+{
+  "slug": "decisions",
+  "name": "Decisions",
+  "description": "API design and operational decisions for beta-api",
+  "created": "2026-06-10",
+  "updated": "2026-08-22",
+  "salience": 0.7,
+  "access_count": 15,
+  "last_accessed": "2026-09-01",
+  "tags": ["api", "decisions"],
+  "connections": []
+}

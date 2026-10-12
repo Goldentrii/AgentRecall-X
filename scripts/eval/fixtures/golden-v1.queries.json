@@ -1,0 +1,336 @@
+{
+  "schema_version": "golden-queries/v1",
+  "description": "26-query golden retrieval set over the synthetic golden-v1 fixture store. Mirrors the category structure of the 2026-08-18 L1 retrieval eval (reports/2026-08-18-eval-L1-retrieval.md): known-decision x10 (A), cross-project x6 (B), freshness x4 (C), CJK x6 (D). Query TEXTS are synthetic equivalents — the originals reference the owner's private store and are not regenerable. target_paths are relative to the fixture root. required_substring is matched case-insensitively against each result's title+excerpt; trap_substring (C only) flags a confident stale return.",
+  "queries": [
+    {
+      "id": "A1",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "why did we pick redis streams over rabbitmq for the job queue",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/queue-backend.md",
+          "projects/alpha-platform/journal/2026-07-14--manual--14L--queue-migration.md"
+        ],
+        "required_substring": "Redis Streams won on operational simplicity"
+      }
+    },
+    {
+      "id": "A2",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "does the worker log pipeline scrub secrets before persisting",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/log-scrubbing.md"
+        ],
+        "required_substring": "sk- keys before any line is persisted"
+      }
+    },
+    {
+      "id": "A3",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "canary rollout probe results dual region gating",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-08-05--manual--18L--canary-retro.md"
+        ],
+        "required_substring": "dual-region gate passed"
+      }
+    },
+    {
+      "id": "A4",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "never run database migrations on friday deploys",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/corrections/2026-07-02-never-run-migrations-on-friday-deploys.json"
+        ],
+        "required_substring": "Friday deploys"
+      }
+    },
+    {
+      "id": "A5",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "dashboard page redesign wizard recall gap known issue",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/dashboard-redesign.md"
+        ],
+        "required_substring": "wizard state is lost on refresh"
+      }
+    },
+    {
+      "id": "A6",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "preflight canonical python script fixes non-determinism",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/health-baseline-2026-06-02.md"
+        ],
+        "required_substring": "scripts/preflight.py is the canonical preflight",
+        "structural_trap": "loose-file-under-rooms"
+      }
+    },
+    {
+      "id": "A7",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "retry storm class recurred twice after the backoff fix",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-09-01--manual--13L--retry-storm-reflection.md"
+        ],
+        "required_substring": "recurred twice"
+      }
+    },
+    {
+      "id": "A8",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "cache migration phase what was hard how solved synthesis",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/pipeline/0001--cache-migration.md"
+        ],
+        "required_substring": "eviction storms during dual-write",
+        "structural_trap": "palace-pipeline-invisible"
+      }
+    },
+    {
+      "id": "A9",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "canonical auth header form bearer token not cookie readme outlier",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json"
+        ],
+        "required_substring": "cookie auth in the README is the outlier"
+      }
+    },
+    {
+      "id": "A10",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "query": "never deploy to production without explicit owner approval how many times confirmed",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json",
+          "projects/alpha-platform/palace/rooms/predictions/README.md"
+        ],
+        "required_substring": "without explicit owner approval"
+      }
+    },
+    {
+      "id": "B1",
+      "category": "cross-project",
+      "project": "beta-api",
+      "query": "can I drop a production table without asking the owner first",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json"
+        ],
+        "required_substring": "explicit owner approval"
+      }
+    },
+    {
+      "id": "B2",
+      "category": "cross-project",
+      "project": "beta-api",
+      "query": "is alpha-ingest or alpha-collector the canonical service name",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/alignment/service-naming-map.md"
+        ],
+        "required_substring": "canonical name is alpha-ingest",
+        "structural_trap": "cross-project-silo"
+      }
+    },
+    {
+      "id": "B3",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "query": "should parallel workers self-review or use independent reviewers",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json"
+        ],
+        "required_substring": "independent reviewer"
+      }
+    },
+    {
+      "id": "B4",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "query": "which job queue backend won the alpha benchmark rabbitmq or redis streams",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/queue-backend.md"
+        ],
+        "required_substring": "Redis Streams won",
+        "structural_trap": "cross-project-silo"
+      }
+    },
+    {
+      "id": "B5",
+      "category": "cross-project",
+      "project": "beta-api",
+      "query": "overnight batch agents should use cli auth not interactive oauth",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json"
+        ],
+        "required_substring": "never interactive OAuth"
+      }
+    },
+    {
+      "id": "B6",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "query": "owner preference focus shipping over refactoring",
+      "ground_truth": {
+        "target_paths": [
+          "insights-index.json"
+        ],
+        "required_substring": "shipping user-visible fixes"
+      }
+    },
+    {
+      "id": "C1",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "query": "what rate limit did we actually ship for the public api",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-08-20--manual--11L--rate-limit-ship.md"
+        ],
+        "required_substring": "250 rps",
+        "trap_substring": "100 rps"
+      }
+    },
+    {
+      "id": "C2",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "query": "what is the current canonical name of the ingestion service",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/alignment/service-naming-map.md",
+          "projects/alpha-platform/journal/2026-07-22--manual--09L--service-rename.md"
+        ],
+        "required_substring": "canonical name is alpha-ingest",
+        "trap_substring": "alpha-collector enters beta"
+      }
+    },
+    {
+      "id": "C3",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "query": "is the cache migration phase still open or closed",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/pipeline/0001--cache-migration.md"
+        ],
+        "required_substring": "phase closed 2026-08-30",
+        "trap_substring": "in progress",
+        "structural_trap": "palace-pipeline-invisible"
+      }
+    },
+    {
+      "id": "C4",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "query": "how many times has the friday migration correction recurred",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-09-01--manual--13L--retry-storm-reflection.md"
+        ],
+        "required_substring": "recurred twice",
+        "trap_substring": "zero so far"
+      }
+    },
+    {
+      "id": "D1",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "为什么选redis读穿透缓存不用memcached",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/cache-strategy.md"
+        ],
+        "required_substring": "read-through Redis cache",
+        "target_language": "en"
+      }
+    },
+    {
+      "id": "D2",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "工作日志持久化之前有没有清洗密钥",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/log-scrubbing.md"
+        ],
+        "required_substring": "sk- keys before any line is persisted",
+        "target_language": "en"
+      }
+    },
+    {
+      "id": "D3",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "灰度发布双区域守门探针结果",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-08-05--manual--18L--canary-retro.md"
+        ],
+        "required_substring": "灰度探针全部通过",
+        "target_language": "zh"
+      }
+    },
+    {
+      "id": "D4",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "双活容灾切换演练结论",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/palace/rooms/decisions/dual-active-dr.md"
+        ],
+        "required_substring": "主备切换在90秒内完成",
+        "target_language": "zh"
+      }
+    },
+    {
+      "id": "D5",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "GPU推理超时根因显存碎片",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/journal/2026-08-11--manual--16L--gpu-inference.md"
+        ],
+        "required_substring": "显存碎片",
+        "target_language": "zh"
+      }
+    },
+    {
+      "id": "D6",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "query": "周五部署不要跑数据库迁移",
+      "ground_truth": {
+        "target_paths": [
+          "projects/alpha-platform/corrections/2026-07-02-never-run-migrations-on-friday-deploys.json"
+        ],
+        "required_substring": "Friday deploys",
+        "target_language": "en"
+      }
+    }
+  ]
+}

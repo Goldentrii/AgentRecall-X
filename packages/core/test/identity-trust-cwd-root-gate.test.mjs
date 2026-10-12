@@ -65,6 +65,9 @@ describe("resolveProject/detectProject — a non-root cwd cannot annex a git-ide
   });
 
   beforeEach(() => {
+    // Leave WORK_ROOT before deleting it: the previous test may have
+    // chdir'd inside, and Windows refuses to remove the process cwd (EPERM).
+    process.chdir(originalCwd);
     fs.rmSync(path.join(TEST_ROOT, "projects"), { recursive: true, force: true });
     fs.rmSync(WORK_ROOT, { recursive: true, force: true });
     fs.mkdirSync(WORK_ROOT, { recursive: true });

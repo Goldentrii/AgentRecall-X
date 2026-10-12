@@ -1,0 +1,11 @@
+
+> bench
+> node scripts/eval/run-bench.mjs
+
+
+run-bench: registry=[predict-loo, rmr-report, correction-transfer, harvest]
+  corpus mode: fixture
+  benchmark_version: correction-transfer-v1-2026-07-02
+
+FATAL: fixture corpus not found at /E:/tools/AgentRecall-X/scripts/eval/fixtures/corpus-v1/
+fixture corpus not found — scripts/eval/fixtures/corpus-v1/projects/<p>/corrections/*.json required.

@@ -1,0 +1,59 @@
+
+> agent-recall-sdk@3.4.51 test
+> node --test test/*.test.mjs
+
+▶ AgentRecall SDK
+  ✔ constructor sets root and project (0.7471ms)
+  ✔ capture creates a Q&A entry (13.7491ms)
+  ✔ journalWrite creates an entry (12.3848ms)
+  ✔ journalRead reads the latest entry (2.2108ms)
+  ✔ journalList returns entries (2.4073ms)
+  ✔ journalSearch finds content (4.407ms)
+  ✔ state write and read (3.1742ms)
+  ✔ palaceWrite creates a room and memory (84.6ms)
+  ✔ palaceRead lists rooms (7.6144ms)
+  ✔ palaceRead reads specific room (8.8264ms)
+  ✔ walk returns context (9.1686ms)
+  ✔ palaceSearch finds content (23.2481ms)
+  ✔ lint returns health report (11.9695ms)
+  ✔ awarenessUpdate adds insights (29.9138ms)
+  ✔ readAwareness returns markdown (0.4397ms)
+  ✔ recallInsight returns insights (1.3162ms)
+  ✔ projects lists tracked projects (1.3034ms)
+  ✔ coldStart returns palace-first context (23.403ms)
+  ✔ palace low-level access works (5.5594ms)
+  ✔ synthesize generates context (8.184ms)
+  ✔ archive with high threshold archives nothing (4.4934ms)
+  ✔ rollup dry run previews (1.5947ms)
+  ✔ alignmentCheck records alignment (15.7964ms)
+  ✔ nudge records contradiction (1.3566ms)
+  ✔ knowledgeWrite creates a lesson (31.0788ms)
+  ✔ knowledgeRead returns lessons (1.0572ms)
+  ✔ readAwarenessState returns structured state (0.4015ms)
+  ✔ graph accessor exposes graph functions (0.1214ms)
+✔ AgentRecall SDK (1275.4015ms)
+▶ SDK audit contract (Phase 0 regression fixtures)
+  ✔ Case A: README Quick Start's memory.recall(...) exists and works on AgentRecall (1029.3946ms)
+  ✔ Case B: constructing a second AgentRecall instance leaks its root onto an earlier instance (14.0069ms)
+  ✔ Case C: interleaved calls on two instances each write under their own root; a throwing scope does not leak (28.2941ms)
+✔ SDK audit contract (Phase 0 regression fixtures) (1072.613ms)
+▶ AgentRecall SDK — modern composite API
+  ✔ sessionStart returns a SessionStartResult for the project (76.4641ms)
+  ✔ sessionStart accepts an optional context hint (27.0678ms)
+  ✔ remember routes content to a store and reports success (138.8996ms)
+  ✔ remember accepts a routing context hint (171.3004ms)
+  ✔ recall finds previously remembered content without throwing (95.3808ms)
+  ✔ recall accepts limit/since opts alongside project override (33.84ms)
+  ✔ sessionEnd writes a journal summary and returns a SessionEndResult (185.7379ms)
+  ✔ sessionEnd accepts trajectory and insights via opts (170.0381ms)
+  ✔ check records an alignment check and returns a CheckResult (19.1019ms)
+  ✔ check accepts a human_correction and records it without throwing (21.9277ms)
+✔ AgentRecall SDK — modern composite API (1900.2075ms)
+ℹ tests 41
+ℹ suites 3
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2088.8757

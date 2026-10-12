@@ -139,7 +139,7 @@ describe("egress-guard — behavioral: backfill scrubs AKIA key + PEM block", ()
   // stub Supabase network calls.
   it("scrubForCloud redacts AKIA key from content that would be uploaded", async () => {
     const { scrubForCloud } = await import(
-      path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")
+      url.pathToFileURL(path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")).href
     );
     const scrubbed = scrubForCloud(DIRTY_CONTENT);
     assert.ok(
@@ -154,7 +154,7 @@ describe("egress-guard — behavioral: backfill scrubs AKIA key + PEM block", ()
 
   it("scrubForCloud redacts PEM header AND base64 body", async () => {
     const { scrubForCloud } = await import(
-      path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")
+      url.pathToFileURL(path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")).href
     );
     const scrubbed = scrubForCloud(DIRTY_CONTENT);
     assert.ok(
@@ -169,7 +169,7 @@ describe("egress-guard — behavioral: backfill scrubs AKIA key + PEM block", ()
 
   it("scrubForCloud on content with no secrets returns content unchanged (modulo injection scrub)", async () => {
     const { scrubForCloud } = await import(
-      path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")
+      url.pathToFileURL(path.join(REPO_ROOT, "packages/core/dist/storage/content-guard.js")).href
     );
     const clean = "# Journal\n\nToday I worked on the feature.";
     const result = scrubForCloud(clean);
