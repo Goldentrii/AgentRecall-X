@@ -84,12 +84,12 @@ Here is what our own instrument found on our own live corpus (2026-07-03):
 
 *The heed instrument defaulted to "heeded" absent evidence before 2026-07-03; the reset default is "unknown" — the honest 0/3 is the correct starting point, not a regression. Transfer recall cannot support a point-estimate claim below 39 classes (claim-gate ledger, [benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6).*
 
-**Verify it yourself** — see [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md). Every number in this README falls into one of two classes.
+**Verify it yourself** — see [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md). Every number in this README falls into one of the classes below.
 
 *Regenerates from this repo (script + committed artifact):*
 
 - Correction-transfer fixture gate — `npm run bench` (exact-match vs `scripts/eval/baselines/correction-transfer-fixture-baseline.json`)
-- Golden retrieval fixture v1: hit@5 **73.1%** keyword / **80.8%** local embeddings — `npm run bench:golden` + `scripts/eval/baselines/golden-v1-2026-10-11.json`
+- Golden retrieval fixture v1, keyword leg: hit@5 **73.1%** — `npm run bench:golden` + `scripts/eval/baselines/golden-v1-2026-10-11.json` (keyword-only artifact)
 - session_start injection median **244 tokens** — `npm run bench:injection` + `scripts/eval/baselines/injection-2026-10-11.json`
 - session_start p95 warm **97 ms** / recall p95 **209 ms** — `npm run bench:latency` + `scripts/eval/baselines/latency-2026-10-11.json` (timing values are machine-dependent; CI gates schema and injection-size determinism, never timing values)
 
@@ -99,6 +99,10 @@ Here is what our own instrument found on our own live corpus (2026-07-03):
 - **92.5%** instrument-biased upper bound and **0/3** evidence-grounded heed — frozen in `scripts/eval/baselines/rmr-baseline-2026-07-03.json`, not re-runnable
 - **0/4** correction transfer recall — frozen in `scripts/eval/baselines/correction-transfer-real-2026-07-03.json`, not re-runnable (the owner's corpus is not in this repo)
 - **1,489 tokens** / **363 ms** (`UPDATE-LOG.md` §C2) and the 75% → **90%** golden eval of 2026-09-12
+
+*Measured locally on the committed fixture with the opt-in model — no committed artifact:*
+
+- Golden fixture v1, embeddings leg: hit@5 **80.8%** (hit@1 69.2%) — measured 2026-10-11; the ~145 MB model is never downloaded in CI, so no artifact is committed. Reproduce on demand: `ar embeddings setup` into a temp root, then `node scripts/eval/golden-retrieval.mjs --embeddings`.
 
 **What this means:** we captured 35% of real corrections in our own live use. The heed instrument was biased and we reset it. The offline transfer benchmark scores 0 on our own corpus — which is a density problem (32 active corrections across 19 projects is too sparse to front-run mistakes), not a retrieval architecture problem (confirmed 5× by internal experiments).
 
@@ -216,7 +220,7 @@ flowchart LR
 
 ## The Automaticity Principle
 
-Memory only compounds if it fires automatically, not on demand. Every pull-channel tool (`recall`, `memory_query`) saw zero organic calls across 44 projects over weeks of real use — including from the agent that built them. That is why only 5 tools ship by default; the two-verb model (session_start / session_end) carries all the compounding value, and everything else is opt-in via `--full`.
+Memory only compounds if it fires automatically, not on demand. Every pull-channel tool (`recall`, `memory_query`) saw zero organic calls across 44 projects over weeks of real use (self-measured on the owner's live corpus, 2026-06-12 census — not regenerable from this repo) — including from the agent that built them. That is why only 5 tools ship by default; the two-verb model (session_start / session_end) carries all the compounding value, and everything else is opt-in via `--full`.
 
 ---
 
@@ -263,7 +267,7 @@ ar embeddings status    # flag / model / index diagnostics
 | Degradation | Missing/corrupt index or model → keyword results, unchanged, with the reason in `semantic_leg` metadata — never an error |
 | Security | Semantic candidates pass the same trust/scope/fence stages as keyword ones; the index stores content-hash→vector only (no text), so a stale or tampered index cannot inject content |
 | Measured | Golden retrieval eval 2026-09-12: 75% → **90%** top-5 hit-rate, zero regressions (default `paraphrase-multilingual-MiniLM-L12-v2`, ~145MB; the e5 family is registry-available via `AGENT_RECALL_EMBEDDINGS_MODEL` — measured tradeoffs in the fix7 report). Self-measured on the owner's private store — not regenerable from this repo; see the fixture row below for the reproducible number |
-| Reproducible | Golden retrieval, fixture v1 (synthetic, 26 queries, hash-locked): hit@5 **73.1%** keyword [53.9%, 86.3%], **80.8%** with local embeddings [62.1%, 91.5%] (hit@1 15.4% → 69.2%). Every remaining miss is a committed structural trap case (pipeline-dir, loose rooms file, cross-project silo). Regenerate: `npm run bench:golden` (keyword leg; embeddings leg needs `ar embeddings setup` + `AGENT_RECALL_EMBEDDINGS_HOME`) |
+| Reproducible | Golden retrieval, fixture v1 (synthetic, 26 queries, hash-locked): hit@5 **73.1%** keyword [53.9%, 86.3%], **80.8%** with local embeddings [62.1%, 91.5%] (hit@1 15.4% → 69.2%). Every remaining miss is a committed structural trap case (pipeline-dir, loose rooms file, cross-project silo). Regenerate: `npm run bench:golden` reproduces the keyword leg against the committed keyword-only artifact (`scripts/eval/baselines/golden-v1-2026-10-11.json`); the embeddings leg was measured locally with the opt-in model on 2026-10-11 — no committed artifact (CI never downloads the model); reproduce on demand with `ar embeddings setup` + `AGENT_RECALL_EMBEDDINGS_HOME` + `node scripts/eval/golden-retrieval.mjs --embeddings` |
 
 Chinese/English cross-lingual queries work (the model is multilingual — a zh question finds an en rule and vice versa). Re-run `ar embeddings rebuild` occasionally (or after writing a lot); content-hash keying makes it cheap, and un-indexed new content simply stays keyword-searchable until then.
 

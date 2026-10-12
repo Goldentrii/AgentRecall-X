@@ -83,7 +83,7 @@ AgentRecall 是两件事：
 
 *在 2026-07-03 之前，遵从率测量工具在缺乏证据时默认判定为"已遵从"；重置后的默认值是"未知"——诚实的 0/3 是正确的起点，而不是倒退。迁移召回率在错误类别少于 39 类时无法支撑一个点估计的主张（claim-gate ledger，[benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6）。*
 
-**自行验证**——见 [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md)。可从本仓库重新生成的数字：correction-transfer fixture 门禁（`npm run bench`）、golden 检索 fixture v1 hit@5 73.1% 关键词 / 80.8% 本地向量（`npm run bench:golden`）、244 tokens 注入（`npm run bench:injection`）、97/209 ms 延迟（`npm run bench:latency`，耗时因机器而异）。作者私有存储上自测、无法从本仓库重新生成的数字：35.3% 捕获召回（n=59，原始评分未提交）、92.5% 偏差上限与 0/3 循证遵从（artifact 已冻结提交，不可重跑）、0/4 迁移召回（同前）、1,489 tokens / 363 ms（§C2）。
+**自行验证**——见 [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md)。可从本仓库重新生成的数字：correction-transfer fixture 门禁（`npm run bench`）、golden 检索 fixture v1 hit@5 73.1% 关键词（`npm run bench:golden`，已提交 artifact 仅含关键词 leg）、244 tokens 注入（`npm run bench:injection`）、97/209 ms 延迟（`npm run bench:latency`，耗时因机器而异）。80.8% 本地向量 leg 为 2026-10-11 在本地加载可选模型（~145 MB，CI 不下载）测得——无已提交 artifact，`ar embeddings setup` 后可按需复现。作者私有存储上自测、无法从本仓库重新生成的数字：35.3% 捕获召回（n=59，原始评分未提交）、92.5% 偏差上限与 0/3 循证遵从（artifact 已冻结提交，不可重跑）、0/4 迁移召回（同前）、1,489 tokens / 363 ms（§C2）。
 
 **这意味着什么：** 我们在自己的真实使用中捕获了 35% 的真实纠正。遵从率测量工具存在偏差，我们已重置。离线迁移 benchmark 在我们自己的语料库上得分为 0——这是一个密度问题（19 个项目里 32 条活跃纠正太稀疏，来不及提前预判错误），而不是检索架构的问题（内部实验已确认 5 次）。
 

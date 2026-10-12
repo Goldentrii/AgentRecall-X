@@ -21,7 +21,7 @@ Version: TBD — owner decides (3.5.0 proposed, see `reports/RELEASE-3.5.0-draft
 
 ### Added
 
-- **Golden retrieval harness** + hash-locked fixture golden-v1 — `npm run bench:golden`; hit@5 73.1% keyword / 80.8% with local embeddings.
+- **Golden retrieval harness** + hash-locked fixture golden-v1 — `npm run bench:golden`; hit@5 73.1% keyword (committed artifact); 80.8% with local embeddings measured locally 2026-10-11 (opt-in model, no committed artifact).
 - **session_start injection-size and latency benches** with committed baselines — `npm run bench:injection`, `npm run bench:latency`.
 - **`windows-latest` CI lane** + `build-and-test` fan-in job.
 
