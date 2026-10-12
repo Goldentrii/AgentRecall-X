@@ -39,11 +39,32 @@ export function readJsonSafe<T>(filePath: string): T | null {
 }
 
 /** Synchronous bounded sleep without CPU spin (Atomics.wait on a throwaway
- * buffer). Only ever reached on win32 transient rename retries (≤ ~1s total)
- * — never a lock-wait primitive (fix9 retired those deliberately). */
+ * buffer). Only ever reached on win32 transient rename retries (≤
+ * RENAME_RETRY_BUDGET_MS total) — never a lock-wait primitive (fix9 retired
+ * those deliberately). */
 function sleepSyncMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
+
+/**
+ * Total win32 transient-rename retry budget. 5s, not the original ~1s (A13,
+ * CI run 38251553161): on a loaded 2-vCPU GitHub runner, a holder that
+ * intended a ~400ms window kept the destination open past the entire ~1s
+ * backoff (the rename-retry test's own PowerShell reader — its close drifted
+ * >600ms under scheduler pressure; even idle on a fast desktop the drift
+ * measures ~80ms). Real-world holders are no gentler: antivirus/indexer
+ * scans commonly pin a just-written file for 100ms–2s. The 5s worst case is
+ * only ever PAID when the rename is genuinely blocked the whole time —
+ * uncontended renames (the overwhelmingly common case) succeed on the first
+ * attempt and never sleep — and after the budget the original error still
+ * surfaces (exported so the regression test derives its assertions from the
+ * real value instead of a copy that can drift).
+ */
+export const RENAME_RETRY_BUDGET_MS = 5_000;
+/** Backoff cap: 10 → 250ms doubling, then flat 250ms until the budget is
+ * spent — early retries catch ms-scale reader windows quickly, the cap keeps
+ * the write's landing latency ≤250ms once a long holder finally releases. */
+const RENAME_RETRY_MAX_DELAY_MS = 250;
 
 /**
  * renameSync with a BOUNDED win32-only retry for transient sharing-violation
@@ -58,14 +79,17 @@ function sleepSyncMs(ms: number): void {
  * it intermittently failed alignment-log-concurrency under full-suite load:
  *   EPERM: operation not permitted, rename '…alignment-log.json.tmp.N' →
  *   '…alignment-log.json'
- * Exponential backoff 1→512ms (~1s total, 11 attempts) then rethrow — a
- * reader window lasts ms, an AV scan tens of ms; anything outlasting the
- * budget is a real environment problem the caller must see. POSIX renames
+ * Exponential backoff 10→250ms (capped), 5s total (see
+ * RENAME_RETRY_BUDGET_MS for why ~1s lost to a slow CI runner), then rethrow
+ * — anything outlasting the budget is a real environment problem the caller
+ * must see. The budget counts REQUESTED sleep, not wall clock, so a
+ * descheduled process still waits at least the full budget. POSIX renames
  * over open files simply succeed, so the retry path is unreachable there
  * (hence "atomic on POSIX" never needed this).
  */
 export function renameAtomic(oldPath: string, newPath: string): void {
-  let delayMs = 1;
+  let delayMs = 10;
+  let sleptMs = 0;
   for (;;) {
     try {
       fs.renameSync(oldPath, newPath);
@@ -74,8 +98,10 @@ export function renameAtomic(oldPath: string, newPath: string): void {
       const code = (err as NodeJS.ErrnoException).code;
       const transient =
         process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
-      if (!transient || delayMs > 512) throw err;
-      sleepSyncMs(delayMs);
+      if (!transient || sleptMs >= RENAME_RETRY_BUDGET_MS) throw err;
+      const napMs = Math.min(delayMs, RENAME_RETRY_MAX_DELAY_MS, RENAME_RETRY_BUDGET_MS - sleptMs);
+      sleepSyncMs(napMs);
+      sleptMs += napMs;
       delayMs *= 2;
     }
   }
