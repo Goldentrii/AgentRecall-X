@@ -6,6 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## Unreleased (branch `integration-2026-10`, 2026-10-11/12)
+
+Version: TBD — owner decides (3.5.0 proposed, see `reports/RELEASE-3.5.0-draft.md`). No package versions were bumped on this branch.
+
+### Fixed
+
+- **Heeded-guard regression suite** — the async `writeCorrection`/`recordOutcome` calls are now awaited in the suite; the CI regression step is green again.
+- **Windows portability** — `fileURLToPath` sweep, path jails, cross-platform npm scripts; ports community PRs #24 (@buer5), #19 (@lonelyhty), #22 (@buer5) with Co-authored-by trailers.
+- **SDK per-instance root isolation** via `AsyncLocalStorage` — concurrent SDK instances no longer share a process-global root (closes TOW2-324).
+- **filelock** — progress-aware contention deadline + win32 `EPERM` handling.
+- **Embeddings config cache key** and **updateIndex equal-mtime re-read**.
+- **Linux `npm test`** green as non-root.
+
+### Added
+
+- **Golden retrieval harness** + hash-locked fixture golden-v1 — `npm run bench:golden`; hit@5 73.1% keyword / 80.8% with local embeddings.
+- **session_start injection-size and latency benches** with committed baselines — `npm run bench:injection`, `npm run bench:latency`.
+- **`windows-latest` CI lane** + `build-and-test` fan-in job.
+
+### Docs
+
+- README numbers relabelled: regenerates-from-this-repo vs self-measured on the owner's private store.
+
 ## [3.4.50] — 2026-09-12
 
 Dreaming admission math + heed-rate measurement (both independently reviewed with adversarial fix rounds).
