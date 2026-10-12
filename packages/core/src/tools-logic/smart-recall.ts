@@ -318,6 +318,11 @@ export interface SmartRecallResult {
    * feedback-log.json because another live process held the feedback-log
    * lock past the timeout. Ranking for THIS call used the on-disk log;
    * the submitted entries were dropped (resubmit to persist them).
+   *
+   * A12 (2026-10-12): the writer now waits out a live holder
+   * (waitForLiveHolder — see processFeedback), so this flag is reachable
+   * only past filelock's 60s pathological hard cap, not under routine CPU
+   * starvation.
    */
   feedback_log_skipped?: true;
   /** Verbatim sources attached for low-confidence top hits (Wave 4 bridge). */
@@ -427,6 +432,15 @@ async function processFeedback(
     // submits recall feedback — the old unlocked read-modify-write dropped
     // concurrent sessions' entries (feedback-log-concurrency.test.mjs
     // reproduced 46/120 lost on main HEAD).
+    //
+    // A12 (2026-10-12): waitForLiveHolder, same class as check()'s
+    // alignment-log RMW (CI run 38242013300: a starved 2-vCPU windows runner
+    // deschedules a healthy holder past the 5s no-progress deadline, the
+    // spurious LockContentionError takes the skip branch below, and the
+    // entries are gone — feedback-log.json is the only store, nothing
+    // re-derives them). A live holder is waited out (60s hard cap;
+    // dead-reclaim unchanged); the skip branch is now a pathological-cap
+    // last resort, not a routine-starvation path.
     return await withLock("feedback-log", () => {
       const log = readFeedbackLog();
       const date = new Date().toISOString().slice(0, 10);
@@ -445,13 +459,14 @@ async function processFeedback(
       // lock-free — never let them observe a truncated file.
       writeTextAtomic(feedbackLogPath(), JSON.stringify(updated, null, 2));
       return { log: updated, persistenceSkipped: false };
-    });
+    }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
-      // Advisory ranking data: never fail (or stall) a recall because the
-      // feedback log is contended past the timeout — log the skip explicitly
-      // and rank with the current on-disk log. The entries are lost, loudly:
-      // stderr for the host log AND persistenceSkipped for the caller
+      // Pathological-cap last resort (see the waitForLiveHolder note above):
+      // never fail a recall because the feedback log is contended past the
+      // 60s hard cap — log the skip explicitly and rank with the current
+      // on-disk log. The entries are lost, loudly: stderr for the host log
+      // AND persistenceSkipped for the caller
       // (surfaced as SmartRecallResult.feedback_log_skipped — review LOW-3).
       console.error(`[agent-recall] smart_recall feedback: ${err.message} — this call's feedback entries were NOT persisted.`);
       return { log: readFeedbackLog(), persistenceSkipped: true };

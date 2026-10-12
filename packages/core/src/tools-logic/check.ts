@@ -130,6 +130,13 @@ export interface CheckResult {
    * NOT be persisted because another live process held the alignment-log
    * lock past the timeout. The record still informed THIS result's
    * watch_for/similar_past_deltas; it is absent from future calls' history.
+   *
+   * A12 (2026-10-12): the writer now takes the lock with waitForLiveHolder
+   * (see the RMW below), so a live holder is waited out instead of skipped —
+   * this flag is reachable only past filelock's 60s pathological hard cap
+   * (or a crash-orphaned lock whose owner record never becomes readable).
+   * Routine CPU starvation (CI run 38242013300: 29/40 records lost on a
+   * 2-vCPU windows runner) can no longer set it.
    */
   alignment_log_skipped?: true;
   /**
@@ -387,6 +394,21 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   // read→push→write span dropped concurrent sessions' records
   // (alignment-log-concurrency.test.mjs reproduced 31/40 lost on main HEAD).
   // Lock name is project-scoped, mirroring `corrections-${project}`.
+  //
+  // A12 CI windows-latest regression fix (2026-10-12, run 38242013300): on a
+  // starved 2-vCPU runner a perfectly healthy holder sits DESCHEDULED past
+  // the 5s no-progress deadline, reads as "wedged", and every spurious
+  // LockContentionError took the skip branch below — 29/40 alignment records
+  // permanently lost. Unlike recordOutcome's materialized counters (lossless
+  // _outcomes.jsonl ledger, self-healing re-derivation) this file IS the only
+  // store, so a skip here is unrecoverable data loss, not a stale cache.
+  // waitForLiveHolder waits out a live holder instead of misdiagnosing it
+  // (dead-reclaim and never-steal unchanged; 60s hard cap) — the same opt-in
+  // recordOutcome took in corrections.ts for the identical failure shape.
+  // The catch below is therefore reachable only past the 60s pathological
+  // hard cap or on a crash lock whose owner record stays unreadable; it is
+  // kept as a loud last resort because throwing there would lose the whole
+  // check() result on top of the record.
   let trimmed: AlignmentRecord[];
   let alignmentLogSkipped = false;
   try {
@@ -396,14 +418,15 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       const t = log.slice(-50);
       writeAlignmentLog(slug, t);
       return t;
-    });
+    }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
-      // Best-effort skip, loudly: one alignment record lost under pathological
-      // live contention beats stealing the lock mid-write (old behavior) or
-      // failing the whole check() call. Downstream analysis still sees the
-      // in-memory record so this call's result is unaffected. The skip is
-      // surfaced BOTH on stderr (host log) and in the result
+      // Best-effort skip, loudly — pathological-contention last resort only
+      // (see the waitForLiveHolder note above): one alignment record lost
+      // past the 60s hard cap beats stealing the lock mid-write (old
+      // behavior) or failing the whole check() call. Downstream analysis
+      // still sees the in-memory record so this call's result is unaffected.
+      // The skip is surfaced BOTH on stderr (host log) and in the result
       // (alignment_log_skipped — review LOW-3: a success-shaped result must
       // not hide a persistence failure from the calling agent).
       console.error(`[agent-recall] check(): ${err.message} — this alignment record was NOT persisted.`);
