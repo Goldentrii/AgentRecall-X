@@ -263,12 +263,13 @@ function tryReclaim(dir: string): boolean {
  * not EEXIST — a transient contention artefact of NTFS delete semantics,
  * observed crashing audit-outcome-concurrency workers once the
  * progress-aware deadline increased acquire/release churn. On win32 ONLY,
- * EPERM is therefore treated as "contended" (retry); a genuinely
- * permission-denied store on Windows now surfaces as LockContentionError
- * after the timeout instead of an immediate EPERM — a diagnostics tradeoff
- * confined to the one platform where EPERM is routinely transient. POSIX
- * behavior is unchanged. */
-function tryAcquire(dir: string): (() => void) | null {
+ * EPERM is therefore treated as "contended" (retry), recorded in the
+ * optional `diag` out-param; acquireLock rethrows the ORIGINAL EPERM at
+ * timeout when no owner record was ever observed during the whole wait
+ * (a genuinely permission-denied store, not contention — A10 review FIX 1),
+ * so the error type stays truthful on both platforms. POSIX behavior is
+ * unchanged (strict immediate rethrow). */
+function tryAcquire(dir: string, diag?: { eperm?: NodeJS.ErrnoException }): (() => void) | null {
   try {
     fs.mkdirSync(dir, { recursive: false });
   } catch (err) {
@@ -288,7 +289,12 @@ function tryAcquire(dir: string): (() => void) | null {
     } else if (code === "EEXIST") {
       return null;
     } else if (code === "EPERM" && process.platform === "win32") {
-      return null; // delete-pending collision — see doc comment above
+      // Delete-pending collision — see doc comment above. Record the error
+      // so acquireLock can tell a genuine permission failure (EPERM retried
+      // for the whole wait with NO owner ever observed) from real contention
+      // and rethrow the original at timeout (A10 review FIX 1).
+      if (diag) diag.eperm = err as NodeJS.ErrnoException;
+      return null;
     } else {
       throw err;
     }
@@ -369,8 +375,9 @@ export async function acquireLock(name: string): Promise<() => void> {
   ensureDir(path.dirname(dir));
 
   let delay = 5;
+  const diag: { eperm?: NodeJS.ErrnoException } = {};
   for (;;) {
-    const release = tryAcquire(dir);
+    const release = tryAcquire(dir, diag);
     if (release) return release;
 
     // Progress detection: a change of owner (pid or acquired_at) since the
@@ -388,6 +395,14 @@ export async function acquireLock(name: string): Promise<() => void> {
     // always bounded — a pathological reclaim-always-true state (e.g. the
     // store root being deleted out from under us) can never spin forever.
     if (Date.now() >= deadline || Date.now() >= hardDeadline) {
+      // A wait that expires having NEVER seen an owner record, with EPERM
+      // being retried as "delete-pending contention", was not contended at
+      // all — it is a genuine win32 permission problem (read-only store,
+      // ACL deny). Surface the original error instead of a fabricated
+      // contention claim. (A truly churning lock writes owner.json on every
+      // handoff, so some poll in the 5 s window reads one; delete-pending
+      // transients last milliseconds, never 5 s.) A10 review FIX 1.
+      if (lastOwnerKey === null && diag.eperm) throw diag.eperm;
       throw contentionError(name, dir);
     }
 

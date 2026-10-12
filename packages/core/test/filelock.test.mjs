@@ -233,4 +233,67 @@ describe("filelock — liveness-aware, event-loop-friendly primitive", () => {
     assert.strictEqual(maxActive, 1, "mutual exclusion must hold through a reclaim race");
     assert.ok(!fs.existsSync(path.join(testRoot, `.lock-${NAME}`)), "lock fully released at the end");
   });
+
+  it("a persistent mkdir EPERM with NO owner ever observed surfaces as EPERM, never LockContentionError (A10 review FIX 1)", async () => {
+    // A genuinely permission-denied store (read-only dir, ACL deny) throws
+    // EPERM on every lock-dir mkdir and never materializes an owner.json.
+    // On win32, where transient delete-pending EPERMs are retried as
+    // contention, the wait must NOT end in a fabricated "held by a live
+    // process" claim — the original EPERM must surface (bounded by the 5s
+    // no-progress deadline). On POSIX the strict immediate rethrow already
+    // guarantees the same observable outcome. Cross-platform simulation: a
+    // child process patches the CJS fs.mkdirSync (which node's ESM
+    // namespace for core modules reflects) to throw EPERM for `.lock-*`
+    // paths only, BEFORE importing the dist module — no real ACLs needed,
+    // identical code path to a read-only store.
+    const EPERM_WORKER_CODE = `
+      const fsCjs = require("node:fs");
+      const realMkdir = fsCjs.mkdirSync.bind(fsCjs);
+      fsCjs.mkdirSync = (p, opts) => {
+        if (String(p).includes(".lock-")) {
+          const err = new Error("EPERM: operation not permitted, mkdir '" + p + "'");
+          err.code = "EPERM";
+          throw err;
+        }
+        return realMkdir(p, opts);
+      };
+      (async () => {
+        const [ , name, moduleUrl ] = process.argv;
+        const { acquireLock, LockContentionError } = await import(moduleUrl);
+        const t0 = Date.now();
+        try {
+          const release = await acquireLock(name);
+          release();
+          console.log(JSON.stringify({ outcome: "acquired", ms: Date.now() - t0 }));
+        } catch (err) {
+          console.log(JSON.stringify({
+            outcome: "threw",
+            code: err.code ?? null,
+            isContention: err instanceof LockContentionError,
+            ms: Date.now() - t0,
+          }));
+        }
+      })();
+    `;
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["-e", EPERM_WORKER_CODE, "--", "eperm-no-owner", FILELOCK_DIST_URL],
+        { env: { ...process.env, AGENT_RECALL_ROOT: testRoot }, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (d) => { out += d; });
+      child.stderr.on("data", (d) => { err += d; });
+      child.on("error", reject);
+      child.on("close", () => {
+        try { resolve(JSON.parse(out)); } catch { reject(new Error(`worker produced no JSON:\nstdout: ${out}\nstderr: ${err}`)); }
+      });
+    });
+
+    assert.equal(result.outcome, "threw", `acquireLock must throw on a permission-dead store; got ${JSON.stringify(result)}`);
+    assert.equal(result.code, "EPERM", `the ORIGINAL EPERM must surface, not a fabricated error; got ${JSON.stringify(result)}`);
+    assert.equal(result.isContention, false, `must NOT be LockContentionError — no owner was ever observed, so nothing was contended; got ${JSON.stringify(result)}`);
+    assert.ok(result.ms < 10_000, `must resolve within the bounded no-progress window (5s soft deadline + slack), never the 60s churn cap; took ${result.ms}ms`);
+  });
 });
