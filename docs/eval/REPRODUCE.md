@@ -212,11 +212,11 @@ Expected output shape (exact sizes depend on the store; exits 0):
 
 ```
 artifact: scripts/eval/baselines/injection-<YYYY-MM-DD>.json
-session-start-size — store: scripts/eval/fixtures/corpus-v1 (hash …)
+session-start-size — store: scripts/eval/fixtures/golden-v1 (hash …)
 project                 chars   tokens  cjk-adj  P0 store  P0 payload  survival
-alpha-platform          …       …       …        6         6           OK
+alpha-platform          …       …       …        1         1           OK
 …
-median <N> tokens | p95 <N> | max <N> (estimator: chars/4, over 4 projects)
+median <N> tokens | p95 <N> | max <N> (estimator: chars/4, over 3 projects)
 ```
 
 The measured payload is the MCP `session_start` tool's default response text
