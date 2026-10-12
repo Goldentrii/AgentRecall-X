@@ -2,7 +2,8 @@
 name: agent-recall
 description: >-
   Persistent compounding memory for AI agents. 5 default MCP tools: session_start,
-  session_end, remember, recall, check. Full surface (18 tools) available with --full flag.
+  session_end, remember, recall, check. Full surface: 6 tools with --full (adds
+  check_action); 13 tools with AR_EXTRAS=1 --full.
   Two-verb model: inhale (session_start) and exhale (session_end).
   Correction-first memory with decision trail tracking,
   watch_for warnings, palace rooms with salience scoring, cross-project insight
@@ -63,9 +64,9 @@ skip:
   - "算了"
 ---
 
-# AgentRecall v3.4.30 — Usage Guide
+# AgentRecall v3.4.51 (integration pending) — Usage Guide
 
-AgentRecall is a persistent memory system. Default surface: **5 tools** (two verbs + three essentials). Full surface: 18 tools via `npx agent-recall-mcp --full`. This guide describes how and when to use them.
+AgentRecall is a persistent memory system. Default surface: **5 tools** (two verbs + three essentials). Full surface: 6 tools via `npx agent-recall-mcp --full` (adds `check_action`); 13 tools with `AR_EXTRAS=1 npx agent-recall-mcp --full`. This guide describes how and when to use them.
 
 **Two-verb model:** `session_start` (inhale — load context) and `session_end` (exhale — save and compound). Everything else is available but secondary; most agents never need more than the default 5. See [Automaticity Law](#why-5-default-tools) below.
 
@@ -126,11 +127,13 @@ transport: stdio
 
 ## Tools
 
-AgentRecall's default surface provides **5 tools**. Start the server with `--full` to enable the complete 18-tool surface.
+AgentRecall's default surface provides **5 tools**. Start the server with `--full` to add `check_action` (6 tools); set `AR_EXTRAS=1` together with `--full` to also enable the quarantined extras (13 tools).
 
 **Default tools (always available):** `session_start`, `session_end`, `remember`, `recall`, `check`
 
-**Full-mode only (`--full`):** `memory_query`, `check_action`, `register_rule`, `pipeline_open`, `pipeline_close`, `pipeline_list`, `pipeline_current`, `pipeline_show`, `skill_write`, `skill_recall`, `skill_list`, `dashboard_export`, `session_end_reflect`, `project_board`, `project_status`, `digest`, `bootstrap_scan`, `bootstrap_import`
+**Full-mode only (`--full`):** `check_action`
+
+**Extras (`AR_EXTRAS=1 --full`, quarantined in the 2026-07-05 purity census):** `pipeline_open`, `pipeline_close`, `pipeline_list`, `pipeline_current`, `pipeline_show`, `register_rule`, `digest`
 
 ---
 
@@ -311,62 +314,30 @@ When `outcome` is provided, the decision trail is persisted to the palace `decis
 
 ### Full-mode tools (`npx agent-recall-mcp --full`)
 
-> These tools are available when the server is started with `--full`. Most agents never need them — the default 5 tools carry all compounding memory value. Enable `--full` for project narrative tracking (pipeline), procedural rules (skills), status dashboards, context caching, or first-time bootstrap.
+> Most agents never need these — the default 5 tools carry all compounding memory value. The 2026-07-05 purity census (owner-approved) stripped the MCP full surface to `check_action`; the former pipeline/rule/digest tools are quarantined behind `AR_EXTRAS=1`, and everything else moved to the `ar` CLI.
 
-### `project_board`
+### `check_action`
 
-**When:** Start of a new session when you don't know which project to work on.
+**When:** Right before a risky or hard-to-reverse action — publish, push, deploy, delete, credential exposure, external send.
 
-**What it does:** Scans all projects and returns a status board — last activity date, pending work, active blockers. Use this before `session_start` to pick which project to load.
-
-```
-project_board()
-```
-
-### `project_status`
-
-**When:** Quick check on a specific project's health without loading full context.
-
-**What it returns:** Last trajectory, active blockers, palace room freshness (stale flag), next steps, summary line. Lighter than `session_start` — no awareness or cross-project loading.
+**What it does:** Pre-action safety matcher — checks the described action against active corrections and rules, and returns matching warnings before you act.
 
 ```
-project_status({ project: "auto" })
+check_action({ action_description: "npm publish agent-recall-mcp" })
 ```
 
-### `bootstrap_scan`
+### Extras (`AR_EXTRAS=1 npx agent-recall-mcp --full`)
 
-**When:** First time using AgentRecall, or when /arstatus shows an empty board.
+Quarantined in the purity census for near-zero organic use; core logic is intact and the tools re-register when the env var is set:
 
-**What it does:** Scans your machine for existing projects — git repos, Claude AutoMemory (`~/.claude/projects/`), and CLAUDE.md files. Returns a structured report of what CAN be imported. Read-only, no writes.
+- `pipeline_open` / `pipeline_close` / `pipeline_list` / `pipeline_current` / `pipeline_show` — project narrative spine (phases with reflection fields)
+- `register_rule` — save an IF-THEN behavior policy
+- `digest` — context cache (store / recall / read / invalidate pre-computed analysis)
 
-**What it scans:**
-- `~/Projects/`, `~/work/`, `~/code/`, `~/dev/`, `~/src/`, `~/repos/`, `~/github/` for git repos
-- `~/.claude/projects/` for Claude AutoMemory (user profile, project memories, feedback)
-- CLAUDE.md files in project roots
+### Removed from the MCP surface (CLI remains)
 
-**How to use:**
-```
-bootstrap_scan()
-```
+`memory_query`, `skill_write`, `skill_recall`, `skill_list`, `dashboard_export`, `session_end_reflect`, `project_board`, `project_status`, `bootstrap_scan`, and `bootstrap_import` were removed from the MCP surface in the 2026-07-05 purity census. Their CLI paths remain intact. First-time bootstrap now runs through the CLI:
 
-**Returns:** `projects` (array of discovered projects with importable items), `global_items` (user profile), `stats` (totals + scan duration)
-
-### `bootstrap_import`
-
-**When:** After reviewing bootstrap_scan results, to import selected projects.
-
-**What it does:** Creates AgentRecall entries for discovered projects — palace rooms, identity.md, knowledge entries from Claude memory, initial journal from git history.
-
-**How to use:**
-```
-bootstrap_import({
-  scan_result: "<JSON from bootstrap_scan>",
-  project_slugs: ["my-app", "api-server"],    // optional: import only these
-  item_types: ["identity", "architecture"]     // optional: import only these types
-})
-```
-
-**CLI equivalent:**
 ```bash
 ar bootstrap                    # scan and show what's available
 ar bootstrap --dry-run          # preview what would be imported
@@ -374,17 +345,7 @@ ar bootstrap --import           # import all new projects
 ar bootstrap --import --project my-app  # import one project
 ```
 
-**What gets imported per project:**
-- `identity` — palace identity.md from project name + description + language
-- `memory` — Claude AutoMemory .md files → palace knowledge room
-- `architecture` — CLAUDE.md content → palace architecture room
-- `trajectory` — git log → initial journal entry with recent activity
-
-**Safety:**
-- Scan is read-only — never writes to your machine or to AgentRecall
-- Import only writes to `~/.agent-recall/`, never modifies source files
-- Skips `.env`, credentials, `.pem`, `.key` files — never reads secrets
-- Projects already in AgentRecall are skipped (no double-import)
+Bootstrap scan is read-only (never writes to your machine or to AgentRecall); import only writes to `~/.agent-recall/`, skips `.env`, credentials, `.pem`, and `.key` files, and never double-imports projects already in AgentRecall.
 
 ---
 
@@ -449,7 +410,7 @@ COMPOUND: After 10 sessions
 6. **Rate your recall results.** Feedback makes future retrievals better.
 7. **Use `check` for ambiguous tasks.** 5 seconds of verification beats 30 minutes of wrong work.
 8. **Read `watch_for` warnings.** If `session_start` or `check` returns warnings, adjust your approach.
-9. **Run bootstrap on first install.** If `/arstatus` shows no projects, `bootstrap_scan` discovers what's already on your machine and imports it in seconds.
+9. **Run bootstrap on first install.** If `/arstatus` shows no projects, `ar bootstrap --import` (CLI) discovers what's already on your machine and imports it in seconds.
 10. **Check active_rooms in session_start.** Palace rooms with high salience contain your project's most important decisions and patterns. Rooms marked stale may need updating.
 
 ---
