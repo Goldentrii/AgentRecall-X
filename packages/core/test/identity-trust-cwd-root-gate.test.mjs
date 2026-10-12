@@ -45,6 +45,28 @@ function gitInit(dir, remoteName) {
   execFileSync("git", ["remote", "add", "origin", `https://github.com/someorg/${remoteName}.git`], { cwd: dir });
 }
 
+const IS_WIN = process.platform === "win32";
+
+/**
+ * 8.3 short form of an existing directory, via the Scripting.FileSystemObject
+ * COM API (array-args execFileSync — no cmd.exe quoting pitfalls). Returns
+ * null when unavailable, or the long path unchanged when the volume has 8.3
+ * name generation disabled (caller must detect and skip).
+ */
+function shortPathOf(dir) {
+  try {
+    const script =
+      `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${dir.replace(/'/g, "''")}').ShortPath`;
+    const out = execFileSync("powershell.exe", ["-NoProfile", "-Command", script], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 describe("resolveProject/detectProject — a non-root cwd cannot annex a git-identified project", () => {
   let core;
   let originalCwd;
@@ -196,6 +218,87 @@ describe("resolveProject/detectProject — a non-root cwd cannot annex a git-ide
       `a genuinely nested, distinctly-identified repo must win on its own git identity, not the ancestor override; got "${detected}"`,
     );
   });
+
+  // CI windows-latest regression (2026-10-12, run 38230438655): GitHub's
+  // windows runner TEMP is C:\Users\RUNNER~1\... — an 8.3 SHORT name
+  // ("runneradmin" > 8 chars). The allowlist stored one spelling of the
+  // project root while `git rev-parse --show-toplevel` returned the other,
+  // and normalizePath used fs.realpathSync (the JS implementation), which
+  // resolves symlinks but NOT 8.3 aliases — so the CRITICAL-2 directory-
+  // identity gate's strict string compare failed and detection fell through
+  // to the raw git remote name ("prismma"). fs.realpathSync.native resolves
+  // 8.3 aliases to the canonical long form on win32; comparisons are
+  // additionally case-folded on win32 (NTFS is case-insensitive).
+  it(
+    "win32 CI regression (2026-10-12): override inheritance survives an 8.3 short-name cwd (RUNNER~1-style temp)",
+    { skip: !IS_WIN },
+    async (t) => {
+      const projectRoot = path.join(WORK_ROOT, "prismma-web-shortname-precedent");
+      gitInit(projectRoot, "prismma");
+
+      // Register the override from the LONG spelling of the root.
+      process.chdir(projectRoot);
+      const resolved = await core.resolveProject("prismma-gateway");
+      assert.equal(resolved, "prismma-gateway");
+
+      const shortRoot = shortPathOf(fs.realpathSync(projectRoot));
+      if (!shortRoot || shortRoot.toLowerCase() === fs.realpathSync(projectRoot).toLowerCase()) {
+        t.skip("volume has 8.3 name generation disabled — no short form to exercise");
+        return;
+      }
+
+      // Later session: cwd reaches a SUBDIRECTORY through the 8.3 spelling.
+      fs.mkdirSync(path.join(projectRoot, "src", "components"), { recursive: true });
+      process.chdir(path.join(shortRoot, "src", "components"));
+      if (process.cwd().toLowerCase() === path.join(fs.realpathSync(projectRoot), "src", "components").toLowerCase()) {
+        t.skip("OS canonicalized the short-name cwd — nothing to exercise");
+        return;
+      }
+
+      const detected = await core.detectProject();
+      assert.equal(
+        detected,
+        "prismma-gateway",
+        `an 8.3 short-name spelling of the SAME overridden root must inherit the override ` +
+        `(realpath-normalized directory identity), not fall back to the raw git remote name; got "${detected}"`,
+      );
+    },
+  );
+
+  it(
+    "win32: override inheritance is case-insensitive (NTFS) — a case-mangled cwd still inherits",
+    { skip: !IS_WIN },
+    async (t) => {
+      const projectRoot = path.join(WORK_ROOT, "prismma-web-case-precedent");
+      gitInit(projectRoot, "prismma");
+
+      process.chdir(projectRoot);
+      const resolved = await core.resolveProject("prismma-gateway");
+      assert.equal(resolved, "prismma-gateway");
+
+      const sub = path.join(projectRoot, "src");
+      fs.mkdirSync(sub, { recursive: true });
+      // Mangle the case of the LAST root component (NTFS resolves it to the
+      // same directory) and flip the drive letter's case for good measure.
+      const base = path.basename(projectRoot).toUpperCase();
+      const mangled = path.join(path.dirname(projectRoot), base, "src");
+      const driveFlipped = mangled[0] === mangled[0].toUpperCase()
+        ? mangled[0].toLowerCase() + mangled.slice(1)
+        : mangled[0].toUpperCase() + mangled.slice(1);
+      process.chdir(driveFlipped);
+      if (process.cwd() === sub) {
+        t.skip("OS canonicalized the case-mangled cwd — nothing to exercise");
+        return;
+      }
+
+      const detected = await core.detectProject();
+      assert.equal(
+        detected,
+        "prismma-gateway",
+        `a case-differing spelling of the SAME overridden root must inherit the override; got "${detected}"`,
+      );
+    },
+  );
 
   it("a project root with only package.json (no git) can still be registered", async () => {
     const projectRoot = path.join(WORK_ROOT, "no-git-project");

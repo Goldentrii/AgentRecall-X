@@ -135,6 +135,53 @@ describe("filelock — liveness-aware, event-loop-friendly primitive", () => {
     holder.kill("SIGKILL");
   });
 
+  // CI windows-latest regression (2026-10-12, run 38230438655): on a starved
+  // 2-vCPU runner a healthy holder can sit descheduled past the 5s
+  // no-progress deadline, so recordOutcome's counter pass skipped 190/480
+  // updates. waitForLiveHolder is the opt-in for callers whose critical
+  // section materializes re-derivable state: wait as long as the holder PID
+  // probes alive (dead holders still reclaim promptly), bounded only by the
+  // maxTotalWaitMs hard cap — never by the wedged-holder heuristic.
+  it("waitForLiveHolder: outwaits a live holder past the 5s no-progress deadline instead of throwing", async () => {
+    const NAME = "wait-live-outwait";
+    const holder = await spawnHolder(testRoot, NAME, 7000); // > LOCK_TIMEOUT_MS, < hard cap
+    try {
+      const started = Date.now();
+      const release = await acquireLock(NAME, { waitForLiveHolder: true });
+      const waited = Date.now() - started;
+      release();
+      assert.ok(
+        waited > 5000,
+        `acquire succeeded after ${waited}ms — must have waited PAST the 5s no-progress deadline ` +
+        `(a sub-5s acquire means the holder released early and the mode was not exercised)`,
+      );
+    } finally {
+      holder.kill("SIGKILL"); // no-op if already exited; never leak an immortal child on a failure path
+      await holder.exited;
+    }
+  });
+
+  it("waitForLiveHolder keeps the hard cap: an immortal live holder still throws LockContentionError at maxTotalWaitMs", async () => {
+    const NAME = "wait-live-hard-cap";
+    const holder = await spawnHolder(testRoot, NAME, 0); // holds forever
+    try {
+      const started = Date.now();
+      await assert.rejects(
+        () => acquireLock(NAME, { waitForLiveHolder: true, maxTotalWaitMs: 1500 }),
+        (err) => err instanceof LockContentionError,
+      );
+      const waited = Date.now() - started;
+      assert.ok(waited >= 1400, `must have waited out the hard cap (waited ${waited}ms)`);
+      assert.ok(waited < 4500, `hard cap must fire BEFORE the 5s wedged deadline would (waited ${waited}ms)`);
+
+      const lockDir = path.join(testRoot, `.lock-${NAME}`);
+      assert.ok(fs.existsSync(lockDir), "live holder's lock dir must survive the capped wait (never stolen)");
+    } finally {
+      holder.kill("SIGKILL");
+      await holder.exited;
+    }
+  });
+
   it("reclaims a dead holder's lock promptly (kill -9 mid-hold, no cleanup code ran)", async () => {
     const NAME = "dead-holder-reclaim";
     const holder = await spawnHolder(testRoot, NAME, 0); // holds forever

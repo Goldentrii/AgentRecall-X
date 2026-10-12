@@ -38,11 +38,54 @@ export function readJsonSafe<T>(filePath: string): T | null {
   }
 }
 
+/** Synchronous bounded sleep without CPU spin (Atomics.wait on a throwaway
+ * buffer). Only ever reached on win32 transient rename retries (≤ ~1s total)
+ * — never a lock-wait primitive (fix9 retired those deliberately). */
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * renameSync with a BOUNDED win32-only retry for transient sharing-violation
+ * errors (CI/parallel-suite flake, 2026-10-12): every atomic write here is
+ * tmp-write + rename, and readers of these files are deliberately LOCK-FREE
+ * (readAlignmentLog in session_start, readCorrections on hot paths, check()'s
+ * similar-past-deltas scan). On NTFS, renaming OVER a destination that any
+ * process holds open without FILE_SHARE_DELETE — a concurrent lock-free
+ * reader, an antivirus/indexer scan — fails with EPERM/EACCES/EBUSY for the
+ * few ms the handle lives. That is a TRANSIENT, not a permission problem
+ * (same NTFS semantics as filelock.ts's A10 delete-pending EPERM note), and
+ * it intermittently failed alignment-log-concurrency under full-suite load:
+ *   EPERM: operation not permitted, rename '…alignment-log.json.tmp.N' →
+ *   '…alignment-log.json'
+ * Exponential backoff 1→512ms (~1s total, 11 attempts) then rethrow — a
+ * reader window lasts ms, an AV scan tens of ms; anything outlasting the
+ * budget is a real environment problem the caller must see. POSIX renames
+ * over open files simply succeed, so the retry path is unreachable there
+ * (hence "atomic on POSIX" never needed this).
+ */
+export function renameAtomic(oldPath: string, newPath: string): void {
+  let delayMs = 1;
+  for (;;) {
+    try {
+      fs.renameSync(oldPath, newPath);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient =
+        process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+      if (!transient || delayMs > 512) throw err;
+      sleepSyncMs(delayMs);
+      delayMs *= 2;
+    }
+  }
+}
+
 export function writeJsonAtomic(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
   const tmp = filePath + ".tmp." + process.pid;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-  fs.renameSync(tmp, filePath); // atomic on POSIX
+  renameAtomic(tmp, filePath); // atomic on POSIX; win32 transient-EPERM retry
 }
 
 /**
@@ -57,7 +100,7 @@ export function writeTextAtomic(filePath: string, text: string): void {
   ensureDir(path.dirname(filePath));
   const tmp = filePath + ".tmp." + process.pid;
   fs.writeFileSync(tmp, text, "utf-8");
-  fs.renameSync(tmp, filePath); // atomic on POSIX
+  renameAtomic(tmp, filePath); // atomic on POSIX; win32 transient-EPERM retry
 }
 
 // ---------------------------------------------------------------------------

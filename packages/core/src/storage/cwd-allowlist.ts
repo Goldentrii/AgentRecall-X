@@ -24,21 +24,51 @@ export interface CwdAllowlist {
 
 /**
  * Normalize a filesystem path for stable matching:
- *   - Resolve symlinks (handles macOS /tmp → /private/tmp)
- *   - Canonicalize separators to forward slashes (Windows realpathSync
- *     returns backslashes; stored allowlist entries and the "+ '/'"
- *     prefix checks below assume one canonical separator)
+ *   - Resolve symlinks/junctions (handles macOS /tmp → /private/tmp)
+ *   - Resolve win32 8.3 short-name aliases to the canonical long form and
+ *     canonicalize on-disk component case: fs.realpathSync.native uses the
+ *     OS final-path lookup, while the JS fs.realpathSync only follows
+ *     symlinks and passes `RUNNER~1`-style aliases through VERBATIM. That
+ *     gap broke the CRITICAL-2 directory-identity gate on GitHub's
+ *     windows-latest runner (CI run 38230438655, 2026-10-12), whose TEMP is
+ *     C:\Users\RUNNER~1\…: the allowlist stored one spelling of the project
+ *     root, `git rev-parse --show-toplevel` produced the other, and the
+ *     strict compare fell through to raw git identity.
+ *   - Canonicalize separators to forward slashes (Windows realpath returns
+ *     backslashes; stored allowlist entries and the "+ '/'" prefix checks
+ *     below assume one canonical separator)
  *   - Strip trailing slash
- * Falls back to the input if realpath fails (path doesn't exist yet).
+ * Falls back to the JS realpath, then to the input, if resolution fails
+ * (path doesn't exist on disk yet).
+ *
+ * NOTE: output keeps the canonical ON-DISK case — never lowercase it here
+ * (stored entries stay human-readable). COMPARISONS must additionally fold
+ * case on win32: use `pathCompareKey`.
  */
 export function normalizePath(p: string): string {
   let normalized = p;
   try {
-    normalized = fs.realpathSync(p);
+    normalized = fs.realpathSync.native(p);
   } catch {
-    // path may not exist on disk yet; use the literal string
+    try {
+      normalized = fs.realpathSync(p);
+    } catch {
+      // path may not exist on disk yet; use the literal string
+    }
   }
   return normalized.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/**
+ * Comparison key for an already-normalizePath'd path: folded to lower case on
+ * win32 (NTFS resolves names case-insensitively, so two spellings of the same
+ * directory must compare equal — part of the 2026-10-12 CI fix above) and
+ * kept exact elsewhere (POSIX filesystems are case-sensitive). Every equality
+ * or prefix check against allowlist entries must go through this key, never
+ * raw string comparison.
+ */
+export function pathCompareKey(p: string): string {
+  return process.platform === "win32" ? p.toLowerCase() : p;
 }
 
 function allowlistPath(slug: string): string {
@@ -55,7 +85,15 @@ export function readCwdAllowlist(slug: string): CwdAllowlist {
     const raw = fs.readFileSync(p, "utf-8");
     const parsed = JSON.parse(raw) as CwdAllowlist;
     if (!parsed || !Array.isArray(parsed.paths)) return { paths: [] };
-    return { paths: parsed.paths.filter((s) => typeof s === "string" && path.isAbsolute(s)) };
+    return {
+      // Re-normalize at read time: entries written before the realpath.native
+      // fix (or on a machine where the dir did not exist yet at write time)
+      // may carry an 8.3 short-name or stale-case spelling — healing them
+      // here keeps every comparison downstream canonical without a migration.
+      paths: parsed.paths
+        .filter((s) => typeof s === "string" && path.isAbsolute(s))
+        .map((s) => normalizePath(s)),
+    };
   } catch {
     return { paths: [] };
   }
@@ -69,7 +107,8 @@ export function addCwdToAllowlist(slug: string, cwdPath: string): void {
   if (!cwdPath || !path.isAbsolute(cwdPath)) return;
   const normalized = normalizePath(cwdPath);
   const current = readCwdAllowlist(slug);
-  if (current.paths.includes(normalized)) return;
+  // Case-folded dedupe (win32): two spellings of one directory are one entry.
+  if (current.paths.some((p) => pathCompareKey(p) === pathCompareKey(normalized))) return;
   const next: CwdAllowlist = { paths: [...current.paths, normalized].sort() };
   const dir = palaceDir(slug);
   ensureDir(dir);
@@ -123,16 +162,18 @@ export interface CwdMatch {
 function matchCwd(cwd: string): CwdMatch | null {
   if (!cwd || !path.isAbsolute(cwd)) return null;
   const normalized = normalizePath(cwd);
+  const cwdKey = pathCompareKey(normalized);
   const projectsDir = projectsRootDir();
   if (!fs.existsSync(projectsDir)) return null;
 
   let bestMatch: { slug: string; matchedPath: string } | null = null;
   for (const entry of fs.readdirSync(projectsDir)) {
     if (entry.startsWith("_archived_") || entry.startsWith(".")) continue;
-    const list = readCwdAllowlist(entry);
+    const list = readCwdAllowlist(entry); // entries arrive re-normalized (realpath'd)
     for (const p of list.paths) {
-      // Exact match OR cwd lives strictly under p
-      if (normalized === p || normalized.startsWith(p + "/")) {
+      // Exact match OR cwd lives strictly under p — case-folded on win32.
+      const pKey = pathCompareKey(p);
+      if (cwdKey === pKey || cwdKey.startsWith(pKey + "/")) {
         if (!bestMatch || p.length > bestMatch.matchedPath.length) {
           bestMatch = { slug: entry, matchedPath: p };
         }
@@ -140,7 +181,11 @@ function matchCwd(cwd: string): CwdMatch | null {
     }
   }
   if (!bestMatch) return null;
-  return { slug: bestMatch.slug, exact: bestMatch.matchedPath === normalized, matchedPath: bestMatch.matchedPath };
+  return {
+    slug: bestMatch.slug,
+    exact: pathCompareKey(bestMatch.matchedPath) === cwdKey,
+    matchedPath: bestMatch.matchedPath,
+  };
 }
 
 /**
