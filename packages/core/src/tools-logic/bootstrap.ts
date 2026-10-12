@@ -273,13 +273,15 @@ function saferealpathSync(p: string): string {
  *
  * - Resolves `filePath` with realpathSync (follows symlinks).
  * - Each root is also normalised — a symlinked scan root itself is followed.
- * - Checks real === root OR real starts with root + '/'.
+ * - Checks real === root OR real starts with root + path.sep (realpathSync
+ *   returns native separators, so the separator must be native too — a
+ *   hard-coded '/' never matches on Windows and the jail rejects everything).
  */
 function isInsideScanRoots(filePath: string, allowedRoots: string[]): boolean {
   const real = saferealpathSync(filePath);
   for (const root of allowedRoots) {
     const realRoot = saferealpathSync(root);
-    if (real === realRoot || real.startsWith(realRoot + "/")) return true;
+    if (real === realRoot || real.startsWith(realRoot + path.sep)) return true;
   }
   return false;
 }

@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";
 
-const GATES_PATH = new url.URL("./claim-gates.json", import.meta.url).pathname;
+const GATES_PATH = url.fileURLToPath(new url.URL("./claim-gates.json", import.meta.url));
 
 // ── loadGates ─────────────────────────────────────────────────────────────
 
@@ -251,6 +251,6 @@ async function main() {
 
 const invokedDirectly =
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  path.resolve(process.argv[1]) === path.resolve(url.fileURLToPath(import.meta.url));
 
 if (invokedDirectly) main();

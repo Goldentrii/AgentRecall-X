@@ -77,9 +77,9 @@ const REGISTRY = [
 ];
 
 const BENCH_VERSION = "correction-transfer-v1-2026-07-02";
-const BASELINES_DIR = new url.URL("./baselines/", import.meta.url).pathname;
-const FIXTURE_ROOT = new url.URL("./fixtures/corpus-v1/", import.meta.url).pathname;
-const FIXTURE_LOCK = new url.URL("./fixtures/corpus-v1.lock.json", import.meta.url).pathname;
+const BASELINES_DIR = url.fileURLToPath(new url.URL("./baselines/", import.meta.url));
+const FIXTURE_ROOT = url.fileURLToPath(new url.URL("./fixtures/corpus-v1/", import.meta.url));
+const FIXTURE_LOCK = url.fileURLToPath(new url.URL("./fixtures/corpus-v1.lock.json", import.meta.url));
 const FIXTURE_BASELINE = path.join(BASELINES_DIR, "correction-transfer-fixture-baseline.json");
 
 const CORPUS_HASH_BASIS =
@@ -91,7 +91,7 @@ const CORPUS_HASH_BASIS =
 function gitCommit() {
   try {
     return childProcess
-      .execSync("git rev-parse --short HEAD 2>/dev/null", { encoding: "utf-8" })
+      .execSync("git rev-parse --short HEAD", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
       .trim();
   } catch {
     return null;
@@ -100,7 +100,7 @@ function gitCommit() {
 
 function coreVersion() {
   try {
-    const pkgPath = new url.URL("../../packages/core/package.json", import.meta.url).pathname;
+    const pkgPath = url.fileURLToPath(new url.URL("../../packages/core/package.json", import.meta.url));
     return JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version;
   } catch {
     return null;

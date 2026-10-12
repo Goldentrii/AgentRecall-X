@@ -25,6 +25,9 @@ export interface CwdAllowlist {
 /**
  * Normalize a filesystem path for stable matching:
  *   - Resolve symlinks (handles macOS /tmp → /private/tmp)
+ *   - Canonicalize separators to forward slashes (Windows realpathSync
+ *     returns backslashes; stored allowlist entries and the "+ '/'"
+ *     prefix checks below assume one canonical separator)
  *   - Strip trailing slash
  * Falls back to the input if realpath fails (path doesn't exist yet).
  */
@@ -35,7 +38,7 @@ export function normalizePath(p: string): string {
   } catch {
     // path may not exist on disk yet; use the literal string
   }
-  return normalized.replace(/\/+$/, "");
+  return normalized.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
 function allowlistPath(slug: string): string {
@@ -52,7 +55,7 @@ export function readCwdAllowlist(slug: string): CwdAllowlist {
     const raw = fs.readFileSync(p, "utf-8");
     const parsed = JSON.parse(raw) as CwdAllowlist;
     if (!parsed || !Array.isArray(parsed.paths)) return { paths: [] };
-    return { paths: parsed.paths.filter((s) => typeof s === "string" && s.startsWith("/")) };
+    return { paths: parsed.paths.filter((s) => typeof s === "string" && path.isAbsolute(s)) };
   } catch {
     return { paths: [] };
   }
@@ -63,7 +66,7 @@ export function readCwdAllowlist(slug: string): CwdAllowlist {
  * Normalizes the path (trailing slash removed).
  */
 export function addCwdToAllowlist(slug: string, cwdPath: string): void {
-  if (!cwdPath || !cwdPath.startsWith("/")) return;
+  if (!cwdPath || !path.isAbsolute(cwdPath)) return;
   const normalized = normalizePath(cwdPath);
   const current = readCwdAllowlist(slug);
   if (current.paths.includes(normalized)) return;
@@ -118,7 +121,7 @@ export interface CwdMatch {
  * storage/project.ts, for how the `exact` flag is used).
  */
 function matchCwd(cwd: string): CwdMatch | null {
-  if (!cwd || !cwd.startsWith("/")) return null;
+  if (!cwd || !path.isAbsolute(cwd)) return null;
   const normalized = normalizePath(cwd);
   const projectsDir = projectsRootDir();
   if (!fs.existsSync(projectsDir)) return null;

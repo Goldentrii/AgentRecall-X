@@ -164,7 +164,7 @@ async function scanForUnchokedJournalReaders(srcRoot, effectiveWrappers) {
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(RISK_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (RISK_PATTERN.test(u.text) && READ_PATTERN.test(u.text)) {
@@ -313,7 +313,7 @@ async function scanForUnchokedPalaceRoomReaders(srcRoot, effectiveWrappers) {
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(PALACE_RISK_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (PALACE_RISK_PATTERN.test(u.text) && READ_PATTERN.test(u.text)) {
@@ -877,8 +877,8 @@ describe("identity-trust completeness — includeUntrusted escape-hatch guard (2
       const srcRoot = path.join(packagesRoot, pkg, "src");
       if (!fs.existsSync(srcRoot)) continue;
       for (const full of walkTsFiles(srcRoot)) {
-        const rel = path.relative(packagesRoot, full);
-        if (rel === path.join("core", "src", "retrieval", "query-memory.ts")) continue; // the sanctioned sole call site
+        const rel = path.relative(packagesRoot, full).split(path.sep).join("/");
+        if (rel === "core/src/retrieval/query-memory.ts") continue; // the sanctioned sole call site (rel is slash-normalized above)
         const cleaned = stripComments(fs.readFileSync(full, "utf-8"));
         if (pattern.test(cleaned)) violations.push(rel);
       }
@@ -1081,7 +1081,7 @@ async function scanForHardcodedUntrustedFalseReaders(srcRoot, effectiveWrappers)
   for (const full of walkTsFiles(srcRoot)) {
     const text = fs.readFileSync(full, "utf-8");
     if (!(HARDCODED_UNTRUSTED_FALSE_PATTERN.test(text) && READ_PATTERN.test(text))) continue;
-    const rel = path.relative(srcRoot, full);
+    const rel = path.relative(srcRoot, full).split(path.sep).join("/");
     const units = await extractTopLevelUnits(full);
     for (const u of units) {
       if (
