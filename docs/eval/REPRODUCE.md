@@ -14,7 +14,7 @@ All commands below run from the repo root (`agentrecall/` after cloning).
 
 - Node.js 20 or later (`.nvmrc` pins `20`; run `nvm use` if you use nvm)
 - npm 10 or later (ships with Node 20)
-- A POSIX shell (bash or sh)
+- bash (Git Bash on Windows works)
 - No global binaries required — everything is installed via `npm ci`
 
 ---

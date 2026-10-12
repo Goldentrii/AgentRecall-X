@@ -311,6 +311,8 @@ Retrieval: keyword + RRF (Cormack 2009). FSRS-lite decay (Ebbinghaus → SuperMe
 | Any JS/TS app | SDK (`agent-recall-sdk`) | Supported |
 | Terminal / CI | CLI (`ar`) | Supported |
 
+CI runs the full build + regression + test pipeline on both `ubuntu-latest` and `windows-latest`. On Windows, four POSIX-only tests self-skip with named reasons (signals, symlink) and one mode-bit assertion is guarded in-test.
+
 ---
 
 ## Links
