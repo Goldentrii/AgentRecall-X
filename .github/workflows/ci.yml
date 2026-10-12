@@ -1,16 +1,21 @@
 name: CI
 
 # ── What runs where ──────────────────────────────────────────────────────────
-# build-and-test is a 2-lane matrix: ubuntu-latest + windows-latest.
-#   - ubuntu-latest  — THE gate for POSIX-only behavior. 5 tests exercise POSIX
-#                      signals / symlinks / mode bits and only run here.
+# test-matrix is a 2-lane matrix: ubuntu-latest + windows-latest.
+#   - ubuntu-latest  — THE gate for POSIX-only behavior: 4 tests self-skip on
+#                      win32 with named reasons (3 mcp-server signal tests,
+#                      1 symlink), and 1 mode-bit assertion is silently guarded
+#                      in-test (blind-spots.test.mjs). Only here do they all run.
 #   - windows-latest — exists because the owner develops on Windows; bench and
 #                      test suites are portable since the fix/windows-paths
-#                      work. The POSIX-only tests self-skip on win32 with named
-#                      reasons, so no step needs `if: runner.os`.
+#                      work. Thanks to the self-skips/guards above, no step
+#                      needs `if: runner.os`.
 # Both lanes run the same steps: build → typecheck → 4 regression suites →
 # full test suite. fail-fast is off so one lane's failure never cancels the
 # other lane's verdict.
+# The non-matrix `build-and-test` fan-in job below carries the status-check
+# context that main's branch protection requires (exactly `build-and-test`,
+# strict=true); the matrix lanes themselves report as `test (<os>)`.
 # Expected state: the Windows lane goes green once fix/linux-core-tests lands
 # (it fixes a recordOutcome read-modify-write race); until then the Windows
 # lane fails on that one race test.
@@ -34,8 +39,8 @@ concurrency:              # cancel superseded runs on the same ref
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: build-and-test (${{ matrix.os }})
+  test-matrix:
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false    # keep the ubuntu gate's verdict even when Windows fails (and vice versa)
       matrix:
@@ -103,3 +108,32 @@ jobs:
             test-output.log
           if-no-files-found: warn
           retention-days: 30
+
+  # ── Fan-in gate for branch protection ───────────────────────────────────────
+  # main's branch protection requires the status-check context exactly
+  # `build-and-test` (strict=true; verified read-only via
+  # `gh api repos/Goldentrii/AgentRecall-X/branches/main/protection/required_status_checks`).
+  # The matrix lanes report as `test (<os>)`, so without this job the required
+  # context would never report and every PR would hang on "Expected". This
+  # dependency-free job carries the required name and fails unless the whole
+  # matrix succeeded. `if: always()` + the explicit result check matter: a
+  # plain `needs:` gate is reported as SKIPPED when a lane fails or is
+  # cancelled, and a skipped check SATISFIES a required context.
+  # OWNER note: alternatively, update the required contexts to the per-lane
+  # names at merge time and drop this job.
+  build-and-test:
+    name: build-and-test
+    needs: [test-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on matrix result
+        shell: bash
+        run: |
+          echo "test-matrix result: ${{ needs.test-matrix.result }}"
+          if [ "${{ needs.test-matrix.result }}" != "success" ]; then
+            echo "::error::test matrix did not succeed (result: ${{ needs.test-matrix.result }})"
+            exit 1
+          fi
+          echo "All matrix lanes green."
