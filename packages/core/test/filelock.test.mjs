@@ -257,6 +257,83 @@ describe("filelock — liveness-aware, event-loop-friendly primitive", () => {
     assert.ok(!fs.existsSync(lockDir), "release must remove the lock dir");
   });
 
+  it("A14: a released-tombstoned lock is reclaimed promptly even when its pid is ALIVE and waitForLiveHolder is set", async () => {
+    // CI run 38255969731 root cause, waiter side: release() can fail to
+    // remove the lock dir (external NTFS pin) and now tombstones owner.json
+    // with released:true instead of silently leaving wreckage. A tombstoned
+    // holder has provably FINISHED its critical section — waiters must treat
+    // it as dead (immediate reclaim), never wait on its live pid (pre-A14
+    // waitForLiveHolder waited the full 60s hard cap on exactly this state,
+    // and check()'s skip branch then dropped the record).
+    const NAME = "released-tombstone";
+    const lockDir = path.join(testRoot, `.lock-${NAME}`);
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(lockDir, "owner.json"),
+      JSON.stringify({ pid: process.pid, acquired_at: new Date().toISOString(), released: true }),
+      "utf-8",
+    );
+
+    const started = Date.now();
+    const release = await acquireLock(NAME, { waitForLiveHolder: true });
+    const took = Date.now() - started;
+    assert.ok(took < 2000, `tombstoned lock must be reclaimed promptly, not waited out (took ${took}ms)`);
+    const owner = JSON.parse(fs.readFileSync(path.join(lockDir, "owner.json"), "utf-8"));
+    assert.strictEqual(owner.pid, process.pid, "reclaimer must own the lock");
+    assert.strictEqual(owner.released, undefined, "fresh ownership record, not the tombstone");
+    release();
+    assert.ok(!fs.existsSync(lockDir), "release must remove the lock dir");
+  });
+
+  it(
+    "A14 (win32): a release that cannot remove the lock dir tombstones it; the next acquire self-heals once the pin lifts",
+    { skip: process.platform !== "win32" ? "NTFS rmdir-denied semantics (cwd/AV pin) do not exist on POSIX" : false },
+    async () => {
+      // Real wreckage, not a planted file: a child process whose CWD is the
+      // lock dir makes RemoveDirectory fail (same NTFS state an antivirus /
+      // indexer directory scan produces on a CI runner — the A14 root cause).
+      const NAME = "release-pin-heal";
+      const lockDir = path.join(testRoot, `.lock-${NAME}`);
+      const release = await acquireLock(NAME);
+
+      const pin = spawn(
+        "powershell.exe",
+        ["-NoProfile", "-Command", "[Console]::Out.WriteLine('READY'); Start-Sleep -Seconds 2"],
+        { cwd: lockDir, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const pinExited = new Promise((resolve) => pin.on("close", resolve));
+      await new Promise((resolve, reject) => {
+        pin.stdout.on("data", (d) => { if (String(d).includes("READY")) resolve(); });
+        pin.on("error", reject);
+        pin.on("close", () => reject(new Error("pin child exited before READY")));
+      });
+
+      release(); // rmSync fails (dir is the pin's CWD) -> tombstone, loudly
+
+      if (fs.existsSync(lockDir)) {
+        const owner = JSON.parse(fs.readFileSync(path.join(lockDir, "owner.json"), "utf-8"));
+        assert.strictEqual(owner.released, true, "failed release must tombstone owner.json");
+
+        // Self-heal: the waiter must acquire as soon as the pin lifts (~2s),
+        // NOT burn the 5s no-progress deadline into LockContentionError and
+        // NOT wait on the tombstone's live pid toward the 60s hard cap.
+        const started = Date.now();
+        const release2 = await acquireLock(NAME, { waitForLiveHolder: true, maxTotalWaitMs: 30_000 });
+        const took = Date.now() - started;
+        release2();
+        // Generous slow-runner bound: the pin holds ~2s from READY; anything
+        // approaching the old 30s staleness rule or the 60s cap is the bug.
+        assert.ok(took < 15_000, `acquire must self-heal right after the pin lifts (took ${took}ms)`);
+      } else {
+        // Environment where rmdir of a cwd-pinned dir succeeds — no wreckage
+        // to heal; the lock must simply be acquirable.
+        const release2 = await acquireLock(NAME);
+        release2();
+      }
+      await pinExited;
+    },
+  );
+
   it("reclaim race is single-winner: several contenders on one dead lock all acquire exactly once each, in turn", async () => {
     const NAME = "reclaim-race";
     const holder = await spawnHolder(testRoot, NAME, 0);

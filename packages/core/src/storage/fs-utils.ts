@@ -47,6 +47,26 @@ function sleepSyncMs(ms: number): void {
 }
 
 /**
+ * A14 diagnostics channel (2026-10-12, CI run 38255969731): one NDJSON line
+ * per event on stderr, prefix "ARLOCKDBG", gated on AGENT_RECALL_LOCK_DEBUG=1.
+ * Shared by filelock.ts (acquire path / reclaim decision / contention /
+ * release failure) and renameAtomic (retry storms) so a failing concurrency
+ * run on an unreachable CI runner tells us WHICH mechanism lost the records
+ * instead of only how many. Read lazily (not at module load) so tests that
+ * set the env after import still get the stream. Never throws.
+ */
+export function lockDebug(ev: string, fields: Record<string, unknown>): void {
+  if (process.env.AGENT_RECALL_LOCK_DEBUG !== "1") return;
+  try {
+    process.stderr.write(
+      "ARLOCKDBG " + JSON.stringify({ ev, pid: process.pid, t: Date.now(), ...fields }) + "\n",
+    );
+  } catch {
+    /* diagnostics must never break the caller */
+  }
+}
+
+/**
  * Total win32 transient-rename retry budget. 5s, not the original ~1s (A13,
  * CI run 38251553161): on a loaded 2-vCPU GitHub runner, a holder that
  * intended a ~400ms window kept the destination open past the entire ~1s
@@ -90,15 +110,31 @@ const RENAME_RETRY_MAX_DELAY_MS = 250;
 export function renameAtomic(oldPath: string, newPath: string): void {
   let delayMs = 10;
   let sleptMs = 0;
+  let retries = 0;
+  let lastCode: string | undefined;
   for (;;) {
     try {
       fs.renameSync(oldPath, newPath);
+      if (retries > 0) {
+        lockDebug("rename-retry", {
+          dest: path.basename(newPath), retries, slept_ms: sleptMs, last_errno: lastCode, outcome: "ok",
+        });
+      }
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       const transient =
         process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
-      if (!transient || sleptMs >= RENAME_RETRY_BUDGET_MS) throw err;
+      if (!transient || sleptMs >= RENAME_RETRY_BUDGET_MS) {
+        if (retries > 0 || transient) {
+          lockDebug("rename-retry", {
+            dest: path.basename(newPath), retries, slept_ms: sleptMs, last_errno: code, outcome: "gave-up",
+          });
+        }
+        throw err;
+      }
+      lastCode = code;
+      retries += 1;
       const napMs = Math.min(delayMs, RENAME_RETRY_MAX_DELAY_MS, RENAME_RETRY_BUDGET_MS - sleptMs);
       sleepSyncMs(napMs);
       sleptMs += napMs;
