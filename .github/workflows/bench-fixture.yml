@@ -134,6 +134,27 @@ jobs:
         if: steps.prereqs.outputs.SKIP != 'true'
         run: npm run bench:golden
 
+      # ── A4: latency / injection-size bench (schema + smoke only) ──────────
+      # Unit tests first: percentile math, estimator, schema guards, env
+      # scrub, error paths (store missing, bad flags).
+      - name: Eval tests — latency + injection-size benches
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node --test scripts/eval/session-start-size.test.mjs scripts/eval/latency.test.mjs
+
+      # Injection size on a fixed store IS deterministic → gate determinism
+      # via double-run byte-diff (generated_utc excluded). Still never gates
+      # the VALUES against a pinned number — a renderer change may move them.
+      - name: Gate — injection-size determinism (double-run byte-diff)
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node scripts/eval/session-start-size.mjs --check-determinism
+
+      # Latency timing is NON-deterministic — schema/smoke ONLY, values never
+      # gated (same policy as the recall/RMR values above). The script's
+      # built-in assertArtifactShape fails the step on a malformed artifact.
+      - name: Smoke — latency bench (--n 20, schema only, values never gated)
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node scripts/eval/latency.mjs --n 20 --n-session 5 --no-artifact
+
       # ── Upload result artifacts ────────────────────────────────────────────
       # SECURITY: NEVER glob the whole baselines dir — real-corpus baselines
       # (e.g. rmr-baseline-2026-07-02.json) embed real project slugs and must

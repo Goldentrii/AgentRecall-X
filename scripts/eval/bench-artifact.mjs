@@ -26,6 +26,9 @@ import * as crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { scrubForExport, SecretScanError } from "../../packages/core/dist/storage/content-guard.js";
+// A4 (2026-10-11): shared stat helpers so verifyBaseline recomputes the
+// injection/latency baselines with the SAME functions that produced them.
+import { percentile, meanRounded } from "./bench-lib.mjs";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -417,6 +420,8 @@ export function verifyBaseline(file) {
     schema !== BENCH_ARTIFACT_VERSION &&
     schema !== "rmr-baseline/v1" &&
     schema !== "rmr-baseline/v2" &&
+    schema !== "injection-baseline/v1" &&
+    schema !== "latency-baseline/v1" &&
     schema !== "golden-retrieval/v1"
   ) {
     throw new Error(
@@ -470,6 +475,83 @@ export function verifyBaseline(file) {
     // corpus_hash + headline-metric recomputation (evolution P0 W1 fix —
     // this was previously indistinguishable from mode="recomputed" below).
     return { ok: true, benchmark: "rmr-report", mode: "parse-only" };
+  }
+
+  // ── injection-baseline/v1 (A4, session-start-size.mjs) ─────────────────
+  // Deterministic sizes: recompute tokens from chars (ceil(chars/4), the
+  // core estimator), the median/p95/max headline stats from per_project, and
+  // the P0-survival flags from their stored counts. store_hash is NOT
+  // recomputable here (the store is not an input to verification).
+  if (schema === "injection-baseline/v1") {
+    const rows = result.per_project ?? [];
+    if (rows.length === 0) {
+      throw new Error(`verifyBaseline: injection baseline has empty per_project in ${file}`);
+    }
+    const drifts = [];
+    for (const row of rows) {
+      // estimateTokens(s) is ceil(s.length/4); only the length matters here.
+      const tok = Math.ceil(row.chars / 4);
+      if (tok !== row.tokens) {
+        drifts.push(`per_project[${row.project}].tokens: stored=${row.tokens}, recomputed=${tok}`);
+      }
+      const survOk = row.p0_in_payload === Math.min(row.p0_in_store, 10);
+      if (survOk !== row.p0_survival_ok) {
+        drifts.push(`per_project[${row.project}].p0_survival_ok: stored=${row.p0_survival_ok}, recomputed=${survOk}`);
+      }
+    }
+    const tokens = rows.map((r) => r.tokens);
+    const chars = rows.map((r) => r.chars);
+    const checks = [
+      ["median_tokens", percentile(tokens, 50)],
+      ["p95_tokens", percentile(tokens, 95)],
+      ["max_tokens", Math.max(...tokens)],
+      ["median_chars", percentile(chars, 50)],
+    ];
+    for (const [key, computed] of checks) {
+      if (result[key] !== computed) {
+        drifts.push(`${key}: stored=${result[key]}, recomputed=${computed}`);
+      }
+    }
+    if (drifts.length > 0) {
+      throw new Error(`verifyBaseline: injection baseline drift in ${file}:\n  ` + drifts.join("\n  "));
+    }
+    return { ok: true, benchmark: "session-start-size", mode: "recomputed" };
+  }
+
+  // ── latency-baseline/v1 (A4, latency.mjs) ──────────────────────────────
+  // Timing is non-deterministic (the artifact says so) — verification NEVER
+  // compares values across runs. It recomputes every percentile/mean/min/max
+  // from the stored samples_ms arrays (internal consistency only), using the
+  // same nearest-rank percentile + round3 mean that produced them.
+  if (schema === "latency-baseline/v1") {
+    if (result.non_deterministic !== "timing") {
+      throw new Error(`verifyBaseline: latency baseline must be marked non_deterministic:"timing" in ${file}`);
+    }
+    const drifts = [];
+    for (const section of ["recall", "session_start"]) {
+      const block = result[section];
+      if (!block || !Array.isArray(block.samples_ms) || block.samples_ms.length === 0) {
+        throw new Error(`verifyBaseline: latency baseline ${section}.samples_ms missing/empty in ${file}`);
+      }
+      const s = block.samples_ms;
+      const checks = [
+        ["p50_ms", percentile(s, 50)],
+        ["p95_ms", percentile(s, 95)],
+        ["p99_ms", percentile(s, 99)],
+        ["mean_ms", meanRounded(s)],
+        ["min_ms", Math.min(...s)],
+        ["max_ms", Math.max(...s)],
+      ];
+      for (const [key, computed] of checks) {
+        if (block[key] !== computed) {
+          drifts.push(`${section}.${key}: stored=${block[key]}, recomputed=${computed}`);
+        }
+      }
+    }
+    if (drifts.length > 0) {
+      throw new Error(`verifyBaseline: latency baseline drift in ${file}:\n  ` + drifts.join("\n  "));
+    }
+    return { ok: true, benchmark: "latency", mode: "recomputed" };
   }
 
   // ── (a) corpus_hash recompute from manifest ────────────────────────────

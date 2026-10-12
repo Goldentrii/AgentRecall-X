@@ -13,6 +13,8 @@
     "clean": "node -e \"const fs = require('fs'); const path = require('path'); ['core', 'mcp-server', 'sdk', 'cli'].forEach(p => { fs.rmSync(path.join('packages', p, 'dist'), { recursive: true, force: true }); fs.readdirSync(path.join('packages', p)).forEach(f => { if (f.endsWith('.tsbuildinfo')) fs.rmSync(path.join('packages', p, f), { force: true }); }); })\"",
     "lint": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli",
     "bench": "node scripts/eval/run-bench.mjs",
+    "bench:latency": "node scripts/eval/latency.mjs",
+    "bench:injection": "node scripts/eval/session-start-size.mjs",
     "bench:golden": "node scripts/eval/golden-retrieval.mjs --check-determinism"
   }
 }
