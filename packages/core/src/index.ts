@@ -11,6 +11,7 @@ export {
   SECTION_HEADERS,
   DEFAULT_PALACE_ROOMS,
   setRoot,
+  withRoot,
   resetRoot,
   getRoot,
   getLegacyRoot,

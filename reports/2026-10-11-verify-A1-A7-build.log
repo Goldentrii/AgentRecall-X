@@ -1,0 +1,5 @@
+
+
+> agent-recall-cli@3.4.51 build
+> tsc && chmod +x dist/index.js
+
