@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { ensureDir } from "./fs-utils.js";
+import { ensureDir, renameAtomic } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
@@ -565,7 +565,7 @@ export function writeRecordAtomic(filepath: string, record: unknown): void {
   // point for every persisted correction record.
   const tmp = `${filepath}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, scrubForCloud(JSON.stringify(record, null, 2)), { encoding: "utf-8", mode: 0o600 });
-  fs.renameSync(tmp, filepath);
+  renameAtomic(tmp, filepath); // win32 transient-EPERM retry — see fs-utils.ts
 }
 
 /** Sort rank for the corrections index — p0 first, unknown severities last. */
@@ -1734,77 +1734,63 @@ export async function recordOutcome(outcome: CorrectionOutcome): Promise<void> {
   // fix6-locks contention handling: the jsonl ledger line above is ALREADY
   // appended (append-only, lossless), and the materialized counters below are
   // fully re-derivable from that ledger via runOutcomesRebuild. So if another
-  // LIVE process holds the lock past the timeout, skipping this counter pass
+  // LIVE process holds the lock past the hard cap, skipping this counter pass
   // loses NOTHING durable — log the skip and return instead of stealing the
   // lock (old behavior, mid-write corruption risk) or failing the caller's
   // hot path (session_start / session_end / check_action record inline).
+  //
+  // CI windows-latest regression fix (2026-10-12, run 38230438655): on a
+  // starved 2-vCPU runner the audit stress (24 procs × 20 calls) skipped
+  // 190/480 counter passes — a healthy holder descheduled past the 5s
+  // no-progress deadline reads as "wedged" — and INCREMENT semantics turned
+  // every skip into a permanently lost increment (materialized 290 vs ledger
+  // 480). Two-part fix:
+  //  (1) LEDGER-DERIVED counters: the locked pass below RE-DERIVES this
+  //      correction's counters from its _outcomes.jsonl events via the exact
+  //      replay core `ar outcomes rebuild` uses (recomputeCorrectionCounters)
+  //      instead of incrementing the possibly-stale record — the counter is
+  //      honestly a CACHE of the ledger, so any earlier skip self-heals on
+  //      the next successful pass and materialized == ledger at rest.
+  //  (2) waitForLiveHolder: this caller opts out of the wedged-holder
+  //      heuristic — it waits while the holder PID probes alive (dead holders
+  //      still reclaim promptly) up to the 60s hard cap, so a starvation
+  //      misdiagnosis can no longer skip the pass at all. See
+  //      AcquireLockOptions in filelock.ts.
   try {
   await withLock(`corrections-${outcome.project}`, () => {
     // Update the per-correction file's counters.
     const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
     if (!target) return; // outcome can still be replayed later if record is restored
 
+    // Re-derive EVERY counter-derived field from this correction's ledger
+    // events — the same parse → sortForReplay → recomputeCorrectionCounters
+    // pipeline runOutcomesRebuild applies, so live writes and rebuild can
+    // never disagree. The event appended above is already in the file, so
+    // this pass covers the current outcome too. Per-kind increment formulas
+    // live in recomputeCorrectionCounters (single implementation).
+    const events = sortForReplay(
+      parseOutcomesLedger(outcome.project).eventsByCorrectionId.get(outcome.correction_id) ?? [],
+    );
+    const counters = recomputeCorrectionCounters(events, target);
+
+    // Merge shape mirrors runOutcomesRebuild's apply pass EXACTLY (explicit
+    // per-field assignment; an `undefined` overwrites a stale field, which
+    // JSON.stringify then drops — same absent-vs-0 asymmetry as live writes).
     const updated: CorrectionRecord = {
       ...target,
-      retrieved_count: target.retrieved_count ?? 0,
-      heeded_count: target.heeded_count ?? 0,
-      recurrence_count: target.recurrence_count ?? 0,
+      retrieved_count: counters.retrieved_count,
+      heeded_count: counters.heeded_count,
+      recurrence_count: counters.recurrence_count,
+      predicted_count: counters.predicted_count,
+      predict_hits: counters.predict_hits,
+      not_violated_count: counters.not_violated_count,
+      last_retrieved: counters.last_retrieved,
+      last_outcome: counters.last_outcome,
+      last_predicted: counters.last_predicted,
+      precision: counters.precision,
+      predict_precision: counters.predict_precision,
+      proof_confidence: counters.proof_confidence,
     };
-    if (outcome.kind === "retrieved") {
-      updated.retrieved_count = (updated.retrieved_count ?? 0) + 1;
-      updated.last_retrieved = outcome.at;
-    } else if (outcome.kind === "heeded") {
-      updated.heeded_count = (updated.heeded_count ?? 0) + 1;
-      updated.last_outcome = outcome.at;
-    } else if (outcome.kind === "recurred") {
-      updated.recurrence_count = (updated.recurrence_count ?? 0) + 1;
-      updated.last_outcome = outcome.at;
-    } else if (outcome.kind === "predicted") {
-      // Wave 5: prediction fired — instrument the predict-the-correction loop.
-      updated.predicted_count = (updated.predicted_count ?? 0) + 1;
-      updated.last_predicted = outcome.at;
-    } else if (outcome.kind === "predict_hit") {
-      updated.predict_hits = (updated.predict_hits ?? 0) + 1;
-    } else if (outcome.kind === "not_violated") {
-      // Heed-rate credit model Option A (2026-08-29): its OWN counter, seeded
-      // only on its own first event (mirrors predicted_count/predict_hits'
-      // pattern, NOT the unconditional retrieved/heeded/recurrence baseline
-      // seed above) — deliberately kept out of precision/proof_confidence
-      // below, which read ONLY heeded_count/recurrence_count.
-      updated.not_violated_count = (updated.not_violated_count ?? 0) + 1;
-      updated.last_outcome = outcome.at;
-    }
-    const r = updated.retrieved_count ?? 0;
-    // Clamp to [0,1]: `retrieved` is guarded 1/day but `heeded` can fire on every
-    // session_end, so raw heeded/retrieved can exceed 1.0 ("150% heeded" is
-    // nonsense). min(1, …) keeps the metric honest. (Root-cause follow-up: apply
-    // the same 1/day guard to heeded as retrieved has, for finer resolution.)
-    // NB (Wave 5): `precision` is heeded/retrieved ONLY — predict_* never touch it.
-    updated.precision = r > 0 ? Math.min(1, Number(((updated.heeded_count ?? 0) / r).toFixed(3))) : undefined;
-
-    // Wave 5: predict_precision = predict_hits / predicted_count, kept SEPARATE
-    // from `precision`. Undefined until at least one prediction has fired.
-    // A predict_hit implies a prior prediction. If data is inconsistent (hits
-    // recorded without a matching predicted_count — e.g. migrated/corrupt records),
-    // floor the denominator at predict_hits so the metric stays VISIBLE and bounded
-    // rather than silently undefined while hits exist.
-    const pc = updated.predicted_count ?? 0;
-    const ph = updated.predict_hits ?? 0;
-    const predictDenom = Math.max(pc, ph);
-    updated.predict_precision = predictDenom > 0
-      ? Math.min(1, Number((ph / predictDenom).toFixed(3)))
-      : undefined;
-
-    // P3: evidence-grounded proof_confidence. With NO outcome evidence yet, keep the
-    // authority prior (weight); once heeded/recurrence accrue, move to the Beta
-    // posterior so a rule that keeps being honored strengthens and one whose bug
-    // keeps recurring weakens. Kept SEPARATE from `precision` (heeded/retrieved) and
-    // from `weight` (static authority) — this is the evidence axis.
-    const heededC = updated.heeded_count ?? 0;
-    const recurC = updated.recurrence_count ?? 0;
-    updated.proof_confidence = (heededC + recurC) > 0
-      ? Number(betaPosterior(heededC, recurC).toFixed(3))
-      : (updated.weight ?? defaultWeight(updated.severity));
 
     // Re-write the JSON file atomically (tmp + rename — prevents truncation on
     // SIGTERM). Reuse the EXISTING filename (see findExistingCorrectionFile
@@ -1819,13 +1805,14 @@ export async function recordOutcome(outcome: CorrectionOutcome): Promise<void> {
     // failure_class are all unchanged — so they deliberately skip this call,
     // preserving the existing hot-path optimization documented above.)
     regenerateCorrectionsIndex(outcome.project);
-  });
+  }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
       console.error(
         `[agent-recall] recordOutcome(${outcome.kind}, ${outcome.correction_id}): ${err.message} ` +
         `— materialized counter update skipped; the _outcomes.jsonl ledger already holds this ` +
-        `event and \`ar outcomes rebuild\` re-derives the counters.`,
+        `event, the next successful recordOutcome pass re-derives ALL counters from the ledger ` +
+        `(self-healing), and \`ar outcomes rebuild\` forces the same re-derivation on demand.`,
       );
       return;
     }

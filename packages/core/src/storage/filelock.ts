@@ -365,10 +365,35 @@ function sleep(ms: number): Promise<void> {
  */
 const MAX_TOTAL_WAIT_MS = 60_000;
 
-export async function acquireLock(name: string): Promise<() => void> {
+export interface AcquireLockOptions {
+  /**
+   * Wait as long as the holder PID probes ALIVE (and from this boot) instead
+   * of applying the 5s no-progress ("wedged holder") deadline. Dead holders
+   * are still reclaimed promptly; the maxTotalWaitMs hard cap still applies.
+   *
+   * CI windows-latest regression (2026-10-12): on a starved 2-vCPU runner a
+   * perfectly healthy holder can sit DESCHEDULED past the no-progress
+   * deadline, so recordOutcome's materialized-counter pass skipped 190/480
+   * updates. For callers whose critical section only rewrites state that is
+   * re-derivable from an authoritative source (the _outcomes.jsonl ledger),
+   * losing the pass to a starvation misdiagnosis is strictly worse than
+   * waiting out a live holder — opt in here. Hot paths that must stay
+   * responsive to a genuinely wedged (alive-but-stuck) holder keep the
+   * default.
+   */
+  waitForLiveHolder?: boolean;
+  /**
+   * Hard cap on the total wait (default MAX_TOTAL_WAIT_MS = 60s). Exists for
+   * tests and callers that need a tighter liveness bound; the default is the
+   * documented absolute worst case.
+   */
+  maxTotalWaitMs?: number;
+}
+
+export async function acquireLock(name: string, opts: AcquireLockOptions = {}): Promise<() => void> {
   const dir = lockDir(name);
   let deadline = Date.now() + LOCK_TIMEOUT_MS;
-  const hardDeadline = Date.now() + MAX_TOTAL_WAIT_MS;
+  const hardDeadline = Date.now() + (opts.maxTotalWaitMs ?? MAX_TOTAL_WAIT_MS);
   let lastOwnerKey: string | null = null;
 
   // Ensure root dir exists before attempting lock
@@ -389,6 +414,16 @@ export async function acquireLock(name: string): Promise<() => void> {
     if (ownerKey !== null && ownerKey !== lastOwnerKey) {
       if (lastOwnerKey !== null) deadline = Date.now() + LOCK_TIMEOUT_MS;
       lastOwnerKey = ownerKey;
+    }
+
+    // waitForLiveHolder mode: a holder that probes alive (and is from this
+    // boot — predatesBoot pids are recycles, handled by tryReclaim below) is
+    // WAITED ON, not misdiagnosed as wedged; keep pushing the no-progress
+    // deadline while it lives. The hardDeadline check below still bounds the
+    // absolute worst case, and an unreadable owner record (legacy/crash lock)
+    // deliberately gets NO reset — same as the progress detector above.
+    if (opts.waitForLiveHolder && owner && isPidAlive(owner.pid) && !predatesBoot(owner.acquired_at)) {
+      deadline = Date.now() + LOCK_TIMEOUT_MS;
     }
 
     // Deadlines are checked BEFORE the reclaim-retry shortcut so the loop is
@@ -420,8 +455,8 @@ export async function acquireLock(name: string): Promise<() => void> {
  * hold); an async fn is allowed only for the documented awareness nesting —
  * see the header's lock-ordering section.
  */
-export async function withLock<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
-  const release = await acquireLock(name);
+export async function withLock<T>(name: string, fn: () => T | Promise<T>, opts: AcquireLockOptions = {}): Promise<T> {
+  const release = await acquireLock(name, opts);
   try {
     return await fn();
   } finally {
