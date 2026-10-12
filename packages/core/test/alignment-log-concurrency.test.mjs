@@ -1,13 +1,20 @@
 /**
- * alignment-log-concurrency.test.mjs — fix6-locks RED reproduction #2.
+ * alignment-log-concurrency.test.mjs — originally the fix6-locks RED
+ * reproduction #2, now the standing lossless-persistence pin for check()'s
+ * alignment-log RMW. The invariant is mechanism-agnostic: N*M concurrent
+ * check() calls ⇒ N*M records on disk, whatever the writer does internally.
  *
- * Claim under test: check() (packages/core/src/tools-logic/check.ts ~L115-143)
- * does an UNLOCKED read-modify-write on the PER-PROJECT alignment-log.json:
- *   readLog(slug)            (full JSON read via readAlignmentLog)
- *   → log.push(record); log.slice(-50)
- *   → writeAlignmentLog(...) (scrub + full overwrite, no lock)
- * Two live sessions running `check` against the same project in the same
- * window lose each other's alignment records.
+ * Two generations of bug it has caught (keep this history current — a stale
+ * diagnosis here sends the next debugger to the wrong code):
+ *   1. pre-fix6-locks (< afd9b0a): check() did an UNLOCKED read→push→write on
+ *      the per-project alignment-log.json — two live sessions lost each
+ *      other's records (31/40 lost). Fixed by the `alignment-${slug}`
+ *      filelock.
+ *   2. CI run 38242013300 (windows-latest 2 vCPU, main @ ebb6c58): the lock
+ *      EXISTS, but on a starved runner a healthy holder sits descheduled past
+ *      the 5s no-progress deadline, the waiter throws LockContentionError,
+ *      and check()'s contention-skip branch dropped the record (29/40 lost).
+ *      Fixed by taking the lock with waitForLiveHolder (A12).
  *
  * Pattern cribbed from audit-outcome-concurrency.test.mjs: real OS-level
  * concurrency via N child node processes driving the REAL public entry point
@@ -15,8 +22,6 @@
  *
  * N*M = 40 is deliberately kept UNDER the file's slice(-50) cap so a count
  * below 40 can only mean lost updates, never cap trimming.
- *
- * Expected on main HEAD (pre-fix): FAIL (lost records). Post-fix: PASS.
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -134,8 +139,12 @@ describe("alignment-log.json concurrent-process lost-update race (check() RMW)",
       goals.size,
       EXPECTED_TOTAL,
       `alignment-log.json lost ${EXPECTED_TOTAL - goals.size} of ${EXPECTED_TOTAL} records — ` +
-      `reproduces the unlocked read-modify-write in check() ` +
-      `(check.ts: readLog → push → writeAlignmentLog with no lock; per-project file)`,
+      `check()'s alignment-log RMW dropped concurrent records (check.ts: withLock("alignment-…") ` +
+      `around readLog → push → writeAlignmentLog). Known causes, in order: a contention-skip ` +
+      `(LockContentionError → alignment_log_skipped) firing where it should have waited — the ` +
+      `lock must be taken with waitForLiveHolder so a starved-but-alive holder is waited out ` +
+      `(CI run 38242013300 lost 29/40 this way); or the lock/catch was removed entirely ` +
+      `(the original pre-fix6-locks unlocked-RMW bug, 31/40 lost)`,
     );
   });
 });
