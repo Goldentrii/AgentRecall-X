@@ -145,12 +145,25 @@ export function resolveEmbeddingModel(): EmbeddingModelSpec {
  *   4. default → off
  *
  * The env check is per-call (RECALL_FUSION precedent). The config-file half
- * is best-effort and mtime-CACHED (fix7 review L: one statSync per call
+ * is best-effort and stat-CACHED (fix7 review L: one statSync per call
  * instead of exists+read+parse — config.json edits are picked up on the
- * next call via the mtime key); any read/parse failure means OFF — the
+ * next call via the stat key); any read/parse failure means OFF — the
  * flag must never make a recall throw.
+ *
+ * CACHE KEY (A10 Linux-CI fix, 2026-10-11): mtimeMs alone cannot distinguish
+ * a file REWRITTEN within the same timestamp tick (fast test suites, coarse
+ * container filesystems) — the fix7 (g) test's delete-then-rewrite-corrupt
+ * sequence landed in the same tick on Linux and the cache served the stale
+ * pre-delete `enabled: true`. The key now also includes size + ino + ctimeMs,
+ * all free from the statSync already performed; a same-tick rewrite changes
+ * at least one of them (delete/recreate changes ino; content edits change
+ * size and/or ctime).
  */
-let _cfgCache: { path: string; mtimeMs: number; enabled: boolean } | null = null;
+let _cfgCache: { path: string; statKey: string; enabled: boolean } | null = null;
+
+function cfgStatKey(stat: fs.Stats): string {
+  return `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+}
 
 export function embeddingsEnabled(): boolean {
   const env = process.env.AGENT_RECALL_EMBEDDINGS;
@@ -159,12 +172,13 @@ export function embeddingsEnabled(): boolean {
     const p = path.join(getRoot(), "config.json");
     const stat = fs.statSync(p, { throwIfNoEntry: false });
     if (!stat) return false;
-    if (_cfgCache && _cfgCache.path === p && _cfgCache.mtimeMs === stat.mtimeMs) {
+    const statKey = cfgStatKey(stat);
+    if (_cfgCache && _cfgCache.path === p && _cfgCache.statKey === statKey) {
       return _cfgCache.enabled;
     }
     const cfg = JSON.parse(fs.readFileSync(p, "utf-8"));
     const enabled = cfg?.embeddings_enabled === true;
-    _cfgCache = { path: p, mtimeMs: stat.mtimeMs, enabled };
+    _cfgCache = { path: p, statKey, enabled };
     return enabled;
   } catch {
     return false;
