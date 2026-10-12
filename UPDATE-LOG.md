@@ -448,7 +448,7 @@ Dual-blind rater study to measure how many genuine behavioral corrections actual
 
 ## RMR Program — C0: mcp-server npx binary +x hotfix (2026-07-02, issue #26)
 
-`npx agent-recall-mcp` silently dropped the execute bit on the `mcp-server/dist/server.js` binary during the TypeScript build step, breaking the package since v3.4.21 (the `tsc` output was never `chmod +x`'d). The build script only ran `tsc`; the shebang was present but the file was mode `0644`.
+`npx agent-recall-mcp` silently dropped the execute bit on the `mcp-server/dist/server.js` binary during the TypeScript build step, breaking the package since v3.4.21 (the `tsc` output was never `chmod +x`'d). The build script only ran `tsc`; the shebang was present but the file was mode `0644`. *[corrected 2026-10-12: the published bin is `dist/index.js` (package.json `bin`), not `dist/server.js`; the build script today uses Node `fs.chmodSync('dist/index.js', 0o755)` instead of shell `chmod` for Windows portability]*
 
 | Item | What | Why |
 |------|------|-----|

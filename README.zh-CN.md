@@ -76,12 +76,14 @@ AgentRecall 是两件事：
 | 遵从率，2026-07-03 之前（测量工具偏差导致的上限——不可引用） | 92.5% [Wilson 60.1–100] | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | 遵从率，基于证据（重置后） | **0/3** 事件 | `scripts/eval/baselines/rmr-baseline-2026-07-03.json` |
 | 纠正迁移召回率（离线 bench，可达成） | **0/4** [Wilson 0–49%] | `scripts/eval/baselines/correction-transfer-real-2026-07-03.json` |
-| session_start 注入中位数 | **1,489 tokens**（原为 2,010；Mem0 参照 ~7K） | `UPDATE-LOG.md` §C2 |
-| session_start p95 延迟（热启动） | **363 ms**（原为 1,132） | `UPDATE-LOG.md` §C2 |
+| session_start 注入中位数（fixture golden-v1，合成语料） | **244 tokens**（chars/4）——`npm run bench:injection` | `scripts/eval/baselines/injection-2026-10-11.json` |
+| session_start p95 延迟（热启动，fixture golden-v1，合成语料） | **97 ms**（recall p95：209 ms）——`npm run bench:latency` | `scripts/eval/baselines/latency-2026-10-11.json` |
+
+*此前这里引用的 1,489 tokens 注入中位数 / 363 ms p95 热启动延迟（原为 2,010 / 1,132）来自 `UPDATE-LOG.md` §C2，系作者在私有存储上自测——无法从本仓库重新生成。Mem0 公布的参照值约 7k tokens/query（他们的数字，未在此做并排对比测量）。*
 
 *在 2026-07-03 之前，遵从率测量工具在缺乏证据时默认判定为"已遵从"；重置后的默认值是"未知"——诚实的 0/3 是正确的起点，而不是倒退。迁移召回率在错误类别少于 39 类时无法支撑一个点估计的主张（claim-gate ledger，[benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6）。*
 
-**自行验证：** 上面每个数字都可以从已提交的 artifact 重新生成——见 [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md)。
+**自行验证**——见 [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md)。可从本仓库重新生成的数字：correction-transfer fixture 门禁（`npm run bench`）、golden 检索 fixture v1 hit@5 73.1% 关键词（`npm run bench:golden`，已提交 artifact 仅含关键词 leg）、244 tokens 注入（`npm run bench:injection`）、97/209 ms 延迟（`npm run bench:latency`，耗时因机器而异）。80.8% 本地向量 leg 为 2026-10-11 在本地加载可选模型（~145 MB，CI 不下载）测得——无已提交 artifact，`ar embeddings setup` 后可按需复现。作者私有存储上自测、无法从本仓库重新生成的数字：35.3% 捕获召回（n=59，原始评分未提交）、92.5% 偏差上限与 0/3 循证遵从（artifact 已冻结提交，不可重跑）、0/4 迁移召回（同前）、1,489 tokens / 363 ms（§C2）。
 
 **这意味着什么：** 我们在自己的真实使用中捕获了 35% 的真实纠正。遵从率测量工具存在偏差，我们已重置。离线迁移 benchmark 在我们自己的语料库上得分为 0——这是一个密度问题（19 个项目里 32 条活跃纠正太稀疏，来不及提前预判错误），而不是检索架构的问题（内部实验已确认 5 次）。
 
@@ -100,7 +102,7 @@ AgentRecall 占据了这块无人认领的地盘中的两部分：
 - **纠正账本** —— 一个受治理的数据模型（`corrections-export/v1`，脱敏出口、可撤回、严重度、证明置信度），任何引擎都可以对接它。
 - **测量工具** —— `predict-loo`（留一法、反自我确认、双分母）以及纠正迁移 benchmark 规范（`HeedBench v1`——暂定名），它们实现了缺失的那条流水线：捕获 → 持久化 → 新会话 → 测量复发。
 
-Agent 记忆领域的 benchmark 数字通常是自我报告、难以复现的。而我们的数字可以用一条命令（`npm run bench`）从一个固定的、哈希锁定的语料库重新生成——包括那些让我们看起来不太好看的分数。
+Agent 记忆领域的 benchmark 数字通常是自我报告、难以复现的。而我们标注为可复现的数字，都可以用四条命令（`npm run bench`、`npm run bench:golden`、`npm run bench:injection`、`npm run bench:latency`）从固定的、哈希锁定的 fixture 重新生成——包括那些让我们看起来不太好看的分数。其余数字均明确标注为作者私有存储自测。
 
 ---
 

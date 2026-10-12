@@ -341,10 +341,10 @@ Import existing projects from your machine into AgentRecall. Solves the cold-sta
 
 #### Step 1: Scan
 
-Call `bootstrap_scan()` via MCP. This is read-only — no writes.
+Run the bootstrap scan via the `ar` CLI (the former `bootstrap_scan` / `bootstrap_import` MCP tools were removed from the MCP surface in the 2026-07-05 purity census). The scan is read-only — no writes.
 
-```
-bootstrap_scan()
+```bash
+ar bootstrap
 ```
 
 This returns:
@@ -392,22 +392,20 @@ Present options:
 
 #### Step 4: Import
 
-If the human confirms, call `bootstrap_import` with the scan results.
+If the human confirms, run the import via the CLI (it re-scans internally).
 
 For "import all":
-```
-bootstrap_import({
-  scan_result: "<JSON from bootstrap_scan>",
-})
+```bash
+ar bootstrap --import
 ```
 
-For selective import:
+For selective import (one slug per run):
+```bash
+ar bootstrap --import --project project-a
+ar bootstrap --import --project project-b
 ```
-bootstrap_import({
-  scan_result: "<JSON from bootstrap_scan>",
-  project_slugs: ["project-a", "project-b"]
-})
-```
+
+If the human is unsure, preview first with `ar bootstrap --dry-run`.
 
 #### Step 5: Show results
 
