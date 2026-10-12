@@ -404,18 +404,19 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   //      immediately reclaimable), so the lock self-heals in ms, not 30s.
   //   2. THIS WRITE IS AN APPEND (NDJSON, appendAlignmentRecord): even if
   //      the lock still times out, the fallback below appends WITHOUT the
-  //      lock — append-vs-append is lossless by construction, and the only
-  //      writer that could race it (migration/compaction, a whole-file
-  //      rewrite) runs behind the very lock that just reported contention,
-  //      i.e. is not running. A record is lost only if the append itself
-  //      throws (disk full/EACCES) — surfaced via alignment_log_skipped.
+  //      lock — append-vs-append is lossless by construction, and the
+  //      fallback itself never compacts (A14 review FIX 2: compaction is a
+  //      whole-file rewrite, gated on {locked:true}), so two fallback
+  //      writers during lock wreckage are both pure appends. A record is
+  //      lost only if the append itself throws (disk full/EACCES) —
+  //      surfaced via alignment_log_skipped.
   // The lock (waitForLiveHolder, as A12) stays on the primary path so
   // migration/compaction stay exclusive and holds stay bounded-tiny.
   const priorLog = readLog(slug);
   let alignmentLogSkipped = false;
   try {
     await withLock(`alignment-${slug}`, () => {
-      appendAlignmentRecord(slug, record);
+      appendAlignmentRecord(slug, record, { locked: true });
     }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {

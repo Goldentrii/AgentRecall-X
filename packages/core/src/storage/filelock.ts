@@ -342,13 +342,13 @@ function tryAcquire(dir: string, diag?: { eperm?: NodeJS.ErrnoException }): (() 
       throw err;
     }
   }
+  // Kept for the release closure's tombstone TOCTOU check (A14 review FIX 3):
+  // the tombstone may only be written over EXACTLY this record.
+  let myOwner: LockOwner | null = { pid: process.pid, acquired_at: new Date().toISOString() };
   try {
-    fs.writeFileSync(
-      ownerPath(dir),
-      JSON.stringify({ pid: process.pid, acquired_at: new Date().toISOString() }),
-      "utf-8",
-    );
+    fs.writeFileSync(ownerPath(dir), JSON.stringify(myOwner), "utf-8");
   } catch (err) {
+    myOwner = null; // identity unverifiable — the release closure never tombstones
     lockDebug("owner-write-failed", {
       lock: path.basename(dir),
       errno: (err as NodeJS.ErrnoException).code,
@@ -369,10 +369,10 @@ function tryAcquire(dir: string, diag?: { eperm?: NodeJS.ErrnoException }): (() 
     const owner = readOwner(dir);
     if (owner && owner.pid !== process.pid) return;
     try {
-      // maxRetries: Node retries EBUSY/ENOTEMPTY/EPERM with linear backoff —
-      // rides out ms-scale external pins (antivirus/indexer scanning the dir)
-      // for up to ~10*20ms without leaving wreckage. Bounded: release is on
-      // hot paths.
+      // maxRetries is best-effort belt-and-braces (bounded, ~10*20ms linear
+      // backoff); in the observed failure shapes (dir pinned by a CWD or an
+      // AV scan) the retries do NOT ride out the pin — the tombstone below is
+      // the mechanism that actually heals the lock (A14 review).
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
     } catch (err) {
       const errno = (err as NodeJS.ErrnoException).code;
@@ -384,23 +384,37 @@ function tryAcquire(dir: string, diag?: { eperm?: NodeJS.ErrnoException }): (() 
       // release failure costs every other process real time.
       let tombstoned = false;
       if (fs.existsSync(dir)) {
-        try {
-          fs.writeFileSync(
-            ownerPath(dir),
-            JSON.stringify({
-              pid: process.pid,
-              acquired_at: owner?.acquired_at ?? new Date(0).toISOString(),
-              released: true,
-            }),
-            "utf-8",
-          );
-          tombstoned = true;
-        } catch {
-          /* tombstone write blocked too — mtime staleness remains the backstop */
+        // TOCTOU re-read (A14 review FIX 3, mirrors tryReclaim's rename-aside
+        // verify): between this closure's entry read and here, the wreckage
+        // may have been reclaimed and RE-ACQUIRED — by this very pid, too
+        // (another async task in this process), which the entry pid-guard
+        // cannot distinguish. Tombstone only when owner.json still holds
+        // EXACTLY the record this acquire wrote (pid + acquired_at); marking
+        // anyone else's live hold released would steal their lock. The
+        // ownerless shape (our rmSync removed owner.json before failing on
+        // the dir) is also left alone — indistinguishable from a fresh
+        // holder's mkdir→owner-write window; it falls back to the
+        // STALE_LOCK_MS mtime rule, and the DATA is safe either way (the
+        // append fallback in check()/processFeedback).
+        const current = readOwner(dir);
+        const stillOurs =
+          myOwner !== null && current !== null &&
+          current.pid === myOwner.pid && current.acquired_at === myOwner.acquired_at;
+        if (stillOurs) {
+          try {
+            fs.writeFileSync(
+              ownerPath(dir),
+              JSON.stringify({ ...myOwner, released: true }),
+              "utf-8",
+            );
+            tombstoned = true;
+          } catch {
+            /* tombstone write blocked too — mtime staleness remains the backstop */
+          }
         }
         console.error(
           `[agent-recall] filelock: release of "${path.basename(dir)}" could not remove the lock dir ` +
-          `(${errno}) — ${tombstoned ? "tombstoned for immediate reclaim" : `tombstone write also failed; reclaim falls back to the ${STALE_LOCK_MS}ms staleness rule`}.`,
+          `(${errno}) — ${tombstoned ? "tombstoned for immediate reclaim" : `not tombstoned (record no longer ours, or write blocked); reclaim falls back to the ${STALE_LOCK_MS}ms staleness rule`}.`,
         );
       }
       lockDebug("release-failed", {

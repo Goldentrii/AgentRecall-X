@@ -334,6 +334,51 @@ describe("filelock — liveness-aware, event-loop-friendly primitive", () => {
     },
   );
 
+  it(
+    "A14 review FIX 3 (win32): a failed release tombstones ONLY its own record — a swapped owner (same pid, different acquired_at) is left alone",
+    { skip: process.platform !== "win32" ? "needs the NTFS rmdir-denied release-failure path (cwd pin)" : false },
+    async () => {
+      // Simulates the TOCTOU: between release()'s entry read and its
+      // tombstone write, the wreckage was reclaimed and RE-ACQUIRED by
+      // another async task of the SAME process (same pid — the entry
+      // pid-guard cannot tell). The release must re-read owner.json and,
+      // seeing a different acquired_at, refuse to tombstone: marking the new
+      // holder's record released would steal their live lock.
+      const NAME = "tombstone-toctou";
+      const lockDir = path.join(testRoot, `.lock-${NAME}`);
+      const release = await acquireLock(NAME);
+
+      // Owner swap: same pid, different acquired_at (a fresh acquire's record).
+      const swapped = { pid: process.pid, acquired_at: "2026-01-01T00:00:00.000Z" };
+      fs.writeFileSync(path.join(lockDir, "owner.json"), JSON.stringify(swapped), "utf-8");
+
+      // Pin the dir so rmSync fails and the tombstone branch is reached.
+      const pin = spawn(
+        "powershell.exe",
+        ["-NoProfile", "-Command", "[Console]::Out.WriteLine('READY'); Start-Sleep -Seconds 2"],
+        { cwd: lockDir, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const pinExited = new Promise((resolve) => pin.on("close", resolve));
+      await new Promise((resolve, reject) => {
+        pin.stdout.on("data", (d) => { if (String(d).includes("READY")) resolve(); });
+        pin.on("error", reject);
+        pin.on("close", () => reject(new Error("pin child exited before READY")));
+      });
+
+      release();
+
+      if (fs.existsSync(path.join(lockDir, "owner.json"))) {
+        const owner = JSON.parse(fs.readFileSync(path.join(lockDir, "owner.json"), "utf-8"));
+        assert.notEqual(owner.released, true, "a record that is not ours must NEVER be tombstoned");
+        assert.equal(owner.acquired_at, swapped.acquired_at, "the swapped record must be untouched");
+      } else {
+        // Environment where the pinned rmSync succeeded — nothing to assert
+        // beyond "no tombstone was fabricated" (the dir is gone entirely).
+      }
+      await pinExited;
+    },
+  );
+
   it("reclaim race is single-winner: several contenders on one dead lock all acquire exactly once each, in turn", async () => {
     const NAME = "reclaim-race";
     const holder = await spawnHolder(testRoot, NAME, 0);

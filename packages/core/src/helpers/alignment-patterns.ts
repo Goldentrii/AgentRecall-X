@@ -120,8 +120,12 @@ export function appendAlignmentRecord(
 
   fs.appendFileSync(p, toLine(record) + "\n", "utf-8");
 
-  // Compaction: rare (file-size gated), and the ONLY remaining whole-file
-  // rewrite on this path. Still inside the caller's lock on the normal path.
+  // Compaction: rare (file-size gated), and the ONLY whole-file rewrite on
+  // this path — so it runs ONLY under the caller's lock (A14 review FIX 2:
+  // the lock-free contention fallback must stay a pure append; two fallback
+  // writers during lock wreckage would otherwise race this rewrite and lose
+  // each other's lines, re-opening the exact hole the fallback closes).
+  if (!opts.locked) return;
   try {
     if (fs.statSync(p).size > ALIGNMENT_COMPACT_BYTES) {
       const newest = readAlignmentLog(project);

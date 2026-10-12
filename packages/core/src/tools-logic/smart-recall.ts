@@ -493,6 +493,9 @@ export function appendFeedbackEntries(entries: FeedbackEntry[], opts: { locked?:
     return;
   }
   fs.appendFileSync(p, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+  // Compaction only under the lock (A14 review FIX 2): the contention
+  // fallback must stay a pure append — see appendAlignmentRecord.
+  if (!opts.locked) return;
   try {
     if (fs.statSync(p).size > FEEDBACK_COMPACT_BYTES) {
       const newest = readFeedbackLog();

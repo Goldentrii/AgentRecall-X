@@ -265,6 +265,19 @@ describe("appendAlignmentRecord — append, migration, compaction gating", () =>
     assert.deepEqual(goals, expected, "compaction result must be the newest records in original order");
   });
 
+  it("A14 review FIX 2: the lock-free fallback NEVER compacts, even past the size gate", () => {
+    const seeded = seedOversized(PROJECT);
+    appendAlignmentRecord(PROJECT, rec(seeded + 1)); // no {locked:true} — the contention-fallback shape
+
+    const p = alignmentLogPath(PROJECT);
+    const lines = fs.readFileSync(p, "utf-8").trim().split("\n");
+    assert.equal(
+      lines.length,
+      seeded + 1,
+      "fallback must be a PURE append — a whole-file compaction rewrite without the lock can race a second fallback writer",
+    );
+    assert.ok(fs.statSync(p).size > ALIGNMENT_COMPACT_BYTES, "size still past the gate — untouched by design");
+  });
 });
 
 describe("appendFeedbackEntries — compaction gating (same FIX 2 contract)", () => {
@@ -290,4 +303,11 @@ describe("appendFeedbackEntries — compaction gating (same FIX 2 contract)", ()
     assert.equal(JSON.parse(lines[lines.length - 1]).id, `id-${seeded + 1}`, "newest entry survives compaction");
   });
 
+  it("A14 review FIX 2: lock-free fallback never compacts", () => {
+    const seeded = seedOversizedFeedback();
+    appendFeedbackEntries([fb(seeded + 1, { id: `id-${seeded + 1}` })]);
+    const lines = fs.readFileSync(fbPath(), "utf-8").trim().split("\n");
+    assert.equal(lines.length, seeded + 1, "fallback must be a pure append");
+    assert.ok(fs.statSync(fbPath()).size > FEEDBACK_COMPACT_BYTES);
+  });
 });
