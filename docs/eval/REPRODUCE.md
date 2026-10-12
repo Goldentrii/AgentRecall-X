@@ -165,7 +165,7 @@ npm run bench:golden                                     # double run + byte-dif
 ```
 
 Expected output shape (numbers are REPORTED, never gated — the printed values
-on an unmodified checkout at core 3.4.51 were hit@5 19/26 = 73.1% keyword):
+on an unmodified checkout at core 3.5.0 were hit@5 19/26 = 73.1% keyword):
 
 ```
 golden fixture lock verified (42 files, 26 queries, hash 3aac650d…)

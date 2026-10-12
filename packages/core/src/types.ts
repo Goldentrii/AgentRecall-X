@@ -10,7 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.4.51";
+export const VERSION = "3.5.0";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)

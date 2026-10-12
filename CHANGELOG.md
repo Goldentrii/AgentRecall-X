@@ -29,6 +29,10 @@ Version: TBD — owner decides (3.5.0 proposed, see `reports/RELEASE-3.5.0-draft
 
 - README numbers relabelled: regenerates-from-this-repo vs self-measured on the owner's private store.
 
+## [3.4.51] — 2026-09-17
+
+- Evolution program P0–P4 final wave (corrections retier, ranking leg, ledgers); shipped as a patch without a changelog entry at the time — see `UPDATE-LOG.md` for the detail.
+
 ## [3.4.50] — 2026-09-12
 
 Dreaming admission math + heed-rate measurement (both independently reviewed with adversarial fix rounds).
