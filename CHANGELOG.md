@@ -6,11 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Wilson 95% CI in `scripts/eval/rmr-report.mjs` and `scripts/eval/ab-report.mjs`** — the term under the root was `z²/(4n)` instead of the standard `z²/(4n²)`, inflating every interval (0/4 gave [0, 0.73] instead of [0, 0.49]). Now matches `bench-artifact.mjs`'s `wilson95`; regression test `packages/core/test/wilson-report-scripts.test.mjs`. Frozen baselines under `scripts/eval/baselines/` are not regenerated.
+
+### Docs
+
+- README rewritten: session loop, MCP tools + hooks, memory layers, a labelled **The math** section (from `packages/core/src/MATH.md`), measurement table, community. War Room section removed. Previous versions archived in `docs/archive/`. Chinese README re-translated to match.
+
 ## [3.5.1] — 2026-10-12
 
 Hardening found by the first real `windows-latest` + 2-vCPU CI runs after 3.5.0 (tag `v3.5.0` does not contain these). All four packages 3.5.1 in lockstep.
-
-Version: TBD — owner decides (3.5.0 proposed, see `reports/RELEASE-3.5.0-draft.md`). No package versions were bumped on this branch.
 
 ### Fixed
 
