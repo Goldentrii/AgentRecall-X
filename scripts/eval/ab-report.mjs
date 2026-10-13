@@ -63,7 +63,7 @@ function wilsonCI(k, n) {
   const p = k / n;
   const z2n = (z * z) / n;
   const centre = p + z2n / 2;
-  const margin = z * Math.sqrt((p * (1 - p)) / n + z2n / 4);
+  const margin = z * Math.sqrt((p * (1 - p)) / n + z2n / (4 * n)); // z²/(4n²) — standard Wilson
   const denom = 1 + z2n;
   return [
     Math.max(0, (centre - margin) / denom),
