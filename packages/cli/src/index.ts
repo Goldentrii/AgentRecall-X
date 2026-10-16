@@ -153,12 +153,15 @@ ASSOCIATION (Phase 2 S_ji graph — evolution p2):
 DIAGNOSTICS:
   ar scrub [--check]   Scrub stdin through the fail-CLOSED export guard and write to stdout.
       Default: stdin → scrubbed content on stdout; exit 0 (clean/redacted), 2 (secret survived scrub).
-      Fail-OPEN (NOT scanned): Authorization: Bearer <token> headers — do not rely on ar scrub for JWT redaction.
-      --check: no output rewrite — exit 0 (clean), 1 (secrets found and scrubbable), 2 (scrub-resistant residue).
-        Fail-OPEN (NOT scanned): Authorization: Bearer <token> headers — do not rely on ar scrub for JWT redaction.
-        A --check exit 0 does NOT clear Bearer tokens.
+      --check: no output rewrite — exit 0 (clean), 1 (would be redacted), 2 (scrub-resistant residue).
+        --check runs the SAME egress scrub as default mode, so exit 0 means default mode emits unchanged
+        content (injection-tag stripping aside).
       Fail-closed pattern classes: AKIA (AWS), ghp_/gho_/ghs_/github_pat_/ghr_ (GitHub), sk- (OpenAI/Anthropic),
-        xoxb-/xoxp- (Slack), npm_, _authToken, PEM private key/certificate blocks.
+        xoxb-/xoxp-/xoxa-/xoxs- (Slack), glpat- (GitLab), npm_, _authToken, PEM private key/certificate blocks;
+        3.5.2: secret-named KEY=value assignments, AWS secret access keys, URL-embedded credentials
+        (scheme://user:pass@host), Authorization/Bearer/Basic values (digit/shape false-positive filter —
+        the pre-3.5.2 "Bearer not scanned" exemption is REMOVED), Slack webhook URLs, high-entropy tokens,
+        and PII (email with RFC-2606/noreply allowlist, IBAN mod-97, card PAN IIN+Luhn).
   ar stats             Show memory system health: corrections, feedback, insights, graph edges
   ar corrections rejected [--stats] [--json]  Survivorship-bias probe: corrections the capture gate discarded
   ar corrections export [--all-projects] [--include-retracted] [--since YYYY-MM-DD] [--to-backend]
@@ -4417,12 +4420,17 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
       //   xoxb-/xoxp-   — Slack bot / user token
       //   npm_…         — npm registry token
       //   _authToken=…  — npm _authToken (.npmrc)
+      //   glpat-/xoxa-/xoxs- — GitLab PAT / Slack app+legacy tokens
       //   PEM private key / certificate blocks
       //
-      // Fail-OPEN (deliberately not scanned — documented scope decision, §4.6):
-      //   Authorization: Bearer <jwt> — high false-positive rate on normal journal
-      //   content; JWTs are short-lived. This is a known gap, not a silent one.
-      const { scrubForExport, scrubPromptInjection, scrubSecretContent, SecretScanError: ScrubError } = await import("agent-recall-core");
+      // 3.5.2 additions (all fail-closed via the same scrubForExport re-scan):
+      //   secret-named KEY=value assignments, AWS secret access keys,
+      //   URL-embedded credentials (scheme://user:pass@host), Authorization/
+      //   bearer values, Slack webhook URLs, high-entropy tokens (egress-only),
+      //   and PII (email / IBAN / card PAN — egress-only, typed placeholders).
+      //   The pre-3.5.2 "Authorization: Bearer not scanned" exemption is gone —
+      //   the context rule carries a digit/shape false-positive filter.
+      const { scrubForExport, scrubPromptInjection, SecretScanError: ScrubError } = await import("agent-recall-core");
       const checkMode = hasFlag("--check", rest);
 
       const chunks: Buffer[] = [];
@@ -4435,30 +4443,26 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
       const rawInput = Buffer.concat(chunks).toString("utf-8");
 
       if (checkMode) {
-        // --check: detection only, no stdout rewrite.
-        // Layer 1: injection scrub is not relevant to secret detection; scan raw.
-        // Layer 2: scrubSecretContent detects secret patterns.
-        const { redactedCount } = scrubSecretContent(rawInput);
-        if (redactedCount === 0) {
-          // No secrets found — clean.
-          process.exitCode = 0;
-        } else {
-          // Secrets found — run scrubForExport to determine if any survive.
-          try {
-            scrubForExport(rawInput);
-            // scrubForExport did not throw — secrets were redactable, none survived.
-            process.exitCode = 1;
-          } catch (e) {
-            if (e instanceof ScrubError) {
-              // scrub-resistant residue — secret survived even after redaction attempt.
-              process.stderr.write(
-                `scrub-resistant: ${e.message}\n` +
-                `agent_instruction: content contains a secret pattern that survived the export scrub — remove or redact the raw secret before piping to ar scrub\n`
-              );
-              process.exitCode = 2;
-            } else {
-              throw e;
-            }
+        // --check: detection only, no stdout rewrite. Detection goes through
+        // THE SAME egress scrub the default mode emits (3.5.2: previously it
+        // counted scrubSecretContent matches, which misses the egress-only
+        // layers — entropy + PII — and would report "clean" for content the
+        // default mode rewrites). Injection-tag stripping alone is NOT a
+        // secret finding: compare against the injection-scrubbed input, so
+        // injection-only content still exits 0 (unchanged exit semantics).
+        try {
+          const scrubbed = scrubForExport(rawInput);
+          process.exitCode = scrubbed === scrubPromptInjection(rawInput) ? 0 : 1;
+        } catch (e) {
+          if (e instanceof ScrubError) {
+            // scrub-resistant residue — secret survived even after redaction attempt.
+            process.stderr.write(
+              `scrub-resistant: ${e.message}\n` +
+              `agent_instruction: content contains a secret pattern that survived the export scrub — remove or redact the raw secret before piping to ar scrub\n`
+            );
+            process.exitCode = 2;
+          } else {
+            throw e;
           }
         }
       } else {
