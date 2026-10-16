@@ -235,8 +235,10 @@ await scenario("T9-prompt-injection", (root) => {
   const rendered = res.map((r) => `[${r.source}] ${r.title} — ${r.excerpt}`).join("\n");
   const fenced = core.fenceMemory(rendered);
   const body = fenced.split("\n").slice(1, -1).join("\n");
-  const forgedCloseInside = body.includes("⟦/agentrecall:memory⟧");
-  const closes = fenced.split("⟦/agentrecall:memory⟧").length - 1;
+  // Since 3.5.2 the delimiters carry a per-render nonce: ⟦/agentrecall:memory:<16 hex>⟧.
+  const CLOSE_RE = /⟦\/agentrecall:memory(?::[0-9a-f]{16})?⟧/g;
+  const forgedCloseInside = (body.match(CLOSE_RE) || []).length > 0;
+  const closes = (fenced.match(CLOSE_RE) || []).length;
   record("T9b forged fence-close neutralized at MCP boundary", leg,
     "0 forged closes inside fence, exactly 1 real close",
     `forged-inside=${forgedCloseInside}, total closes=${closes}`,
