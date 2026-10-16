@@ -29,9 +29,24 @@
  * for docs the prefilter says CAN match), so a stale/poisoned index can skew
  * ranking weights but cannot fabricate content. Contents ARE cached
  * IN-PROCESS (per (size, mtimeNs), pruned to the enumerated file set on each
- * drift) — a long-lived MCP server holds roughly one copy of the project's
- * journal text in RAM, the same order of memory the brute-force path already
- * allocated transiently on EVERY query.
+ * drift) — a long-lived MCP server holds roughly one copy of the hot
+ * project's journal text in RAM, the same order of memory the brute-force
+ * path already allocated transiently on EVERY query.
+ *
+ * BOUNDED CACHE (review fix, 2026-10-16, reports/2026-10-16-review-
+ * correctness.md MEDIUM): the in-process per-project states are an LRU —
+ * at most AGENT_RECALL_LEXICAL_MAX_PROJECTS project states (default 4) and
+ * at most AGENT_RECALL_LEXICAL_MAX_CONTENT_MB of cached content text
+ * (default 256 MB, UTF-16 accounting) are retained, least-recently-queried
+ * project evicted first; the project being queried is never evicted by its
+ * own call, so a single over-budget hot project keeps working (documented
+ * exemption, not a leak — it is one corpus, the brute path's own transient
+ * working set). Eviction only drops the IN-PROCESS cache: the next query for
+ * an evicted project reloads the persisted index from disk and lazily
+ * re-reads contents — results identical (pinned by the LRU/byte-budget
+ * tests). Bounds are enforced per loadJournalLexicalSnapshot call;
+ * trustedContent reads between calls can transiently exceed the byte budget
+ * by at most the active project's own corpus until the next query.
  *
  * TRUST (security): the cached `u` bit is an OPTIMIZATION, not the trust
  * boundary. Every content read performed through this module re-runs
@@ -155,15 +170,90 @@ interface ProjectState {
   entries: Map<string, DocEntry>;
   /** Lazily-read file contents, validated by (s, m) at every use. */
   contents: Map<string, { s: number; m: bigint; c: string }>;
+  /** UTF-16 byte accounting for `contents` (2 bytes/char) — kept in lockstep
+   *  by cacheContent/dropContent below, never recomputed by scan. */
+  contentBytes: number;
   /** Last built snapshot + the exact (path,s,m) enumeration it was built from. */
   snap?: { includeRollupArchive: boolean; scanned: ScannedFile[]; snapshot: LexicalJournalSnapshot };
 }
 
+/** Insertion order == LRU order: every loadJournalLexicalSnapshot call
+ *  delete+set-refreshes its key, so the FIRST key is always the
+ *  least-recently-queried project (see enforceCacheBounds). */
 const states = new Map<string, ProjectState>();
+
+const DEFAULT_MAX_PROJECT_STATES = 4;
+const DEFAULT_MAX_CONTENT_MB = 256;
+
+/** Positive-number env override with a safe fallback — config parsing only,
+ *  never fed to a path/RegExp/fs call. */
+function envPositive(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function maxProjectStates(): number {
+  return envPositive("AGENT_RECALL_LEXICAL_MAX_PROJECTS", DEFAULT_MAX_PROJECT_STATES);
+}
+
+function maxContentBytes(): number {
+  return envPositive("AGENT_RECALL_LEXICAL_MAX_CONTENT_MB", DEFAULT_MAX_CONTENT_MB) * 1024 * 1024;
+}
+
+/** The ONLY mutators of a state's contents map — keep contentBytes exact. */
+function cacheContent(state: ProjectState, p: string, rec: { s: number; m: bigint; c: string }): void {
+  const prev = state.contents.get(p);
+  if (prev) state.contentBytes -= prev.c.length * 2;
+  state.contents.set(p, rec);
+  state.contentBytes += rec.c.length * 2;
+}
+
+function dropContent(state: ProjectState, p: string): void {
+  const prev = state.contents.get(p);
+  if (!prev) return;
+  state.contentBytes -= prev.c.length * 2;
+  state.contents.delete(p);
+}
+
+/**
+ * Evict least-recently-queried project states beyond the project-count cap,
+ * then beyond the content-byte budget — never the project currently being
+ * queried (`activeKey`). Eviction is cache-only and loss-free: dirty entries
+ * are always persisted inside the same load call that derived them (before
+ * bounds run), so an evicted project's next query reloads the on-disk index
+ * and produces identical results (pinned by the bounded-cache tests).
+ */
+function enforceCacheBounds(activeKey: string): void {
+  const cap = maxProjectStates();
+  for (const key of states.keys()) {
+    if (states.size <= cap) break;
+    if (key === activeKey) continue;
+    states.delete(key);
+  }
+  const budget = maxContentBytes();
+  let total = 0;
+  for (const s of states.values()) total += s.contentBytes;
+  for (const [key, s] of states) {
+    if (total <= budget) break;
+    if (key === activeKey) continue;
+    total -= s.contentBytes;
+    states.delete(key);
+  }
+}
 
 /** Reset all in-process caches (tests — simulates a fresh process). */
 export function resetLexicalIndexCaches(): void {
   states.clear();
+}
+
+/** Introspection for tests / a future `ar` doctor surface: how many project
+ *  states are resident and how much content text they cache (UTF-16 bytes). */
+export function lexicalIndexCacheStats(): { states: number; contentBytes: number } {
+  let contentBytes = 0;
+  for (const s of states.values()) contentBytes += s.contentBytes;
+  return { states: states.size, contentBytes };
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +419,11 @@ export async function loadJournalLexicalSnapshot(
     const indexPath = lexicalJournalIndexPath(project);
     let state = states.get(indexPath);
     if (!state) {
-      state = { entries: loadPersistedEntries(indexPath), contents: new Map() };
-      states.set(indexPath, state);
+      state = { entries: loadPersistedEntries(indexPath), contents: new Map(), contentBytes: 0 };
+    } else {
+      states.delete(indexPath); // LRU refresh — re-inserted below as most recent
     }
+    states.set(indexPath, state);
 
     // ---- enumerate (must mirror candidates.ts's readJournalCandidates) ----
     // Live half: listJournalFiles(project, false) — the SAME shared reader the
@@ -374,6 +466,7 @@ export async function loadJournalLexicalSnapshot(
 
     // ---- unchanged? serve the cached snapshot (postings + memos intact) ----
     if (state.snap && state.snap.includeRollupArchive === opts.includeRollupArchive && sameScan(state.snap.scanned, scanned)) {
+      enforceCacheBounds(indexPath);
       return state.snap.snapshot;
     }
 
@@ -397,7 +490,7 @@ export async function loadJournalLexicalSnapshot(
         // the same isRescueSourcedContent every sibling journal reader calls.
         e = { s: sc.s, m: sc.m, u: isRescueSourcedContent(content), runs: terms.runs, stems: terms.stems };
         state.entries.set(sc.path, e);
-        state.contents.set(sc.path, { s: sc.s, m: sc.m, c: content });
+        cacheContent(state, sc.path, { s: sc.s, m: sc.m, c: content });
         dirty = true;
       }
       docs.push({ date: sc.date, file: sc.file, path: sc.path, untrusted: e.u });
@@ -419,7 +512,7 @@ export async function loadJournalLexicalSnapshot(
     if (keep.size !== state.entries.size) dirty = true;
     state.entries = keep;
     for (const k of [...state.contents.keys()]) {
-      if (!keep.has(k)) state.contents.delete(k);
+      if (!keep.has(k)) dropContent(state, k);
     }
     if (dirty) await persistEntries(project, indexPath, keep);
 
@@ -475,7 +568,7 @@ export async function loadJournalLexicalSnapshot(
           } catch {
             return null;
           }
-          st.contents.set(d.path, rec);
+          cacheContent(st, d.path, rec);
         }
         // Read-time re-verification through the SAME choke — a poisoned/stale
         // cached trust bit can never surface quarantined content (see TRUST
@@ -486,6 +579,7 @@ export async function loadJournalLexicalSnapshot(
     };
 
     state.snap = { includeRollupArchive: opts.includeRollupArchive, scanned, snapshot };
+    enforceCacheBounds(indexPath);
     return snapshot;
   } catch {
     return null; // any unexpected failure → caller takes the brute-force path

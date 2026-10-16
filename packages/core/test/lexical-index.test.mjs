@@ -299,6 +299,47 @@ describe("retrieval/lexical-index — persistent lexical journal index", () => {
     }
   });
 
+  it("bounded cache: project states LRU-evict beyond the cap; evicted projects reload from disk with identical results", async () => {
+    core.resetLexicalIndexCaches();
+    const slugs = [];
+    for (let k = 0; k < 7; k++) {
+      const slug = `${P}-lru-${k}`;
+      buildStore(TEST_ROOT, slug, 200 + k, 6);
+      slugs.push(slug);
+    }
+    for (const slug of slugs) await runJournal(slug, "staging bucket secret rotate");
+    const stats = core.lexicalIndexCacheStats();
+    assert.ok(stats.states <= 4, `project-state cap exceeded: ${stats.states} states resident after 7 projects (cap 4)`);
+    // slugs[0] was least-recently used → evicted. Its next query reloads the
+    // persisted index from disk and must still equal brute force exactly.
+    for (const q of ["staging bucket secret rotate", "postgres migration runbook"]) {
+      const bruteRes = await brute(() => runJournal(slugs[0], q));
+      const indexedRes = await runJournal(slugs[0], q);
+      assert.deepStrictEqual(indexedRes, bruteRes, `evicted-project reload != brute for "${q}"`);
+    }
+  });
+
+  it("bounded cache: content-byte budget evicts LRU states (active project exempt), equivalence intact", async () => {
+    process.env.AGENT_RECALL_LEXICAL_MAX_CONTENT_MB = "0.001"; // ~1 KB — every project alone exceeds it
+    try {
+      core.resetLexicalIndexCaches();
+      const slugs = [];
+      for (let k = 0; k < 3; k++) {
+        const slug = `${P}-bytes-${k}`;
+        buildStore(TEST_ROOT, slug, 300 + k, 8);
+        slugs.push(slug);
+      }
+      for (const slug of slugs) await runJournal(slug, "staging bucket secret rotate");
+      const stats = core.lexicalIndexCacheStats();
+      assert.equal(stats.states, 1, `under a ~1 KB budget only the active project may stay resident (got ${stats.states})`);
+      const bruteRes = await brute(() => runJournal(slugs[0], "postgres migration runbook"));
+      const indexedRes = await runJournal(slugs[0], "postgres migration runbook");
+      assert.deepStrictEqual(indexedRes, bruteRes, "byte-budget eviction broke equivalence");
+    } finally {
+      delete process.env.AGENT_RECALL_LEXICAL_MAX_CONTENT_MB;
+    }
+  });
+
   it("rawArchiveOnly: readTierCandidates subset flag is identical to filtering the full read", async () => {
     const slug = `${P}-rawonly`;
     buildStore(TEST_ROOT, slug, 61);

@@ -1008,6 +1008,7 @@ export {
   lexicalJournalIndexPath,
   lexicalIndexEnabled,
   resetLexicalIndexCaches,
+  lexicalIndexCacheStats,
 } from "./retrieval/lexical-index.js";
 export type { LexicalJournalSnapshot, LexicalSnapshotDoc } from "./retrieval/lexical-index.js";
 
