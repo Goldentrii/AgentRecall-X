@@ -1,4 +1,11 @@
 // packages/core/src/supabase/embedding.ts
+//
+// EGRESS NOTE (fix 3.5.2): these providers NEVER read the ambient
+// OPENAI_API_KEY. They are constructed only from an explicitly configured
+// key (config.json embedding_api_key / AGENT_RECALL_EMBEDDING_KEY, see
+// supabase/config.ts) behind an explicit Supabase opt-in — which is why they
+// are not additionally gated on AGENT_RECALL_CLOUD_EMBEDDINGS (that flag
+// gates the AMBIENT-key seam in vector/embedding.ts).
 
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;

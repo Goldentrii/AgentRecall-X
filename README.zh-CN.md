@@ -452,6 +452,7 @@ ar embeddings status
 | 网络 | 只有 `setup` 会下载。召回与重建在硬禁用远程拉取的情况下运行 |
 | 降级 | 索引缺失/损坏 → 返回关键词结果，原因写在 `semantic_leg` 元数据中——绝不报错 |
 | 安全 | 索引只存内容哈希 → 向量（不存文本）；语义命中经过同样的 trust/scope/fence 阶段 |
+| 云端通路 | 存在一条休眠的 OpenAI embedding 通路；只有同时设置 `AGENT_RECALL_CLOUD_EMBEDDINGS=1` **和** `OPENAI_API_KEY` 才会激活——环境中仅有 `OPENAI_API_KEY` 不会向外发送任何数据 |
 
 </details>
 

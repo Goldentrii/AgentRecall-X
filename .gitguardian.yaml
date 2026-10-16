@@ -1,0 +1,8 @@
+version: 2
+secret:
+  # Synthetic, non-functional secrets used to test the scrubber itself
+  # (scrubForCloud / scrubForExport). None of these are real credentials.
+  ignored_paths:
+    - packages/core/test/content-guard-hardening.test.mjs
+    - packages/core/test/content-guard*.test.mjs
+    - packages/cli/test/scrub.test.mjs

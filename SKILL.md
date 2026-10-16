@@ -64,7 +64,7 @@ skip:
   - "算了"
 ---
 
-# AgentRecall v3.5.1 — Usage Guide
+# AgentRecall v3.5.2 — Usage Guide
 
 AgentRecall is a persistent memory system. Default surface: **5 tools** (two verbs + three essentials). Full surface: 6 tools via `npx agent-recall-mcp --full` (adds `check_action`); 13 tools with `AR_EXTRAS=1 npx agent-recall-mcp --full`. This guide describes how and when to use them.
 

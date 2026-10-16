@@ -1,0 +1,1208 @@
+{
+  "schema_version": "golden-retrieval/v1",
+  "bench_version": "golden-retrieval-v1",
+  "generated_utc": "2026-10-15T21:03:58.183Z",
+  "corpus_hash": "3aac650d7558d317a89fb2de562e2a00076c64f1241d92690eca6b2564b1f666",
+  "corpus_manifest": [
+    {
+      "path": "awareness.md",
+      "sha256": "af2e4cbf17d9af25f072a7f0db38cbef545519d78774cae29ded3edb9604cc4f"
+    },
+    {
+      "path": "insights-index.json",
+      "sha256": "a8e6dea0315332c5553fb0a03ca438064eca3df5804c19100861256b276c4ea4"
+    },
+    {
+      "path": "projects/alpha-platform/corrections/2026-06-18-always-set-cache-ttl-explicitly.json",
+      "sha256": "c00f845bf7939783c698e0b5392625d665bf89f6472af7e76e541c85c64ba16b"
+    },
+    {
+      "path": "projects/alpha-platform/corrections/2026-07-02-never-run-migrations-on-friday-deploys.json",
+      "sha256": "c82a5107ba61b8ed1161d57c0c6f7f5423468fb153f9cacd921dcd104a61ddc3"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-06-05--manual--08L--sprint-notes.md",
+      "sha256": "730098a0157eca67d7bd8670742ec93008a9841c0f6ca45f66a1ea800bce69dd"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-06-12--manual--08L--ingest-kickoff.md",
+      "sha256": "3039b91b5b1c7f65bfc3765a6f69f54f37b2bcd7b31df7cb7ce13c99873297c4"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-06-28--manual--10L--cache-migration-kickoff.md",
+      "sha256": "802df3d2ec44a4b450855444760e0fe8db4af7d5c40c6824bae5199d85d8d83f"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-07-14--manual--14L--queue-migration.md",
+      "sha256": "54cd719c5c3a1337aeb5769b34aa6bd28647b692afee91efcd02cf4bf8618182"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-07-22--manual--09L--service-rename.md",
+      "sha256": "6099186e4b91628e82dbbbad306c0becadb46c3d2aa0230426ebe38c1d2ff3ec"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-08-02--manual--12L--cache-ttl-final.md",
+      "sha256": "ef5c114f5cf29f5ddb0811f1d5d34eef3a0ae52e6bb8a7ba12ae4378fd5e8916"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-08-05--manual--18L--canary-retro.md",
+      "sha256": "44ee339123175df9d8e5d51cc80aad31691f70f916968c450b31fcbf0de7eede"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-08-11--manual--16L--gpu-inference.md",
+      "sha256": "b156c62b24965bdc04fcb617d9ccaaf60a7d7fa82d1f50734469efba9dea8499"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-08-20--manual--11L--rate-limit-ship.md",
+      "sha256": "97d177e02c4493fa46167673f62f38445374744b72389bff48ea81996be74228"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-09-01--manual--13L--retry-storm-reflection.md",
+      "sha256": "f0c9dbff361dd2d597f00dc540aebd24cd33695bd14e8c00240b7d97d6a4fae9"
+    },
+    {
+      "path": "projects/alpha-platform/journal/2026-09-10--manual--10L--oncall-week.md",
+      "sha256": "58fd9e07d7f9fb103aee402d27fd6845c68f343a90c689bc6f28dc7c085dc1a1"
+    },
+    {
+      "path": "projects/alpha-platform/palace/pipeline/0001--cache-migration.md",
+      "sha256": "cc13e2d1625a83bed306e06eb954243533c9983af9b2c5cd4e33197cbd473735"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/alignment/_room.json",
+      "sha256": "efb71119f62f9af4788e2dc70dde788e35d118399692f306c3fe99e3837c822b"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/alignment/service-naming-map.md",
+      "sha256": "fa512c47708c438be6c462869ec8588c0f1abefc786111d39d9100af58a4b3d2"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/_room.json",
+      "sha256": "afffce3b825d65cf6afeb62705114524036f486e17abd37317b3a5175f37d7d0"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/cache-strategy.md",
+      "sha256": "ae2b2a309125c16eb47f8255e35e4e39634bc1e3d624ae7c1a5d3fbcf9602ff5"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/dashboard-redesign.md",
+      "sha256": "52bea242b6143eaa97e5daf447594f6df6db3239cd3bc1a5bf85978ec915a641"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/dual-active-dr.md",
+      "sha256": "61ce1c468f20c844f42c518b1b2229eb60660f1598166d4ec64d9619b864143c"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/log-scrubbing.md",
+      "sha256": "38bd116e8df965fc55899627d3f65bff3f20138aa70d9beb4d6421c1e2d2d841"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/queue-backend.md",
+      "sha256": "9fc6a072a29811319a0b4beeb414bb82c18cd654ffa36ded58189485068c06cb"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/decisions/rate-limit-proposal.md",
+      "sha256": "1e3a4a7de01602810b0dc7b7504eac7dd37103e2f82d3047a578061cde366e32"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/goals/_room.json",
+      "sha256": "089394d2353541f06d07e757d0e44d12459f531667aae50478057d68350204e3"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/goals/evolution.md",
+      "sha256": "1249ef81e9a1b0fd80634b6e2636eb31eca6036403b81168496d3f3e06e3cbc5"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/health-baseline-2026-06-02.md",
+      "sha256": "581e7bd2d9a9ebe5602d6fd0ef649930f8f78457d63b6eceda64d0811133a04e"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/predictions/_room.json",
+      "sha256": "8cc55f0a6a96dd7c28cc7e34a3ff0c1370f3730c587fa2374e8268210edc901c"
+    },
+    {
+      "path": "projects/alpha-platform/palace/rooms/predictions/README.md",
+      "sha256": "63a411e125bde4fd3f24579ffdac30bcc2f12501812cbc59777ccc9659421c7c"
+    },
+    {
+      "path": "projects/beta-api/corrections/2026-07-30-validate-webhook-signatures.json",
+      "sha256": "0c84155e6e3a387cd2dfd8cbe4035496abee97411ed1833df9e9c9850d00c68c"
+    },
+    {
+      "path": "projects/beta-api/journal/2026-07-18--manual--09L--webhook-policy.md",
+      "sha256": "ffae6aa4352389d9d01bd7bc7c4258df9b2085d2039816e8ef52fe642132e056"
+    },
+    {
+      "path": "projects/beta-api/journal/2026-08-25--manual--08L--release-notes.md",
+      "sha256": "13de312aed554d5dbf56fddb86ceec315ab12e96804634bc0cf3257f01e0f1d1"
+    },
+    {
+      "path": "projects/beta-api/palace/pipeline/0001--auth-hardening.md",
+      "sha256": "538977841a3c6922e86d20fb79f9732d939893c6d578617a890347431ab53489"
+    },
+    {
+      "path": "projects/beta-api/palace/rooms/decisions/_room.json",
+      "sha256": "bddfb3bd533bc19448df0062a9d0109175a4f41b2bbba323f9917ed805c51baf"
+    },
+    {
+      "path": "projects/beta-api/palace/rooms/decisions/webhook-retry.md",
+      "sha256": "36054c829238705eaa6a626866f044117cafc56be6aad83e6bac36387e1d1054"
+    },
+    {
+      "path": "projects/gamma-cli/corrections/2026-08-09-add-help-text-to-flags.json",
+      "sha256": "1a325e191cbe921f2910d17ef453a3eef74fe560923dfc64ba209f9a634cab27"
+    },
+    {
+      "path": "projects/gamma-cli/journal/2026-07-05--manual--08L--flag-decision.md",
+      "sha256": "f6a3b3be8992d4339e5d55194d4142523be9efab5e4e869b9f36bce0698c74c7"
+    },
+    {
+      "path": "projects/gamma-cli/journal/2026-08-29--manual--07L--release-110.md",
+      "sha256": "cb0e5dbda72ef6b9a0dc483fcb4d76c2f3bad6cf87e02bcc20e6a235cc9a26ee"
+    },
+    {
+      "path": "projects/gamma-cli/palace/pipeline/0001--packaging.md",
+      "sha256": "d952ca338ccce2e976e97507abe41e39a1e31512ab81671d4b33b64023851840"
+    },
+    {
+      "path": "projects/gamma-cli/palace/rooms/decisions/_room.json",
+      "sha256": "c54b68b8041fd9344a22781601e203a0af4c7d8a112659554b61f5ed303ce9b8"
+    },
+    {
+      "path": "projects/gamma-cli/palace/rooms/decisions/flag-parsing.md",
+      "sha256": "96963553473d9c88dd2ebea03da87ba6fee838bf7b6db8ff34c352527c9d1c56"
+    }
+  ],
+  "queries_hash": "bc8d77a4d6f752a5d309a0577a42f6065c29c34d3f6fb92ddede6c6bb6bfc251",
+  "n_queries": 26,
+  "leg": "keyword",
+  "limit": 5,
+  "environment": {
+    "node": "v24.11.1",
+    "platform": "win32-x64",
+    "tz": "UTC",
+    "repo_commit": "c52e37e",
+    "core_version": "3.5.1"
+  },
+  "per_query": [
+    {
+      "id": "A1",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/queue-backend",
+          "id": "gs1xua"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-14 / decisions",
+          "id": "gkp3yi"
+        },
+        {
+          "source": "insight",
+          "title": "Overnight batch agents must use CLI token auth, never interactive OAuth sessions",
+          "id": "ccsk77"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 3,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "decisions/README",
+          "id": "kpvup4"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/log-scrubbing",
+          "id": "b7bhdw"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-02 / decisions",
+          "id": "l3jlaa"
+        },
+        {
+          "source": "insight",
+          "title": "Parallel workers must never self-review — route every work product to an independent reviewer",
+          "id": "fia21t"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "goals/evolution",
+          "id": "jj7hxi"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 结论",
+          "id": "c73fy8"
+        },
+        {
+          "source": "palace",
+          "title": "alignment/service-naming-map",
+          "id": "5sv88j"
+        },
+        {
+          "source": "journal",
+          "title": "2026-09-10 / follow-ups",
+          "id": "aacw7d"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/log-scrubbing",
+          "id": "b7bhdw"
+        }
+      ]
+    },
+    {
+      "id": "A4",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": true,
+      "hit5": true,
+      "rank_of_first_target": 1,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "goals/evolution",
+          "id": "jj7hxi"
+        },
+        {
+          "source": "journal",
+          "title": "2026-09-01 / corrections_review",
+          "id": "wzqztj"
+        },
+        {
+          "source": "insight",
+          "title": "Never run destructive database operations in production without explicit owner approval",
+          "id": "vryg4g"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "A5",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/dashboard-redesign",
+          "id": "34eyh8"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-22 / decisions",
+          "id": "rb1tnp"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/dual-active-dr",
+          "id": "6owgtu"
+        }
+      ]
+    },
+    {
+      "id": "A6",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "predictions/README",
+          "id": "wrnj0r"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-22 / decisions",
+          "id": "fzd9nc"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        },
+        {
+          "source": "palace",
+          "title": "alignment/service-naming-map",
+          "id": "5sv88j"
+        },
+        {
+          "source": "palace",
+          "title": "blockers/README",
+          "id": "8u2q3y"
+        }
+      ]
+    },
+    {
+      "id": "A7",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 4,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "predictions/README",
+          "id": "wrnj0r"
+        },
+        {
+          "source": "journal",
+          "title": "2026-09-01 / reflection",
+          "id": "dppvig"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "A8",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/cache-strategy",
+          "id": "jc1a0"
+        },
+        {
+          "source": "journal",
+          "title": "2026-06-28 / summary",
+          "id": "sf5k3p"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        },
+        {
+          "source": "palace",
+          "title": "predictions/README",
+          "id": "wrnj0r"
+        }
+      ]
+    },
+    {
+      "id": "A9",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 4,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/log-scrubbing",
+          "id": "b7bhdw"
+        },
+        {
+          "source": "journal",
+          "title": "2026-09-01 / corrections_review",
+          "id": "jfz082"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        },
+        {
+          "source": "palace",
+          "title": "alignment/service-naming-map",
+          "id": "5sv88j"
+        }
+      ]
+    },
+    {
+      "id": "A10",
+      "category": "known-decision",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "predictions/README",
+          "id": "wrnj0r"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-20 / decisions",
+          "id": "oes56m"
+        },
+        {
+          "source": "insight",
+          "title": "Never deploy to production without explicit owner approval",
+          "id": "fqthnl"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "B1",
+      "category": "cross-project",
+      "project": "beta-api",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 5,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Always validate webhook signatures before processing the payload",
+          "id": "2026-07-30-validate-webhook-signatures"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/webhook-retry",
+          "id": "dblajc"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-25 / summary",
+          "id": "1qvom3"
+        },
+        {
+          "source": "insight",
+          "title": "Never run destructive database operations in production without explicit owner approval",
+          "id": "vryg4g"
+        }
+      ]
+    },
+    {
+      "id": "B2",
+      "category": "cross-project",
+      "project": "beta-api",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Always validate webhook signatures before processing the payload",
+          "id": "2026-07-30-validate-webhook-signatures"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-25 / summary",
+          "id": "1qvom3"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-25 / follow-ups",
+          "id": "4tbzu2"
+        }
+      ]
+    },
+    {
+      "id": "B3",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "hit1": true,
+      "hit5": true,
+      "rank_of_first_target": 1,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "insight",
+          "title": "Parallel workers must never self-review — route every work product to an independent reviewer",
+          "id": "fia21t"
+        }
+      ]
+    },
+    {
+      "id": "B4",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Every CLI flag must ship with help text in the same PR",
+          "id": "2026-08-09-add-help-text-to-flags"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-29 / summary",
+          "id": "4selks"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-05 / decisions",
+          "id": "urzp6h"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-05 / work",
+          "id": "v4mnve"
+        }
+      ]
+    },
+    {
+      "id": "B5",
+      "category": "cross-project",
+      "project": "beta-api",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 3,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-25 / summary",
+          "id": "lkhtar"
+        },
+        {
+          "source": "insight",
+          "title": "Overnight batch agents must use CLI token auth, never interactive OAuth sessions",
+          "id": "ccsk77"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-25 / follow-ups",
+          "id": "4tbzu2"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        }
+      ]
+    },
+    {
+      "id": "B6",
+      "category": "cross-project",
+      "project": "gamma-cli",
+      "hit1": true,
+      "hit5": true,
+      "rank_of_first_target": 1,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "insight",
+          "title": "Owner preference: prioritize shipping user-visible fixes over internal refactoring",
+          "id": "67i1st"
+        },
+        {
+          "source": "insight",
+          "title": "Never deploy to production without explicit owner approval",
+          "id": "fqthnl"
+        },
+        {
+          "source": "insight",
+          "title": "Never run destructive database operations in production without explicit owner approval",
+          "id": "vryg4g"
+        },
+        {
+          "source": "insight",
+          "title": "Overnight batch agents must use CLI token auth, never interactive OAuth sessions",
+          "id": "ccsk77"
+        },
+        {
+          "source": "insight",
+          "title": "Flaky e2e suites usually trace to an unpinned browser version",
+          "id": "ovbl75"
+        }
+      ]
+    },
+    {
+      "id": "C1",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 3,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/rate-limit-proposal",
+          "id": "j9n1y1"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-20 / decisions",
+          "id": "jq8g8i"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "C2",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 3,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "alignment/service-naming-map",
+          "id": "5sv88j"
+        },
+        {
+          "source": "journal",
+          "title": "2026-07-22 / decisions",
+          "id": "c3bkdh"
+        },
+        {
+          "source": "insight",
+          "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+          "id": "trjvbg"
+        }
+      ]
+    },
+    {
+      "id": "C3",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "alignment/README",
+          "id": "kwrxw"
+        },
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/cache-strategy",
+          "id": "jc1a0"
+        },
+        {
+          "source": "journal",
+          "title": "2026-06-28 / summary",
+          "id": "vzvcpd"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "C4",
+      "category": "freshness",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 4,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "architecture/README",
+          "id": "grxua0"
+        },
+        {
+          "source": "corrections",
+          "title": "Never run database migrations on Friday deploys",
+          "id": "2026-07-02-never-run-migrations-on-friday-deploys"
+        },
+        {
+          "source": "palace",
+          "title": "goals/evolution",
+          "id": "jj7hxi"
+        },
+        {
+          "source": "journal",
+          "title": "2026-09-01 / corrections_review",
+          "id": "b2s987"
+        },
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        }
+      ]
+    },
+    {
+      "id": "D1",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "corrections",
+          "title": "Always set a cache TTL explicitly — never rely on the client library default",
+          "id": "2026-06-18-always-set-cache-ttl-explicitly"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/cache-strategy",
+          "id": "jc1a0"
+        },
+        {
+          "source": "journal",
+          "title": "2026-06-28 / risks",
+          "id": "js2bxi"
+        },
+        {
+          "source": "palace",
+          "title": "decisions/queue-backend",
+          "id": "gs1xua"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 结论",
+          "id": "ugtjka"
+        }
+      ]
+    },
+    {
+      "id": "D2",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 结论",
+          "id": "c73fy8"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 过程",
+          "id": "frxqe4"
+        }
+      ]
+    },
+    {
+      "id": "D3",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "decisions/dual-active-dr",
+          "id": "6owgtu"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 结论",
+          "id": "c73fy8"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 过程",
+          "id": "frxqe4"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / top",
+          "id": "1k5uco"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 后续",
+          "id": "tft0d3"
+        }
+      ]
+    },
+    {
+      "id": "D4",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": true,
+      "hit5": true,
+      "rank_of_first_target": 1,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "decisions/dual-active-dr",
+          "id": "6owgtu"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 结论",
+          "id": "c73fy8"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 结论",
+          "id": "og08f"
+        }
+      ]
+    },
+    {
+      "id": "D5",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": true,
+      "rank_of_first_target": 2,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "decisions/dual-active-dr",
+          "id": "6owgtu"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 结论",
+          "id": "ugtjka"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 备注",
+          "id": "jd0t24"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / top",
+          "id": "tmzb8l"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 数据",
+          "id": "nghbcm"
+        }
+      ]
+    },
+    {
+      "id": "D6",
+      "category": "cjk",
+      "project": "alpha-platform",
+      "hit1": false,
+      "hit5": false,
+      "rank_of_first_target": null,
+      "stale_confident": false,
+      "top5_sources": [
+        {
+          "source": "palace",
+          "title": "decisions/dual-active-dr",
+          "id": "6owgtu"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-11 / 数据",
+          "id": "qfpv89"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 过程",
+          "id": "7422p7"
+        },
+        {
+          "source": "journal",
+          "title": "2026-08-05 / 后续",
+          "id": "tft0d3"
+        }
+      ]
+    }
+  ],
+  "aggregates": {
+    "overall": {
+      "hit1": {
+        "num": 4,
+        "den": 26,
+        "value": 0.15384615384615385,
+        "wilson95": [
+          0.06149933998929477,
+          0.33531584418313565
+        ]
+      },
+      "hit5": {
+        "num": 19,
+        "den": 26,
+        "value": 0.7307692307692307,
+        "wilson95": [
+          0.5391659658023868,
+          0.8629572447493261
+        ]
+      }
+    },
+    "by_category": {
+      "known-decision": {
+        "hit1": {
+          "num": 1,
+          "den": 10,
+          "value": 0.1,
+          "wilson95": [
+            0.01787574951572113,
+            0.4041563854975721
+          ]
+        },
+        "hit5": {
+          "num": 8,
+          "den": 10,
+          "value": 0.8,
+          "wilson95": [
+            0.49015684672072335,
+            0.9433190520193067
+          ]
+        }
+      },
+      "cross-project": {
+        "hit1": {
+          "num": 2,
+          "den": 6,
+          "value": 0.3333333333333333,
+          "wilson95": [
+            0.09676933255921683,
+            0.7000116786584712
+          ]
+        },
+        "hit5": {
+          "num": 4,
+          "den": 6,
+          "value": 0.6666666666666666,
+          "wilson95": [
+            0.29998832134152864,
+            0.9032306674407831
+          ]
+        }
+      },
+      "freshness": {
+        "hit1": {
+          "num": 0,
+          "den": 4,
+          "value": 0,
+          "wilson95": [
+            0,
+            0.48990002040399916
+          ]
+        },
+        "hit5": {
+          "num": 3,
+          "den": 4,
+          "value": 0.75,
+          "wilson95": [
+            0.3006360524426366,
+            0.9544139373553637
+          ]
+        }
+      },
+      "cjk": {
+        "hit1": {
+          "num": 1,
+          "den": 6,
+          "value": 0.16666666666666666,
+          "wilson95": [
+            0.03005258587173032,
+            0.563509436563646
+          ]
+        },
+        "hit5": {
+          "num": 4,
+          "den": 6,
+          "value": 0.6666666666666666,
+          "wilson95": [
+            0.29998832134152864,
+            0.9032306674407831
+          ]
+        }
+      }
+    },
+    "stale_return_rate": {
+      "num": 0,
+      "den": 4,
+      "value": 0,
+      "wilson95": [
+        0,
+        0.48990002040399916
+      ]
+    },
+    "cjk_vs_ascii": {
+      "cjk_hit5": {
+        "num": 4,
+        "den": 6,
+        "value": 0.6666666666666666,
+        "wilson95": [
+          0.29998832134152864,
+          0.9032306674407831
+        ]
+      },
+      "ascii_hit5": {
+        "num": 15,
+        "den": 20,
+        "value": 0.75,
+        "wilson95": [
+          0.5312949900419365,
+          0.888139947210597
+        ]
+      }
+    }
+  }
+}

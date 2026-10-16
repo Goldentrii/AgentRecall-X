@@ -24,7 +24,7 @@ async function runCli(...args) {
 // P1 fence follow-up (class-sweep, TOW2-388): several CLI commands whose
 // stdout is entirely retrieved/stored memory (read, list, palace read/walk,
 // search, ...) now wrap their JSON payload in fenceMemory()'s
-// "⟦agentrecall:memory⟧ ... ⟦/agentrecall:memory⟧" delimiter lines before
+// "⟦agentrecall:memory: ... ⟦/agentrecall:memory:" delimiter lines before
 // printing — the same intentional JSON-parseability tradeoff already
 // accepted for `ar cold-start`/`ar recall`/`ar insight` and the MCP
 // smart-recall.ts precedent. Strip the delimiter lines before JSON.parse so
@@ -33,7 +33,7 @@ async function runCli(...args) {
 // projects/palace lint/palace write), so this helper is safe to use
 // universally in this file.
 function parseFenced(stdout) {
-  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+  if (stdout.startsWith("⟦agentrecall:memory:")) {
     const firstNL = stdout.indexOf("\n");
     const lastNL = stdout.lastIndexOf("\n");
     if (firstNL !== -1 && lastNL > firstNL) {

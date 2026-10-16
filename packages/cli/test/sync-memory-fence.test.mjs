@@ -42,8 +42,10 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(__dirname, "..", "dist", "index.js");
 
-const FENCE_OPEN_PREFIX = "⟦agentrecall:memory⟧";
-const FENCE_CLOSE = "⟦/agentrecall:memory⟧";
+// Delimiters carry a per-render 16-hex nonce (fix 3.5.2), so match on the
+// prefix up to the ':' that precedes the nonce.
+const FENCE_OPEN_PREFIX = "⟦agentrecall:memory:";
+const FENCE_CLOSE = "⟦/agentrecall:memory:";
 const RULE_TEXT = "always run the type-checker before committing (sync-memory-fence regression fixture)";
 
 const tmpDirs = [];

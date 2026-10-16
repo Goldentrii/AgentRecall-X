@@ -106,7 +106,7 @@ describe("ar dream — behavioral", () => {
     const { stdout } = await runCli(
       "dream", "admit", "--file", f, "--run-date", "2026-09-12", "--journal-files", "6",
     );
-    assert.ok(stdout.startsWith("⟦agentrecall:memory⟧"), "report is fenced (memory-derived titles)");
+    assert.ok(stdout.startsWith("⟦agentrecall:memory:"), "report is fenced (memory-derived titles)");
     const body = stdout.slice(stdout.indexOf("\n") + 1, stdout.lastIndexOf("\n"));
     const report = JSON.parse(body);
     assert.equal(report.candidates_seen, 2);

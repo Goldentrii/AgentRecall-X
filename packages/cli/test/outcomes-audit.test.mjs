@@ -46,7 +46,7 @@ const PROJECT = "audit-test";
 // (it only echoes back this call's own just-submitted verdict) so those
 // assertions keep using plain JSON.parse unchanged.
 function parseFenced(stdout) {
-  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+  if (stdout.startsWith("⟦agentrecall:memory:")) {
     const firstNL = stdout.indexOf("\n");
     const lastNL = stdout.lastIndexOf("\n");
     if (firstNL !== -1 && lastNL > firstNL) {

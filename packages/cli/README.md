@@ -452,6 +452,7 @@ ar embeddings status
 | Network | Only `setup` downloads. Recall and rebuild run with remote fetch hard-disabled |
 | Degradation | Missing/corrupt index → keyword results with the reason in `semantic_leg` metadata — never an error |
 | Security | Index stores content-hash → vector only (no text); semantic hits pass the same trust/scope/fence stages |
+| Cloud seam | A dormant OpenAI embedding path exists for vector recall; it activates only with `AGENT_RECALL_CLOUD_EMBEDDINGS=1` **and** `OPENAI_API_KEY` set together — an ambient `OPENAI_API_KEY` alone never sends anything off-machine |
 
 </details>
 

@@ -379,7 +379,7 @@ export { routeCapture } from "./storage/capture-router.js";
 export type { CaptureRouteInput, CaptureRouteResult, CaptureRouteKind } from "./storage/capture-router.js";
 
 // Storage — content guard (cloud egress scrub)
-export { scrubForCloud, scrubPromptInjection, scrubSecretContent, scrubForExport, SecretScanError, fenceMemory } from "./storage/content-guard.js";
+export { scrubForCloud, scrubPromptInjection, scrubSecretContent, scrubPii, scrubForExport, SecretScanError, fenceMemory } from "./storage/content-guard.js";
 export type { SecretScanResult } from "./storage/content-guard.js";
 
 // Tools-logic — corrections export (vendor-neutral, fail-closed-scrubbed egress contract)
@@ -613,7 +613,7 @@ export type { RecallResultItem } from "./supabase/recall-backend.js";
 
 // Local vector backend (no-Supabase semantic recall)
 export { LocalVectorRecallBackend } from "./vector/local-vector-backend.js";
-export { embed } from "./vector/embedding.js";
+export { embed, cloudEmbeddingsEnabled } from "./vector/embedding.js";
 export { upsertVector, queryVector, vectorIndexPath } from "./vector/local-vector-store.js";
 export type { VectorItem } from "./vector/local-vector-store.js";
 
@@ -999,6 +999,19 @@ export type {
 // recallInsight() — see retrieval/scope.ts's own doc comment.
 export { applyScope } from "./retrieval/scope.js";
 
+// perf/lexical-index (2026-10-16) — the persistent lexical journal index
+// behind scoreJournalTier's fast path. Exported for tests (cache reset =
+// fresh-process simulation; index path = corruption/poisoning fixtures) and
+// for a future `ar` CLI doctor/rebuild surface.
+export {
+  loadJournalLexicalSnapshot,
+  lexicalJournalIndexPath,
+  lexicalIndexEnabled,
+  resetLexicalIndexCaches,
+  lexicalIndexCacheStats,
+} from "./retrieval/lexical-index.js";
+export type { LexicalJournalSnapshot, LexicalSnapshotDoc } from "./retrieval/lexical-index.js";
+
 // Wave 5a CONTRADICTION stage (2026-08-31) — exported so a test (or a later
 // caller) can exercise the pure comparator directly without going through
 // queryMemory() — see retrieval/contradiction.ts's own doc comment.
@@ -1009,6 +1022,11 @@ export type { ContradictionItem, ContradictionResult } from "./retrieval/contrad
 // (see that file's own header). Exported here too, alongside its sibling
 // contradiction-stage exports above, so a test can exercise it directly.
 export { extractHighPrecisionVersionTokens } from "./retrieval/contradiction.js";
+// 3.5.2 (2026-10-16, adversarial T5a) — the marker-less `NUMBER unit per
+// unit` rate-fact extractor that joined grammarConflict as a second branch.
+// Exported for direct unit-testing, the extractHighPrecisionVersionTokens
+// precedent above.
+export { extractRateFactTokens } from "./retrieval/contradiction.js";
 
 // fix7 (2026-09-12, plan-v2 #7) — OPT-IN local embeddings for the semantic-
 // paraphrase retrieval gap. Everything here is inert unless the
