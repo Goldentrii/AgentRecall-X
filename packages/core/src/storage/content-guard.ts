@@ -18,12 +18,16 @@
  *
  * scrubForCloud(content) = scrubSecretContent(scrubPromptInjection(content))
  *
- * PII BOUNDARY (3.5.2): PII (email / IBAN / card PAN — scrubPii) is redacted
- * ONLY on egress paths (scrubForExport, which the Supabase sync chokepoint and
- * `ar corrections export` run). scrubForCloud deliberately does NOT scrub PII:
- * it is also applied to LOCAL journal/palace writes (P0-a), and a user's own
- * emails/bank details in their own local journal are data they chose to
- * record, not a leak.
+ * EGRESS-ONLY LAYERS (3.5.2): PII (email / IBAN / card PAN — scrubPii) and
+ * the high-entropy token detector run ONLY on egress paths (scrubForExport,
+ * which the Supabase sync chokepoint and `ar corrections export` run).
+ * scrubForCloud deliberately runs NEITHER: it is also applied to LOCAL
+ * journal/palace writes (P0-a), and a user's own emails/bank details — and
+ * legitimate high-entropy identifiers (API response IDs, vector doc ids) —
+ * in their own local journal are data they chose to record, not a leak.
+ * Context-identified secret rules (prefixes, KEY=value, URL userinfo,
+ * Authorization headers, webhook URLs) DO run locally: their evidence is
+ * structural, and a raw credential on disk is the P0-a bug class.
  *
  * NARROWING (P0-a rework, 2026-08-18, owner-decided architecture): a prior
  * revision of scrubPromptInjection also stripped free-standing natural-
@@ -101,9 +105,11 @@ export function scrubPromptInjection(s: string): string {
  *   xoxp-…       — Slack user token
  *   -----BEGIN … KEY/CERTIFICATE— PEM markers
  */
-// NOTE: generic `Authorization: Bearer <jwt>` is intentionally NOT scanned here.
-// JWTs are short-lived and the pattern has a very high false-positive rate on
-// normal journal content. This is a documented scope decision, not a silent gap.
+// NOTE (updated 3.5.2 review fixes): `Authorization: Bearer/Basic <token>` IS
+// now scanned — via the context rules in SECRET_VALUE_PATTERNS below, which
+// apply the isSecretLikeValue false-positive filter (digit required, ISO
+// dates / pure numbers / placeholders skipped). The pre-3.5.2 blanket
+// exemption ("high false-positive rate") no longer holds with that filter.
 const SECRET_CONTENT_PATTERNS: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /\bAKIA[0-9A-Z]{16,}\b/g,          label: "AWS access key" },
   { re: /\bghp_[A-Za-z0-9_]{20,}\b/g,      label: "GitHub PAT (ghp_)" },
@@ -114,6 +120,8 @@ const SECRET_CONTENT_PATTERNS: ReadonlyArray<{ re: RegExp; label: string }> = [
   { re: /\bsk-[A-Za-z0-9\-_]{20,}\b/g,     label: "OpenAI/Anthropic secret key (sk-)" },
   { re: /\bxoxb-[A-Za-z0-9\-]{20,}\b/g,    label: "Slack bot token (xoxb-)" },
   { re: /\bxoxp-[A-Za-z0-9\-]{20,}\b/g,    label: "Slack user token (xoxp-)" },
+  { re: /\bxox[as]-[A-Za-z0-9\-]{10,}\b/g, label: "Slack app/legacy token (xoxa-/xoxs-)" },
+  { re: /\bglpat-[A-Za-z0-9\-_]{16,}\b/g,  label: "GitLab PAT (glpat-)" },
   { re: /\bnpm_[A-Za-z0-9]{20,}\b/g,        label: "npm registry token" },
   { re: /_authToken=[^\s"'\r\n]{8,}/g,       label: "npm _authToken (.npmrc)" },
   {
@@ -180,6 +188,24 @@ function isSecretLikeValue(value: string): boolean {
 
 const SECRET_VALUE_PATTERNS: ReadonlyArray<ContentPattern> = [
   {
+    // URL-embedded credentials: scheme://user:pass@host — the WHOLE userinfo
+    // is redacted (review 2026-10-16 HIGH-1: connection strings are among the
+    // most common real-world secrets in dev notes; IP hosts and passwords
+    // with email-illegal chars leaked before this rule). Scheme is any
+    // RFC-3986 scheme (postgres://, redis://, mongodb+srv://, …), bounded
+    // quantifiers keep it linear. Runs BEFORE the KV rule so the credential
+    // gets this label even inside KEY=value lines (KV exempts http(s) URLs).
+    // decide() skips an already-redacted userinfo so the fixpoint loop
+    // converges instead of counting the same placeholder every round.
+    re: /\b([a-z][a-z0-9+.-]{1,30}:\/\/)([^/\s:@]{1,64}):([^@\s/]{1,128})@/gi,
+    label: "URL-embedded credential",
+    decide: (_m, groups) => {
+      const user = groups[1] ?? "";
+      if (user.startsWith("[REDACTED")) return null; // placeholder — already scrubbed
+      return `${groups[0] ?? ""}[REDACTED:secret-value]@`;
+    },
+  },
+  {
     // KEY=value / "key": "value" / key: value where the key NAME contains a
     // secret-ish keyword. No leading \b: AUTH_TOKEN has no word boundary
     // before TOKEN, and a greedy identifier prefix in the regex would be
@@ -207,6 +233,41 @@ const SECRET_VALUE_PATTERNS: ReadonlyArray<ContentPattern> = [
     label: "AWS secret access key",
     decide: (_m, groups) => `${groups[0] ?? ""}[REDACTED:secret-value]`,
   },
+  {
+    // Authorization header context: `Authorization: Bearer <tok>` /
+    // `authorization = "Basic dXNlcjpwYXNz"` — scheme word optional (an
+    // opaque value straight after `authorization:` is still a credential).
+    // Review 2026-10-16 MEDIUM-2: opaque bearer tokens under the 32-char
+    // entropy floor (e.g. 12-char hex) previously leaked. Same
+    // isSecretLikeValue filter as the KV rule (digit required, ISO dates /
+    // pure numbers / placeholders skipped).
+    re: /(\bauthorization["']?[ \t]*[:=][ \t]*["']?(?:bearer|basic|token)?[ \t]*)([A-Za-z0-9\-._~+/=]{8,512})/gi,
+    label: "Authorization header credential",
+    decide: (_m, groups) => {
+      const value = groups[1] ?? "";
+      return isSecretLikeValue(value) ? `${groups[0] ?? ""}[REDACTED:secret-value]` : null;
+    },
+  },
+  {
+    // Bare `Bearer <tok>` outside an Authorization header (curl snippets,
+    // pasted request logs). "basic" is NOT matched bare — too common as an
+    // English word; it only counts under an authorization key (rule above).
+    // The digit filter keeps prose ("bearer of good news") out.
+    re: /(\bbearer[ \t]+)([A-Za-z0-9\-._~+/=]{8,512})/gi,
+    label: "bearer token",
+    decide: (_m, groups) => {
+      const value = groups[1] ?? "";
+      return isSecretLikeValue(value) ? `${groups[0] ?? ""}[REDACTED:secret-value]` : null;
+    },
+  },
+  {
+    // Slack incoming-webhook URLs are bearer credentials (review 2026-10-16
+    // MEDIUM-3): the KV rule exempts https URLs and `/` splits the entropy
+    // candidate, so the path leaked. Redact everything after /services/.
+    re: /(\bhooks\.slack\.com\/services\/)[A-Za-z0-9/_-]{8,}/g,
+    label: "Slack webhook URL",
+    decide: (_m, groups) => `${groups[0] ?? ""}[REDACTED:secret-value]`,
+  },
 ];
 
 /**
@@ -227,6 +288,10 @@ function shannonEntropy(s: string): number {
 /**
  * High-entropy token detector — the catch-all for secrets with no known
  * prefix and no key context.
+ *
+ * EGRESS-ONLY (review 2026-10-16 MEDIUM-4, owner decision): runs in
+ * scrubForExport, never in scrubForCloud — statistical detection must not
+ * destroy legitimate high-entropy identifiers in the user's LOCAL journal.
  *
  * POLICY (each row tested in content-guard-hardening.test.mjs):
  *   - candidate charset [A-Za-z0-9+=_-], length ≥ 32. `/` is deliberately
@@ -307,15 +372,24 @@ function applyContentPatterns(
   return { content: result, redactedCount, labels };
 }
 
-/** THROWING core — full secret scrub: prefixes, KV/AWS values, entropy. */
+/**
+ * THROWING core — context-identified secret scrub: prefixes + KV/AWS/URL/
+ * bearer/webhook values. Deliberately does NOT include the entropy detector:
+ * entropy is EGRESS-ONLY (review 2026-10-16 MEDIUM-4, owner decision) — a
+ * statistical detector applied to LOCAL writes would irreversibly destroy
+ * legitimate ≥32-char base64 identifiers (API response IDs, vector doc ids,
+ * data-URI fragments) in the user's own journal, the same class of
+ * user-chosen data the PII boundary protects. Context-identified rules
+ * (a secret-named key, a known prefix, a userinfo in a URL) stay local:
+ * their evidence is structural, not statistical.
+ */
 function applySecretScrub(content: string): SecretScanResult {
   const a = applyContentPatterns(content, SECRET_CONTENT_PATTERNS);
   const b = applyContentPatterns(a.content, SECRET_VALUE_PATTERNS);
-  const c = applyEntropyScrub(b.content);
   return {
-    content: c.content,
-    redactedCount: a.redactedCount + b.redactedCount + c.redactedCount,
-    labels: [...a.labels, ...b.labels, ...c.labels],
+    content: b.content,
+    redactedCount: a.redactedCount + b.redactedCount,
+    labels: [...a.labels, ...b.labels],
   };
 }
 
@@ -324,8 +398,10 @@ function applySecretScrub(content: string): SecretScanResult {
  * Returns the redacted content and a count of how many matches were replaced.
  *
  * 3.5.2: now also covers secret-named KEY=value assignments, AWS secret
- * access keys, and high-entropy tokens — see SECRET_VALUE_PATTERNS and
- * applyEntropyScrub for the documented false-positive policy.
+ * access keys, URL-embedded credentials, Authorization/bearer values, and
+ * Slack webhook URLs — see SECRET_VALUE_PATTERNS for the documented
+ * false-positive policy. The high-entropy detector is NOT here: it runs on
+ * egress only (scrubForExport) — see applySecretScrub's comment.
  */
 export function scrubSecretContent(content: string): SecretScanResult {
   try {
@@ -595,9 +671,13 @@ export function scrubForExport(content: string): string {
   let current = scrubPromptInjection(content);
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const secrets = applySecretScrub(current);
-    const pii = applyPiiScrub(secrets.content);
+    // Entropy detector runs HERE (egress) and not in applySecretScrub/
+    // scrubForCloud — see applySecretScrub's comment for the local-writes
+    // rationale (review 2026-10-16 MEDIUM-4, owner decision).
+    const entropy = applyEntropyScrub(secrets.content);
+    const pii = applyPiiScrub(entropy.content);
     current = pii.content;
-    if (secrets.redactedCount + pii.redactedCount === 0) {
+    if (secrets.redactedCount + entropy.redactedCount + pii.redactedCount === 0) {
       return current;
     }
   }
@@ -605,9 +685,12 @@ export function scrubForExport(content: string): string {
   // the one that finished the job, the content is clean — emit it. Otherwise
   // matches are being generated faster than we remove them: refuse to emit.
   const residue = applySecretScrub(current);
-  const residuePii = applyPiiScrub(residue.content);
-  if (residue.redactedCount + residuePii.redactedCount === 0) return current;
+  const residueEntropy = applyEntropyScrub(residue.content);
+  const residuePii = applyPiiScrub(residueEntropy.content);
+  if (residue.redactedCount + residueEntropy.redactedCount + residuePii.redactedCount === 0) {
+    return current;
+  }
   throw new SecretScanError(
-    residue.labels[0] ?? residuePii.labels[0] ?? "unresolved scrub fixpoint",
+    residue.labels[0] ?? residueEntropy.labels[0] ?? residuePii.labels[0] ?? "unresolved scrub fixpoint",
   );
 }

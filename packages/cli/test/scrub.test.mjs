@@ -227,41 +227,43 @@ describe("ar scrub — fail-CLOSED stdin scrub", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Fail-OPEN documented scope: Authorization: Bearer <jwt> is NOT scanned
+  // 3.5.2 policy reversal: Authorization: Bearer <token> IS scrubbed now
+  // (review 2026-10-16 MEDIUM-2 — the context rule carries a digit/shape
+  // false-positive filter, so the old blanket exemption no longer applies)
   // -------------------------------------------------------------------------
 
-  it("Authorization: Bearer header is NOT scrubbed (documented fail-open)", async () => {
-    // Per §4.6 / content-guard.ts comment: generic JWTs are not scanned because
-    // they are short-lived and the pattern has high false-positive rate on normal
-    // journal content. This test asserts the documented behaviour.
+  it("Authorization: Bearer header IS scrubbed (3.5.2 — exemption removed)", async () => {
     const jwt = "eyJhbGciOiJSUzI1NiJ9." + "a".repeat(200) + "." + "b".repeat(40);
     const input = `Authorization: Bearer ${jwt}`;
     const { stdout, exitCode } = await runScrub(input);
     assert.equal(exitCode, 0);
-    // The JWT pattern is NOT scanned — content passes through unchanged.
-    assert.ok(stdout.includes(jwt), "JWT in Authorization header passes through (documented fail-open)");
+    assert.ok(!stdout.includes(jwt), "Bearer value must be redacted");
+    assert.ok(stdout.includes("[REDACTED:secret-value]"), "typed placeholder expected");
+    assert.ok(stdout.includes("Authorization: Bearer"), "header context survives");
+  });
+
+  it("--check flags a Bearer header as scrubbable (exit 1)", async () => {
+    const { exitCode } = await runScrub("Authorization: Bearer d4f8a2b9c1e3", "--check");
+    assert.equal(exitCode, 1);
   });
 
   // -------------------------------------------------------------------------
-  // --help renders the fail-open warning prominently (security review LOW)
+  // --help reflects the 3.5.2 policy: Bearer exemption removed, new classes listed
   // -------------------------------------------------------------------------
 
-  it("--help documents the Bearer-token fail-open in BOTH default and --check descriptions", async () => {
-    // Security review finding: an operator piping a curl command with a Bearer
-    // token sees exit 0 and assumes clean. The warning must live in the help text
-    // itself — not just code comments — and be mirrored into the --check section.
+  it("--help no longer advertises the Bearer fail-open and documents the 3.5.2 classes", async () => {
     const { stdout } = await execFileAsync("node", [CLI, "--help"]);
-    const warning = "Fail-OPEN (NOT scanned): Authorization: Bearer <token> headers — do not rely on ar scrub for JWT redaction.";
-    const occurrences = stdout.split(warning).length - 1;
-    assert.equal(
-      occurrences,
-      2,
-      `the Bearer fail-open warning must appear exactly twice (default mode + --check mode), found ${occurrences}`
-    );
-    // The --check mirror also spells out the exit-0 trap explicitly.
     assert.ok(
-      stdout.includes("A --check exit 0 does NOT clear Bearer tokens."),
-      "--check section must state that exit 0 does not clear Bearer tokens"
+      !stdout.includes("Fail-OPEN (NOT scanned): Authorization: Bearer"),
+      "the pre-3.5.2 Bearer fail-open warning must be gone from --help"
+    );
+    assert.ok(
+      stdout.includes('the pre-3.5.2 "Bearer not scanned" exemption is REMOVED'),
+      "--help must state the Bearer exemption removal explicitly"
+    );
+    assert.ok(
+      stdout.includes("URL-embedded credentials"),
+      "--help must list the URL-credential class"
     );
   });
 });
