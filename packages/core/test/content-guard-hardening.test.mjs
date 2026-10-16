@@ -12,12 +12,14 @@
  *      card PAN (IIN prefix + Luhn validated). Typed placeholders.
  *
  * BOUNDARY (the load-bearing design decision of this change):
- *   - Secret values go into scrubForCloud → applied to LOCAL writes too
- *     (P0-a class: local journal content is surfaced cross-session and pasted
- *     via handoff, so raw secrets must never sit on disk).
- *   - PII is EGRESS-ONLY (scrubForExport / Supabase sync path). A user's own
- *     local journal legitimately contains their emails/contacts; redacting
- *     those locally would destroy user data. scrubForCloud must NOT touch PII.
+ *   - Context-identified secret values (KV, URL userinfo, Authorization/
+ *     bearer, webhooks, prefixes) go into scrubForCloud → applied to LOCAL
+ *     writes too (P0-a class: local journal content is surfaced cross-session
+ *     and pasted via handoff, so raw secrets must never sit on disk).
+ *   - PII AND the statistical entropy detector are EGRESS-ONLY
+ *     (scrubForExport / Supabase sync path). A user's own local journal
+ *     legitimately contains their emails/contacts and high-entropy
+ *     identifiers; redacting those locally would destroy user data.
  *
  * FALSE-POSITIVE POLICY (documented, each row tested below):
  *   - KV values skipped when: < 8 chars; no digit at all (letter-only
@@ -44,6 +46,9 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 
 let guard;
 before(async () => {
@@ -110,6 +115,78 @@ const SECRET_POSITIVES = [
     placeholder: "[REDACTED:secret-value]",
   },
   {
+    name: "URL-embedded credential, IP host (review HIGH-1)",
+    input: "db at https://root:T0pSecr3t@10.20.30.40/admin failed",
+    gone: "root:T0pSecr3t",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "@10.20.30.40",
+  },
+  {
+    name: "URL-embedded credential, redis host:port",
+    input: "cache redis://default:MyRedisPw1@127.0.0.1:6379 is up",
+    gone: "MyRedisPw1",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "@127.0.0.1:6379",
+  },
+  {
+    name: "URL-embedded credential, symbol password + compound scheme",
+    input: "mongodb+srv://svc:P4ssw0rd!x@cluster0.abc.mongodb.net/db",
+    gone: "P4ssw0rd!x",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "@cluster0.abc.mongodb.net",
+  },
+  {
+    name: "URL-embedded credential inside a KV line (KV exempts https URLs)",
+    input: "API_TOKEN=https://user:Pa55word@internal:8443/x",
+    gone: "Pa55word",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "@internal:8443",
+  },
+  {
+    name: "Authorization: Bearer with short opaque token (review MEDIUM-2)",
+    input: "sent Authorization: Bearer d4f8a2b9c1e3 header",
+    gone: "d4f8a2b9c1e3",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "Authorization: Bearer",
+  },
+  {
+    name: "authorization = Basic <base64>",
+    input: "authorization = 'Basic dXNlcjpwYXNzd29yZDE='",
+    gone: "dXNlcjpwYXNzd29yZDE=",
+    placeholder: "[REDACTED:secret-value]",
+  },
+  {
+    name: "bare bearer token (curl snippet)",
+    input: "curl -H bearer Xy12Ab34Cd56 /api",
+    gone: "Xy12Ab34Cd56",
+    placeholder: "[REDACTED:secret-value]",
+  },
+  {
+    name: "Slack webhook URL (review MEDIUM-3)",
+    input: "notify https://hooks.slack.com/services/T00000000/B00000000/XXXXxxxx1234 on deploy",
+    gone: "T00000000/B00000000/XXXXxxxx1234",
+    placeholder: "[REDACTED:secret-value]",
+    keeps: "hooks.slack.com/services/",
+  },
+  {
+    name: "GitLab PAT prefix (glpat-)",
+    input: "ci uses glpat-" + "xQ3vR7mK9pL2nW4jT8bZ for pulls",
+    gone: "glpat-" + "xQ3vR7mK9pL2nW4jT8bZ",
+    placeholder: "[REDACTED-SECRET]",
+  },
+  {
+    name: "Slack legacy token prefix (xoxs-)",
+    input: "old xoxs-1234567890-abcdefghij token",
+    gone: "xoxs-1234567890-abcdefghij",
+    placeholder: "[REDACTED-SECRET]",
+  },
+];
+
+// Redacted ONLY on egress (scrubForExport) — the entropy detector must not
+// touch local writes (review MEDIUM-4, owner decision: a legit ≥32-char
+// base64 identifier in the user's own journal must survive at rest).
+const EGRESS_SECRET_POSITIVES = [
+  {
     name: "high-entropy standalone token (32 distinct base62 chars)",
     input: "rotated to aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY overnight",
     gone: "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY",
@@ -139,6 +216,18 @@ const SECRET_NEGATIVES = [
   { name: "kebab-case slug with date", input: "branch feature-flag-rollout-2026-10-16-variant deployed" },
   { name: "version string", input: '"version": "3.5.1-beta.2+build.998877"' },
   { name: "13-digit ms timestamp", input: "at 1760612345678 the job ran" },
+  { name: "URL with port, no credentials", input: "see https://example.com:8443/path for details" },
+  { name: "URL path with colon segment (no userinfo)", input: "read https://en.wikipedia.org/wiki/Foo:Bar today" },
+  // localhost (no dot) keeps this out of the email rule too, so the fixture
+  // also survives the kitchen-sink's scrubForExport pass — the point here is
+  // only that user@host WITHOUT a scheme/password never trips the URL rule.
+  { name: "ssh-style user@host (no scheme, no password)", input: "clone via git@localhost as usual" },
+  { name: "bearer as English word", input: "the bearer of good news arrived early" },
+  { name: "bearer with ISO-date value", input: "token bearer 2026-10-16 rotation planned" },
+  { name: "bare 'basic' word with digits (only authorization-context counts)", input: "basic 12345678 reps done" },
+  { name: "already-redacted Authorization header", input: "Authorization: Bearer [REDACTED:secret-value]" },
+  { name: "already-redacted URL credential", input: "db https://[REDACTED:secret-value]@10.20.30.40/x" },
+  { name: "slack domain without /services/ path", input: "see hooks.slack.com docs for setup" },
 ];
 
 describe("scrubForCloud: secret-value hardening (KV, AWS, entropy)", () => {
@@ -162,6 +251,29 @@ describe("scrubForCloud: secret-value hardening (KV, AWS, entropy)", () => {
     assert.ok(!out.includes("AKIA"), "AKIA redacted");
     assert.ok(out.includes("[REDACTED-SECRET]"), "legacy placeholder preserved");
   });
+
+  it("BOUNDARY: entropy detector is egress-only — scrubForCloud keeps local base64 identifiers", () => {
+    // Review MEDIUM-4 (owner decision): a legit high-entropy identifier in
+    // the user's own journal must survive the LOCAL write scrub...
+    for (const t of EGRESS_SECRET_POSITIVES) {
+      assert.equal(guard.scrubForCloud(t.input), t.input, `scrubForCloud must keep: ${t.name}`);
+    }
+  });
+
+  for (const t of EGRESS_SECRET_POSITIVES) {
+    it(`redacts on egress only: ${t.name}`, () => {
+      // ...while the SAME content is redacted the moment it heads off-machine.
+      const out = guard.scrubForExport(t.input);
+      assert.ok(!out.includes(t.gone), `raw token must be gone on egress\n  out: ${out}`);
+      assert.ok(out.includes(t.placeholder), `typed placeholder expected\n  out: ${out}`);
+    });
+  }
+
+  for (const t of SECRET_NEGATIVES) {
+    it(`egress scrub also leaves alone: ${t.name}`, () => {
+      assert.equal(guard.scrubForExport(t.input), t.input);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -224,7 +336,9 @@ describe("scrubPii / scrubForExport: PII redaction with checksum gates", () => {
 // ---------------------------------------------------------------------------
 
 describe("idempotency: placeholders never re-match any detector", () => {
-  const ALL_POSITIVE_INPUTS = [...SECRET_POSITIVES, ...PII_POSITIVES].map((t) => t.input);
+  const ALL_POSITIVE_INPUTS = [...SECRET_POSITIVES, ...EGRESS_SECRET_POSITIVES, ...PII_POSITIVES].map(
+    (t) => t.input,
+  );
 
   it("scrubForExport(scrubForExport(x)) === scrubForExport(x), never throws", () => {
     for (const input of ALL_POSITIVE_INPUTS) {
@@ -244,12 +358,13 @@ describe("idempotency: placeholders never re-match any detector", () => {
   it("mixed kitchen-sink document survives export scrub without throwing", () => {
     const doc = [
       ...SECRET_POSITIVES.map((t) => t.input),
+      ...EGRESS_SECRET_POSITIVES.map((t) => t.input),
       ...PII_POSITIVES.map((t) => t.input),
       ...SECRET_NEGATIVES.map((t) => t.input),
       ...PII_NEGATIVES.map((t) => t.input),
     ].join("\n");
     const out = guard.scrubForExport(doc);
-    for (const t of [...SECRET_POSITIVES, ...PII_POSITIVES]) {
+    for (const t of [...SECRET_POSITIVES, ...EGRESS_SECRET_POSITIVES, ...PII_POSITIVES]) {
       assert.ok(!out.includes(t.gone), `kitchen-sink: ${t.name} must be gone`);
     }
     // Negatives survive verbatim inside the larger doc too.
@@ -274,17 +389,62 @@ describe("regex safety: no catastrophic backtracking", () => {
     { name: "email local-part bait (no domain)", input: ("a".repeat(63) + "@").repeat(1560) },
     { name: "PAN-dense input (5000 Luhn checks)", input: "4111 1111 1111 1111 ".repeat(5000) },
     { name: "IBAN-shaped caps soup", input: "DE89 ABCD 1234 ".repeat(6700) },
+    { name: "bearer keyword flood (values too short)", input: "bearer ".repeat(14_000) },
+    { name: "URL-credential flood (8K redactions/pass)", input: "https://u:p@".repeat(8_200) },
+    { name: "authorization keyword flood (digit-free values)", input: "authorization:".repeat(7_000) },
   ];
 
+  // Budget: generous 250 ms absolute ceiling (review LOW-5: the former hard
+  // 50 ms budget measured 50.1 ms under full-suite load and flaked, while the
+  // same inputs run ~16 ms standalone — the ceiling guards against the
+  // CLASS regression, quadratic blowup, which lands in SECONDS, not tens of
+  // ms; CI scheduling noise must not fail the suite). Best-of-3 to shed
+  // first-run JIT/GC noise.
+  const BUDGET_MS = 250;
   for (const t of ADVERSARIAL) {
-    it(`${t.name} (${Math.round(t.input.length / 1024)} KB) scrubs in < 50 ms`, () => {
+    it(`${t.name} (${Math.round(t.input.length / 1024)} KB) scrubs in < ${BUDGET_MS} ms`, () => {
       let best = Infinity;
       for (let i = 0; i < 3; i++) {
         const t0 = performance.now();
         guard.scrubForExport(t.input);
         best = Math.min(best, performance.now() - t0);
       }
-      assert.ok(best < 50, `took ${best.toFixed(1)} ms (best of 3)`);
+      assert.ok(best < BUDGET_MS, `took ${best.toFixed(1)} ms (best of 3)`);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// E. logSyncError — best-effort, never throws (review LOW-3)
+// ---------------------------------------------------------------------------
+
+describe("logSyncError: best-effort logging never escapes doSync's catch", () => {
+  let sync;
+  before(async () => {
+    sync = await import("../dist/supabase/sync.js");
+  });
+
+  it("writes the line when the root is writable", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-logguard-ok-"));
+    try {
+      sync.logSyncError("scrub refused: test-entry", dir);
+      const logged = fs.readFileSync(path.join(dir, "sync-errors.log"), "utf-8");
+      assert.ok(logged.includes("scrub refused: test-entry"));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT throw when the root path is a file (every fs op inside fails)", () => {
+    // scrubForExport throwing is an EXPECTED path into doSync's catch now; if
+    // logSyncError threw here, the fire-and-forget `void doSync(...)` promise
+    // would reject unhandled and crash the process on Node >= 15.
+    const fileAsRoot = path.join(os.tmpdir(), `ar-logguard-file-${Date.now()}`);
+    fs.writeFileSync(fileAsRoot, "not a directory", "utf-8");
+    try {
+      assert.doesNotThrow(() => sync.logSyncError("boom", fileAsRoot));
+    } finally {
+      fs.rmSync(fileAsRoot, { force: true });
+    }
+  });
 });

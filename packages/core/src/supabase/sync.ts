@@ -105,19 +105,29 @@ export function logSyncError(message: string, rootAtCall?: string): void {
   // review MEDIUM-2 tightened this from doSync entry, which still left a
   // one-check-phase same-tick window) and passed here; when omitted the old
   // resolve-at-log-time behavior is unchanged.
-  const logPath = path.join(rootAtCall ?? getRoot(), "sync-errors.log");
-  const timestamp = new Date().toISOString();
-  const line = `${timestamp} ${message}\n`;
-  fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  fs.appendFileSync(logPath, line, "utf-8");
-  // Cap at 500 lines
-  const content = fs.readFileSync(logPath, "utf-8");
-  const lines = content.split("\n").filter(Boolean);
-  if (lines.length > 500) {
-    const trimmed = lines.slice(-500).join("\n") + "\n";
-    const tmpPath = logPath + ".tmp";
-    fs.writeFileSync(tmpPath, trimmed, "utf-8");
-    fs.renameSync(tmpPath, logPath);
+  // Best-effort logging — NEVER throws (3.5.2 review LOW-3): this function
+  // runs inside the catch of fire-and-forget `void doSync(...)` calls, and
+  // scrubForExport throwing is now an EXPECTED path into that catch. If the
+  // log write itself fails (root deleted mid-flight, disk full, read-only),
+  // a throw here would escape the catch → unhandled rejection → process
+  // crash on Node ≥ 15. Losing a log line is the acceptable failure mode.
+  try {
+    const logPath = path.join(rootAtCall ?? getRoot(), "sync-errors.log");
+    const timestamp = new Date().toISOString();
+    const line = `${timestamp} ${message}\n`;
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(logPath, line, "utf-8");
+    // Cap at 500 lines
+    const content = fs.readFileSync(logPath, "utf-8");
+    const lines = content.split("\n").filter(Boolean);
+    if (lines.length > 500) {
+      const trimmed = lines.slice(-500).join("\n") + "\n";
+      const tmpPath = logPath + ".tmp";
+      fs.writeFileSync(tmpPath, trimmed, "utf-8");
+      fs.renameSync(tmpPath, logPath);
+    }
+  } catch {
+    // swallow — see header comment
   }
 }
 
