@@ -351,10 +351,17 @@ export interface QueryMemoryItem {
    * with no detected conflict.
    *
    * ANNOTATE-ONLY (pre-ship red-team fix, STEP 4a, 2026-09-01): a
-   * `supersededBy` item's `score`/rank is NEVER changed by this stage — see
-   * `applyContradictionStage`'s own doc comment for why the original
-   * down-rank was removed. It is, and always was, NEVER removed from
-   * `items`.
+   * `supersededBy` item's `score`/rank is NEVER changed by this per-tier
+   * stage — see `applyContradictionStage`'s own doc comment for why the
+   * original down-rank was removed. It is, and always was, NEVER removed
+   * from `items`.
+   *
+   * 3.5.2 (2026-10-16): POST-FUSION, this annotation now has one bounded
+   * ranking consequence — `applySupersessionCap` caps the fused score just
+   * below the superseder's when BOTH sides are in the fused list, so a
+   * confidently-superseded fact never outranks its replacement (adversarial
+   * T5a). See that function's doc block for why this is not the removed
+   * STEP-4a penalty class.
    */
   supersededBy?: string;
   /**
@@ -467,9 +474,12 @@ export interface QueryMemoryInput {
 export interface QueryMemoryResult {
   /** Fused + ranked (RRF, two-stage canonical fusion; `score` is the raw
    *  fused RRF sum — since fix4b, 2026-09-12, NOTHING multiplies it by
-   *  default and no post-fusion freshness signal exists; exact ties resolve
-   *  by the authority/insertion order. Exception: the legacy `freshnessBias`
-   *  opt-in, see QueryMemoryInput) — UNCUT, UNFENCED. Caller applies its own
+   *  default and no GENERAL post-fusion freshness signal exists; exact ties
+   *  resolve by the authority/insertion order. Two exceptions: the legacy
+   *  `freshnessBias` opt-in (see QueryMemoryInput), and — 3.5.2 — the
+   *  bounded supersession cap, which lowers a `supersededBy`-annotated
+   *  item's score just below its in-list superseder's (see
+   *  applySupersessionCap)) — UNCUT, UNFENCED. Caller applies its own
    *  limit/labeling/feedback adjustments. */
   items: QueryMemoryItem[];
   /** Raw pre-fusion candidate counts per competing tier (Fix 4/5 semantics —
@@ -1666,6 +1676,74 @@ function fuseCanonical(rrfMap: Map<string, RRFEntry>): Map<string, RRFEntry> {
 // and is documented in the fix4b report as a future option — deliberately
 // NOT shipped: the brief sanctioned exactly two designs.
 
+/**
+ * 3.5.2 BOUNDED SUPERSESSION CAP (2026-10-16, adversarial T5a,
+ * reports/2026-10-15-rigorous-eval.md Finding 2 / §7 item 2).
+ *
+ * THE GAP: `applyContradictionStage` is per-tier and annotate-only, and the
+ * semantic leg's votes carry no recency signal — so under the hybrid opt-in
+ * a confidently-superseded fact ("rate limit 100 req/min", 2026-08-01)
+ * deterministically outranked its own replacement ("500 req/min",
+ * 2026-10-12). A stale-first answer is the most dangerous retrieval failure
+ * mode: confidently wrong, invisible to the caller.
+ *
+ * THE FIX: after fusion, an item carrying `supersededBy` whose superseder is
+ * ALSO present in the fused list has its fused score capped at
+ * `superseder.score × SUPERSEDED_RANK_CAP` — i.e. a superseded fact can
+ * never rank above the sibling that superseded it. Chains (A←B←C) converge
+ * via the fixed-point loop: supersession edges always point stale→newer
+ * (detectContradictions resolves direction from DATES, which totally order),
+ * so the edge graph is acyclic and each pass only ever lowers scores —
+ * convergence in ≤ items.length passes, deterministic.
+ *
+ * WHY THIS IS NOT fix4b's REMOVED HOT-WINDOW (nor STEP 4a's removed
+ * CONTRADICTION_PENALTY) COMING BACK — the three defects that killed those
+ * are each structurally absent here:
+ *   1. NOT a global freshness signal: only items with a grammar-detected,
+ *      date-unambiguous `supersededBy` annotation are touched (the
+ *      high-precision version grammar + the 3.5.2 rate-fact grammar — see
+ *      ./contradiction.ts). An undated, un-conflicted, or ambiguously-tied
+ *      item is never moved; there is no time-window bucketing at all.
+ *   2. BOUNDED AND RELATIVE: the cap is relative to the ONE superseding
+ *      sibling (≈ one adjacent RRF rank below it — 1/62 ÷ 1/61 ≈ 0.984),
+ *      never a flat multiplier that can vault items across relevance bands.
+ *      `Math.min` only ever LOWERS the stale side; the superseder and every
+ *      unrelated item keep their exact fused scores.
+ *   3. FAIL-SAFE ON FALSE POSITIVES: a wrong grammar match at worst swaps a
+ *      near-duplicate pair's relative order (both still returned, both
+ *      annotated) — not the old ×0.5 wholesale inversion. And on a missing/
+ *      unparseable/equal date, `supersededBy` is never set in the first
+ *      place (detectContradictions' never-guess invariant), so this cap
+ *      cannot fire from no signal.
+ *
+ * Mutates `fused` items in place (they are already this function's own
+ * spread copies — see the fused-array construction in queryMemory below);
+ * the caller re-sorts immediately after. Skips silently when the superseder
+ * is not in the fused list (e.g. filtered by `since`): the cap is relative
+ * by design, and with no reference score there is nothing bounded to do.
+ */
+const SUPERSEDED_RANK_CAP = 0.98;
+
+function applySupersessionCap(fused: QueryMemoryItem[]): void {
+  if (fused.length < 2) return;
+  const byId = new Map<string, QueryMemoryItem>();
+  for (const it of fused) byId.set(it.id, it);
+  for (let pass = 0; pass < fused.length; pass++) {
+    let changed = false;
+    for (const it of fused) {
+      if (!it.supersededBy) continue;
+      const superseder = byId.get(it.supersededBy);
+      if (!superseder) continue;
+      const capped = superseder.score * SUPERSEDED_RANK_CAP;
+      if (it.score > capped) {
+        it.score = capped;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+}
+
 /** LEGACY multiplicative boost — the exact pre-fix4b `applyHotWindowBoost`
  *  body (all defects included: date-only strings parse to 00:00 UTC so the
  *  bucket depends on wall-clock time-of-day — audit Finding 2; palace
@@ -1873,10 +1951,19 @@ export async function queryMemory(input: QueryMemoryInput): Promise<QueryMemoryR
     const alsoFoundIn = [...sources].filter((s) => s !== item.source);
     fused.push({ ...item, score, ...(alsoFoundIn.length > 0 ? { alsoFoundIn } : {}) });
   }
+  // 3.5.2 (2026-10-16): bounded supersession cap — a grammar-detected,
+  // date-unambiguous superseded fact never outranks its own superseder.
+  // Runs BEFORE the sort (order-independent: pure score caps + fixed point).
+  // This is the one deliberate, narrow exception to fix4b's "no post-fusion
+  // freshness signal" — see applySupersessionCap's doc block for why it is
+  // not the removed hot-window/CONTRADICTION_PENALTY class.
+  applySupersessionCap(fused);
   // fix4b (2026-09-12): the sort is stable, so exact fused-score ties
   // resolve purely by insertion order — the fix4 authority tie-break
-  // (corrections first). No post-fusion freshness signal touches default
-  // ranking; see the fallback doc block above applyLegacyHotWindowBoost.
+  // (corrections first). No GENERAL post-fusion freshness signal touches
+  // default ranking (see the fallback doc block above
+  // applyLegacyHotWindowBoost); the 3.5.2 supersession cap above is
+  // supersession-gated, not time-window-gated.
   fused.sort((a, b) => b.score - a.score);
 
   return {

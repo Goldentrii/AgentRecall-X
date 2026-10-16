@@ -360,12 +360,28 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
   // Pre-STEP-4 this made the stale item rank ABOVE current on raw score
   // alone, which the (now-removed) down-rank+re-sort mechanism corrected;
   // post-STEP-4 this SAME "stale ranks above current" natural order is
-  // exactly what E1 now asserts MUST be preserved (annotate-only proof) —
+  // exactly what E1 asserted MUST be preserved (annotate-only proof) —
   // the fixture shape didn't need to change, only what E1 asserts about it.
-  describe("PART E — CONTRADICTION stage (Wave 5a; ANNOTATE-ONLY as of STEP 4a): annotate, never drop, never re-rank", () => {
+  //
+  // ── 3.5.2 UPDATE (2026-10-16, adversarial T5a, reports/2026-10-15-
+  // rigorous-eval.md §7 item 2) ── The per-tier stage REMAINS annotate-only
+  // (no score change, no re-sort inside `applyContradictionStage` — E2/E3/
+  // E11/E12/E13's false-positive-exclusion proofs are untouched), but a NEW
+  // post-fusion stage (`query-memory.ts`'s bounded supersession cap) now
+  // caps a `supersededBy`-annotated item's FUSED score just below its
+  // superseder's. This is NOT the STEP-4a-removed CONTRADICTION_PENALTY
+  // coming back: that was a global ×0.5 on a loose grammar (false positives
+  // inverted unrelated ranks); this is relative to the one superseding
+  // sibling, fires only when the date order was unambiguous (never on a
+  // tie), and the grammar is now high-precision (version markers + the
+  // 3.5.2 `NUMBER unit per unit` rate frame). E1 below therefore asserts
+  // the stale side ranks BELOW current despite its stronger exactness —
+  // see packages/core/test/freshness-supersession.test.mjs for the cap's
+  // own dedicated suite (rate grammar, error paths, relative-bound proof).
+  describe("PART E — CONTRADICTION stage (Wave 5a; per-tier ANNOTATE-ONLY + 3.5.2 bounded post-fusion supersession cap)", () => {
     const PROJECT = "qmp-contradiction-demo";
 
-    it("E1 — L1-C1-style version contradiction: the older/stale mention ('propose 3.5.0') survives, is annotated, and its NATURAL rank (unchanged by the stage) is preserved", async () => {
+    it("E1 — L1-C1-style version contradiction: the older/stale mention ('propose 3.5.0') survives, is annotated, and (3.5.2) is score-capped strictly below its superseder", async () => {
       const jdir = core.journalDir(PROJECT);
       fs.mkdirSync(jdir, { recursive: true });
       const TERM = "PIPE5A_VERSION_TERM";
@@ -394,20 +410,23 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
         `stale.conflictsWith must include the current sibling's id; got ${JSON.stringify(stale.conflictsWith)}`,
       );
 
-      // ANNOTATE-ONLY (STEP 4a): the stale item's score/rank must be
-      // COMPLETELY UNCHANGED by this stage — it naturally ranks ABOVE
+      // 3.5.2 BOUNDED SUPERSESSION CAP: the stale item naturally ranks ABOVE
       // current here (stronger exactness match, per this fixture's own
-      // construction), and the contradiction stage must NOT flip that,
-      // unlike the pre-STEP-4 down-rank+re-sort mechanism this test used to
-      // verify. (E3 below independently proves the SAME "natural,
-      // exactness-driven order, unperturbed" invariant for a NON-conflicting
-      // pair — this test is the conflicting-pair sibling proof.)
-      assert.ok(stale.score > current.score, "sanity: this fixture's own stale side must score higher on raw exactness alone — otherwise this test cannot discriminate annotate-only from down-rank");
+      // construction — exactly why this fixture can discriminate the cap
+      // from mere recency), and the post-fusion cap must flip that: a
+      // confidently-resolved superseded fact never outranks its replacement.
+      // (E3 below still proves the "natural, exactness-driven order,
+      // unperturbed" invariant for a NON-conflicting pair — only annotated
+      // supersessions are ever touched.)
       const staleIdx = result.items.indexOf(stale);
       const currentIdx = result.items.indexOf(current);
       assert.ok(
-        staleIdx < currentIdx,
-        `ANNOTATE-ONLY: stale (3.5.0, stronger exactness match) must keep ranking ABOVE current (3.4.41) — the contradiction stage must never reorder; got order ${JSON.stringify(result.items.map((i) => i.excerpt))}`,
+        stale.score < current.score,
+        `3.5.2 cap: stale fused score must sit strictly below the superseder's; got stale=${stale.score}, current=${current.score}`,
+      );
+      assert.ok(
+        currentIdx < staleIdx,
+        `3.5.2 cap: current (3.4.41, newer date) must rank ABOVE stale (3.5.0) despite stale's stronger exactness; got order ${JSON.stringify(result.items.map((i) => i.excerpt))}`,
       );
     });
 
