@@ -1,0 +1,210 @@
+[
+  {
+    "test": "T1 paraphrase (no shared keywords)",
+    "leg": "keyword",
+    "expected": "Stripe decision in top-5",
+    "actual": "miss (top1: none)",
+    "pass": true,
+    "note": "expected miss for pure lexical leg"
+  },
+  {
+    "test": "T1 paraphrase (no shared keywords)",
+    "leg": "hybrid",
+    "expected": "Stripe decision in top-5",
+    "actual": "hit rank=1",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T2 zh query vs en memory",
+    "leg": "keyword",
+    "expected": "approval rule in top-5",
+    "actual": "miss (top1: none)",
+    "pass": true,
+    "note": "expected miss (no shared tokens)"
+  },
+  {
+    "test": "T2 zh query vs en memory",
+    "leg": "hybrid",
+    "expected": "approval rule in top-5",
+    "actual": "hit rank=1",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T3 en query vs zh memory",
+    "leg": "keyword",
+    "expected": "PostgreSQL decision in top-5",
+    "actual": "miss (top1: palace/blockers: blockers/README — > Current and resolved blockers)",
+    "pass": true,
+    "note": "expected miss (no shared tokens)"
+  },
+  {
+    "test": "T3 en query vs zh memory",
+    "leg": "hybrid",
+    "expected": "PostgreSQL decision in top-5",
+    "actual": "hit rank=1",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T4 prohibition outranks positive-usage decoy",
+    "leg": "keyword",
+    "expected": "correction rule above decoy",
+    "actual": "rule rank=1, decoy rank=5",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T4 prohibition outranks positive-usage decoy",
+    "leg": "hybrid",
+    "expected": "correction rule above decoy",
+    "actual": "rule rank=1, decoy rank=2",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T5a recency: newest decision ranks first (no filter)",
+    "leg": "keyword",
+    "expected": "500-limit entry above 100-limit",
+    "actual": "first rate-limit hit: \"API rate limit raised to 500 requests per minute per key; the old 100 \"",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T5b since:7d filters the stale journal entry",
+    "leg": "keyword",
+    "expected": "only 2026-10-12 journal entry",
+    "actual": "new present=true, old leaked=false",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T5a recency: newest decision ranks first (no filter)",
+    "leg": "hybrid",
+    "expected": "500-limit entry above 100-limit",
+    "actual": "first rate-limit hit: \"API rate limit set to 100 requests per minute per key.\"",
+    "pass": false,
+    "note": ""
+  },
+  {
+    "test": "T5b since:7d filters the stale journal entry",
+    "leg": "hybrid",
+    "expected": "only 2026-10-12 journal entry",
+    "actual": "new present=true, old leaked=false",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T6 version conflict: stale annotated or outranked",
+    "leg": "keyword",
+    "expected": "stale v18 entry annotated supersededBy/conflictsWith, current v20 above",
+    "actual": "current rank=1, stale rank=2, stale.supersededBy=eyquo2, stale.conflictsWith=[\"eyquo2\"]",
+    "pass": true,
+    "note": "annotation present"
+  },
+  {
+    "test": "T6 version conflict: stale annotated or outranked",
+    "leg": "hybrid",
+    "expected": "stale v18 entry annotated supersededBy/conflictsWith, current v20 above",
+    "actual": "current rank=1, stale rank=2, stale.supersededBy=eyquo2, stale.conflictsWith=[\"eyquo2\"]",
+    "pass": true,
+    "note": "annotation present"
+  },
+  {
+    "test": "T8 true decision survives 50 near-duplicate distractors",
+    "leg": "keyword",
+    "expected": "palace decision in top-5",
+    "actual": "hit rank=2",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T8 true decision survives 50 near-duplicate distractors",
+    "leg": "hybrid",
+    "expected": "palace decision in top-5",
+    "actual": "hit rank=2",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T9a injection phrase returned by core verbatim",
+    "leg": "keyword",
+    "expected": "verbatim (no read-path NL scrubbing since v3.4.44 — fence is the defense)",
+    "actual": "retrieved=true, injection-in-excerpt=true",
+    "pass": true,
+    "note": "verbatim as designed — fence must hold"
+  },
+  {
+    "test": "T9b forged fence-close neutralized at MCP boundary",
+    "leg": "keyword",
+    "expected": "0 forged closes inside fence, exactly 1 real close",
+    "actual": "forged-inside=false, total closes=1",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T9a injection phrase returned by core verbatim",
+    "leg": "hybrid",
+    "expected": "verbatim (no read-path NL scrubbing since v3.4.44 — fence is the defense)",
+    "actual": "retrieved=true, injection-in-excerpt=true",
+    "pass": true,
+    "note": "verbatim as designed — fence must hold"
+  },
+  {
+    "test": "T9b forged fence-close neutralized at MCP boundary",
+    "leg": "hybrid",
+    "expected": "0 forged closes inside fence, exactly 1 real close",
+    "actual": "forged-inside=false, total closes=1",
+    "pass": true,
+    "note": ""
+  },
+  {
+    "test": "T10a PII/secrets returned verbatim on local recall",
+    "leg": "keyword",
+    "expected": "local read path does no redaction (document, don't assume)",
+    "actual": "{\"email\":true,\"card\":true,\"iban\":true,\"awsSecret\":false,\"awsKeyId\":false}",
+    "pass": true,
+    "note": "finding, not pass/fail: local-trust design"
+  },
+  {
+    "test": "T10b scrubForCloud coverage (cloud-sync path)",
+    "leg": "keyword",
+    "expected": "secrets scrubbed; classic PII (email/card/IBAN) coverage unknown",
+    "actual": "survives scrub: {\"email\":true,\"card\":true,\"iban\":true,\"awsSecret\":true,\"awsKeyId\":false}",
+    "pass": false,
+    "note": "payment PII NOT covered by cloud scrubber"
+  },
+  {
+    "test": "T10c PII in session_start auto-injection",
+    "leg": "keyword",
+    "expected": "card/secret should not ride into every session's context",
+    "actual": "card=false, awsSecret=false, email=false",
+    "pass": true,
+    "note": "session_start shows titles/summaries, not raw lines — verify"
+  },
+  {
+    "test": "T10a PII/secrets returned verbatim on local recall",
+    "leg": "hybrid",
+    "expected": "local read path does no redaction (document, don't assume)",
+    "actual": "{\"email\":true,\"card\":true,\"iban\":true,\"awsSecret\":false,\"awsKeyId\":false}",
+    "pass": true,
+    "note": "finding, not pass/fail: local-trust design"
+  },
+  {
+    "test": "T10b scrubForCloud coverage (cloud-sync path)",
+    "leg": "hybrid",
+    "expected": "secrets scrubbed; classic PII (email/card/IBAN) coverage unknown",
+    "actual": "survives scrub: {\"email\":true,\"card\":true,\"iban\":true,\"awsSecret\":true,\"awsKeyId\":false}",
+    "pass": false,
+    "note": "payment PII NOT covered by cloud scrubber"
+  },
+  {
+    "test": "T10c PII in session_start auto-injection",
+    "leg": "hybrid",
+    "expected": "card/secret should not ride into every session's context",
+    "actual": "card=false, awsSecret=false, email=false",
+    "pass": true,
+    "note": "session_start shows titles/summaries, not raw lines — verify"
+  }
+]
