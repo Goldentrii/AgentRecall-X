@@ -13,8 +13,17 @@
  *   2. scrubSecretContent — redact known secret token prefixes (AKIA…, ghp_…,
  *      gho_…, ghs_…, sk-…, xoxb-…, PEM markers). Operates on content, not
  *      filenames (bootstrap.ts isSecretFile() handles filename-level rejection).
+ *      3.5.2 hardening adds: secret-named KEY=value assignments, AWS secret
+ *      access keys, and high-entropy tokens (Shannon ≥ 4.5, len ≥ 32).
  *
  * scrubForCloud(content) = scrubSecretContent(scrubPromptInjection(content))
+ *
+ * PII BOUNDARY (3.5.2): PII (email / IBAN / card PAN — scrubPii) is redacted
+ * ONLY on egress paths (scrubForExport, which the Supabase sync chokepoint and
+ * `ar corrections export` run). scrubForCloud deliberately does NOT scrub PII:
+ * it is also applied to LOCAL journal/palace writes (P0-a), and a user's own
+ * emails/bank details in their own local journal are data they chose to
+ * record, not a leak.
  *
  * NARROWING (P0-a rework, 2026-08-18, owner-decided architecture): a prior
  * revision of scrubPromptInjection also stripped free-standing natural-
@@ -124,31 +133,320 @@ export interface SecretScanResult {
   labels: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Layer 2b — secret VALUES (3.5.2 hardening, rigorous-eval finding 4)
+//
+// The prefix table above only catches tokens whose SHAPE is self-identifying
+// (AKIA…, ghp_…). This section catches secrets identified by their CONTEXT
+// (a secret-named key assignment) or their STATISTICS (high Shannon entropy).
+//
+// Every regex here is linear-time by construction: fixed-string alternations,
+// plain character classes (no ambiguous nested quantifiers), and bounded
+// repetition counts. See content-guard-hardening.test.mjs "regex safety" for
+// the 100 KB adversarial-input budget (< 50 ms).
+// ---------------------------------------------------------------------------
+
+/**
+ * A content pattern with an optional decide() filter. decide() returns the
+ * replacement string, or null to KEEP the match (a filtered false positive).
+ * Patterns without decide() replace the whole match with [REDACTED-SECRET]
+ * (the legacy behavior of the prefix table).
+ */
+interface ContentPattern {
+  re: RegExp;
+  label: string;
+  decide?: (match: string, groups: Array<string | undefined>) => string | null;
+}
+
+/**
+ * KV false-positive filter — the documented policy for when an assignment
+ * value is NOT treated as a secret:
+ *   - placeholder/reference starts: [REDACTED…], $VAR / ${VAR}, <paste-here>, ****
+ *   - http(s) URLs (TOKEN_URL=https://… is config, not a credential)
+ *   - no digit at all (letter-only passwords are a DOCUMENTED false negative;
+ *     real machine-issued secrets virtually always carry digits, while
+ *     digit-free values are overwhelmingly prose/placeholders)
+ *   - numeric-only shapes (token_count: 12845667, tokenEstimate = 12845.667)
+ *   - ISO-date-shaped values (TOKEN_EXPIRY=2026-12-31T23:59:59Z)
+ */
+function isSecretLikeValue(value: string): boolean {
+  if (/^[\[$<*]/.test(value)) return false;
+  if (/^https?:\/\//i.test(value)) return false;
+  if (!/\d/.test(value)) return false;
+  if (/^[\d.,%]+$/.test(value)) return false;
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return false;
+  return true;
+}
+
+const SECRET_VALUE_PATTERNS: ReadonlyArray<ContentPattern> = [
+  {
+    // KEY=value / "key": "value" / key: value where the key NAME contains a
+    // secret-ish keyword. No leading \b: AUTH_TOKEN has no word boundary
+    // before TOKEN, and a greedy identifier prefix in the regex would be
+    // quadratic — the replacement keeps everything before the keyword intact
+    // instead. The key suffix is CAPPED at 64 chars: an unbounded
+    // [A-Za-z0-9_-]* makes each keyword occurrence backtrack O(n) on a long
+    // word-char run (measured ~600 ms on 100 KB of "token_as" repeats) —
+    // {0,64} bounds it, and no real key name runs longer. Value must be on
+    // the same line ([ \t], not \s — a YAML key with a nested block must not
+    // swallow the next line).
+    re: /((?:secret|token|passwd|password|api[_-]?key|private[_-]?key|access[_-]?key)[A-Za-z0-9_-]{0,64}["']?[ \t]*[:=][ \t]*)("([^"\r\n]{8,})"|'([^'\r\n]{8,})'|[^\s"',;]{8,})/gi,
+    label: "secret-named key/value assignment",
+    decide: (_m, groups) => {
+      const keyAndSep = groups[0] ?? "";
+      const value = groups[2] ?? groups[3] ?? groups[1] ?? "";
+      return isSecretLikeValue(value) ? `${keyAndSep}[REDACTED:secret-value]` : null;
+    },
+  },
+  {
+    // AWS secret access key in PROSE form ("aws secret access key: wJalr…"):
+    // spaces inside the key name defeat the KV rule above, so match the exact
+    // 40-char base64 value after an aws-secret-ish phrase. The env form
+    // (AWS_SECRET_ACCESS_KEY=…) is already covered by the KV rule.
+    re: /((?:aws[_ -]?)?secret[_ -]?(?:access[_ -]?)?key\b["']?[^\S\r\n]*[:=][^\S\r\n]*["']?)([A-Za-z0-9/+=]{40})(?![A-Za-z0-9/+=])/gi,
+    label: "AWS secret access key",
+    decide: (_m, groups) => `${groups[0] ?? ""}[REDACTED:secret-value]`,
+  },
+];
+
+/**
+ * Shannon entropy in bits/char over the string's character frequencies.
+ */
+function shannonEntropy(s: string): number {
+  const freq = new Map<string, number>();
+  for (const ch of s) freq.set(ch, (freq.get(ch) ?? 0) + 1);
+  let h = 0;
+  const n = s.length;
+  for (const c of freq.values()) {
+    const p = c / n;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
+/**
+ * High-entropy token detector — the catch-all for secrets with no known
+ * prefix and no key context.
+ *
+ * POLICY (each row tested in content-guard-hardening.test.mjs):
+ *   - candidate charset [A-Za-z0-9+=_-], length ≥ 32. `/` is deliberately
+ *     EXCLUDED so URL paths never merge into one long candidate; base64
+ *     secrets containing `/` are split at the slash and only ≥32-char
+ *     fragments are caught — a documented false negative (the KV/prefix
+ *     rules still catch such secrets in assignment contexts).
+ *   - hex-only shapes (git SHAs, SHA-256 digests, UUIDs) are NEVER redacted:
+ *     excluded explicitly, and mathematically out of reach anyway (16-symbol
+ *     alphabet caps entropy at 4.0 < 4.5).
+ *   - SRI integrity hashes (sha256-/sha384-/sha512-…) are excluded by prefix.
+ *   - requires ≥ 2 digits and ≥ 1 letter: kills long identifiers and
+ *     camelCase names (≈4% of true 32-char base64 secrets slip this gate —
+ *     accepted for the false-positive reduction).
+ *   - Shannon entropy ≥ 4.5 bits/char (truffleHog's base64 threshold).
+ */
+const ENTROPY_CANDIDATE = /[A-Za-z0-9+=_-]{32,}/g;
+const ENTROPY_MIN_BITS = 4.5;
+
+function isHighEntropyToken(tok: string): boolean {
+  if (tok.length < 32) return false;
+  if (/^sha\d{3}-/i.test(tok)) return false; // SRI integrity hash
+  if (/^[0-9a-fA-F-]+$/.test(tok)) return false; // hex / UUID / digit-dash shapes
+  const digits = tok.match(/\d/g)?.length ?? 0;
+  if (digits < 2) return false;
+  if (!/[A-Za-z]/.test(tok)) return false;
+  return shannonEntropy(tok) >= ENTROPY_MIN_BITS;
+}
+
+/** THROWING core — entropy scrub. Callers wrap for fail-open behavior. */
+function applyEntropyScrub(content: string): SecretScanResult {
+  let redactedCount = 0;
+  ENTROPY_CANDIDATE.lastIndex = 0;
+  const result = content.replace(ENTROPY_CANDIDATE, (m) => {
+    if (!isHighEntropyToken(m)) return m;
+    redactedCount++;
+    return "[REDACTED:high-entropy]";
+  });
+  return {
+    content: result,
+    redactedCount,
+    labels: redactedCount > 0 ? ["high-entropy token"] : [],
+  };
+}
+
+/** THROWING core — run a pattern table. Callers wrap for fail-open behavior. */
+function applyContentPatterns(
+  content: string,
+  patterns: ReadonlyArray<ContentPattern>,
+): SecretScanResult {
+  let result = content;
+  let redactedCount = 0;
+  const labels: string[] = [];
+
+  for (const p of patterns) {
+    // Reset lastIndex for global regexes (they carry state across calls if reused).
+    p.re.lastIndex = 0;
+    let found = 0;
+    result = result.replace(p.re, (...args) => {
+      const m = args[0] as string;
+      if (!p.decide) {
+        found++;
+        return REDACTED_PLACEHOLDER;
+      }
+      // args = (match, ...captures, offset, whole) — no named groups used.
+      const groups = args.slice(1, args.length - 2) as Array<string | undefined>;
+      const replacement = p.decide(m, groups);
+      if (replacement === null) return m; // filtered false positive — keep
+      found++;
+      return replacement;
+    });
+    if (found > 0) {
+      redactedCount += found;
+      labels.push(p.label);
+    }
+  }
+
+  return { content: result, redactedCount, labels };
+}
+
+/** THROWING core — full secret scrub: prefixes, KV/AWS values, entropy. */
+function applySecretScrub(content: string): SecretScanResult {
+  const a = applyContentPatterns(content, SECRET_CONTENT_PATTERNS);
+  const b = applyContentPatterns(a.content, SECRET_VALUE_PATTERNS);
+  const c = applyEntropyScrub(b.content);
+  return {
+    content: c.content,
+    redactedCount: a.redactedCount + b.redactedCount + c.redactedCount,
+    labels: [...a.labels, ...b.labels, ...c.labels],
+  };
+}
+
 /**
  * Scan content for known secret token patterns and redact them in-place.
  * Returns the redacted content and a count of how many matches were replaced.
+ *
+ * 3.5.2: now also covers secret-named KEY=value assignments, AWS secret
+ * access keys, and high-entropy tokens — see SECRET_VALUE_PATTERNS and
+ * applyEntropyScrub for the documented false-positive policy.
  */
 export function scrubSecretContent(content: string): SecretScanResult {
   try {
-    let result = content;
-    let redactedCount = 0;
-    const labels: string[] = [];
-
-    for (const { re, label } of SECRET_CONTENT_PATTERNS) {
-      // Reset lastIndex for global regexes (they carry state across calls if reused).
-      re.lastIndex = 0;
-      const matches = result.match(re);
-      if (matches && matches.length > 0) {
-        re.lastIndex = 0;
-        result = result.replace(re, REDACTED_PLACEHOLDER);
-        redactedCount += matches.length;
-        labels.push(label);
-      }
-    }
-
-    return { content: result, redactedCount, labels };
+    return applySecretScrub(content);
   } catch {
     // Never throw — return original content on error.
+    return { content, redactedCount: 0, labels: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2c — PII scrub (3.5.2 hardening) — EGRESS-ONLY, by design
+//
+// PII is scrubbed ONLY on paths that leave the machine (scrubForExport, which
+// the Supabase sync chokepoint and `ar corrections export` both run). It is
+// deliberately NOT part of scrubForCloud: scrubForCloud is also applied to
+// LOCAL journal/palace writes (P0-a, 2026-08-18), and a user's own journal
+// legitimately contains their emails, bank details, and contacts — redacting
+// those locally would destroy user data the user chose to record. A secret
+// token on disk is a liability; the user's own email on their own disk is not.
+// ---------------------------------------------------------------------------
+
+/** ISO 13616 IBAN mod-97 check (rearrange, A=10…Z=35, big-mod incrementally). */
+function ibanChecksumOk(compact: string): boolean {
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(compact)) return false;
+  const rearranged = compact.slice(4) + compact.slice(0, 4);
+  let rem = 0;
+  for (const ch of rearranged) {
+    const v = ch >= "0" && ch <= "9" ? ch : String(ch.charCodeAt(0) - 55);
+    for (const d of v) rem = (rem * 10 + (d.charCodeAt(0) - 48)) % 97;
+  }
+  return rem === 1;
+}
+
+/** Luhn checksum over a digit string. */
+function luhnOk(digits: string): boolean {
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (alt) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Known card IIN prefixes: Visa (4), Mastercard (51-55, 2-series approximated
+ * as 22-27), Amex (34/37), Discover (6011/65), JCB (35). A candidate without
+ * one of these prefixes is never redacted even if Luhn-valid — this is what
+ * keeps 13-digit ms-timestamps (1…) and random Luhn-valid IDs out.
+ */
+const PAN_IIN_PREFIX = /^(4|5[1-5]|2[2-7]|3[47]|6011|65|35)/;
+
+const PII_PATTERNS: ReadonlyArray<ContentPattern> = [
+  {
+    // Email. Bounded quantifiers (RFC local-part max 64, domain max 253) keep
+    // backtracking linear on adversarial input. Allowlist in decide():
+    // RFC-2606 reserved domains (example.com/.org/.net, .test/.example/
+    // .invalid/.localhost) are documentation placeholders, and noreply@
+    // addresses are machine senders — neither is personal data.
+    re: /([A-Za-z0-9._%+-]{1,64})@([A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24})\b/g,
+    label: "email address",
+    decide: (_m, groups) => {
+      const local = (groups[0] ?? "").toLowerCase();
+      const domain = (groups[1] ?? "").toLowerCase();
+      if (/^no-?reply$/.test(local)) return null;
+      if (/(?:^|\.)example\.(?:com|org|net)$/.test(domain)) return null;
+      if (/\.(?:test|example|invalid|localhost)$/.test(domain)) return null;
+      return "[REDACTED:email]";
+    },
+  },
+  {
+    // IBAN — [A-Z]{2}\d{2} + 4-char groups (optionally space-separated),
+    // validated by length (15-34 compact) and the mod-97 checksum, so a
+    // random caps-and-digits string survives with probability ≈ 1/97 ON TOP
+    // of having to hold the exact shape. Bounded repetition {2,7} keeps the
+    // regex linear.
+    re: /\b([A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?)\b/g,
+    label: "IBAN",
+    decide: (_m, groups) => {
+      const compact = (groups[0] ?? "").replace(/ /g, "");
+      if (compact.length < 15 || compact.length > 34) return null;
+      return ibanChecksumOk(compact) ? "[REDACTED:iban]" : null;
+    },
+  },
+  {
+    // Card PAN — 13-19 digits, single space/dash separators allowed,
+    // validated by IIN prefix + Luhn. The lookarounds refuse digits embedded
+    // in longer digit runs: a PAN hidden inside a longer ID is a documented
+    // false negative (never split someone's serial number apart).
+    re: /(?<![\d-])((?:\d[ -]?){12,18}\d)(?![\d-])/g,
+    label: "card PAN",
+    decide: (_m, groups) => {
+      const compact = (groups[0] ?? "").replace(/[ -]/g, "");
+      if (compact.length < 13 || compact.length > 19) return null;
+      if (!PAN_IIN_PREFIX.test(compact)) return null;
+      return luhnOk(compact) ? "[REDACTED:pan]" : null;
+    },
+  },
+];
+
+/** THROWING core — PII scrub. Callers wrap for fail-open behavior. */
+function applyPiiScrub(content: string): SecretScanResult {
+  return applyContentPatterns(content, PII_PATTERNS);
+}
+
+/**
+ * scrubPii(content) — redact PII (email, IBAN, card PAN) with typed
+ * placeholders. Fail-open like its siblings. EGRESS-ONLY by design — see the
+ * Layer 2c header. Exported for export/adapter surfaces and tests;
+ * scrubForExport already runs it, so most callers never need it directly.
+ */
+export function scrubPii(content: string): SecretScanResult {
+  try {
+    return applyPiiScrub(content);
+  } catch {
     return { content, redactedCount: 0, labels: [] };
   }
 }
@@ -277,22 +575,39 @@ export function fenceMemory(block: string): string {
  * Use this for every string that leaves AgentRecall via an export/adapter path.
  */
 export function scrubForExport(content: string): string {
-  const scrubbed = scrubForCloud(content);
-  // Fail-CLOSED post-condition. Re-scan the OUTPUT with the secret patterns
-  // DIRECTLY — not via scrubSecretContent(), whose own try/catch returns
-  // redactedCount:0 on an internal error and would silently re-open the fail-open
-  // hole this function exists to close. A bare re.test() here lets any regex-engine
-  // error propagate and abort the export rather than leak.
+  // Fail-CLOSED: NO try/catch anywhere on this path. The throwing cores
+  // (applySecretScrub / applyPiiScrub) are called DIRECTLY — not via
+  // scrubSecretContent()/scrubPii(), whose own try/catch returns
+  // redactedCount:0 on an internal error and would silently re-open the
+  // fail-open hole this function exists to close. Any regex-engine error
+  // propagates and aborts the export rather than leak.
   //
-  // Under scrubForCloud's current contract a successful scrub leaves no residue,
-  // so this never fires on normal input — it is a defense-in-depth guard that trips
-  // only if scrubForCloud fails open (its outer catch returns the original) or its
-  // redaction contract regresses. Either way: refuse to emit.
-  for (const { re, label } of SECRET_CONTENT_PATTERNS) {
-    re.lastIndex = 0;
-    if (re.test(scrubbed)) {
-      throw new SecretScanError(label);
+  // FIXPOINT LOOP (3.5.2): a redaction can create a match that did not exist
+  // on the previous pass — e.g. "a@b.io4111111111111111": the digit run
+  // blocks the email's trailing \b, but once the PAN is replaced the
+  // boundary appears and the email becomes matchable. So the full pipeline
+  // (secrets incl. KV/entropy, then PII — scrubForExport is the EGRESS
+  // scrubber, so PII applies here and NOT in scrubForCloud) repeats until a
+  // pass redacts nothing. That clean final pass IS the fail-closed
+  // post-condition: if content still trips a detector after MAX_ROUNDS,
+  // refuse to emit.
+  const MAX_ROUNDS = 5;
+  let current = scrubPromptInjection(content);
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const secrets = applySecretScrub(current);
+    const pii = applyPiiScrub(secrets.content);
+    current = pii.content;
+    if (secrets.redactedCount + pii.redactedCount === 0) {
+      return current;
     }
   }
-  return scrubbed;
+  // Out of rounds. One final DETECTION pass: if the last in-loop round was
+  // the one that finished the job, the content is clean — emit it. Otherwise
+  // matches are being generated faster than we remove them: refuse to emit.
+  const residue = applySecretScrub(current);
+  const residuePii = applyPiiScrub(residue.content);
+  if (residue.redactedCount + residuePii.redactedCount === 0) return current;
+  throw new SecretScanError(
+    residue.labels[0] ?? residuePii.labels[0] ?? "unresolved scrub fixpoint",
+  );
 }

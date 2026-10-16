@@ -7,7 +7,7 @@ import { readSupabaseConfig } from "./config.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
 import { classifyStore } from "../storage/classification.js";
 import { isUnclaimedProject } from "../storage/paths.js";
-import { scrubForCloud } from "../storage/content-guard.js";
+import { scrubForExport } from "../storage/content-guard.js";
 import { exportCorrections } from "../tools-logic/export-corrections.js";
 import { getRoot } from "../types.js";
 import { readTierCandidates } from "../retrieval/candidates.js";
@@ -225,10 +225,18 @@ async function doSync(
     // (syncToSupabase + backfill). Scrub happens BEFORE hashing so the stored
     // hash always matches the hash computed by backfill's skip-dedup check.
     // Call-site scrubs (the 9 syncToSupabase callers that pre-wrap content in
-    // scrubForCloud) are redundant defense-in-depth — scrubForCloud is idempotent,
+    // scrubForCloud) are redundant defense-in-depth — the scrubs are idempotent,
     // so double-scrub is safe and the call-site wraps are intentionally kept as a
     // privacy boundary safeguard.
-    const scrubbedContent = scrubForCloud(content);
+    //
+    // FAIL-CLOSED (3.5.2): scrubForExport, not scrubForCloud. scrubForCloud
+    // fails OPEN (returns the ORIGINAL content on any internal error) — right
+    // for local writes, wrong at the egress boundary. scrubForExport throws
+    // if the scrub cannot produce residue-free output; the throw lands in
+    // this function's catch → logSyncError → return. Nothing is uploaded:
+    // the scrub runs before any client write. It also redacts PII (email /
+    // IBAN / card PAN), which local writes deliberately keep.
+    const scrubbedContent = scrubForExport(content);
     const hash = contentHash(scrubbedContent);
 
     const { data: existing } = await client
@@ -399,7 +407,10 @@ export async function backfill(
       // Skip-dedup hash must match what doSync stores: hash of SCRUBBED content.
       // Using raw content here would cause raw_hash != scrubbed_hash for any file
       // containing a secret pattern, making the skip never fire → re-uploads every run.
-      const hash = contentHash(scrubForCloud(file.content));
+      // Must be the SAME function doSync uses (scrubForExport, fail-closed): a
+      // throw here is caught by this per-file try → failed++ → the file is
+      // skipped, never uploaded raw.
+      const hash = contentHash(scrubForExport(file.content));
       const { data: existing } = await client
         .from("ar_sync_state")
         .select("file_hash")
