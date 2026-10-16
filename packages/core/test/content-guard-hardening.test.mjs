@@ -40,7 +40,8 @@
  *
  * Also asserts: idempotency (placeholders never re-match any detector —
  * scrubForExport's fail-closed post-scan depends on it) and regex safety
- * (100 KB adversarial inputs scrub in < 50 ms, best of 3).
+ * (adversarial inputs must scale LINEARLY from 100 KB to 800 KB — ratio
+ * assertion, load-robust; absolute wall-clock bounds flaked under suite load).
  */
 
 import { describe, it, before } from "node:test";
@@ -375,41 +376,69 @@ describe("idempotency: placeholders never re-match any detector", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D. Regex safety — 100 KB adversarial inputs, < 50 ms (best of 3)
+// D. Regex safety — adversarial inputs must scale linearly (1x → 8x ratio)
 // ---------------------------------------------------------------------------
 
 describe("regex safety: no catastrophic backtracking", () => {
+  // Each fixture is a FACTORY so the same shape can be built at 1x (~100 KB)
+  // and 8x (~800 KB) for the scaling assertion below.
   const ADVERSARIAL = [
-    { name: "repeated bare keys, no values", input: "password=".repeat(11200) },
-    { name: "single 100KB letter run", input: "a".repeat(100_000) },
-    { name: "single 100KB digit run", input: "1".repeat(100_000) },
-    { name: "unterminated quoted value", input: 'token="' + "a".repeat(99_000) },
-    { name: "keyword/suffix ambiguity bait", input: "token_as".repeat(12_500) },
-    { name: "100KB single entropy candidate", input: "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY".repeat(3125) },
-    { name: "email local-part bait (no domain)", input: ("a".repeat(63) + "@").repeat(1560) },
-    { name: "PAN-dense input (5000 Luhn checks)", input: "4111 1111 1111 1111 ".repeat(5000) },
-    { name: "IBAN-shaped caps soup", input: "DE89 ABCD 1234 ".repeat(6700) },
-    { name: "bearer keyword flood (values too short)", input: "bearer ".repeat(14_000) },
-    { name: "URL-credential flood (8K redactions/pass)", input: "https://u:p@".repeat(8_200) },
-    { name: "authorization keyword flood (digit-free values)", input: "authorization:".repeat(7_000) },
+    { name: "repeated bare keys, no values", make: (m) => "password=".repeat(11_200 * m) },
+    { name: "single letter run", make: (m) => "a".repeat(100_000 * m) },
+    { name: "single digit run", make: (m) => "1".repeat(100_000 * m) },
+    { name: "unterminated quoted value", make: (m) => 'token="' + "a".repeat(99_000 * m) },
+    { name: "keyword/suffix ambiguity bait", make: (m) => "token_as".repeat(12_500 * m) },
+    { name: "single entropy candidate", make: (m) => "aB3dE5fG7hJ9kL1mN2pQ4rS6tU8vW0xY".repeat(3_125 * m) },
+    { name: "email local-part bait (no domain)", make: (m) => ("a".repeat(63) + "@").repeat(1_560 * m) },
+    { name: "PAN-dense input (Luhn checks per 20 bytes)", make: (m) => "4111 1111 1111 1111 ".repeat(5_000 * m) },
+    { name: "IBAN-shaped caps soup", make: (m) => "DE89 ABCD 1234 ".repeat(6_700 * m) },
+    { name: "bearer keyword flood (values too short)", make: (m) => "bearer ".repeat(14_000 * m) },
+    { name: "URL-credential flood (one redaction per 12 bytes)", make: (m) => "https://u:p@".repeat(8_200 * m) },
+    { name: "authorization keyword flood (digit-free values)", make: (m) => "authorization:".repeat(7_000 * m) },
   ];
 
-  // Budget: generous 250 ms absolute ceiling (review LOW-5: the former hard
-  // 50 ms budget measured 50.1 ms under full-suite load and flaked, while the
-  // same inputs run ~16 ms standalone — the ceiling guards against the
-  // CLASS regression, quadratic blowup, which lands in SECONDS, not tens of
-  // ms; CI scheduling noise must not fail the suite). Best-of-3 to shed
-  // first-run JIT/GC noise.
-  const BUDGET_MS = 250;
+  // SCALING assertion, not a wall-clock budget (review LOW-5 + rv-correct
+  // addendum: the former absolute bounds — 50 ms, then 250 ms — measured
+  // 50.1 ms and 174–206 ms under merged-suite load while passing standalone;
+  // any absolute number is a bet on machine load). What the test must catch
+  // is the CLASS regression: super-linear backtracking. Linear patterns give
+  // time(8x)/time(1x) ≈ 8 (plus noise); quadratic gives ≈ 64; catastrophic
+  // is unbounded. Assert ratio < 20 on medians-of-3 — load scales numerator
+  // and denominator together, so the ratio is load-robust. A very generous
+  // 2 s absolute ceiling on the 8x run stays as a backstop that only true
+  // catastrophic blowup (or a hung engine) can hit.
+  const RATIO_MAX = 20;
+  const CEILING_8X_MS = 2_000;
+
+  function medianScrubMs(input) {
+    const times = [];
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      guard.scrubForExport(input);
+      times.push(performance.now() - t0);
+    }
+    return times.sort((a, b) => a - b)[1];
+  }
+
   for (const t of ADVERSARIAL) {
-    it(`${t.name} (${Math.round(t.input.length / 1024)} KB) scrubs in < ${BUDGET_MS} ms`, () => {
-      let best = Infinity;
-      for (let i = 0; i < 3; i++) {
-        const t0 = performance.now();
-        guard.scrubForExport(t.input);
-        best = Math.min(best, performance.now() - t0);
-      }
-      assert.ok(best < BUDGET_MS, `took ${best.toFixed(1)} ms (best of 3)`);
+    it(`${t.name}: 1x→8x scaling ratio < ${RATIO_MAX} (linear), 8x < ${CEILING_8X_MS} ms`, () => {
+      const in1 = t.make(1);
+      const in8 = t.make(8);
+      guard.scrubForExport(in1); // warm-up: shed first-run JIT/regex-compile cost
+      const t1 = medianScrubMs(in1);
+      const t8 = medianScrubMs(in8);
+      // Floor the denominator at 0.5 ms: timer jitter on a sub-ms base run
+      // must not explode the ratio. A real quadratic still fails — 8x of a
+      // quadratic sub-ms 100 KB run lands ≥ tens of ms → ratio ≥ 60.
+      const ratio = t8 / Math.max(t1, 0.5);
+      assert.ok(
+        t8 < CEILING_8X_MS,
+        `8x input (${Math.round(in8.length / 1024)} KB) took ${t8.toFixed(1)} ms — catastrophic-backtracking ceiling`,
+      );
+      assert.ok(
+        ratio < RATIO_MAX,
+        `scaling ratio ${ratio.toFixed(1)} (1x: ${t1.toFixed(2)} ms, 8x: ${t8.toFixed(1)} ms) — super-linear growth`,
+      );
     });
   }
 });
