@@ -382,6 +382,24 @@ function normalizeRateUnit(word: string): string {
 }
 
 /**
+ * MEDIUM-1 (review fix, 2026-10-16, reports/2026-10-16-review-correctness.md)
+ * — GENERIC-FREQUENCY DENYLIST for the COUNTED-NOUN position. "ran 5 times
+ * per day" vs "retried 3 times per day" produced a cross-topic supersession:
+ * `time-per-<period>` is the single most common `N unit per unit` frame in
+ * ordinary narrative prose and carries near-zero topical signal — W5a
+ * HIGH-2's generic one-word key recurring in two-word form for exactly this
+ * unit family. Genuine rate-limit facts name the RESOURCE noun ("requests",
+ * "jobs", "records"); "N times per day" is almost always narrative.
+ * Checked POST-normalization ("times" → "time", "occurrences" →
+ * "occurrence"), counted-noun position only — the `per <period>` side is
+ * untouched. Deliberately tiny, like RATE_UNIT_ALIASES: extend it only with
+ * units that are generic FREQUENCY words, never resource nouns.
+ * Scalar-noun generalization (ports/timeouts/etc.) is a separate, later
+ * branch — see the review's "Brief questions answered" section.
+ */
+const RATE_UNIT_DENYLIST = new Set(["time", "occurrence"]);
+
+/**
  * 3.5.2 (2026-10-16) — marker-less `NUMBER unit per unit` rate-fact
  * extractor, the grammar extension the 2026-10-15 rigorous eval's §7 item 2
  * called for. Adversarial T5a proved the gap: "API rate limit set to 100
@@ -427,8 +445,12 @@ export function extractRateFactTokens(text: string): Map<string, string> {
   const pattern = /(?<![\d.])(\d+(?:\.\d+)?)\s+([a-z][a-z-]{0,30})\s+per\s+([a-z][a-z-]{0,30})\b/gi;
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(text)) !== null) {
+    const unit = normalizeRateUnit(m[2]);
+    // MEDIUM-1 review fix — see RATE_UNIT_DENYLIST above: a generic
+    // frequency word in the counted-noun position is narrative, not a fact.
+    if (RATE_UNIT_DENYLIST.has(unit)) continue;
     const value = String(Number(m[1]));
-    const key = `${normalizeRateUnit(m[2])}-per-${normalizeRateUnit(m[3])}`;
+    const key = `${unit}-per-${normalizeRateUnit(m[3])}`;
     result.set(key, value);
   }
   return result;

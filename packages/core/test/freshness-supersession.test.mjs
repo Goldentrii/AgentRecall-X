@@ -83,6 +83,39 @@ describe("3.5.2 freshness supersession — rate fact-keys + bounded post-fusion 
       assert.equal([...a.keys()][0], [...b.keys()][0], "req/min must normalize to the same key as requests/minute");
     });
 
+    // MEDIUM-1 (review, reports/2026-10-16-review-correctness.md): the
+    // generic-frequency frame "N times per day/week/..." is the single most
+    // common `N unit per unit` shape in ordinary prose and carries near-zero
+    // topical signal — W5a HIGH-2 (generic one-word key) recurring in
+    // two-word form for exactly one unit family. DENYLISTED at the extractor.
+    it("A4 — generic frequency units are denylisted: 'ran 5 times per day' vs 'retried 3 times per day' is narrative, not a rate fact", () => {
+      const a = core.extractRateFactTokens("ran 5 times per day");
+      const b = core.extractRateFactTokens("retried 3 times per day");
+      assert.equal(a.size, 0, `'times' (→ 'time') must be denylisted; got ${JSON.stringify([...a])}`);
+      assert.equal(b.size, 0, `'times' (→ 'time') must be denylisted; got ${JSON.stringify([...b])}`);
+      const occ = core.extractRateFactTokens("saw 3 occurrences per week in the logs");
+      assert.equal(occ.size, 0, `'occurrences' (→ 'occurrence') must be denylisted; got ${JSON.stringify([...occ])}`);
+
+      // The exact review repro, end to end: NO cross-topic supersession.
+      const { supersededBy, conflictsWith } = core.detectContradictions([
+        { text: "ran 5 times per day", date: "2026-01-01" },
+        { text: "retried 3 times per day", date: "2026-02-01" },
+      ]);
+      assert.equal(supersededBy.size, 0, "MEDIUM-1 repro: cross-topic 'times per day' pair must never resolve a supersession");
+      assert.equal(conflictsWith.size, 0, "MEDIUM-1 repro: must not even annotate a conflict");
+
+      // Negatives — resource-noun rate facts are UNAFFECTED by the denylist:
+      // the T5a frame still extracts, and a different genuine unit still
+      // conflicts across values.
+      const t5a = core.extractRateFactTokens("API rate limit set to 100 requests per minute per key.");
+      assert.equal(t5a.size, 1, "the denylist must not touch 'requests per minute'");
+      const jobs = core.detectContradictions([
+        { text: "scheduler capped at 5 jobs per day", date: "2026-01-01" },
+        { text: "scheduler raised to 20 jobs per day", date: "2026-02-01" },
+      ]);
+      assert.equal(jobs.supersededBy.get(0), 1, "a genuine non-denylisted unit ('jobs per day') must still resolve supersession");
+    });
+
     it("A3 — number-shaped prose that is NOT a rate extracts nothing (precision anchor)", () => {
       const cases = [
         "Log retention shortened to 30 days to cut ingest costs.", // bare count, no `per`
