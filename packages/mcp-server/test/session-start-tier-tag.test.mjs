@@ -43,6 +43,16 @@ function stripTierTags(text) {
   return text.replace(/ \[(gate|nudge|watch)\]/g, "");
 }
 
+/**
+ * Normalizes the per-render 64-bit fence nonce (fix 3.5.2, content-guard.ts) so two
+ * independent renders can be diffed byte-for-byte. The nonce is DELIBERATELY
+ * fresh per render — it is presentation-security, not content — so the
+ * additivity proofs below compare renders modulo the nonce.
+ */
+function normalizeFenceNonce(text) {
+  return text.replace(/⟦(\/?)agentrecall:memory:[0-9a-f]{16}⟧/g, "⟦$1agentrecall:memory:0000000000000000⟧");
+}
+
 const CORRECTIONS_WITH_TIER = [
   { id: "c1", severity: "p0", rule: "Never push without explicit approval.", tier: "gate" },
   { id: "c2", severity: "p0", rule: "Always run tests before merging.", tier: "nudge" },
@@ -69,7 +79,7 @@ describe("session_start render — evolution p4 tier tag (additive-only proof)",
     it("ADDITIVITY PROOF: stripping the tier tag from the tagged render reproduces the untagged render byte-for-byte", () => {
       const tagged = formatTerse(baseResult({ corrections: CORRECTIONS_WITH_TIER }));
       const untagged = formatTerse(baseResult({ corrections: CORRECTIONS_WITHOUT_TIER }));
-      assert.equal(stripTierTags(tagged), untagged);
+      assert.equal(normalizeFenceNonce(stripTierTags(tagged)), normalizeFenceNonce(untagged));
     });
 
     it("does not reorder or drop any correction — same count, same order, same severity brackets, regardless of tier", () => {
@@ -94,7 +104,7 @@ describe("session_start render — evolution p4 tier tag (additive-only proof)",
     it("ADDITIVITY PROOF: stripping the tier tag reproduces the untagged verbose render byte-for-byte", () => {
       const tagged = formatVerbose(baseResult({ corrections: CORRECTIONS_WITH_TIER }));
       const untagged = formatVerbose(baseResult({ corrections: CORRECTIONS_WITHOUT_TIER }));
-      assert.equal(stripTierTags(tagged), untagged);
+      assert.equal(normalizeFenceNonce(stripTierTags(tagged)), normalizeFenceNonce(untagged));
     });
   });
 });

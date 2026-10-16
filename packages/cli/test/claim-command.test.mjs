@@ -51,8 +51,8 @@ describe("ar claim — unclaimed staging CLI surface", () => {
     const { code, stdout } = await runCli(["claim", "--list"]);
     assert.equal(code, 0);
     assert.ok(stdout.includes("claim-list-sid-1"), stdout);
-    const fenceOpen = stdout.indexOf("⟦agentrecall:memory⟧");
-    const fenceClose = stdout.indexOf("⟦/agentrecall:memory⟧");
+    const fenceOpen = stdout.indexOf("⟦agentrecall:memory:");
+    const fenceClose = stdout.indexOf("⟦/agentrecall:memory:");
     const titleAt = stdout.indexOf("CLAIM_LIST_UNIQUE_TITLE");
     assert.ok(fenceOpen >= 0 && fenceClose > fenceOpen, "list output must carry the memory fence");
     assert.ok(titleAt > fenceOpen && titleAt < fenceClose, "the staged card title must render INSIDE the fence");
