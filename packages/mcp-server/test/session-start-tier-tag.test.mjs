@@ -44,13 +44,13 @@ function stripTierTags(text) {
 }
 
 /**
- * Normalizes the per-render fence nonce (fix 3.5.2, content-guard.ts) so two
+ * Normalizes the per-render 64-bit fence nonce (fix 3.5.2, content-guard.ts) so two
  * independent renders can be diffed byte-for-byte. The nonce is DELIBERATELY
  * fresh per render — it is presentation-security, not content — so the
  * additivity proofs below compare renders modulo the nonce.
  */
 function normalizeFenceNonce(text) {
-  return text.replace(/⟦(\/?)agentrecall:memory:[0-9a-f]{4}⟧/g, "⟦$1agentrecall:memory:0000⟧");
+  return text.replace(/⟦(\/?)agentrecall:memory:[0-9a-f]{16}⟧/g, "⟦$1agentrecall:memory:0000000000000000⟧");
 }
 
 const CORRECTIONS_WITH_TIER = [

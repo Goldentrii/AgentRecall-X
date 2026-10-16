@@ -42,7 +42,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(__dirname, "..", "dist", "index.js");
 
-// Delimiters carry a per-render 4-hex nonce (fix 3.5.2), so match on the
+// Delimiters carry a per-render 16-hex nonce (fix 3.5.2), so match on the
 // prefix up to the ':' that precedes the nonce.
 const FENCE_OPEN_PREFIX = "⟦agentrecall:memory:";
 const FENCE_CLOSE = "⟦/agentrecall:memory:";
