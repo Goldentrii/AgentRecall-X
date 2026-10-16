@@ -235,6 +235,7 @@
  */
 
 import { readTierCandidates, filterTrusted, type MemoryCandidate } from "./candidates.js";
+import { loadJournalLexicalSnapshot } from "./lexical-index.js";
 import { applyScope } from "./scope.js";
 import { detectContradictions, type ContradictionItem } from "./contradiction.js";
 import { listRooms, recordAccess, ensurePalaceInitialized } from "../palace/rooms.js";
@@ -612,7 +613,7 @@ interface QueryIdfModel {
  * substring containment (script-agnostic), so a rare Han token earns
  * exactly the same discriminative weight as a rare ASCII one.
  */
-function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
+function buildQueryVariants(query: string): QueryVariantModel {
   const rawWords = tokenizeWords(query);
   const variantsByRaw = new Map<string, string[]>();
   for (const w of rawWords) {
@@ -621,19 +622,36 @@ function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
     for (const v of expandQuery([w])) variants.add(v);
     variantsByRaw.set(w, [...variants]);
   }
+  return { rawWords, variantsByRaw };
+}
 
-  const n = corpusTexts.length;
-  const docs = corpusTexts.map((t) => {
-    const lower = t.toLowerCase();
-    return { lower, tokenSet: new Set(tokenizeWords(t).map((tok) => stem(tok))) };
-  });
+/** Query-side half of the IDF model — one entry per unique raw query word,
+ *  mapping to its stem/synonym variants (perf/lexical-index refactor,
+ *  2026-10-16: split out of buildIdfModel so the indexed journal path can
+ *  assemble the SAME numeric model from index-derived DF counts). */
+interface QueryVariantModel {
+  rawWords: string[];
+  variantsByRaw: Map<string, string[]>;
+}
+
+/**
+ * Assemble the IDF model from a per-word DF oracle. This is buildIdfModel's
+ * exact math (bm25Idf → max-normalize → totalMass → weightedExactness),
+ * extracted verbatim so the brute-force corpus scan and the lexical-index
+ * postings path (scoreJournalTier) produce byte-identical weights whenever
+ * their DF counts agree — the only thing that varies between them is HOW df
+ * is counted, pinned equal by test/lexical-index.test.mjs.
+ */
+function assembleIdfModel(
+  qv: QueryVariantModel,
+  n: number,
+  dfOf: (variants: string[]) => number,
+): QueryIdfModel {
+  const { rawWords, variantsByRaw } = qv;
   const idf = new Map<string, number>();
   let maxIdf = 0;
   for (const [w, variants] of variantsByRaw) {
-    let df = 0;
-    for (const d of docs) {
-      if (variants.some((v) => d.tokenSet.has(v) || d.lower.includes(v))) df++;
-    }
+    const df = dfOf(variants);
     const weight = n > 0 ? bm25Idf(df, n) : 1;
     idf.set(w, weight);
     if (weight > maxIdf) maxIdf = weight;
@@ -662,6 +680,22 @@ function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
       return Math.min(1, matchedMass / totalMass);
     },
   };
+}
+
+function buildIdfModel(query: string, corpusTexts: string[]): QueryIdfModel {
+  const qv = buildQueryVariants(query);
+  const n = corpusTexts.length;
+  const docs = corpusTexts.map((t) => {
+    const lower = t.toLowerCase();
+    return { lower, tokenSet: new Set(tokenizeWords(t).map((tok) => stem(tok))) };
+  });
+  return assembleIdfModel(qv, n, (variants) => {
+    let df = 0;
+    for (const d of docs) {
+      if (variants.some((v) => d.tokenSet.has(v) || d.lower.includes(v))) df++;
+    }
+    return df;
+  });
 }
 
 /**
@@ -990,76 +1024,173 @@ function readLegacyJournalCandidates(project: string): MemoryCandidate[] {
 // TOKENIZE+SCORE stage — one strategy per tier.
 // ---------------------------------------------------------------------------
 
+/** One matching journal line, pre-scoring. */
+interface JournalHit { title: string; excerpt: string; date: string; line: number }
+
+/** The journal tier's per-line matcher — the old inline loop body, extracted
+ *  VERBATIM (perf/lexical-index, 2026-10-16) so the brute-force path and the
+ *  lexical-index fast path run the IDENTICAL scan (section tracking, excerpt
+ *  window, per-hit line numbers) over identical content. `dateLabel` is the
+ *  old loop's `candidate.date || candidate.file` — computed once per
+ *  candidate by both callers. */
+function collectJournalLineHits(content: string, dateLabel: string, keywords: string[], hits: JournalHit[]): void {
+  const lines = content.split("\n");
+  let currentSection = "top";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("## ")) {
+      currentSection = line.slice(3).trim().toLowerCase().replace(/\s+/g, "_");
+    }
+    if (!lineMatchesQuery(line, keywords)) continue;
+    const matchIdx = firstMatchIndex(line, keywords);
+    const start = Math.max(0, matchIdx - 100);
+    const end = Math.min(line.length, matchIdx + 150);
+    let excerpt = line.slice(start, end).trim();
+    if (start > 0) excerpt = "..." + excerpt;
+    if (end < line.length) excerpt = excerpt + "...";
+    hits.push({ title: `${dateLabel} / ${currentSection}`, excerpt, date: dateLabel, line: i + 1 });
+  }
+}
+
 /** Journal tier: ported from journal-search.ts's per-line matching (section
  *  tracking, excerpt window) + smart-recall.ts's Ebbinghaus×exactness scoring —
  *  now operating on already-fetched MemoryCandidate content instead of a
- *  fresh fs read. */
-function scoreJournalTier(
+ *  fresh fs read.
+ *
+ *  perf/lexical-index (2026-10-16): async, with a persistent-index FAST PATH.
+ *  When the lexical index is usable (default; AGENT_RECALL_LEXICAL_INDEX=0
+ *  disables, and ANY index failure falls back), the fetch stage no longer
+ *  reads/tokenizes the whole corpus per query: trust bits, the line-match
+ *  prefilter, and IDF document frequencies come from retrieval/lexical-index.ts,
+ *  and file content is read ONLY for docs that can actually produce a hit.
+ *  RANKING-IDENTICAL to the brute path by construction (same enumeration
+ *  order, same trust filter, the same collectJournalLineHits scan, and
+ *  assembleIdfModel fed DF counts that match buildIdfModel's predicate
+ *  exactly) — pinned by test/lexical-index.test.mjs. The legacy-journal half
+ *  (readLegacyJournalCandidates) stays brute-force on both paths: it scans
+ *  an out-of-root directory tree that is empty on virtually every install. */
+async function scoreJournalTier(
   project: string,
   query: string,
   opts: { includeRollupArchive?: boolean; perTierLimit?: number; since?: string; perSectionDedupe?: boolean },
-): QueryMemoryItem[] {
-  const candidates = filterTrusted(
-    readTierCandidates("journal", project, {
-      includeRollupArchive: opts.includeRollupArchive ?? true,
-      includeUntrusted: true,
-    }),
-  ).concat(filterTrusted(readLegacyJournalCandidates(project)));
-
+): Promise<QueryMemoryItem[]> {
   const keywords = tokenizeWords(query);
   if (keywords.length === 0) return [];
   const sinceCutoff = opts.since ? parseSinceDate(opts.since) : null;
   const limit = opts.perTierLimit ?? 25;
+  const includeRollupArchive = opts.includeRollupArchive ?? true;
 
-  interface Hit { title: string; excerpt: string; date: string; line: number }
-  const hits: Hit[] = [];
+  const hits: JournalHit[] = [];
+  let idfModel: QueryIdfModel;
 
-  // fix4 S3 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
-  // SCORE-THEN-TRUNCATE. The pre-fix4 loop broke out at `hits.length >=
-  // limit` while iterating candidates in date-DESCENDING order — i.e. it
-  // truncated by RECENCY before any hit was ever scored, so an old entry
-  // matching the query strongly was dropped UNSCORED whenever `limit`
-  // weaker-but-newer line matches existed (the S2-standard eval's latent
-  // "journal recency pre-truncation" defect; the W2 sort-before-truncate
-  // work made the pre-truncation deterministic, not correct). Now every
-  // matching line across every candidate is collected and SCORED
-  // (recency×0.5 + exactness×0.5, unchanged formula), and `limit` is
-  // applied to the score-sorted list at the end — one truncation criterion,
-  // the same one RRF ranking uses. Cost: the full line scan always runs
-  // (previously it stopped early once `limit` hits were found) — bounded by
-  // the same already-read candidate set, and measured within the S11
-  // latency budget by this tranche's eval runs.
-  for (const candidate of candidates) {
-    if (sinceCutoff && candidate.date) {
-      const fileDate = new Date(candidate.date);
-      if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
-    }
-    const lines = candidate.content.split("\n");
-    let currentSection = "top";
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith("## ")) {
-        currentSection = line.slice(3).trim().toLowerCase().replace(/\s+/g, "_");
-      }
-      if (!lineMatchesQuery(line, keywords)) continue;
-      const date = candidate.date || candidate.file;
-      const matchIdx = firstMatchIndex(line, keywords);
-      const start = Math.max(0, matchIdx - 100);
-      const end = Math.min(line.length, matchIdx + 150);
-      let excerpt = line.slice(start, end).trim();
-      if (start > 0) excerpt = "..." + excerpt;
-      if (end < line.length) excerpt = excerpt + "...";
-      hits.push({ title: `${date} / ${currentSection}`, excerpt, date, line: i + 1 });
-    }
+  // ---- FAST PATH: persistent lexical index (null → brute fallback) ----
+  let snapshotOrNull = null;
+  try {
+    snapshotOrNull = await loadJournalLexicalSnapshot(project, { includeRollupArchive });
+  } catch {
+    snapshotOrNull = null; // defense in depth — the loader already never throws
   }
+  const snapshot = snapshotOrNull;
 
-  // fix4 S5: IDF over the scanned journal corpus (one doc = one journal
-  // file's content) — weights each query word by rarity before the
-  // unchanged recency*0.5 + exactness*0.5 blend below. Review L2
-  // (2026-09-11): skipped entirely when nothing matched — building the
-  // model tokenizes/lowercases the whole corpus, pure waste at zero hits.
-  if (hits.length === 0) return [];
-  const idfModel = buildIdfModel(query, candidates.map((c) => c.content));
+  if (snapshot) {
+    // TRUST-FILTER stage, same predicate as filterTrusted (drop only
+    // untrusted === true) — applied to index docs by flag, with content
+    // reads below re-verifying through the rescue choke regardless.
+    const trustedIdx: number[] = [];
+    for (let i = 0; i < snapshot.docs.length; i++) {
+      if (snapshot.docs[i].untrusted !== true) trustedIdx.push(i);
+    }
+    const legacy = filterTrusted(readLegacyJournalCandidates(project));
+
+    // fix4 S3's SCORE-THEN-TRUNCATE loop (see the brute path below for the
+    // full history note) — identical scan, but content is only read for
+    // docs the substring prefilter says CAN contain a keyword
+    // (lineMatchesQuery is pure `includes` over whitespace-free keywords,
+    // so docsContaining has no false negatives — lexical-index.ts header).
+    for (const i of trustedIdx) {
+      const doc = snapshot.docs[i];
+      if (sinceCutoff && doc.date) {
+        const fileDate = new Date(doc.date);
+        if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
+      }
+      if (!keywords.some((kw) => snapshot.docsContaining(kw).has(i))) continue;
+      const content = snapshot.trustedContent(i);
+      if (content === null) continue;
+      collectJournalLineHits(content, doc.date || doc.file, keywords, hits);
+    }
+    for (const candidate of legacy) {
+      if (sinceCutoff && candidate.date) {
+        const fileDate = new Date(candidate.date);
+        if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
+      }
+      collectJournalLineHits(candidate.content, candidate.date || candidate.file, keywords, hits);
+    }
+    if (hits.length === 0) return [];
+
+    // fix4 S5's IDF, df counted from the index postings instead of a fresh
+    // full-corpus tokenization — same corpus (every trusted candidate,
+    // since-filter deliberately NOT applied, matching buildIdfModel's brute
+    // call below), same per-word predicate (stemmed-token-set hit OR
+    // lowercase substring), same math (assembleIdfModel).
+    const qv = buildQueryVariants(query);
+    const legacyDocs = legacy.map((c) => ({
+      lower: c.content.toLowerCase(),
+      tokenSet: new Set(tokenizeWords(c.content).map((tok) => stem(tok))),
+    }));
+    const trustedSet = new Set(trustedIdx);
+    const n = trustedIdx.length + legacyDocs.length;
+    idfModel = assembleIdfModel(qv, n, (variants) => {
+      const matched = new Set<number>();
+      for (const v of variants) {
+        for (const d of snapshot.docsWithStemToken(v)) if (trustedSet.has(d)) matched.add(d);
+        for (const d of snapshot.docsContaining(v)) if (trustedSet.has(d)) matched.add(d);
+      }
+      let df = matched.size;
+      for (const d of legacyDocs) {
+        if (variants.some((v) => d.tokenSet.has(v) || d.lower.includes(v))) df++;
+      }
+      return df;
+    });
+  } else {
+    // ---- BRUTE PATH (pre-index behavior, also the fallback + test oracle) ----
+    const candidates = filterTrusted(
+      readTierCandidates("journal", project, {
+        includeRollupArchive,
+        includeUntrusted: true,
+      }),
+    ).concat(filterTrusted(readLegacyJournalCandidates(project)));
+
+    // fix4 S3 (2026-09-11, reports/agentrecall-fix4-retrieval-2026-09-11.md):
+    // SCORE-THEN-TRUNCATE. The pre-fix4 loop broke out at `hits.length >=
+    // limit` while iterating candidates in date-DESCENDING order — i.e. it
+    // truncated by RECENCY before any hit was ever scored, so an old entry
+    // matching the query strongly was dropped UNSCORED whenever `limit`
+    // weaker-but-newer line matches existed (the S2-standard eval's latent
+    // "journal recency pre-truncation" defect; the W2 sort-before-truncate
+    // work made the pre-truncation deterministic, not correct). Now every
+    // matching line across every candidate is collected and SCORED
+    // (recency×0.5 + exactness×0.5, unchanged formula), and `limit` is
+    // applied to the score-sorted list at the end — one truncation criterion,
+    // the same one RRF ranking uses. Cost: the full line scan always runs
+    // (previously it stopped early once `limit` hits were found) — bounded by
+    // the same already-read candidate set, and measured within the S11
+    // latency budget by this tranche's eval runs.
+    for (const candidate of candidates) {
+      if (sinceCutoff && candidate.date) {
+        const fileDate = new Date(candidate.date);
+        if (!isNaN(fileDate.getTime()) && fileDate < sinceCutoff) continue;
+      }
+      collectJournalLineHits(candidate.content, candidate.date || candidate.file, keywords, hits);
+    }
+
+    // fix4 S5: IDF over the scanned journal corpus (one doc = one journal
+    // file's content) — weights each query word by rarity before the
+    // unchanged recency*0.5 + exactness*0.5 blend below. Review L2
+    // (2026-09-11): skipped entirely when nothing matched — building the
+    // model tokenizes/lowercases the whole corpus, pure waste at zero hits.
+    if (hits.length === 0) return [];
+    idfModel = buildIdfModel(query, candidates.map((c) => c.content));
+  }
 
   const items: QueryMemoryItem[] = hits.map((h) => {
     // Independent review fix (W3b, 2026-08-30): `id` must be unique PER HIT,
@@ -1917,8 +2048,13 @@ export function queryArchiveFallback(project: string, query: string, limit: numb
   const keywords = tokenizeWords(query);
   if (keywords.length === 0 || limit <= 0) return [];
 
+  // rawArchiveOnly (perf/lexical-index, 2026-10-16): this function keeps only
+  // raw-archive candidates, so the reader is told not to read/trust-tag the
+  // live + rollup halves at all — identical output (the `.filter` is now a
+  // belt-and-braces no-op), minus a full live-journal read per low-confidence
+  // query (~0.8 s at 10k entries — the 2026-10-15 scale eval's p95 driver).
   const candidates = filterTrusted(
-    readTierCandidates("journal", project, { includeRawArchive: true, includeUntrusted: true }).filter(
+    readTierCandidates("journal", project, { includeRawArchive: true, rawArchiveOnly: true, includeUntrusted: true }).filter(
       (c) => c.sourceKind === "journal-archive-raw",
     ),
   );
