@@ -1,0 +1,21 @@
+▶ AgentRecall CLI
+  ✔ --version prints version (1174.7964ms)
+  ✔ --help prints usage (1072.5325ms)
+  ✔ write + read roundtrip (2155.4417ms)
+  ✔ capture creates log entry (885.9367ms)
+  ✔ list shows entries (933.0213ms)
+  ✔ projects lists tracked projects (927.7122ms)
+  ✔ palace write + read (1763.7429ms)
+  ✔ palace walk returns context (880.3446ms)
+  ✔ palace lint runs health check (890.0908ms)
+  ✔ search finds content (1021.1307ms)
+  ✔ unknown command exits with error (1224.438ms)
+✔ AgentRecall CLI (12950.9411ms)
+ℹ tests 11
+ℹ suites 1
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13071.5566

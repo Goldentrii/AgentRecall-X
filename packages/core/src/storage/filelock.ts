@@ -73,7 +73,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir } from "./fs-utils.js";
+import { ensureDir, lockDebug } from "./fs-utils.js";
 
 const LOCK_TIMEOUT_MS = 5000;
 /**
@@ -98,6 +98,23 @@ const BOOT_SLACK_MS = 120_000;
 interface LockOwner {
   pid: number;
   acquired_at: string;
+  /**
+   * A14 release tombstone (2026-10-12, CI run 38255969731): release() could
+   * fail to remove the lock dir (NTFS: an antivirus/indexer directory scan,
+   * or any process whose CWD is the dir, makes rmdir fail EPERM even after
+   * the children were unlinked) and SWALLOWED the error. The wreckage — a
+   * lock dir that nobody holds — then read as "held" for up to STALE_LOCK_MS
+   * (ownerless shape) or as "held by a live process" indefinitely (owner.json
+   * survived; the pid is alive but long past its critical section), so every
+   * waiter either burned the 5s no-progress deadline (ownerless: nothing for
+   * waitForLiveHolder to wait on) or the 60s hard cap — and check()'s
+   * contention-skip branch silently dropped 28/40 alignment records. When
+   * removal fails, release now writes `released: true` into owner.json
+   * instead: a tombstoned lock is reclaimable IMMEDIATELY (the holder
+   * provably finished its critical section — no mid-write risk), healing the
+   * lock the moment the external pin lifts.
+   */
+  released?: boolean;
 }
 
 /** Thrown when the lock timeout elapses while the holder process is still
@@ -154,15 +171,23 @@ function readOwner(dir: string): LockOwner | null {
   }
 }
 
-/** Signal-0 liveness probe. EPERM means "alive but not ours" — still alive. */
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+/** Signal-0 liveness probe. EPERM means "alive but not ours" — still alive
+ * (fail closed: only a definitive ESRCH-class "no such process" reads as
+ * dead). Returns the errno so the A14 debug channel can report WHY a reclaim
+ * decision was made. */
+function probePid(pid: number): { alive: boolean; errno?: string } {
+  if (!Number.isInteger(pid) || pid <= 0) return { alive: false, errno: "bad-pid" };
   try {
     process.kill(pid, 0);
-    return true;
+    return { alive: true };
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    const code = (err as NodeJS.ErrnoException).code;
+    return { alive: code === "EPERM", errno: code };
   }
+}
+
+function isPidAlive(pid: number): boolean {
+  return probePid(pid).alive;
 }
 
 /**
@@ -194,7 +219,20 @@ function tryReclaim(dir: string): boolean {
     // Live holder from THIS boot — NEVER steal. A pre-boot acquired_at means
     // the "live" pid is a post-reboot recycle, not the holder (see
     // predatesBoot's doc comment).
-    if (isPidAlive(owner.pid) && !predatesBoot(owner.acquired_at)) return false;
+    const probe = probePid(owner.pid);
+    const preBoot = predatesBoot(owner.acquired_at);
+    // released:true = the holder COMPLETED its critical section but could not
+    // remove the dir (see LockOwner.released) — reclaimable regardless of
+    // pid liveness; there is no mid-write to protect.
+    if (!owner.released && probe.alive && !preBoot) return false;
+    lockDebug("reclaim", {
+      lock: path.basename(dir),
+      reason: owner.released ? "released-tombstone" : probe.alive ? "pre-boot-pid" : "dead-pid",
+      owner_pid: owner.pid,
+      probe_alive: probe.alive,
+      probe_errno: probe.errno,
+      acquired_at: owner.acquired_at,
+    });
   } else {
     // No owner record: legacy lock or crash inside the mkdir→owner-write
     // window. Fall back to the old mtime staleness rule.
@@ -205,6 +243,11 @@ function tryReclaim(dir: string): boolean {
       return true; // vanished — holder released; caller retries mkdir
     }
     if (Date.now() - stat.mtimeMs <= STALE_LOCK_MS) return false;
+    lockDebug("reclaim", {
+      lock: path.basename(dir),
+      reason: "legacy-stale",
+      age_ms: Math.round(Date.now() - stat.mtimeMs),
+    });
   }
 
   const trash = `${dir}.reclaim-${process.pid}-${Date.now()}`;
@@ -255,8 +298,21 @@ function tryReclaim(dir: string): boolean {
  * Only EEXIST means "contended"; ENOENT (store root vanished) is repaired and
  * retried; any OTHER error (EACCES/EROFS/EMFILE, …) is rethrown immediately —
  * spinning 5 s on a read-only store and then reporting "held by a live
- * process" would misdiagnose an environment problem as contention. */
-function tryAcquire(dir: string): (() => void) | null {
+ * process" would misdiagnose an environment problem as contention.
+ *
+ * win32 EXCEPTION (A10, 2026-10-11): on Windows, mkdir of a name whose
+ * previous incarnation is DELETE-PENDING (another process's release/reclaim
+ * rmSync has started but the handle isn't fully closed) fails with EPERM,
+ * not EEXIST — a transient contention artefact of NTFS delete semantics,
+ * observed crashing audit-outcome-concurrency workers once the
+ * progress-aware deadline increased acquire/release churn. On win32 ONLY,
+ * EPERM is therefore treated as "contended" (retry), recorded in the
+ * optional `diag` out-param; acquireLock rethrows the ORIGINAL EPERM at
+ * timeout when no owner record was ever observed during the whole wait
+ * (a genuinely permission-denied store, not contention — A10 review FIX 1),
+ * so the error type stays truthful on both platforms. POSIX behavior is
+ * unchanged (strict immediate rethrow). */
+function tryAcquire(dir: string, diag?: { eperm?: NodeJS.ErrnoException }): (() => void) | null {
   try {
     fs.mkdirSync(dir, { recursive: false });
   } catch (err) {
@@ -275,17 +331,28 @@ function tryAcquire(dir: string): (() => void) | null {
       }
     } else if (code === "EEXIST") {
       return null;
+    } else if (code === "EPERM" && process.platform === "win32") {
+      // Delete-pending collision — see doc comment above. Record the error
+      // so acquireLock can tell a genuine permission failure (EPERM retried
+      // for the whole wait with NO owner ever observed) from real contention
+      // and rethrow the original at timeout (A10 review FIX 1).
+      if (diag) diag.eperm = err as NodeJS.ErrnoException;
+      return null;
     } else {
       throw err;
     }
   }
+  // Kept for the release closure's tombstone TOCTOU check (A14 review FIX 3):
+  // the tombstone may only be written over EXACTLY this record.
+  let myOwner: LockOwner | null = { pid: process.pid, acquired_at: new Date().toISOString() };
   try {
-    fs.writeFileSync(
-      ownerPath(dir),
-      JSON.stringify({ pid: process.pid, acquired_at: new Date().toISOString() }),
-      "utf-8",
-    );
-  } catch {
+    fs.writeFileSync(ownerPath(dir), JSON.stringify(myOwner), "utf-8");
+  } catch (err) {
+    myOwner = null; // identity unverifiable — the release closure never tombstones
+    lockDebug("owner-write-failed", {
+      lock: path.basename(dir),
+      errno: (err as NodeJS.ErrnoException).code,
+    });
     // Owner record is advisory: without it the lock degrades to the legacy
     // mtime staleness rule instead of pid-liveness. NOTE (review LOW-2): in
     // this degraded mode a LIVE holder that keeps the lock past STALE_LOCK_MS
@@ -302,9 +369,60 @@ function tryAcquire(dir: string): (() => void) | null {
     const owner = readOwner(dir);
     if (owner && owner.pid !== process.pid) return;
     try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* already released */
+      // maxRetries is best-effort belt-and-braces (bounded, ~10*20ms linear
+      // backoff); in the observed failure shapes (dir pinned by a CWD or an
+      // AV scan) the retries do NOT ride out the pin — the tombstone below is
+      // the mechanism that actually heals the lock (A14 review).
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
+    } catch (err) {
+      const errno = (err as NodeJS.ErrnoException).code;
+      // A14 root cause (CI run 38255969731): swallowing this left a stale
+      // lock dir that waiters misdiagnosed for 5-60s each, and check()'s
+      // contention-skip dropped 28/40 alignment records. Tombstone the owner
+      // record (released: true) so the very next reclaim attempt may take the
+      // lock the moment the external pin lifts — and say it loudly; a silent
+      // release failure costs every other process real time.
+      let tombstoned = false;
+      if (fs.existsSync(dir)) {
+        // TOCTOU re-read (A14 review FIX 3, mirrors tryReclaim's rename-aside
+        // verify): between this closure's entry read and here, the wreckage
+        // may have been reclaimed and RE-ACQUIRED — by this very pid, too
+        // (another async task in this process), which the entry pid-guard
+        // cannot distinguish. Tombstone only when owner.json still holds
+        // EXACTLY the record this acquire wrote (pid + acquired_at); marking
+        // anyone else's live hold released would steal their lock. The
+        // ownerless shape (our rmSync removed owner.json before failing on
+        // the dir) is also left alone — indistinguishable from a fresh
+        // holder's mkdir→owner-write window; it falls back to the
+        // STALE_LOCK_MS mtime rule, and the DATA is safe either way (the
+        // append fallback in check()/processFeedback).
+        const current = readOwner(dir);
+        const stillOurs =
+          myOwner !== null && current !== null &&
+          current.pid === myOwner.pid && current.acquired_at === myOwner.acquired_at;
+        if (stillOurs) {
+          try {
+            fs.writeFileSync(
+              ownerPath(dir),
+              JSON.stringify({ ...myOwner, released: true }),
+              "utf-8",
+            );
+            tombstoned = true;
+          } catch {
+            /* tombstone write blocked too — mtime staleness remains the backstop */
+          }
+        }
+        console.error(
+          `[agent-recall] filelock: release of "${path.basename(dir)}" could not remove the lock dir ` +
+          `(${errno}) — ${tombstoned ? "tombstoned for immediate reclaim" : `not tombstoned (record no longer ours, or write blocked); reclaim falls back to the ${STALE_LOCK_MS}ms staleness rule`}.`,
+        );
+      }
+      lockDebug("release-failed", {
+        lock: path.basename(dir),
+        errno,
+        dir_still_exists: fs.existsSync(dir),
+        tombstoned,
+      });
     }
   };
 }
@@ -320,32 +438,138 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Acquire a named lock. Retries with async (event-loop-friendly) backoff
- * until LOCK_TIMEOUT_MS; reclaims dead-holder / legacy-stale locks; throws
- * LockContentionError if the holder is alive at timeout.
+ * Acquire a named lock. Retries with async (event-loop-friendly) backoff;
+ * reclaims dead-holder / legacy-stale locks; throws LockContentionError only
+ * when the lock makes NO PROGRESS for LOCK_TIMEOUT_MS (same holder the whole
+ * time — a wedged process), or after MAX_TOTAL_WAIT_MS outright.
+ *
+ * PROGRESS-AWARE DEADLINE (A10 Linux-CI fix, 2026-10-11): the old fixed
+ * `now + 5s` deadline measured TOTAL wait, so under heavy-but-healthy
+ * contention (N processes serializing short critical sections through one
+ * lock — the audit-outcome-concurrency stress shape) a waiter near the back
+ * of the herd timed out even though the lock was changing hands every few
+ * milliseconds. Callers like recordOutcome treat LockContentionError as
+ * "skip the materialized-counter update" (by design: ledger stays lossless),
+ * so every such spurious timeout became a silently lost counter increment
+ * (reproduced: 480-event stress runs materialized 461-476). The timeout's
+ * actual job is detecting a WEDGED holder, so the deadline now resets every
+ * time the observed owner (pid + acquired_at) changes: a live, churning lock
+ * is waited on; a holder that sits on the lock for LOCK_TIMEOUT_MS without
+ * releasing still times out exactly as before (the "never steal from a live
+ * holder" filelock test is unchanged). MAX_TOTAL_WAIT_MS bounds the absolute
+ * worst case so a hot path can never hang indefinitely behind a pathological
+ * ping-pong.
  * Returns a release function (idempotent).
  */
-export async function acquireLock(name: string): Promise<() => void> {
+const MAX_TOTAL_WAIT_MS = 60_000;
+
+export interface AcquireLockOptions {
+  /**
+   * Wait as long as the holder PID probes ALIVE (and from this boot) instead
+   * of applying the 5s no-progress ("wedged holder") deadline. Dead holders
+   * are still reclaimed promptly; the maxTotalWaitMs hard cap still applies.
+   *
+   * CI windows-latest regression (2026-10-12): on a starved 2-vCPU runner a
+   * perfectly healthy holder can sit DESCHEDULED past the no-progress
+   * deadline, so recordOutcome's materialized-counter pass skipped 190/480
+   * updates. For callers whose critical section only rewrites state that is
+   * re-derivable from an authoritative source (the _outcomes.jsonl ledger),
+   * losing the pass to a starvation misdiagnosis is strictly worse than
+   * waiting out a live holder — opt in here. Hot paths that must stay
+   * responsive to a genuinely wedged (alive-but-stuck) holder keep the
+   * default.
+   */
+  waitForLiveHolder?: boolean;
+  /**
+   * Hard cap on the total wait (default MAX_TOTAL_WAIT_MS = 60s). Exists for
+   * tests and callers that need a tighter liveness bound; the default is the
+   * documented absolute worst case.
+   */
+  maxTotalWaitMs?: number;
+}
+
+export async function acquireLock(name: string, opts: AcquireLockOptions = {}): Promise<() => void> {
   const dir = lockDir(name);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let deadline = startedAt + LOCK_TIMEOUT_MS;
+  const hardDeadline = startedAt + (opts.maxTotalWaitMs ?? MAX_TOTAL_WAIT_MS);
+  let lastOwnerKey: string | null = null;
+  let polls = 0;
+  let reclaimed = false;
 
   // Ensure root dir exists before attempting lock
   ensureDir(path.dirname(dir));
 
   let delay = 5;
+  const diag: { eperm?: NodeJS.ErrnoException } = {};
   for (;;) {
-    const release = tryAcquire(dir);
-    if (release) return release;
+    const release = tryAcquire(dir, diag);
+    if (release) {
+      lockDebug("acquired", {
+        lock: name,
+        path: polls === 0 ? "immediate" : reclaimed ? "reclaimed" : "waited",
+        wait_ms: Date.now() - startedAt,
+        polls,
+        last_holder: lastOwnerKey,
+      });
+      return release;
+    }
+    polls += 1;
 
-    // Deadline is checked BEFORE the reclaim-retry shortcut so the loop is
+    // Progress detection: a change of owner (pid or acquired_at) since the
+    // last look means the lock is live — reset the no-progress deadline.
+    // An unreadable owner.json (legacy/crash lock) never counts as progress,
+    // so that branch keeps the original fixed-timeout behavior.
+    const owner = readOwner(dir);
+    const ownerKey = owner ? `${owner.pid}:${owner.acquired_at}` : null;
+    if (ownerKey !== null && ownerKey !== lastOwnerKey) {
+      if (lastOwnerKey !== null) deadline = Date.now() + LOCK_TIMEOUT_MS;
+      lastOwnerKey = ownerKey;
+    }
+
+    // waitForLiveHolder mode: a holder that probes alive (and is from this
+    // boot — predatesBoot pids are recycles, handled by tryReclaim below) is
+    // WAITED ON, not misdiagnosed as wedged; keep pushing the no-progress
+    // deadline while it lives. The hardDeadline check below still bounds the
+    // absolute worst case, and an unreadable owner record (legacy/crash lock)
+    // deliberately gets NO reset — same as the progress detector above.
+    if (
+      opts.waitForLiveHolder && owner && !owner.released &&
+      isPidAlive(owner.pid) && !predatesBoot(owner.acquired_at)
+    ) {
+      deadline = Date.now() + LOCK_TIMEOUT_MS;
+    }
+
+    // Deadlines are checked BEFORE the reclaim-retry shortcut so the loop is
     // always bounded — a pathological reclaim-always-true state (e.g. the
     // store root being deleted out from under us) can never spin forever.
-    if (Date.now() >= deadline) {
+    if (Date.now() >= deadline || Date.now() >= hardDeadline) {
+      // A wait that expires having NEVER seen an owner record, with EPERM
+      // being retried as "delete-pending contention", was not contended at
+      // all — it is a genuine win32 permission problem (read-only store,
+      // ACL deny). Surface the original error instead of a fabricated
+      // contention claim. (A truly churning lock writes owner.json on every
+      // handoff, so some poll in the 5 s window reads one; delete-pending
+      // transients last milliseconds, never 5 s.) A10 review FIX 1.
+      lockDebug("contention", {
+        lock: name,
+        waited_ms: Date.now() - startedAt,
+        polls,
+        hard_cap_hit: Date.now() >= hardDeadline,
+        last_holder: lastOwnerKey,
+        owner_now: owner ? `${owner.pid}:${owner.acquired_at}` : null,
+        eperm_seen: Boolean(diag.eperm),
+        wait_for_live_holder: Boolean(opts.waitForLiveHolder),
+      });
+      if (lastOwnerKey === null && diag.eperm) throw diag.eperm;
       throw contentionError(name, dir);
     }
 
     // Held. Dead holder (or legacy-stale dir) → reclaim and retry at once.
-    if (tryReclaim(dir)) continue;
+    if (tryReclaim(dir)) {
+      reclaimed = true;
+      continue;
+    }
 
     await sleep(Math.min(delay, Math.max(1, deadline - Date.now())));
     delay = Math.min(delay * 2, MAX_BACKOFF_MS);
@@ -358,8 +582,8 @@ export async function acquireLock(name: string): Promise<() => void> {
  * hold); an async fn is allowed only for the documented awareness nesting —
  * see the header's lock-ordering section.
  */
-export async function withLock<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
-  const release = await acquireLock(name);
+export async function withLock<T>(name: string, fn: () => T | Promise<T>, opts: AcquireLockOptions = {}): Promise<T> {
+  const release = await acquireLock(name, opts);
   try {
     return await fn();
   } finally {

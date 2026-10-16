@@ -1,0 +1,53 @@
+2d4d0fd test(core): case-hermetic palace init in destination-proof suite (Linux parity)
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+> tsc && chmod +x dist/index.js
+
+> tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli
+
+
+
+
+
+CI_CHAIN_EXIT=0
+=== npm test tail ===
+    # Subtest: a crashed session (WM file, no hook-end) gets rescued into a card + recency entry on the NEXT hook-start
+    ok 1 - a crashed session (WM file, no hook-end) gets rescued into a card + recency entry on the NEXT hook-start
+      ---
+      duration_ms: 1966.303627
+      ...
+    # Subtest: M1: a fault-injected appendRecentSession failure preserves WM (no permanent continuity invisibility), doesn't abort the sweep, and self-heals on retry
+    ok 2 - M1: a fault-injected appendRecentSession failure preserves WM (no permanent continuity invisibility), doesn't abort the sweep, and self-heals on retry
+      ---
+      duration_ms: 3469.978123
+      ...
+    # Subtest: C1 (c): a secret/injection tag from a crashed session never appears verbatim in the rescued card body
+    ok 3 - C1 (c): a secret/injection tag from a crashed session never appears verbatim in the rescued card body
+      ---
+      duration_ms: 2373.002863
+      ...
+    # Subtest: idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card
+    ok 4 - idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card
+      ---
+      duration_ms: 1984.103916
+      ...
+    # Subtest: e2e crash-rescue round trip: prompts via hook-ambient → simulated crash → rescue → NEXT hook-start's continuity shows it
+    ok 5 - e2e crash-rescue round trip: prompts via hook-ambient → simulated crash → rescue → NEXT hook-start's continuity shows it
+      ---
+      duration_ms: 3860.249715
+      ...
+    1..5
+ok 79 - working-memory wave — hook-start orphan rescue
+  ---
+  duration_ms: 13654.472967
+  type: 'suite'
+  ...
+1..79
+# tests 293
+# suites 77
+# pass 293
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 37964.391912

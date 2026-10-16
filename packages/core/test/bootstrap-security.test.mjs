@@ -82,16 +82,27 @@ describe("Guard 1 — symlink escape is blocked by realpath jail", () => {
     }
   });
 
-  it("bootstrapImport skips items whose realpath resolves outside the repo's scan root", async () => {
+  it("bootstrapImport skips items whose realpath resolves outside the repo's scan root", async (t) => {
     // Create a git repo inside scanBase with a symlink pointing outside scanBase
     const repo = makeGitRepo(scanBase, "legit-repo");
     // symlink: scanBase/legit-repo/escape-link.txt -> secretDir/secret.txt
     // The string starts with scanBase (passes naive startsWith check), but
     // after realpathSync it resolves to secretDir which is outside scanBase.
-    fs.symlinkSync(
-      path.join(secretDir, "secret.txt"),
-      path.join(repo, "escape-link.txt"),
-    );
+    try {
+      fs.symlinkSync(
+        path.join(secretDir, "secret.txt"),
+        path.join(repo, "escape-link.txt"),
+      );
+    } catch (err) {
+      if (process.platform === "win32" && err && err.code === "EPERM") {
+        // POSIX-only prerequisite: creating file symlinks on Windows requires
+        // SeCreateSymbolicLinkPrivilege (admin shell or Developer Mode). The
+        // guard under test (realpath jail) is still covered on POSIX CI.
+        t.skip("file symlink creation needs SeCreateSymbolicLinkPrivilege on Windows");
+        return;
+      }
+      throw err;
+    }
 
     const scanResult = await bootstrapScan({ scan_dirs: [scanBase] });
     assert.ok(scanResult._session_nonce, "nonce must be present");

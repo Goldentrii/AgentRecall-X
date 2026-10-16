@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   filterEventsBeforeDay,
@@ -89,7 +89,7 @@ describe("STRICT TEMPORAL SPLIT — filterEventsBeforeDay (leakage guard)", () =
   });
 
   it("END-TO-END leakage proof: a same-day co-citation produces NO edge in day D's graph; the identical pair one day earlier DOES", async () => {
-    const core = await import(CORE_DIST);
+    const core = await import(pathToFileURL(CORE_DIST).href);
     const D = "2026-09-10";
     // Same-day pair (must NOT edge for day D):
     const sameDayEvents = new Map([
@@ -121,7 +121,7 @@ describe("STRICT TEMPORAL SPLIT — filterEventsBeforeDay (leakage guard)", () =
 
 describe("evaluateDayPair — hand-computed known-MRR fixture", () => {
   it("activation tie-break promotes the cited-but-tied item from rank 4 (miss@3) to rank 3 (hit@3)", async () => {
-    const core = await import(CORE_DIST);
+    const core = await import(pathToFileURL(CORE_DIST).href);
     const project = "proj";
     const day = "2026-09-10";
 
@@ -240,7 +240,7 @@ describe("tieBreakFixedContext", () => {
 
 describe("runEval — end-to-end on a small fixture store (below the claim gate)", () => {
   it("reports the exact literal CANNOT CLAIM string with the correct raw counts", async () => {
-    const core = await import(CORE_DIST);
+    const core = await import(pathToFileURL(CORE_DIST).href);
     const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ar-activation-eval-fixture-"));
     try {
       const project = "fixtureproj";
@@ -287,7 +287,7 @@ describe("runEval — end-to-end on a small fixture store (below the claim gate)
   });
 
   it("computeProjectDayPairs correctly derives candidates/cited from a raw ledger, deterministically", async () => {
-    const core = await import(CORE_DIST);
+    const core = await import(pathToFileURL(CORE_DIST).href);
     const ledger = [
       { correction_id: "a", kind: "retrieved", at: "2026-09-10T08:00:00Z" },
       { correction_id: "b", kind: "retrieved", at: "2026-09-10T08:00:00Z" },

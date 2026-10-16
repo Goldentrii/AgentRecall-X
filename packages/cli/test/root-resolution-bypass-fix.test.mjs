@@ -68,7 +68,7 @@ describe("root-resolution bypass fix — hook-start", () => {
     const root = freshRoot("ar-rootfix-hs-lock-");
     const home = isolatedHome();
     const { code, stderr } = await runCli(["--root", root, "--project", "rootfix-hs", "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "rootfix-hs-lock-test" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "rootfix-hs-lock-test" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.ok(fs.existsSync(path.join(root, ".hook-start-lock")), "expected .hook-start-lock under --root");
@@ -91,7 +91,7 @@ describe("root-resolution bypass fix — hook-start", () => {
     );
 
     const { code, stdout, stderr } = await runCli(["--root", root, "--project", project, "hook-start"], {
-      env: { HOME: home, CLAUDE_SESSION_ID: "rootfix-hs-prefetch-test" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "rootfix-hs-prefetch-test" },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.match(stdout, /root-fix prefetch marker TOW2-000/, `expected the prefetch line to render; stdout=${stdout}`);
@@ -120,7 +120,7 @@ describe("root-resolution bypass fix — hook-end", () => {
     const payload = JSON.stringify({ session_id: sid });
     const { code, stderr } = await runCli(["--root", root, "--project", project, "hook-end"], {
       stdin: payload,
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
@@ -146,7 +146,7 @@ describe("root-resolution bypass fix — hook-correction", () => {
     });
     const { code, stderr } = await runCli(["--root", root, "--project", "rootfix-hc", "hook-correction"], {
       stdin: payload,
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.ok(fs.existsSync(path.join(root, ".hook-correction-seen")), "expected .hook-correction-seen under --root");
@@ -162,7 +162,7 @@ describe("root-resolution bypass fix — hook-ambient", () => {
     const payload = JSON.stringify({ prompt: "just a normal prompt about the widget", session_id: sid });
     const { code, stderr } = await runCli(["--root", root, "--project", "rootfix-ha", "hook-ambient"], {
       stdin: payload,
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     const expected = path.join(root, `.ambient-counter-${sid.replace(/[^a-z0-9_-]/gi, "_")}`);
@@ -186,7 +186,7 @@ describe("root-resolution bypass fix — ar stats", () => {
     fs.writeFileSync(path.join(jDir, "2026-08-12-marker.md"), "x", "utf-8");
 
     const { code, stdout, stderr } = await runCli(["--root", root, "--project", project, "stats"], {
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.match(stdout, /1/, `expected the counts (1 correction, 1 journal entry) to appear; stdout=${stdout}`);
@@ -211,7 +211,7 @@ describe("root-resolution bypass fix — ar setup supabase --backfill", () => {
     fs.mkdirSync(path.join(root, "projects", project), { recursive: true });
 
     const { code, stdout, stderr } = await runCli(["--root", root, "setup", "supabase", "--backfill"], {
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home },
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.match(

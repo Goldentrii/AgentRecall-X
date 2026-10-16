@@ -29,6 +29,8 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { parseFeedbackLogText } from "../dist/tools-logic/smart-recall.js";
+
 const PROJECT = "feedback-race-proj";
 
 const SMART_RECALL_DIST_URL = pathToFileURL(
@@ -68,7 +70,7 @@ function spawnWorker(testRoot, project, iters, startAt) {
       process.execPath,
       ["-e", WORKER_CODE, "--", project, String(iters), String(startAt), SMART_RECALL_DIST_URL],
       {
-        env: { ...process.env, AGENT_RECALL_ROOT: testRoot },
+        env: { ...process.env, AGENT_RECALL_ROOT: testRoot, AGENT_RECALL_LOCK_DEBUG: "1" },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -117,8 +119,21 @@ describe("feedback-log.json concurrent-process lost-update race (smartRecall fee
 
     const logPath = path.join(testRoot, "feedback-log.json");
     assert.ok(fs.existsSync(logPath), "feedback-log.json must exist after stress run");
-    const entries = JSON.parse(fs.readFileSync(logPath, "utf-8"));
+    // A14: append-only NDJSON (legacy array still parses) — shared parser.
+    const entries = parseFeedbackLogText(fs.readFileSync(logPath, "utf-8"));
     const ids = new Set(entries.map((e) => e.id).filter(Boolean));
+
+    // A14 self-diagnosis: on a loss, print every filelock/rename debug event
+    // the children emitted (AGENT_RECALL_LOCK_DEBUG=1 below), so a CI-only
+    // recurrence names the losing mechanism instead of only the count.
+    if (ids.size !== EXPECTED_TOTAL) {
+      console.error("[feedback-log-concurrency] FAILURE DIAGNOSIS — lock events:");
+      for (const r of results) {
+        for (const line of r.stderr.split(/\r?\n/)) {
+          if (line.startsWith("ARLOCKDBG ") || line.includes("[agent-recall]")) console.error("  " + line);
+        }
+      }
+    }
 
     console.log(
       `[feedback-log-concurrency] N=${N} M=${M} K=${K} expected=${EXPECTED_TOTAL} ` +

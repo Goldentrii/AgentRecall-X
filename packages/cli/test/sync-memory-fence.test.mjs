@@ -114,7 +114,7 @@ describe("ar sync-memory — frontmatter/fence blank-line regression", () => {
     const memDir = path.join(home, ".claude", "projects", `-Users-${os.userInfo().username}`, "memory");
     fs.mkdirSync(memDir, { recursive: true });
 
-    const { code, stdout, stderr } = await runCli(root, ["--project", project, "sync-memory"], { env: { HOME: home } });
+    const { code, stdout, stderr } = await runCli(root, ["--project", project, "sync-memory"], { env: { HOME: home, USERPROFILE: home } });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
 
     const syncPath = path.join(memDir, `ar_sync_${project.toLowerCase()}.md`);

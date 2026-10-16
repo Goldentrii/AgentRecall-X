@@ -7,11 +7,14 @@
     "packages/cli"
   ],
   "scripts": {
-    "sync-readme": "cp README.md packages/core/README.md && cp README.md packages/mcp-server/README.md && cp README.md packages/sdk/README.md && cp README.md packages/cli/README.md",
+    "sync-readme": "node -e \"const fs = require('fs'); ['core', 'mcp-server', 'sdk', 'cli'].forEach(p => fs.copyFileSync('README.md', 'packages/' + p + '/README.md'))\"",
     "build": "npm run build -w packages/core && npm run build -w packages/mcp-server && npm run build -w packages/sdk && npm run build -w packages/cli",
     "test": "npm test -w packages/core && npm test -w packages/mcp-server && npm test -w packages/sdk && npm test -w packages/cli",
-    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
+    "clean": "node -e \"const fs = require('fs'); const path = require('path'); ['core', 'mcp-server', 'sdk', 'cli'].forEach(p => { fs.rmSync(path.join('packages', p, 'dist'), { recursive: true, force: true }); fs.readdirSync(path.join('packages', p)).forEach(f => { if (f.endsWith('.tsbuildinfo')) fs.rmSync(path.join('packages', p, f), { force: true }); }); })\"",
     "lint": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli",
-    "bench": "node scripts/eval/run-bench.mjs"
+    "bench": "node scripts/eval/run-bench.mjs",
+    "bench:latency": "node scripts/eval/latency.mjs",
+    "bench:injection": "node scripts/eval/session-start-size.mjs",
+    "bench:golden": "node scripts/eval/golden-retrieval.mjs --check-determinism"
   }
 }

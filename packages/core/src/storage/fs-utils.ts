@@ -29,6 +29,21 @@ export function safeIsoDateOrToday(date: string | undefined | null): string {
   return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayISO();
 }
 
+/** True when the file's content starts with a JSON array bracket — the
+ * legacy whole-array format of the append-only NDJSON stores (A14:
+ * alignment-log.json, feedback-log.json). Reads 16 bytes, not the file. */
+export function isLegacyJsonArrayFile(p: string): boolean {
+  let fd: number;
+  try { fd = fs.openSync(p, "r"); } catch { return false; }
+  try {
+    const buf = Buffer.alloc(16);
+    const n = fs.readSync(fd, buf, 0, 16, 0);
+    return buf.subarray(0, n).toString("utf-8").trimStart().startsWith("[");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function readJsonSafe<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -38,11 +53,116 @@ export function readJsonSafe<T>(filePath: string): T | null {
   }
 }
 
+/** Synchronous bounded sleep without CPU spin (Atomics.wait on a throwaway
+ * buffer). Only ever reached on win32 transient rename retries (≤
+ * RENAME_RETRY_BUDGET_MS total) — never a lock-wait primitive (fix9 retired
+ * those deliberately). */
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * A14 diagnostics channel (2026-10-12, CI run 38255969731): one NDJSON line
+ * per event on stderr, prefix "ARLOCKDBG", gated on AGENT_RECALL_LOCK_DEBUG=1.
+ * Shared by filelock.ts (acquire path / reclaim decision / contention /
+ * release failure) and renameAtomic (retry storms) so a failing concurrency
+ * run on an unreachable CI runner tells us WHICH mechanism lost the records
+ * instead of only how many. Read lazily (not at module load) so tests that
+ * set the env after import still get the stream. Never throws.
+ */
+export function lockDebug(ev: string, fields: Record<string, unknown>): void {
+  if (process.env.AGENT_RECALL_LOCK_DEBUG !== "1") return;
+  try {
+    process.stderr.write(
+      "ARLOCKDBG " + JSON.stringify({ ev, pid: process.pid, t: Date.now(), ...fields }) + "\n",
+    );
+  } catch {
+    /* diagnostics must never break the caller */
+  }
+}
+
+/**
+ * Total win32 transient-rename retry budget. 5s, not the original ~1s (A13,
+ * CI run 38251553161): on a loaded 2-vCPU GitHub runner, a holder that
+ * intended a ~400ms window kept the destination open past the entire ~1s
+ * backoff (the rename-retry test's own PowerShell reader — its close drifted
+ * >600ms under scheduler pressure; even idle on a fast desktop the drift
+ * measures ~80ms). Real-world holders are no gentler: antivirus/indexer
+ * scans commonly pin a just-written file for 100ms–2s. The 5s worst case is
+ * only ever PAID when the rename is genuinely blocked the whole time —
+ * uncontended renames (the overwhelmingly common case) succeed on the first
+ * attempt and never sleep — and after the budget the original error still
+ * surfaces (exported so the regression test derives its assertions from the
+ * real value instead of a copy that can drift).
+ */
+export const RENAME_RETRY_BUDGET_MS = 5_000;
+/** Backoff cap: 10 → 250ms doubling, then flat 250ms until the budget is
+ * spent — early retries catch ms-scale reader windows quickly, the cap keeps
+ * the write's landing latency ≤250ms once a long holder finally releases. */
+const RENAME_RETRY_MAX_DELAY_MS = 250;
+
+/**
+ * renameSync with a BOUNDED win32-only retry for transient sharing-violation
+ * errors (CI/parallel-suite flake, 2026-10-12): every atomic write here is
+ * tmp-write + rename, and readers of these files are deliberately LOCK-FREE
+ * (readAlignmentLog in session_start, readCorrections on hot paths, check()'s
+ * similar-past-deltas scan). On NTFS, renaming OVER a destination that any
+ * process holds open without FILE_SHARE_DELETE — a concurrent lock-free
+ * reader, an antivirus/indexer scan — fails with EPERM/EACCES/EBUSY for the
+ * few ms the handle lives. That is a TRANSIENT, not a permission problem
+ * (same NTFS semantics as filelock.ts's A10 delete-pending EPERM note), and
+ * it intermittently failed alignment-log-concurrency under full-suite load:
+ *   EPERM: operation not permitted, rename '…alignment-log.json.tmp.N' →
+ *   '…alignment-log.json'
+ * Exponential backoff 10→250ms (capped), 5s total (see
+ * RENAME_RETRY_BUDGET_MS for why ~1s lost to a slow CI runner), then rethrow
+ * — anything outlasting the budget is a real environment problem the caller
+ * must see. The budget counts REQUESTED sleep, not wall clock, so a
+ * descheduled process still waits at least the full budget. POSIX renames
+ * over open files simply succeed, so the retry path is unreachable there
+ * (hence "atomic on POSIX" never needed this).
+ */
+export function renameAtomic(oldPath: string, newPath: string): void {
+  let delayMs = 10;
+  let sleptMs = 0;
+  let retries = 0;
+  let lastCode: string | undefined;
+  for (;;) {
+    try {
+      fs.renameSync(oldPath, newPath);
+      if (retries > 0) {
+        lockDebug("rename-retry", {
+          dest: path.basename(newPath), retries, slept_ms: sleptMs, last_errno: lastCode, outcome: "ok",
+        });
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const transient =
+        process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+      if (!transient || sleptMs >= RENAME_RETRY_BUDGET_MS) {
+        if (retries > 0 || transient) {
+          lockDebug("rename-retry", {
+            dest: path.basename(newPath), retries, slept_ms: sleptMs, last_errno: code, outcome: "gave-up",
+          });
+        }
+        throw err;
+      }
+      lastCode = code;
+      retries += 1;
+      const napMs = Math.min(delayMs, RENAME_RETRY_MAX_DELAY_MS, RENAME_RETRY_BUDGET_MS - sleptMs);
+      sleepSyncMs(napMs);
+      sleptMs += napMs;
+      delayMs *= 2;
+    }
+  }
+}
+
 export function writeJsonAtomic(filePath: string, data: unknown): void {
   ensureDir(path.dirname(filePath));
   const tmp = filePath + ".tmp." + process.pid;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-  fs.renameSync(tmp, filePath); // atomic on POSIX
+  renameAtomic(tmp, filePath); // atomic on POSIX; win32 transient-EPERM retry
 }
 
 /**
@@ -57,7 +177,7 @@ export function writeTextAtomic(filePath: string, text: string): void {
   ensureDir(path.dirname(filePath));
   const tmp = filePath + ".tmp." + process.pid;
   fs.writeFileSync(tmp, text, "utf-8");
-  fs.renameSync(tmp, filePath); // atomic on POSIX
+  renameAtomic(tmp, filePath); // atomic on POSIX; win32 transient-EPERM retry
 }
 
 // ---------------------------------------------------------------------------

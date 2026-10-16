@@ -3242,8 +3242,9 @@ async function main(): Promise<void> {
       const feedbackFile = path.join(statsRoot, "feedback-log.json");
       if (fs.existsSync(feedbackFile)) {
         try {
-          const data = JSON.parse(fs.readFileSync(feedbackFile, "utf-8"));
-          feedbackCount = Array.isArray(data) ? data.length : 0;
+          // A14: feedback-log.json is append-only NDJSON (legacy array still
+          // parses) — count via the shared dual-format parser.
+          feedbackCount = core.parseFeedbackLogText(fs.readFileSync(feedbackFile, "utf-8")).length;
         } catch { /* non-blocking */ }
       }
 

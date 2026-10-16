@@ -20,7 +20,7 @@ claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
 
 # 3. Run the benchmark against your own corpus
 #    (the bench lives in the repo, not the npm package — clone once)
-git clone https://github.com/Goldentrii/AgentRecall-MCP.git && cd AgentRecall-MCP
+git clone https://github.com/Goldentrii/AgentRecall-X.git && cd AgentRecall-X
 npm ci && npm run bench    # reads your local ~/.agent-recall corpus
 
 # 4. Post your numbers in GitHub Discussions → Benchmark Numbers

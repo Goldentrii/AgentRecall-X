@@ -201,7 +201,7 @@ export function transformFile(srcPath, opts = {}) {
 
 // ── Target files ──────────────────────────────────────────────────────────────
 
-const BASELINES_DIR = new url.URL("./baselines/", import.meta.url).pathname;
+const BASELINES_DIR = url.fileURLToPath(new url.URL("./baselines/", import.meta.url));
 const LOCAL_DIR = path.join(BASELINES_DIR, "local");
 
 const DEFAULT_TARGETS = [
@@ -342,7 +342,7 @@ function runSelfTest() {
 
 const invokedDirectly =
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(new url.URL(import.meta.url).pathname);
+  path.resolve(process.argv[1]) === path.resolve(url.fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   const args = process.argv.slice(2);

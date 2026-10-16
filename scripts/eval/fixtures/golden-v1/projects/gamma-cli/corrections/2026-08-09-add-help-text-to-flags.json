@@ -1,0 +1,14 @@
+{
+  "id": "2026-08-09-add-help-text-to-flags",
+  "date": "2026-08-09",
+  "severity": "p1",
+  "project": "gamma-cli",
+  "rule": "Every CLI flag must ship with help text in the same PR",
+  "context": "Three flags landed undocumented in v1.0.2 and generated support tickets. The lint rule now fails the build on a flag without help text.",
+  "tags": ["cli", "flags", "docs"],
+  "kind": "correction",
+  "active": true,
+  "retrieved_count": 1,
+  "heeded_count": 1,
+  "recurrence_count": 0
+}

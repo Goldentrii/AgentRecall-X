@@ -1,0 +1,19 @@
+
+[room-slug-guards] AR_ROOT=C:\Users\tong\AppData\Local\Temp\ar-slug-guards-urckMw
+
+[G1] createRoom rejects empty slug
+  ✅ createRoom('') throws clear error
+  ✅ createRoom('   ') throws clear error
+[G2] palace_write rejects empty room before side effects
+  ✅ palace_write({room:''}) throws
+  ✅ palace_write({room:'   '}) throws
+[G3] journal_write survives whitespace palace_room
+  ✅ journal_write(whitespace room) does not throw
+  ✅ journal_write(whitespace room) skips palace (palace === null)
+[G4] createRoom persists sanitized slug; palace_write returns it
+  ✅ palace_write('My Room').room === 'My-Room' (sanitized)
+  ✅ no room in listRooms has an empty/blank slug
+  ✅ listRooms reports the sanitized slug 'My-Room'
+
+[room-slug-guards] PASS 9 / FAIL 0
+

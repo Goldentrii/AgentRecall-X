@@ -992,18 +992,25 @@ describe("retrieval/query-memory.ts — queryMemory() pipeline (Wave 2)", () => 
 
     let tmpHome;
     let origHome;
+    let origUserProfile;
     let legacyJournalDir;
 
     before(async () => {
       origHome = process.env.HOME;
+      origUserProfile = process.env.USERPROFILE;
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "ar-legacy-root-fixture-"));
+      // os.homedir() reads HOME on POSIX but USERPROFILE on Windows —
+      // override both so getLegacyRoot() is redirected on every platform.
       process.env.HOME = tmpHome;
+      process.env.USERPROFILE = tmpHome;
       legacyJournalDir = path.join(tmpHome, ".claude", "projects", `-fake-legacy-entry-${PROJECT}`, "memory", "journal");
       fs.mkdirSync(legacyJournalDir, { recursive: true });
     });
 
     after(async () => {
       process.env.HOME = origHome;
+      if (origUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = origUserProfile;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 

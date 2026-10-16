@@ -1,0 +1,94 @@
+{
+  "version": "1",
+  "updated": "2026-09-15",
+  "insights": [
+    {
+      "id": "ins-owner-approval-db",
+      "title": "Never run destructive database operations in production without explicit owner approval",
+      "source": "alpha-platform, 2026-06-30",
+      "applies_when": ["production", "database", "drop table", "delete", "destructive", "owner approval"],
+      "skill_tags": ["database", "safety"],
+      "projects": ["alpha-platform"],
+      "severity": "critical",
+      "confirmed_count": 10,
+      "last_confirmed": "2026-09-12"
+    },
+    {
+      "id": "ins-no-self-review",
+      "title": "Parallel workers must never self-review — route every work product to an independent reviewer",
+      "source": "alpha-platform, 2026-07-09",
+      "applies_when": ["review", "worker", "self-review", "parallel", "reviewer", "quality"],
+      "skill_tags": ["process", "review"],
+      "projects": ["alpha-platform", "beta-api"],
+      "severity": "critical",
+      "confirmed_count": 33,
+      "last_confirmed": "2026-09-10"
+    },
+    {
+      "id": "ins-batch-cli-auth",
+      "title": "Overnight batch agents must use CLI token auth, never interactive OAuth sessions",
+      "source": "beta-api, 2026-08-01",
+      "applies_when": ["overnight", "batch", "auth", "cli", "oauth", "token", "unattended"],
+      "skill_tags": ["auth", "automation"],
+      "projects": ["beta-api"],
+      "severity": "important",
+      "confirmed_count": 9,
+      "last_confirmed": "2026-09-02"
+    },
+    {
+      "id": "ins-ship-over-refactor",
+      "title": "Owner preference: prioritize shipping user-visible fixes over internal refactoring",
+      "source": "gamma-cli, 2026-07-26",
+      "applies_when": ["refactor", "shipping", "priority", "owner", "preference", "focus", "roadmap"],
+      "skill_tags": ["process", "prioritization"],
+      "projects": ["alpha-platform", "gamma-cli"],
+      "severity": "important",
+      "confirmed_count": 12,
+      "last_confirmed": "2026-08-31"
+    },
+    {
+      "id": "ins-auth-header-bearer",
+      "title": "Canonical auth header form is Authorization: Bearer <token> — the cookie auth in the README is the outlier",
+      "source": "alpha-platform, 2026-07-30",
+      "applies_when": ["auth", "header", "bearer", "token", "cookie", "readme", "canonical"],
+      "skill_tags": ["auth", "api-design"],
+      "projects": ["alpha-platform"],
+      "severity": "important",
+      "confirmed_count": 8,
+      "last_confirmed": "2026-09-05"
+    },
+    {
+      "id": "ins-deploy-gate",
+      "title": "Never deploy to production without explicit owner approval",
+      "source": "alpha-platform, 2026-06-30",
+      "applies_when": ["deploy", "production", "approval", "owner", "release", "gate"],
+      "skill_tags": ["process", "safety"],
+      "projects": ["alpha-platform", "beta-api", "gamma-cli"],
+      "severity": "critical",
+      "confirmed_count": 10,
+      "last_confirmed": "2026-09-14"
+    },
+    {
+      "id": "ins-pin-ci-node",
+      "title": "Pin the CI node version to the engines floor, never latest",
+      "source": "gamma-cli, 2026-08-14",
+      "applies_when": ["ci", "node", "version", "pin", "build"],
+      "skill_tags": ["ci"],
+      "projects": ["gamma-cli"],
+      "severity": "minor",
+      "confirmed_count": 2,
+      "last_confirmed": "2026-08-14"
+    },
+    {
+      "id": "ins-flaky-e2e-browser-pin",
+      "title": "Flaky e2e suites usually trace to an unpinned browser version",
+      "source": "alpha-platform, 2026-06-05",
+      "applies_when": ["e2e", "flaky", "test", "browser", "pin"],
+      "skill_tags": ["testing"],
+      "projects": ["alpha-platform"],
+      "severity": "minor",
+      "confirmed_count": 3,
+      "last_confirmed": "2026-07-19"
+    }
+  ]
+}

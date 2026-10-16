@@ -1,0 +1,9 @@
+
+> bench:latency
+> node scripts/eval/latency.mjs --n 50
+
+artifact: scripts/eval/baselines/latency-2026-10-12.json
+latency — store: scripts/eval/fixtures/golden-v1 (hash 6816ea41d9f9…) on TONGS (13th Gen Intel(R) Core(TM) i7-13700)
+recall        n=50 errors=0  p50 41.859 ms  p95 92.128 ms  p99 104.904 ms  mean 46.468 ms  min 11.572  max 104.904
+session_start n=50 errors=0  p50 66.85 ms  p95 83.55 ms  p99 91.546 ms  mean 68.826 ms  min 47.927  max 91.546
+(non-deterministic: timing — values are never CI-gated; schema + sample-recompute only)

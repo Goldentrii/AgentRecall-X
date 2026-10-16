@@ -1,0 +1,14 @@
+{
+  "id": "2026-07-30-validate-webhook-signatures",
+  "date": "2026-07-30",
+  "severity": "p0",
+  "project": "beta-api",
+  "rule": "Always validate webhook signatures before processing the payload",
+  "context": "A test tenant accepted an unsigned webhook in staging. Signature validation is mandatory on every inbound webhook route, no exceptions for internal senders.",
+  "tags": ["webhooks", "security", "signatures"],
+  "kind": "correction",
+  "active": true,
+  "retrieved_count": 1,
+  "heeded_count": 1,
+  "recurrence_count": 0
+}

@@ -56,11 +56,14 @@ console.log(`\n[heeded-guard] AR_ROOT=${AR_ROOT}\n`);
 console.log("[T1] evidence-grounded heeded path + old default-heeded stays dead");
 
 const RULE = "Always pin dependency versions in the lockfile before release";
-const w = writeCorrection(PROJ, { id: "c-pin-deps", rule: RULE, context: "build broke from a floating minor bump" });
+// v3.4.49 contract (liveness-aware file locking, afd9b0a): writeCorrection and
+// recordOutcome are async (Promise-returning) — the sync lock path was retired.
+// Same return shapes as before ({ written } / void); they just must be awaited.
+const w = await writeCorrection(PROJ, { id: "c-pin-deps", rule: RULE, context: "build broke from a floating minor bump" });
 check("correction written (passes quality gate)", w.written === true, JSON.stringify(w));
 
 // Simulate session_start surfacing it today → retrieved_count = 1, last_retrieved = now.
-recordOutcome({ correction_id: "c-pin-deps", project: PROJ, kind: "retrieved", at: new Date().toISOString() });
+await recordOutcome({ correction_id: "c-pin-deps", project: PROJ, kind: "retrieved", at: new Date().toISOString() });
 
 const afterRetrieve = readCorrections(PROJ).find((c) => c.id === "c-pin-deps");
 check("retrieved_count = 1 after one retrieval", afterRetrieve?.retrieved_count === 1,

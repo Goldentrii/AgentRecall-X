@@ -6,6 +6,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { projectSubPath, roomDir } from "../storage/paths.js";
 import { extractKeywords } from "./auto-name.js";
+import { ensureDir, writeTextAtomic, isLegacyJsonArrayFile } from "../storage/fs-utils.js";
+import { scrubForCloud } from "../storage/content-guard.js";
 
 export interface AlignmentRecord {
   date: string;
@@ -22,16 +24,114 @@ export interface WatchForPattern {
   suggestion: string;
 }
 
-function alignmentLogPath(project: string): string {
+export function alignmentLogPath(project: string): string {
   // F2 fix (independent review, 2026-07-20): was a local naive sanitizer
   // (no lowercase, no existing-dir reuse) — routes through paths.ts now.
   return projectSubPath(project, "alignment-log.json");
 }
 
+/**
+ * A14 (2026-10-12, CI run 38255969731 — the SECOND silent mass-loss of
+ * alignment records on a starved windows runner): alignment-log.json is now
+ * APPEND-ONLY NDJSON — one scrubbed JSON object per line — instead of a
+ * locked read→push→write of a pretty-printed array. Why this is structural
+ * and not a tuning fix:
+ *
+ *   - An append (O_APPEND, one small write syscall) cannot lose OTHER
+ *     writers' records, with or without the lock. The old RMW lost 28/40
+ *     records when the lock misbehaved (a swallowed release failure left a
+ *     stale lock dir; every waiter threw LockContentionError and check()'s
+ *     skip branch dropped the record). Lossless is now a property of the
+ *     write SHAPE, not of lock health on a starved runner.
+ *   - The hot path no longer rewrites the whole file, so there is no
+ *     tmp+rename on every check() — the win32 rename-EPERM storms against
+ *     lock-free readers (A13's 5s retry budget INSIDE the lock) are gone,
+ *     and lock holds collapse from "scrub+stringify+rename 80KB" to one
+ *     appendFileSync.
+ *
+ * Reader compatibility: the LEGACY format (a JSON array, pretty-printed)
+ * is still read; the first locked writer migrates it to NDJSON. The 50-cap
+ * moves from write time to READ time (parseAlignmentLogText caps at 50);
+ * physical compaction to the newest 50 happens under the lock once the file
+ * exceeds COMPACT_BYTES.
+ */
+export const ALIGNMENT_READ_CAP = 50;
+/** Exported so the compaction tests derive the gate from the real value. */
+export const ALIGNMENT_COMPACT_BYTES = 1024 * 1024;
+
+/** Parse either format: legacy JSON array, or NDJSON (one record per line —
+ * unparsable lines, e.g. a torn tail mid-append, are skipped). Returns the
+ * newest ALIGNMENT_READ_CAP records. Exported for tests/scripts so no caller
+ * hand-rolls a second (drifting) parser. */
+export function parseAlignmentLogText(text: string): AlignmentRecord[] {
+  const trimmed = text.trimStart();
+  let records: AlignmentRecord[];
+  if (trimmed.startsWith("[")) {
+    try { records = JSON.parse(trimmed) as AlignmentRecord[]; } catch { return []; }
+  } else {
+    records = [];
+    for (const line of trimmed.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try { records.push(JSON.parse(line) as AlignmentRecord); } catch { /* torn/foreign line */ }
+    }
+  }
+  return Array.isArray(records) ? records.slice(-ALIGNMENT_READ_CAP) : [];
+}
+
 export function readAlignmentLog(project: string): AlignmentRecord[] {
   const p = alignmentLogPath(project);
   if (!fs.existsSync(p)) return [];
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return []; }
+  try { return parseAlignmentLogText(fs.readFileSync(p, "utf-8")); } catch { return []; }
+}
+
+/** One scrubbed NDJSON line for a record. Scrub runs BEFORE the write (same
+ * doctrine as the old whole-file writer: session_start and check() re-read
+ * this file; free-text params must never reach disk unscrubbed) and any
+ * newline the scrub could conceivably introduce is flattened so one record
+ * stays one line. */
+function toLine(record: AlignmentRecord): string {
+  return scrubForCloud(JSON.stringify(record)).replace(/[\r\n]+/g, " ");
+}
+
+/**
+ * Append one record — THE writer for alignment-log.json. Call this while
+ * holding the `alignment-<project>` lock (migration and compaction rewrite
+ * the file); check() falls back to calling it WITHOUT the lock after a
+ * LockContentionError, which is still append-safe against every other
+ * append and loses nothing (only a concurrent compaction/migration — itself
+ * behind the very lock that just timed out, i.e. not running — could race
+ * it; that residual corner is documented at the call site).
+ */
+export function appendAlignmentRecord(
+  project: string,
+  record: AlignmentRecord,
+  opts: { locked?: boolean } = {},
+): void {
+  const p = alignmentLogPath(project);
+  ensureDir(path.dirname(p));
+
+  if (fs.existsSync(p) && isLegacyJsonArrayFile(p)) {
+    // Legacy array on disk: migrate + append in one atomic rewrite.
+    const prior = readAlignmentLog(project);
+    const lines = [...prior, record].slice(-ALIGNMENT_READ_CAP).map(toLine);
+    writeTextAtomic(p, lines.join("\n") + "\n");
+    return;
+  }
+
+  fs.appendFileSync(p, toLine(record) + "\n", "utf-8");
+
+  // Compaction: rare (file-size gated), and the ONLY whole-file rewrite on
+  // this path — so it runs ONLY under the caller's lock (A14 review FIX 2:
+  // the lock-free contention fallback must stay a pure append; two fallback
+  // writers during lock wreckage would otherwise race this rewrite and lose
+  // each other's lines, re-opening the exact hole the fallback closes).
+  if (!opts.locked) return;
+  try {
+    if (fs.statSync(p).size > ALIGNMENT_COMPACT_BYTES) {
+      const newest = readAlignmentLog(project);
+      writeTextAtomic(p, newest.map(toLine).join("\n") + "\n");
+    }
+  } catch { /* compaction is best-effort; appends stay lossless without it */ }
 }
 
 /**

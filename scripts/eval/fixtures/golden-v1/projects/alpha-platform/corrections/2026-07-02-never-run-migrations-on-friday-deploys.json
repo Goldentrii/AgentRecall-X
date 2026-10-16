@@ -1,0 +1,14 @@
+{
+  "id": "2026-07-02-never-run-migrations-on-friday-deploys",
+  "date": "2026-07-02",
+  "severity": "p0",
+  "project": "alpha-platform",
+  "rule": "Never run database migrations on Friday deploys",
+  "context": "The 2026-06-26 Friday deploy ran a column-drop migration; the weekend on-call could not roll it back without the author. Migrations ride Monday-Thursday deploys only. Recurrence recorded: zero so far.",
+  "tags": ["migrations", "deploy", "friday", "database"],
+  "kind": "correction",
+  "active": true,
+  "retrieved_count": 3,
+  "heeded_count": 1,
+  "recurrence_count": 0
+}

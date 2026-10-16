@@ -1,0 +1,214 @@
+
+> agent-recall-mcp@3.4.51 test
+> node --test test/*.test.mjs
+
+▶ C-1 ambient capture — every MCP tool call appends one working-memory gist line
+  ✔ a recall() call appends exactly one WM line carrying the query (2602.0236ms)
+  ✔ H2: the appended WM line carries this server process's cwd (rescue needs it to guess the real project slug) (3196.8147ms)
+  ✔ defaults-only: calling session_start with NO optional args still appends a non-empty gist (2464.737ms)
+  ✔ CJK: a >300-byte CJK content argument is captured, byte-capped, with no U+FFFD replacement character (1541.324ms)
+  ✔ two concurrent MCP server processes never cross-talk in working memory (1208.7986ms)
+  ✔ unwritable working-memory subsystem: the real tool call still succeeds; capture fails silently (1045.8447ms)
+✔ C-1 ambient capture — every MCP tool call appends one working-memory gist line (12060.7942ms)
+▶ C-1 + C-3 pipeline — an ambient-captured gist survives into a session card on graceful close
+  ✔ a tool call's WM gist is distilled into a session card once the client disconnects gracefully (1227.7098ms)
+✔ C-1 + C-3 pipeline — an ambient-captured gist survives into a session card on graceful close (1227.9279ms)
+▶ description drift assertions
+  ✔ each tool's leadTag is present in its inline source file (1.9475ms)
+  ✔ each tool's leadTag is present in --list-tools output (2303.7768ms)
+  ✔ each tool's leadTag is present in --help output (2355.8629ms)
+  ✔ server.ts wires lifecycleInstructions(tier) into the McpServer options arg (arg-2 regression guard) (0.9603ms)
+  ✔ canonical lifecycleInstructions('B') contains the carrier sentinel (2024.2245ms)
+  ✔ HANDSHAKE: MCP initialize result contains instructions with carrier sentinel (1975.8292ms)
+✔ description drift assertions (8663.7153ms)
+▶ fence-completeness — trusted wrapper self-check
+  ✔ CLI's outputFenced() itself calls fenceMemory (packages/cli/src/index.ts) (371.0281ms)
+  ✔ SDK's withFenced/fenceString/fenceRoomMeta each call fenceMemory (packages/sdk/src/agent-recall.ts) (21.682ms)
+✔ fence-completeness — trusted wrapper self-check (393.6947ms)
+▶ fence-completeness — real repo, MCP tools + resources
+  ✔ every live-registered MCP tool and resource has a manifest entry, and every fenced one is backed (7469.5562ms)
+✔ fence-completeness — real repo, MCP tools + resources (7469.822ms)
+▶ fence-completeness — real repo, CLI subcommands
+  ✔ every top-level `ar <command>` case and every discovered sub-action has a manifest entry, and every fenced one is backed (41.5537ms)
+✔ fence-completeness — real repo, CLI subcommands (41.7502ms)
+▶ fence-completeness — real repo, SDK exports
+  ✔ every public AgentRecall method/getter-submethod has a manifest entry, and every fenced one is backed (5.6111ms)
+✔ fence-completeness — real repo, SDK exports (5.8154ms)
+▶ fence-completeness — manifest self-consistency
+  ✔ no duplicate {channel, id} manifest entries (1.4766ms)
+  ✔ every entry has a valid status and channel (0.3838ms)
+✔ fence-completeness — manifest self-consistency (2.1534ms)
+▶ fence-completeness — PROOF OF FAILURE (fixtures, discarded after use)
+  ✔ CLI: a new, unclassified `case "totally_new_command":` in a fixture source file makes the completeness check throw (4.0216ms)
+  ✔ SDK: a new, unclassified public method in a fixture source file makes the completeness check throw (3.2631ms)
+  ✔ MCP: a new, unclassified tool + resource registered on a fixture server makes the completeness check throw (11.3707ms)
+  ✔ a manifest entry falsely claiming "fenced" with no fenceMemory call in its source makes the backing-check throw (0.3496ms)
+  ✔ an allowlisted entry with no reason (or a too-short one) makes the reason-check throw (0.2036ms)
+✔ fence-completeness — PROOF OF FAILURE (fixtures, discarded after use) (19.5261ms)
+▶ fix4 S1 — corrections-tier egress is fenced (destination proof)
+  ✔ recall (live compiled server): a corrections-sourced result renders INSIDE the fence (2541.1424ms)
+  ✔ smart_recall (registered handler): the corrections item rides inside the single fenced JSON payload (2408.2195ms)
+✔ fix4 S1 — corrections-tier egress is fenced (destination proof) (4950.2517ms)
+▶ fix4 review M1 — feedback-ID footer carries no memory-derived bytes outside the fence
+  ✔ recall (live compiled server): the correction id appears only INSIDE the fence; the footer keeps only AgentRecall-authored text (2510.9313ms)
+✔ fix4 review M1 — feedback-ID footer carries no memory-derived bytes outside the fence (2511.186ms)
+▶ fix7 — semantically-surfaced items are fenced (destination proof, live compiled server)
+  ✔ recall: an item reachable ONLY via the semantic leg renders INSIDE the fence (4789.126ms)
+✔ fix7 — semantically-surfaced items are fenced (destination proof, live compiled server) (4789.9446ms)
+▶ kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only session, no hooks involved
+  ✔ a SIGKILL'd MCP server's working memory is rescued into a card by the NEXT session's session_start tool call (6799.6783ms)
+✔ kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only session, no hooks involved (6800.5336ms)
+▶ lifecycle-instructions canonical-source drift guard (C1 / TOW2-327)
+  ✔ server.ts's live MCP instructions equal the canonical lifecycleInstructions('B') output, byte-for-byte (2418.8227ms)
+  ✔ AGENTS.md asserts agent-driven, unprompted lifecycle behavior (no semi-manual framing) (1.0274ms)
+✔ lifecycle-instructions canonical-source drift guard (C1 / TOW2-327) (2421.1234ms)
+▶ C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory into a card
+  ✖ SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling (3642.7315ms)
+  ✖ SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling (2931.3374ms)
+  ✖ idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash (2122.6605ms)
+  ✔ no-op: a graceful close with ZERO tool calls (nothing captured) never crashes and writes no spurious card (283.7198ms)
+✖ C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory into a card (8981.7997ms)
+▶ P1 fence — session_start
+  ✔ RED->GREEN (terse): an injection-laden P0 correction is bracketed (3565.9514ms)
+  ✔ RED->GREEN (verbose): an injection-laden P0 correction is bracketed, JSON dump preserved inside the fence (2866.1293ms)
+  ✔ RED->GREEN (lite): continuity content is bracketed; header and hint stay outside the fence (2004.439ms)
+✔ P1 fence — session_start (8438.0564ms)
+▶ P1 fence — recall
+  ✔ RED->GREEN: a retrieved result's excerpt is bracketed; the feedback-rating footer stays outside the fence (1212.8997ms)
+✔ P1 fence — recall (1213.1037ms)
+▶ P1 fence — smart_recall
+  ✔ RED->GREEN: the JSON payload is bracketed by the fence and remains a superset-parseable string (870.3942ms)
+✔ P1 fence — smart_recall (870.4849ms)
+▶ P1 fence — agent-recall://awareness resource
+  ✔ RED->GREEN: raw awareness.md content is bracketed by the fence (910.9702ms)
+✔ P1 fence — agent-recall://awareness resource (911.1727ms)
+▶ R2b(1): the pending egress surfaces are fence-manifested AND fence-backed
+  ✔ mcp_tool 'check' is classified fenced in the manifest and its source calls fenceMemory (1.8528ms)
+  ✔ mcp_tool 'session_start' is classified fenced in the manifest and its source calls fenceMemory (0.8289ms)
+  ✔ cli_subcommand 'hook-start' (which renders the pending line) stays classified fenced (0.2456ms)
+✔ R2b(1): the pending egress surfaces are fence-manifested AND fence-backed (4.3217ms)
+▶ R2b(2): check()'s pending payload rides INSIDE the fence (real server, stdio)
+  ✔ staging a string human_correction returns correction_pending fenced (2531.6288ms)
+  ✔ the check tool schema teaches the structured form on first read (agent-first) (2482.5723ms)
+✔ R2b(2): check()'s pending payload rides INSIDE the fence (real server, stdio) (5014.5527ms)
+▶ R2b(3): session_start terse render — ≤2 lines, count only, no pending content
+  ✔ adds at most 2 lines when pending items exist, and renders no staged rule text (0.8563ms)
+  ✔ renders nothing when there is no pending (0.3001ms)
+✔ R2b(3): session_start terse render — ≤2 lines, count only, no pending content (1.4494ms)
+▶ check_action MCP smoke (surviving --full tool)
+  ✔ check_action with a safe command returns a result without isError=true (2982.3701ms)
+✔ check_action MCP smoke (surviving --full tool) (2983.5936ms)
+▶ mcp-server session_start terse render — continuity label (Fable option 2)
+  ✔ (c) marks a cross-project entry distinctly from a current-project entry in the SAME render (1.5728ms)
+  ✔ frames the header as orientation-only when EVERY surfaced entry is cross-project (0.3222ms)
+  ✔ keeps the original neutral header when at least one entry matches the current project (0.2841ms)
+  ✔ backward-compat: an entry with NO is_current_project field (pre-label fixture) still renders without crashing and derives the marker from slug vs project (0.3708ms)
+✔ mcp-server session_start terse render — continuity label (Fable option 2) (3.8583ms)
+▶ mcp-server session_start terse render — Continuity section
+  ✔ omits the Continuity section entirely when `continuity` is absent (no noise) (1.4694ms)
+  ✔ omits the Continuity section when `continuity` is an empty array (0.2594ms)
+  ✔ renders a top Continuity section with entries, including cross-project slug and next_step (0.3681ms)
+  ✔ renders the Continuity section before the per-project header line (0.2074ms)
+  ✔ renders after the alignment/store_doctor banners when they are present (alerts stay first) (0.2623ms)
+✔ mcp-server session_start terse render — Continuity section (3.9364ms)
+▶ mcp-server session_start lite render — Continuity line
+  ✔ omits the ⏪ line when continuity is null (0.4281ms)
+  ✔ renders the ⏪ line right after the header, inside the P1 memory fence (0.3308ms)
+✔ mcp-server session_start lite render — Continuity line (1.0631ms)
+▶ session_start render — evolution p4 tier tag (additive-only proof)
+  ▶ formatTerse
+    ✔ renders the [gate]/[nudge]/[watch] tag suffix on each P0/P1 rule line (1.4674ms)
+    ✔ omits the tag entirely when `tier` is absent (pre-p4 fixture / back-compat) (0.2679ms)
+    ✔ ADDITIVITY PROOF: stripping the tier tag from the tagged render reproduces the untagged render byte-for-byte (0.4055ms)
+    ✔ does not reorder or drop any correction — same count, same order, same severity brackets, regardless of tier (1.1713ms)
+  ✔ formatTerse (4.2484ms)
+  ▶ formatVerbose
+    ✔ renders the tag suffix on the rule line, before the ctx: line (0.4921ms)
+    ✔ ADDITIVITY PROOF: stripping the tier tag reproduces the untagged verbose render byte-for-byte (0.2862ms)
+  ✔ formatVerbose (1.0133ms)
+✔ session_start render — evolution p4 tier tag (additive-only proof) (5.8808ms)
+▶ MCP server smoke tests
+  ✔ --list-tools outputs 5 core tools by default (2474.6956ms)
+  ✔ --full exposes 6 active tools (5 core + check_action, quarantined extras excluded without AR_EXTRAS) (2493.1336ms)
+  ✔ AR_EXTRAS=1 --full exposes all 13 tools (2387.9184ms)
+  ✔ --version prints a semver string (1535.4218ms)
+  ✔ --help shows storage path and usage info (1019.7654ms)
+✔ MCP server smoke tests (9912.3204ms)
+▶ Tool-surface purity — purity-census-2026-07-05
+  ✔ (a) default listing is exactly the 5 alive tools — no extras (2584.279ms)
+  ✔ (b) --full WITHOUT AR_EXTRAS is exactly 6 tools (5 core + check_action only) (2611.7083ms)
+  ✔ (c) AR_EXTRAS=1 --full restores exactly the quarantined set (2246.2387ms)
+  ✔ AR_EXTRAS=1 without --full does NOT expose quarantined tools (flag requires both) (1463.513ms)
+✔ Tool-surface purity — purity-census-2026-07-05 (8907.846ms)
+▶ fix5 — formatTerse unclaimed line
+  ✔ renders EXACTLY ONE line when unclaimed_cards > 0, count-only (1.5436ms)
+  ✔ singular form for exactly one staged card (0.2419ms)
+  ✔ absent-when-empty: no line at all when the field is undefined or 0 (0.2695ms)
+✔ fix5 — formatTerse unclaimed line (3.252ms)
+ℹ tests 79
+ℹ suites 32
+ℹ pass 76
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13593.0705
+
+✖ failing tests:
+
+test at test\lifecycle-exit.test.mjs:158:3
+✖ SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling (3642.7315ms)
+  AssertionError [ERR_ASSERTION]: expected a session card carrying the SIGTERM-time gist
+      at TestContext.<anonymous> (file:///E:/tools/AgentRecall-X-a2/packages/mcp-server/test/lifecycle-exit.test.mjs:170:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1518:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\lifecycle-exit.test.mjs:177:3
+✖ SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling (2931.3374ms)
+  AssertionError [ERR_ASSERTION]: expected a session card carrying the SIGINT-time gist
+      at TestContext.<anonymous> (file:///E:/tools/AgentRecall-X-a2/packages/mcp-server/test/lifecycle-exit.test.mjs:188:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\lifecycle-exit.test.mjs:191:3
+✖ idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash (2122.6605ms)
+  AssertionError [ERR_ASSERTION]: idempotency guard must produce exactly one card even under a signal race, got 0
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///E:/tools/AgentRecall-X-a2/packages/mcp-server/test/lifecycle-exit.test.mjs:238:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async Test.run (node:internal/test_runner/test:1113:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:788:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path E:\tools\AgentRecall-X-a2\packages\mcp-server
+npm error workspace agent-recall-mcp@3.4.51
+npm error location E:\tools\AgentRecall-X-a2\packages\mcp-server
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c node --test test/*.test.mjs

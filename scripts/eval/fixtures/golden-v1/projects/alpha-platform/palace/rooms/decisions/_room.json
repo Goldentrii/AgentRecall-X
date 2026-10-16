@@ -1,0 +1,12 @@
+{
+  "slug": "decisions",
+  "name": "Decisions",
+  "description": "Architecture and operational decisions for alpha-platform",
+  "created": "2026-06-01",
+  "updated": "2026-08-15",
+  "salience": 0.7,
+  "access_count": 24,
+  "last_accessed": "2026-09-05",
+  "tags": ["architecture", "decisions"],
+  "connections": ["alignment", "goals"]
+}

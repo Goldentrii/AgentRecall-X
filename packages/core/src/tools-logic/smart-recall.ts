@@ -107,7 +107,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir, writeTextAtomic } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomic, isLegacyJsonArrayFile } from "../storage/fs-utils.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { getConnectedRooms } from "../palace/graph.js";
@@ -318,8 +318,25 @@ export interface SmartRecallResult {
    * feedback-log.json because another live process held the feedback-log
    * lock past the timeout. Ranking for THIS call used the on-disk log;
    * the submitted entries were dropped (resubmit to persist them).
+   *
+   * A12 (2026-10-12): the writer now waits out a live holder
+   * (waitForLiveHolder — see processFeedback), so this flag is reachable
+   * only past filelock's 60s pathological hard cap, not under routine CPU
+   * starvation. It can only be set when the persist settled within the
+   * post-search grace window — a persist still running when results are
+   * ready reports feedback_log_pending instead.
    */
   feedback_log_skipped?: true;
+  /**
+   * A12 review FIX 1 (2026-10-12): set when this call's feedback entries
+   * were still being persisted when results were ready (another live process
+   * held the feedback-log lock past the ≤1s post-search grace). NOT a loss:
+   * ranking for THIS call already reflects the submitted entries (in-memory
+   * merge), and the persist continues in the background — it lands once the
+   * holder releases, or logs loudly on stderr if filelock's 60s pathological
+   * cap expires. Mutually exclusive with feedback_log_skipped.
+   */
+  feedback_log_pending?: true;
   /** Verbatim sources attached for low-confidence top hits (Wave 4 bridge). */
   bridged?: BridgedSource[];
   /** Diagnostic: raw per-source candidate counts before RRF fusion (Fix 4/5).
@@ -410,16 +427,118 @@ function feedbackLogPath(): string {
   return path.join(getRoot(), "feedback-log.json");
 }
 
+/**
+ * A14 (2026-10-12): feedback-log.json is append-only NDJSON now, same
+ * structural reasoning as alignment-log.json (helpers/alignment-patterns.ts
+ * header): the locked whole-file RMW lost entries whenever the lock
+ * misbehaved on a starved runner (feedback-log-concurrency reproduced
+ * 118/120 under 2-core starvation even AFTER the filelock release fix — the
+ * skip branch is one misdiagnosed 5s deadline away from silent loss, and
+ * this file is the only store). An append cannot lose other writers'
+ * entries. Legacy array files still parse; the first locked writer migrates.
+ * Parse either format; dedupe id-carrying entries by query+id+date at READ
+ * time (keep-first — mirrors mergeFeedback's write-time rule, which
+ * append-only writers can no longer enforce exclusively); cap 1000.
+ * Exported for the CLI stats counter and tests — no hand-rolled parsers.
+ */
+/** Read cap, exported so tests derive it from the real value. */
+export const FEEDBACK_READ_CAP = 1000;
+
+export function parseFeedbackLogText(text: string): FeedbackEntry[] {
+  const trimmed = text.trimStart();
+  let entries: FeedbackEntry[];
+  if (trimmed.startsWith("[")) {
+    try { entries = JSON.parse(trimmed) as FeedbackEntry[]; } catch { return []; }
+    if (!Array.isArray(entries)) return [];
+  } else {
+    entries = [];
+    for (const line of trimmed.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try { entries.push(JSON.parse(line) as FeedbackEntry); } catch { /* torn tail */ }
+    }
+  }
+  const seen = new Set<string>();
+  const deduped: FeedbackEntry[] = [];
+  for (const e of entries) {
+    if (e && e.id) {
+      const key = `${e.query}\u0000${e.id}\u0000${e.date}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    deduped.push(e);
+  }
+  return deduped.slice(-FEEDBACK_READ_CAP);
+}
+
 function readFeedbackLog(): FeedbackEntry[] {
   const p = feedbackLogPath();
   if (!fs.existsSync(p)) return [];
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return []; }
+  try { return parseFeedbackLogText(fs.readFileSync(p, "utf-8")); } catch { return []; }
+}
+
+/** Append entries — THE writer for feedback-log.json. Hold the
+ * "feedback-log" lock on the normal path (migration/compaction rewrite the
+ * file); the contention fallback calls it lock-free, which is append-safe
+ * against every other append (the only racing rewriter sits behind the very
+ * lock that just timed out). */
+/** Exported so the compaction tests derive the gate from the real value. */
+export const FEEDBACK_COMPACT_BYTES = 2 * 1024 * 1024;
+export function appendFeedbackEntries(entries: FeedbackEntry[], opts: { locked?: boolean } = {}): void {
+  if (entries.length === 0) return;
+  const p = feedbackLogPath();
+  ensureDir(path.dirname(p));
+  if (fs.existsSync(p) && isLegacyJsonArrayFile(p)) {
+    const merged = [...readFeedbackLog(), ...entries].slice(-FEEDBACK_READ_CAP);
+    writeTextAtomic(p, merged.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    return;
+  }
+  fs.appendFileSync(p, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+  // Compaction only under the lock (A14 review FIX 2): the contention
+  // fallback must stay a pure append — see appendAlignmentRecord.
+  if (!opts.locked) return;
+  try {
+    if (fs.statSync(p).size > FEEDBACK_COMPACT_BYTES) {
+      const newest = readFeedbackLog();
+      writeTextAtomic(p, newest.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    }
+  } catch { /* compaction is best-effort; appends stay lossless without it */ }
+}
+
+/**
+ * Merge submitted feedback into a log snapshot: dedupe by id+query+date (only
+ * when a stable ID is present — without one there is no reliable key, so the
+ * entry always logs, allowing accumulation across calls), cap at 1000. Pure
+ * (never mutates `log`). ONE implementation for both consumers (class, not
+ * instance): the locked RMW in processFeedback applies it to the FRESH locked
+ * read, and smartRecall applies it to a lock-free read so ranking reflects
+ * this call's feedback immediately without waiting on the lock.
+ */
+function newFeedbackEntries(log: FeedbackEntry[], feedback: RecallFeedback[], query: string): FeedbackEntry[] {
+  const date = new Date().toISOString().slice(0, 10);
+  const out: FeedbackEntry[] = [];
+  for (const f of feedback) {
+    const isDuplicate = f.id
+      ? log.some((existing) => existing.query === query && existing.id === f.id && existing.date === date) ||
+        out.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
+      : false;
+    if (!isDuplicate) {
+      out.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
+    }
+  }
+  return out;
+}
+
+function mergeFeedback(log: FeedbackEntry[], feedback: RecallFeedback[], query: string): FeedbackEntry[] {
+  // A14: delegates to newFeedbackEntries so the dedupe rule stays ONE
+  // implementation — the ranking merge here, and the append writer in
+  // processFeedback, can never drift apart.
+  return [...log, ...newFeedbackEntries(log, feedback, query)].slice(-FEEDBACK_READ_CAP);
 }
 
 async function processFeedback(
   feedback: RecallFeedback[],
   query: string,
-): Promise<{ log: FeedbackEntry[]; persistenceSkipped: boolean }> {
+): Promise<{ persistenceSkipped: boolean }> {
   ensureDir(path.dirname(feedbackLogPath()));
   try {
     // fix6-locks: the read→push→write span runs as ONE locked critical section.
@@ -427,34 +546,50 @@ async function processFeedback(
     // submits recall feedback — the old unlocked read-modify-write dropped
     // concurrent sessions' entries (feedback-log-concurrency.test.mjs
     // reproduced 46/120 lost on main HEAD).
+    //
+    // A12 (2026-10-12): waitForLiveHolder, same class as check()'s
+    // alignment-log RMW (CI run 38242013300: a starved 2-vCPU windows runner
+    // deschedules a healthy holder past the 5s no-progress deadline, the
+    // spurious LockContentionError takes the skip branch below, and the
+    // entries are gone — feedback-log.json is the only store, nothing
+    // re-derives them). A live holder is waited out (60s hard cap;
+    // dead-reclaim unchanged); the skip branch is now a pathological-cap
+    // last resort, not a routine-starvation path.
+    //
+    // A12 review FIX 1: this promise is NOT on recall's critical path —
+    // smartRecall starts it before the search, ranks from a lock-free
+    // read + mergeFeedback, and races it against a ≤1s grace after results
+    // are ready (feedback_log_pending when it loses the race; the lock wait's
+    // ref'd backoff timers keep a naturally-exiting process alive until the
+    // write lands, so losslessness holds — feedback-log-concurrency pins it).
+    // A14: APPEND, don't rewrite — the dedupe read stays inside the lock on
+    // the normal path (strict cross-process dedupe), and the write itself can
+    // no longer lose other writers' entries (see parseFeedbackLogText's
+    // header). The lock now guards only migration/compaction exclusivity.
     return await withLock("feedback-log", () => {
-      const log = readFeedbackLog();
-      const date = new Date().toISOString().slice(0, 10);
-      for (const f of feedback) {
-        // Only deduplicate when a stable ID is present. Without an ID there's no
-        // reliable key, so always log the entry (allows accumulation across calls).
-        const isDuplicate = f.id
-          ? log.some((existing) => existing.query === query && existing.id === f.id && existing.date === date)
-          : false;
-        if (!isDuplicate) {
-          log.push({ query, id: f.id, title: f.title ?? "", useful: f.useful, date });
-        }
-      }
-      const updated = log.slice(-1000);
-      // Atomic: readers (readFeedbackLog in every smartRecall call) are
-      // lock-free — never let them observe a truncated file.
-      writeTextAtomic(feedbackLogPath(), JSON.stringify(updated, null, 2));
-      return { log: updated, persistenceSkipped: false };
-    });
+      appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query), { locked: true });
+      return { persistenceSkipped: false };
+    }, { waitForLiveHolder: true });
   } catch (err) {
     if (err instanceof LockContentionError) {
-      // Advisory ranking data: never fail (or stall) a recall because the
-      // feedback log is contended past the timeout — log the skip explicitly
-      // and rank with the current on-disk log. The entries are lost, loudly:
-      // stderr for the host log AND persistenceSkipped for the caller
-      // (surfaced as SmartRecallResult.feedback_log_skipped — review LOW-3).
-      console.error(`[agent-recall] smart_recall feedback: ${err.message} — this call's feedback entries were NOT persisted.`);
-      return { log: readFeedbackLog(), persistenceSkipped: true };
+      // A14 lossless fallback (was: drop the entries with a skip flag —
+      // reproduced losing 2/120 under 2-core starvation): append WITHOUT the
+      // lock. Append-vs-append is lossless; the only racing rewriter
+      // (migration/compaction) sits behind the lock that just timed out.
+      // Residual: the dedupe read is lock-free here, so a same-id duplicate
+      // can land — collapsed by parseFeedbackLogText's read-time dedupe.
+      console.error(
+        `[agent-recall] smart_recall feedback: ${err.message} — appending the entries WITHOUT the lock (lossless fallback).`,
+      );
+      try {
+        appendFeedbackEntries(newFeedbackEntries(readFeedbackLog(), feedback, query));
+        return { persistenceSkipped: false };
+      } catch (appendErr) {
+        console.error(
+          `[agent-recall] smart_recall feedback: lock-free append failed too (${(appendErr as Error).message}) — this call's feedback entries were NOT persisted.`,
+        );
+        return { persistenceSkipped: true };
+      }
     }
     throw err;
   }
@@ -924,13 +1059,38 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     resolvedProject = input.project ?? "auto";
   }
 
-  // Process feedback first; reuse the returned log to avoid a second disk read
+  // A12 review FIX 1 — feedback persistence runs CONCURRENTLY with the
+  // search, never ahead of it. Pre-fix this awaited processFeedback before
+  // dispatching any search, so with waitForLiveHolder a wedged-but-alive
+  // feedback-log holder blocked a feedback-carrying recall up to the 60s
+  // hard cap (recall is the hot path — README p95 209ms). Both contracts now
+  // hold at once:
+  //   lossless — the locked RMW persist (unchanged semantics) is started
+  //     here, before the search, and runs to completion even if it loses the
+  //     grace race below (ref'd backoff timers keep the process alive);
+  //   never stalled — ranking uses a lock-free readFeedbackLog() merged
+  //     in-memory with THIS call's entries (same mergeFeedback the persist
+  //     applies under the lock), so results reflect the feedback immediately.
+  // The .catch is attached SYNCHRONOUSLY so no unhandled rejection can
+  // escape when the promise loses the race (processFeedback already converts
+  // LockContentionError to a loud skip; anything else — ENOSPC, ACLs — is
+  // logged loudly here and reported like a skip when the race is won).
+  // AGENT_RECALL_ROOT scope: processFeedback is INVOKED here, inside the
+  // caller's AsyncLocalStorage context (A7 withRoot), which propagates
+  // through its entire async continuation — the background completion writes
+  // to this call's root, not whatever the process switched to later (the SDK
+  // two-instance isolation test covers this).
   let feedbackLogSkipped = false;
   let feedbackLog: FeedbackEntry[];
+  let feedbackPersist: Promise<{ persistenceSkipped: boolean }> | undefined;
   if (input.feedback && input.feedback.length > 0) {
-    const fb = await processFeedback(input.feedback, input.query);
-    feedbackLog = fb.log;
-    feedbackLogSkipped = fb.persistenceSkipped;
+    feedbackLog = mergeFeedback(readFeedbackLog(), input.feedback, input.query);
+    feedbackPersist = processFeedback(input.feedback, input.query).catch((err: unknown) => {
+      console.error(
+        `[agent-recall] smart_recall feedback: persist failed — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { persistenceSkipped: true };
+    });
   } else {
     feedbackLog = readFeedbackLog();
   }
@@ -1154,12 +1314,35 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // "queried" once it ran, not only once it returned something).
   if (archiveSourceRan) sourcesQueried.push("archive");
 
+  // A12 review FIX 1, part 3: results are ready — give the concurrent persist
+  // a short grace to settle (uncontended case: it finished during the search,
+  // zero added latency, skip reporting stays synchronous and exact). If it is
+  // still waiting on a held lock, return NOW with feedback_log_pending; the
+  // persist keeps running in the background (catch already attached above)
+  // up to filelock's 60s cap.
+  let feedbackLogPending = false;
+  if (feedbackPersist) {
+    const GRACE_MS = 1000;
+    let graceTimer: NodeJS.Timeout | undefined;
+    const raced = await Promise.race([
+      feedbackPersist,
+      new Promise<"pending">((resolve) => { graceTimer = setTimeout(() => resolve("pending"), GRACE_MS); }),
+    ]);
+    clearTimeout(graceTimer); // never hold the event loop open for a lost race
+    if (raced === "pending") {
+      feedbackLogPending = true;
+    } else {
+      feedbackLogSkipped = raced.persistenceSkipped;
+    }
+  }
+
   return {
     query: input.query,
     results: finalResults,
     total_searched: totalSearched,
     sources_queried: sourcesQueried,
     ...(feedbackLogSkipped ? { feedback_log_skipped: true as const } : {}),
+    ...(feedbackLogPending ? { feedback_log_pending: true as const } : {}),
     ...(rawCandidateCounts ? { candidates_by_source: rawCandidateCounts } : {}),
     ...(degraded ? { degraded } : {}),
     ...(recallPath ? { recall_path: recallPath } : {}),

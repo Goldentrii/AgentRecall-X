@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 
 // ── Test root ────────────────────────────────────────────────────────────────
@@ -507,7 +508,7 @@ describe("ab-report.mjs", () => {
   const REPORT_ROOT = path.join(os.tmpdir(), `ar-ab-report-test-${Date.now()}`);
   // Test file: packages/core/test/ab-experiment.test.mjs
   // ab-report.mjs: scripts/eval/ab-report.mjs (3 levels up from test/)
-  const SCRIPT = path.join(path.dirname(new URL(import.meta.url).pathname), "../../../scripts/eval/ab-report.mjs");
+  const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../scripts/eval/ab-report.mjs");
 
   before(() => {
     fs.mkdirSync(REPORT_ROOT, { recursive: true });

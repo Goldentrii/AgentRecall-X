@@ -371,12 +371,18 @@ function readIndexJsonlCache(jsonlPath: string): Map<string, JournalIndexRow> {
  *
  * Degrades gracefully to a full rebuild — first run, a hand-deleted
  * index.jsonl, or a pre-incremental jsonl with no `file` key — after which
- * subsequent calls become fast again. Known limitation: on filesystems with
- * coarser-than-millisecond mtime resolution, a file rewritten within the
- * same tick as the previous index write could be missed until the next
- * write touches it again; journal writes are human/agent-paced (seconds
- * apart at minimum) so this is an accepted, low-probability tradeoff of
- * mtime-based invalidation, not a correctness guarantee.
+ * subsequent calls become fast again.
+ *
+ * EQUAL-MTIME RULE (A10 Linux-CI fix, 2026-10-11): the cache test is
+ * STRICTLY `fileMtime < indexMtime`. An mtime EQUAL to the index's own
+ * last-write time is ambiguous — on filesystems with coarse timestamp
+ * resolution (container overlayfs in CI), a file rewritten within the same
+ * tick as the previous index write lands exactly on the threshold, and the
+ * old `<=` rule served the stale cached row (the former "known limitation",
+ * which the journal-index-incremental "DOES re-read" test tripped on Linux).
+ * Equal now means re-read: the make-style conservative choice. Cost: a file
+ * written in the same tick as the index is re-read once more than strictly
+ * necessary; correctness: a same-tick rewrite can no longer be missed.
  */
 export function updateIndex(project: string): void {
   const dir = journalDir(project);
@@ -406,7 +412,7 @@ export function updateIndex(project: string): void {
       fileMtimeMs = Infinity;
     }
 
-    const cached = fileMtimeMs <= indexMtimeMs ? previous.get(entry.file) : undefined;
+    const cached = fileMtimeMs < indexMtimeMs ? previous.get(entry.file) : undefined;
     // Re-anchor date/file to the CURRENT listing even on a cache hit — only
     // the expensive derived fields (title/summary/momentum) come from cache.
     rows.push(

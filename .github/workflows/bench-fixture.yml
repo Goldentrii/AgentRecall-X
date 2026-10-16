@@ -116,6 +116,45 @@ jobs:
             echo "::notice::No baseline files found in scripts/eval/baselines/ — skipping verifyBaseline gate. Run with --update-baselines once run-bench.mjs is ready."
           fi
 
+      # ── Golden retrieval harness (A3) ──────────────────────────────────────
+      # GATES determinism + schema + lock-hash ONLY — NEVER a hit-rate value
+      # (same policy as the header: at n=26 a hit@5 gate would be a gate on
+      # noise; a green recall gate on a thin fixture is the LoCoMo-74% trap
+      # in reverse). The hit@1/hit@5 numbers are REPORTED in the run log and
+      # the committed baseline, never asserted.
+      - name: Validate golden fixture (lock hash + shape)
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node scripts/eval/fixtures/validate-golden-fixture.mjs
+
+      - name: Golden harness unit tests
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node --test scripts/eval/golden-retrieval.test.mjs
+
+      - name: Gate — golden retrieval determinism + schema
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: npm run bench:golden
+
+      # ── A4: latency / injection-size bench (schema + smoke only) ──────────
+      # Unit tests first: percentile math, estimator, schema guards, env
+      # scrub, error paths (store missing, bad flags).
+      - name: Eval tests — latency + injection-size benches
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node --test scripts/eval/session-start-size.test.mjs scripts/eval/latency.test.mjs
+
+      # Injection size on a fixed store IS deterministic → gate determinism
+      # via double-run byte-diff (generated_utc excluded). Still never gates
+      # the VALUES against a pinned number — a renderer change may move them.
+      - name: Gate — injection-size determinism (double-run byte-diff)
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node scripts/eval/session-start-size.mjs --check-determinism
+
+      # Latency timing is NON-deterministic — schema/smoke ONLY, values never
+      # gated (same policy as the recall/RMR values above). The script's
+      # built-in assertArtifactShape fails the step on a malformed artifact.
+      - name: Smoke — latency bench (--n 20, schema only, values never gated)
+        if: steps.prereqs.outputs.SKIP != 'true'
+        run: node scripts/eval/latency.mjs --n 20 --n-session 5 --no-artifact
+
       # ── Upload result artifacts ────────────────────────────────────────────
       # SECURITY: NEVER glob the whole baselines dir — real-corpus baselines
       # (e.g. rmr-baseline-2026-07-02.json) embed real project slugs and must

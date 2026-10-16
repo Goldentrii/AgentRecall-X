@@ -11,6 +11,7 @@ export {
   SECTION_HEADERS,
   DEFAULT_PALACE_ROOMS,
   setRoot,
+  withRoot,
   resetRoot,
   getRoot,
   getLegacyRoot,
@@ -425,7 +426,8 @@ export { stem, getSynonyms, expandQuery } from "./helpers/normalize.js";
 export { isJournalFile } from "./helpers/journal-filter.js";
 
 // Helpers — alignment patterns
-export { readAlignmentLog, extractWatchPatterns } from "./helpers/alignment-patterns.js";
+export { readAlignmentLog, extractWatchPatterns, parseAlignmentLogText, appendAlignmentRecord } from "./helpers/alignment-patterns.js";
+export { parseFeedbackLogText } from "./tools-logic/smart-recall.js";
 export type { WatchForPattern } from "./helpers/alignment-patterns.js";
 
 // Helpers — handoff artifact

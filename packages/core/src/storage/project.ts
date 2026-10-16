@@ -193,7 +193,7 @@ export async function detectProject(): Promise<string> {
   // nested underneath it.
   let gitIdentityFromGate: string | null = null;
   try {
-    const { findProjectByCwdWithExactness, normalizePath } = await import("./cwd-allowlist.js");
+    const { findProjectByCwdWithExactness, normalizePath, pathCompareKey } = await import("./cwd-allowlist.js");
     const hit = findProjectByCwdWithExactness(cwd);
     if (hit) {
       if (hit.exact) return hit.slug;
@@ -219,8 +219,15 @@ export async function detectProject(): Promise<string> {
       // own git toplevel resolves to a genuinely DIFFERENT directory (a
       // nested, distinct repo — CRITICAL-3's actual annexation scenario)
       // does git identity get a chance to override the ancestor claim.
+      // Compare via normalizePath + pathCompareKey (CI windows-latest fix,
+      // 2026-10-12): git may return a different-but-equivalent spelling of
+      // the same directory than the allowlist stored — an 8.3 short-name
+      // alias (GitHub's TEMP is C:\Users\RUNNER~1\…) or a case variation
+      // (NTFS is case-insensitive). realpath.native canonicalizes both
+      // sides; the key folds case on win32. A raw string compare here sent
+      // every short-name/case-differing session to raw git identity.
       const ownToplevel = await detectGitToplevel(cwd);
-      if (ownToplevel && normalizePath(ownToplevel) === hit.matchedPath) {
+      if (ownToplevel && pathCompareKey(normalizePath(ownToplevel)) === pathCompareKey(hit.matchedPath)) {
         return hit.slug;
       }
 

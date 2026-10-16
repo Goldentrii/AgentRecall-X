@@ -1,0 +1,12 @@
+{
+  "slug": "decisions",
+  "name": "Decisions",
+  "description": "CLI design decisions for gamma-cli",
+  "created": "2026-06-20",
+  "updated": "2026-08-18",
+  "salience": 0.7,
+  "access_count": 8,
+  "last_accessed": "2026-08-29",
+  "tags": ["cli", "decisions"],
+  "connections": []
+}

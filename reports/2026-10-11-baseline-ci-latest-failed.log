@@ -1,0 +1,300 @@
+build-and-test	UNKNOWN STEP	﻿2026-09-21T14:25:09.6159412Z Current runner version: '2.337.0'
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6185191Z ##[group]Runner Image Provisioner
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6186101Z Hosted Compute Agent
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6186775Z Version: 20260828.587
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6187430Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6188151Z Build Date: 2026-08-28T16:44:25Z
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6188891Z Worker ID: {db25dd3d-4e1f-4b06-9233-57cdcf4cacf8}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6189635Z Azure Region: westus
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6190267Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6192167Z ##[group]Operating System
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6192834Z Ubuntu
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6193477Z 24.04.5
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6194031Z LTS
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6194526Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6195143Z ##[group]Runner Image
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6195756Z Image: ubuntu-24.04
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6196699Z Version: 20260907.300.1
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6198059Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6199662Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6200633Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6202322Z ##[group]GITHUB_TOKEN Permissions
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6204369Z Contents: read
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6205124Z Metadata: read
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6205711Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6207827Z Secret source: Actions
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6208903Z Cache mode: write
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6209663Z Prepare workflow directory
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6560408Z Prepare all required actions
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:09.6611128Z Getting action download info
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.0423227Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.1748727Z Download action repository 'actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af' (SHA:39370e3970a6d050c480ffad4ff0ed4d3fdee5af)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.3499641Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.5648567Z Complete job name: build-and-test
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6567877Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6579671Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6580612Z with:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6581072Z   repository: Goldentrii/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6585971Z   token: ***
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6586430Z   ssh-strict: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6586860Z   ssh-user: git
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6587302Z   persist-credentials: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6587783Z   clean: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6588224Z   sparse-checkout-cone-mode: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6588757Z   fetch-depth: 1
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6589182Z   fetch-tags: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6589618Z   show-progress: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6590151Z   lfs: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6590563Z   submodules: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6591015Z   set-safe-directory: true
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.6592162Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7618483Z Syncing repository: Goldentrii/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7621057Z ##[group]Getting Git version info
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7622622Z Working directory is '/home/runner/work/AgentRecall-X/AgentRecall-X'
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7624421Z [command]/usr/bin/git version
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7772731Z git version 2.55.0
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7797132Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7813353Z Temporarily overriding HOME='/home/runner/work/_temp/d2e4d48e-794b-470f-b2f6-032baf1ef676' before making global git config changes
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7815812Z Adding repository directory to the temporary git global config as a safe directory
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7819885Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/AgentRecall-X/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7880723Z Deleting the contents of '/home/runner/work/AgentRecall-X/AgentRecall-X'
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7885714Z ##[group]Initializing the repository
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.7891873Z [command]/usr/bin/git init /home/runner/work/AgentRecall-X/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8046643Z hint: Using 'master' as the name for the initial branch. This default branch name
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8048387Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8049987Z hint: to use in all of your new repositories, which will suppress this warning,
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8051273Z hint: call:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8052134Z hint:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8052954Z hint: 	git config --global init.defaultBranch <name>
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8054003Z hint:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8054987Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8056557Z hint: 'development'. The just-created branch can be renamed via this command:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8058166Z hint:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8059022Z hint: 	git branch -m <name>
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8060246Z hint:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8061409Z hint: Disable this message with "git config set advice.defaultBranchName false"
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8063402Z Initialized empty Git repository in /home/runner/work/AgentRecall-X/AgentRecall-X/.git/
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8066205Z [command]/usr/bin/git remote add origin https://github.com/Goldentrii/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8120541Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8122234Z ##[group]Disabling automatic garbage collection
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8125289Z [command]/usr/bin/git config --local gc.auto 0
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8160230Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8161722Z ##[group]Setting up auth
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8174726Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8211599Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8640942Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8678416Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8907535Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8948308Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8949150Z ##[group]Fetching the repository
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:10.8958683Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +db6338a5d60a36ea9c38a58e1d22e8037d75f095:refs/remotes/origin/main
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8717210Z From https://github.com/Goldentrii/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8718783Z  * [new ref]         db6338a5d60a36ea9c38a58e1d22e8037d75f095 -> origin/main
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8723704Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8725267Z ##[group]Determining the checkout info
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8727414Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8732908Z [command]/usr/bin/git sparse-checkout disable
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8840435Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8879855Z ##[group]Checking out the ref
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.8883511Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.9831033Z Switched to a new branch 'main'
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.9836240Z branch 'main' set up to track 'origin/main'.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.9845976Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.9907758Z [command]/usr/bin/git log -1 --format=%H
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:11.9945370Z db6338a5d60a36ea9c38a58e1d22e8037d75f095
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0265569Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0268043Z ##[group]Run actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0268657Z with:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0269063Z   node-version: 20
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0269492Z   cache: npm
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0269916Z   always-auth: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0270355Z   check-latest: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0341633Z   token: ***
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.0342374Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.1788695Z Attempting to download 20...
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.1899869Z (node:2199) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.1901397Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:12.8144828Z Acquiring 20.20.2 - x64 from https://github.com/actions/node-versions/releases/download/20.20.2-23521894959/node-20.20.2-linux-x64.tar.gz
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:13.2975244Z Extracting ...
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:13.3101023Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/540da473-5b49-45f0-8f82-036f07843605 -f /home/runner/work/_temp/cc1c5d1a-9073-4b4e-a7b4-5061b98e195e
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:14.3255547Z Adding to the cache ...
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.2735075Z ##[group]Environment details
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.4996944Z node: v20.20.2
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.4997551Z npm: 10.8.2
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.4997941Z yarn: 1.22.22
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.4998805Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.5025389Z [command]/opt/hostedtoolcache/node/20.20.2/x64/bin/npm config get cache
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.6104537Z /home/runner/.npm
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.6957176Z ##[warning]Failed to restore: Cache service responded with 400
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.6966742Z npm cache is not found
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.7124194Z ##[group]Run npm ci
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.7124532Z ^[[36;1mnpm ci^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.7167457Z shell: /usr/bin/bash -e {0}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:16.7167768Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:17.0819537Z npm warn EBADENGINE Unsupported engine {
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:17.0820236Z npm warn EBADENGINE   package: 'vectra@0.14.0',
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:17.0820799Z npm warn EBADENGINE   required: { node: '>=22.x' },
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:17.0821437Z npm warn EBADENGINE   current: { node: 'v20.20.2', npm: '10.8.2' }
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:17.0822351Z npm warn EBADENGINE }
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:18.0957007Z npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:18.7339462Z npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2675134Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2676006Z added 212 packages, and audited 217 packages in 4s
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2676516Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2676921Z 57 packages are looking for funding
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2677449Z   run `npm fund` for details
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2785779Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2786419Z 3 vulnerabilities (2 moderate, 1 high)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2786805Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2786964Z To address all issues, run:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2787281Z   npm audit fix
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2787430Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.2787569Z Run `npm audit` for details.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.3073060Z ##[group]Run npm run build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.3073387Z ^[[36;1mnpm run build^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.3112334Z shell: /usr/bin/bash -e {0}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.3112643Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.5017010Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.5017600Z > build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.5018637Z > npm run build -w packages/core && npm run build -w packages/mcp-server && npm run build -w packages/sdk && npm run build -w packages/cli
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.5019484Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.6450891Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.6451501Z > agent-recall-core@3.4.51 build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.6452141Z > tsc
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:21.6452283Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:26.9870891Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:26.9872343Z > agent-recall-mcp@3.4.51 build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:26.9874052Z > tsc && chmod +x dist/index.js
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:26.9874368Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:30.2898077Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:30.2898921Z > agent-recall-sdk@3.4.51 build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:30.2899595Z > tsc
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:30.2899738Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:31.8484962Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:31.8485820Z > agent-recall-cli@3.4.51 build
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:31.8486503Z > tsc && chmod +x dist/index.js
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:31.8486833Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.0161602Z ##[group]Run npm run lint 2>&1 | tee lint-output.log
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.0162580Z ^[[36;1mnpm run lint 2>&1 | tee lint-output.log^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.0202155Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.0202516Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.1328693Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.1329343Z > lint
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.1330512Z > tsc --noEmit -p packages/core && tsc --noEmit -p packages/mcp-server && tsc --noEmit -p packages/sdk && tsc --noEmit -p packages/cli
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:34.1331156Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7030239Z ##[group]Run node benchmark/consistency.mjs
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7030629Z ^[[36;1mnode benchmark/consistency.mjs^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7030922Z ^[[36;1mnode benchmark/funnel.mjs^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7031202Z ^[[36;1mnode benchmark/heeded-guard.mjs^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7031501Z ^[[36;1mnode benchmark/room-slug-guards.mjs^[[0m
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7069460Z shell: /usr/bin/bash -e {0}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:39.7069723Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3417500Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3418275Z [consistency] AR_ROOT=/tmp/ar-consistency-eurpYp
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3420354Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3649957Z [P0-1] session_start blind to incremental writes
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3817190Z   ✅ session_start does NOT say 'No memory found'
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3818294Z   ✅ captured answer 'A1' is visible in session_start payload
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3819263Z [P0-2] salience inversion
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3823945Z   ✅ top room is 'architecture' (content beats empty defaults)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3828228Z   ✅ no empty room ranks above a non-empty room
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3829237Z   ✅ palace-index architecture.memory_count === 1
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.3830209Z [P0-3] session-1 insight invisible at session-2
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4195036Z   ✅ insight title surfaces in next session_start
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4195907Z [P0-2b] named-topic first write counts as content
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4271352Z   ✅ named-topic room 'decisions' counts >= 1 entry
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4272470Z [P0-3b] fresh project insight surfaces past a full awareness cap
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4854966Z   ✅ fresh session-1 insight visible despite full awareness top-3
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4856040Z [P0-4] promotional link in tool output
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4856997Z   ✅ session_start payload contains no t.me / telegram URL
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4857814Z [P1-1] markdown leak in card fields
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4858561Z   ✅ trajectory field has no leading '##' header
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4879374Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4879770Z [consistency] PASS 10 / FAIL 0
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:40.4880192Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1297379Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1298213Z [funnel] AR_ROOT=/tmp/ar-funnel-iS5zo1
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1298686Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1302505Z [T0] normalizeTitle + tokenOverlap unit
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1310878Z   ✅ near-duplicate titles overlap >= 0.6
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1311591Z   ✅ clearly-different titles overlap < 0.6
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1312511Z [T1] near-duplicate insight confirms existing entry
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1970580Z   ✅ T1: exactly ONE entry for multi-agent review insight
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1971231Z   ✅ T1: confirmed_count === 2
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1971853Z   ✅ T1: applies_when merged (has both 'code-review' and 'ternary')
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.1972398Z [T2] clearly-different insight creates a new entry
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2096905Z   ✅ T2: Supabase insight added as separate entry
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2097766Z   ✅ T2: Supabase insight confirmed_count === 1
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2098487Z   ✅ T2: total index has 2 entries
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2099405Z [T3] SessionEndResult.insights_confirmed / insights_added fields
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2251657Z   ✅ T3: insights_confirmed === 1 (near-dup confirmed)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2252774Z   ✅ T3: insights_added === 0 (no new entry)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2371142Z   ✅ T3: insights_added === 1 (new entry)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2372202Z   ✅ T3: insights_confirmed === 0 (no confirmation)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.2373220Z [T4] cap eviction — count>=2 entries survive count-1 flood
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3536523Z   ✅ T4: ANCHOR-INSIGHT (count=3) survived the count-1 flood
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3537542Z   ✅ T4: ANCHOR-INSIGHT still has confirmed_count >= 3
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3538322Z   ✅ T4: index size stays at or below 200
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3539154Z   ✅ T4: all count>=2 entries are preserved (anchor in count>=2 group)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3540543Z [T5] malformed insights-index.json — graceful degradation
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3656832Z   ✅ T5: session_end does not throw on corrupted insights-index.json
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3658254Z   ✅ T5: session_end reports success despite corrupted index
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3677178Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3677556Z [funnel] PASS 18 / FAIL 0
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:41.3677863Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0037878Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0038967Z [heeded-guard] AR_ROOT=/tmp/ar-heeded-Uud7po
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0039442Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0043088Z [T1] evidence-grounded heeded path + old default-heeded stays dead
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0096008Z   ❌ correction written (passes quality gate) → {}
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0110923Z   ❌ retrieved_count = 1 after one retrieval → got undefined
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0520371Z   ✅ T1a: heeded=0 after sessionEnd with unrelated summary + no trigger (old default-heeded dead)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0521661Z   ❌ T1a: retrieved_count unaffected (still 1) → retrieved=undefined
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0673327Z   ❌ T1b: heeded=1 after check-action trigger + sessionEnd (evidence-grounded path) → heeded=0 — expected 1 (triggered via check-action, no recurrence marker)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0674958Z   ✅ T1b: heeded_count never exceeds retrieved_count
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0675741Z   ✅ T1b: precision is in [0,1]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0780035Z   ❌ T1c: heeded_count = 1 after TWO same-day session_ends with trigger (1/day guard held) → heeded=0 — 1/day guard must prevent a second heeded write on the same day
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0781560Z   ✅ T1c: heeded_count still ≤ retrieved_count
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0801834Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0802430Z [heeded-guard] PASS 4 / FAIL 5
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0802653Z 
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0896332Z ##[error]Process completed with exit code 1.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0987491Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0988884Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0989277Z with:
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0989573Z   name: ci-failure-logs-db6338a5d60a36ea9c38a58e1d22e8037d75f095
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0989952Z   path: lint-output.log
+build-and-test	UNKNOWN STEP	test-output.log
+build-and-test	UNKNOWN STEP	
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0990241Z   if-no-files-found: warn
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0990473Z   retention-days: 30
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0990689Z   compression-level: 6
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0990902Z   overwrite: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0991116Z   include-hidden-files: false
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.0991353Z ##[endgroup]
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2795004Z (node:2486) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2796557Z (Use `node --trace-deprecation ...` to show where the warning was created)
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2851373Z Multiple search paths detected. Calculating the least common ancestor of all paths
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2854709Z The least common ancestor is /home/runner/work/AgentRecall-X/AgentRecall-X. This will be the root directory of the artifact
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2856240Z With the provided path, there will be 1 file uploaded
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2860578Z Artifact name is valid!
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.2861631Z Root directory input is valid!
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.7069493Z Beginning upload of artifact content to blob storage
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:42.7261184Z (node:2486) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.0110305Z Uploaded bytes 212
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.0859847Z Finished uploading artifact content to blob storage!
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.0861441Z SHA256 digest of uploaded artifact zip is cafd6d3b5a162c85ad0e025c225fc87280abb5f91e150fc508779f2b7332c523
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.0862832Z Finalizing artifact upload
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.3406287Z Artifact ci-failure-logs-db6338a5d60a36ea9c38a58e1d22e8037d75f095.zip successfully finalized. Artifact ID 10644227880
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.3408774Z Artifact ci-failure-logs-db6338a5d60a36ea9c38a58e1d22e8037d75f095 has been successfully uploaded! Final size is 212 bytes. Artifact ID is 10644227880
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.3415164Z Artifact download URL: https://github.com/Goldentrii/AgentRecall-X/actions/runs/35612015399/artifacts/10644227880
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.3611659Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.3613281Z Post job cleanup.
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4466105Z [command]/usr/bin/git version
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4509143Z git version 2.55.0
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4554677Z Temporarily overriding HOME='/home/runner/work/_temp/86b718d1-e88b-4a1f-9092-55f28d79b15b' before making global git config changes
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4556587Z Adding repository directory to the temporary git global config as a safe directory
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4559179Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/AgentRecall-X/AgentRecall-X
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4602334Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4639020Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+build-and-test	UNKNOWN STEP	2026-09-21T14:25:43.4917788Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader

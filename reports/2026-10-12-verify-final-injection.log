@@ -1,0 +1,13 @@
+
+> bench:injection
+> node scripts/eval/session-start-size.mjs
+
+artifact: scripts/eval/baselines/injection-2026-10-12.json
+session-start-size — store: scripts/eval/fixtures/golden-v1 (hash 6816ea41d9f9…)
+payload: MCP session_start default: formatTerse(sessionStart({project})) — mode=full, verbose=false; content[0].text string
+project                 chars   tokens  cjk-adj  P0 store  P0 payload  survival
+alpha-platform          974     244     244      1         1           OK
+beta-api                1054    264     264      1         1           OK
+gamma-cli               678     170     170      0         0           OK
+auto → AgentRecall-X chars=446 tokens=112  [printed only — cwd-dependent, excluded from artifact]
+median 244 tokens | p95 264 | max 264 (estimator: chars/4, over 3 projects)

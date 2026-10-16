@@ -1,0 +1,16 @@
+    not ok 1 - N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; retrieved_count may undercount
+not ok 29 - audit: recordOutcome concurrent-process race on hot-path counters
+    not ok 5 - (g) config.json embeddings_enabled
+not ok 195 - fix7 — opt-in local embeddings
+    not ok 8 - palaceWalk depth="all" (readRoomContent) never surfaces a rescue-tagged room file's content, but still surfaces genuine siblings
+    not ok 9 - palaceWalk depth="relevant" (README direct read) never surfaces a rescue-tagged README, but still surfaces a genuine one
+    not ok 10 - journalSearch's include_palace branch never surfaces a rescue-tagged room file, but still surfaces a genuine one
+    not ok 12 - fetchVerbatim's palace branch never returns a rescue-tagged room file's content for a resurrect()-style verbatim fetch (STEP 2 fix)
+    not ok 13 - palaceSearch never surfaces a rescue-tagged room file's content, but still surfaces a genuine sibling
+    not ok 15 - check() never surfaces a rescue-tagged alignment-room correction, but still surfaces a genuine sibling
+    not ok 17 - journalColdStart never surfaces a rescue-tagged room README's entries in top_rooms, but still surfaces a genuine README's entries
+    not ok 19 - palaceLint never echoes a rescue-tagged room file's raw content into its issues (structural-only, evidence for the SAFE reclassification)
+not ok 216 - destination-proof — a hijacked rescue card cannot outrank/impersonate genuine memory at ANY surface
+    not ok 3 - DOES re-read a file whose mtime is newer than the index's last-write time
+not ok 244 - updateIndex — incremental journal index rebuild
+chain_done

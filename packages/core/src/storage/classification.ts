@@ -72,8 +72,11 @@ const PERSONAL_PATH_MARKERS: readonly string[] = [
  * personal markers; default project. Never throws.
  */
 export function classifyPath(absPath: string): Tier {
+  // Markers are written with forward slashes; normalize Windows separators
+  // so a backslash path cannot dodge the personal-tier gate.
+  const normalized = absPath.replace(/\\/g, "/");
   for (const marker of PERSONAL_PATH_MARKERS) {
-    if (absPath.includes(marker)) return "personal";
+    if (normalized.includes(marker)) return "personal";
   }
   return "project";
 }

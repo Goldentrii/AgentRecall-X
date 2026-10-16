@@ -4,6 +4,7 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { currentContext, isStrictMode, NoRuntimeContextError } from "./repository/context-store.js";
 
 export { NoRuntimeContextError };
@@ -12,7 +13,7 @@ export { NoRuntimeContextError };
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.5.0-beta.0";
+export const VERSION = "3.5.1";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)
@@ -21,9 +22,22 @@ export const VERSION = "3.5.0-beta.0";
 let _root: string | null = null;
 
 /**
+ * Per-call root scope (TOW2-324). withRoot() runs a (possibly async)
+ * function with an explicit root that takes precedence over the
+ * process-global `_root` for the duration of that call chain only.
+ * AsyncLocalStorage propagates the scope across awaits/promises/timers
+ * created inside the callback, and restores the outer context when the
+ * callback returns, throws, or rejects — a failed call can never leak
+ * its root onto subsequent unscoped calls.
+ */
+const _rootScope = new AsyncLocalStorage<string>();
+
+/**
  * Set the storage root directory. This is process-global state —
  * only one root is active at a time. Call before any other operations.
  * Use resetRoot() to revert to environment/default resolution.
+ * For per-instance/per-call scoping (e.g. multiple SDK instances in one
+ * process), use withRoot() instead.
  */
 export function setRoot(root: string): void {
   _root = root;
@@ -31,26 +45,49 @@ export function setRoot(root: string): void {
 
 /**
  * Clear the explicitly-set root, reverting to AGENT_RECALL_ROOT env var
- * or the default ~/.agent-recall.
+ * or the default ~/.agent-recall. Does not affect active withRoot() scopes.
  */
 export function resetRoot(): void {
   _root = null;
 }
 
 /**
- * Resolve the storage root. R2.9 order: an active RuntimeContext (ALS store)
- * wins first, and propagates through every `await`/timer/`setImmediate`
- * continuation of the code that entered it (fixes the fire-and-forget leak
- * class documented in orchestration/ground/G1-root-sdk.md §4 Scenario 3).
- * Only when there is NO active context do we fall back to the legacy
- * process-global (`_root` / env / default) — and if strict mode has ever
- * been turned on (a MemoryRuntime was created anywhere in this process, or
- * AGENT_RECALL_STRICT_CONTEXT=1), that fallback is refused instead: callers
- * outside a runtime must not silently share the legacy global root.
+ * Run `fn` with `root` as the effective storage root for the duration of
+ * the call (including its entire async continuation chain). Concurrent
+ * scopes with different roots do not interfere: each interleaved call chain
+ * sees its own root. Code outside any scope (CLI, MCP server) keeps
+ * resolving via setRoot()/env/default exactly as before.
+ *
+ * Note: the scope propagates through promises, awaits, timers, and
+ * callbacks REGISTERED inside `fn`. It does not follow manually detached
+ * continuations (e.g. an EventEmitter whose listeners were registered
+ * outside the scope) — bind those explicitly if ever needed.
+ */
+export function withRoot<T>(root: string, fn: () => T): T {
+  return _rootScope.run(root, fn);
+}
+
+/**
+ * Resolve the storage root. Combined resolution order (merge of R2.9 and
+ * TOW2-324/A7):
+ *   1. An active RuntimeContext (ALS store) wins first, and propagates
+ *      through every `await`/timer/`setImmediate` continuation of the code
+ *      that entered it (fixes the fire-and-forget leak class documented in
+ *      orchestration/ground/G1-root-sdk.md §4 Scenario 3).
+ *   2. An explicit withRoot() scope — callers that provided a root
+ *      explicitly always get it, even under strict mode.
+ *   3. Only when NEITHER scope is active do we fall back to the legacy
+ *      process-global (`_root` / env / default) — and if strict mode has
+ *      ever been turned on (a MemoryRuntime was created anywhere in this
+ *      process, or AGENT_RECALL_STRICT_CONTEXT=1), that fallback is refused
+ *      instead: callers outside a runtime must not silently share the
+ *      legacy global root.
  */
 export function getRoot(): string {
   const ctx = currentContext();
   if (ctx) return ctx.root;
+  const scoped = _rootScope.getStore();
+  if (scoped !== undefined) return scoped;
   if (isStrictMode()) throw new NoRuntimeContextError();
   return _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }

@@ -391,7 +391,7 @@ Phase 6 修复了研究文献指出的 11 个结构性缺口。一次完成三�
 <td>Squire 2004 taxonomy + CoALA architecture</td>
 </tr>
 <tr>
-<td><b>Procedural memory (5th layer)</b> — <code>palace/skills/</code> + 3 MCP tools<br/><b>程序记忆（第 5 层）</b> — <code>palace/skills/</code> + 3 个 MCP 工具</td>
+<td><b>Procedural memory (5th layer)</b> — <code>palace/skills/</code> + SDK access (the 3 MCP skill tools were removed in the 2026-07-05 purity census)<br/><b>程序记忆（第 5 层）</b> — <code>palace/skills/</code> + SDK 访问（3 个 MCP skill 工具已于 2026-07-05 purity census 移除）</td>
 <td>Squire 2004 declarative/non-declarative split, ACT-R production rules</td>
 </tr>
 <tr>

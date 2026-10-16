@@ -96,9 +96,13 @@ describe("Wave 5 — deriveBlindSpots", () => {
     assert.ok(fs.existsSync(file), "blind-spots.json must exist under personalDir");
     // privacy invariant — the file is classified personal
     assert.equal(classifyPath(file), "personal");
-    // mode 0600
-    const mode = fs.statSync(file).mode & 0o777;
-    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    // mode 0600 — POSIX-only invariant: Windows has no POSIX permission bits
+    // (Node reports a synthetic 0666/0444 from the read-only attribute), so
+    // the owner-only mode can only be asserted where the OS can express it.
+    if (process.platform !== "win32") {
+      const mode = fs.statSync(file).mode & 0o777;
+      assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    }
     // NEVER under palace/
     assert.ok(!file.includes(`${path.sep}palace${path.sep}`), "must not live under palace/");
 

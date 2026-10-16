@@ -1,0 +1,22 @@
+HEAD: 3bd1d10 fix(filelock): rethrow EPERM at timeout when no lock owner was ever observed (win32)
+npm notice
+
+LINT_OK
+[consistency] PASS 10 / FAIL 0
+[funnel] PASS 18 / FAIL 0
+[heeded-guard] PASS 9 / FAIL 0
+[room-slug-guards] PASS 9 / FAIL 0
+CI_CHAIN_EXIT=0
+=== root npm test tail ===
+  duration_ms: 8905.716399
+  type: 'suite'
+  ...
+1..79
+# tests 293
+# suites 77
+# pass 293
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 26249.946334

@@ -229,8 +229,13 @@ export function listCaseVariantForks(root: string): Array<{ project: string; var
  * "/foo/bar" being inside "/foo/ba"). Throws if not.
  */
 function assertInsideRoot(resolved: string, root: string, project: string): void {
-  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
-  if (!resolved.startsWith(rootWithSep) && resolved !== root) {
+  // `resolved` comes out of path.resolve() (native, normalized separators);
+  // `root` is the raw getRoot() string, which on Windows may carry mixed
+  // separators (e.g. an AGENT_RECALL_ROOT set from a POSIX-style shell).
+  // Resolve it too, or the startsWith jail rejects every legitimate path.
+  const normRoot = path.resolve(root);
+  const rootWithSep = normRoot.endsWith(path.sep) ? normRoot : normRoot + path.sep;
+  if (!resolved.startsWith(rootWithSep) && resolved !== normRoot) {
     throw new Error(`Invalid project name (path escape): ${project}`);
   }
 }

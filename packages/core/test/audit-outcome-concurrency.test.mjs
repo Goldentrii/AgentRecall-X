@@ -41,7 +41,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-import { writeCorrection, readCorrections } from "../dist/storage/corrections.js";
+import { writeCorrection, readCorrections, recordOutcome } from "../dist/storage/corrections.js";
 
 const PROJECT = "audit-outcome-concurrency-proj";
 
@@ -132,7 +132,11 @@ afterEach(async () => {
 });
 
 describe("audit: recordOutcome concurrent-process race on hot-path counters", () => {
-  it("N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; retrieved_count may undercount", async () => {
+  // (Renamed 2026-10-12: the old title said retrieved_count "may undercount"
+  // while the assertion demanded strict equality. Post-fix the equality IS the
+  // contract — counters are ledger-derived under a waitForLiveHolder lock, so
+  // materialized == ledger at rest even on a starved 2-vCPU CI runner.)
+  it("N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; materialized retrieved_count converges to it", async () => {
     const N = 24; // concurrent OS processes
     const M = 20; // recordOutcome calls per process
     const EXPECTED_TOTAL = N * M; // 480
@@ -191,12 +195,13 @@ describe("audit: recordOutcome concurrent-process race on hot-path counters", ()
       `(append-only, no lock required) — got ${myLedgerEvents.length}`,
     );
 
-    // CORRECT behavior would have retrieved_count converge to the ledger
-    // total. This is the audited claim: an unlocked read-modify-write
-    // (readCorrections().find() -> mutate -> writeRecordAtomic(), see
-    // corrections.ts:991-1054) can lose increments under real concurrent
-    // writers, so this assertion is EXPECTED to fail today if the race
-    // reproduces — that failure IS the regression signal for PR A1.
+    // retrieved_count must converge to the ledger total. History: the
+    // original unlocked read-modify-write lost increments outright (PR A1
+    // added the corrections-${project} lock); the 2026-10-12 CI failure then
+    // showed contention-SKIPS of the locked pass losing increments on a
+    // starved 2-vCPU runner (480 vs 290). Counters are now RE-DERIVED from
+    // the ledger inside a waitForLiveHolder lock, so this equality holds at
+    // rest — any remaining divergence here is a real regression.
     assert.strictEqual(
       actualCount,
       EXPECTED_TOTAL,
@@ -204,6 +209,82 @@ describe("audit: recordOutcome concurrent-process race on hot-path counters", ()
       `count (${myLedgerEvents.length}) — this reproduces the unlocked read-modify-write ` +
       `race in recordOutcome (corrections.ts read at line 991, write at line 1054; the ` +
       `function's own comment at line 981 names this exact race for the ledger-only early-return)`,
+    );
+  });
+
+  // CI windows-latest regression (2026-10-12, run 38230438655): on a starved
+  // 2-vCPU runner the progress-aware lock deadline still skipped 190/480
+  // counter passes (a holder descheduled >5s looks "wedged"), and INCREMENT
+  // semantics meant every skip was a permanently lost increment (480 vs 290).
+  // The fix makes the ledger the single source of truth: each locked counter
+  // pass RE-DERIVES this correction's counters from its _outcomes.jsonl
+  // events (the exact replay core `ar outcomes rebuild` uses), so any earlier
+  // skip self-heals on the next successful pass instead of compounding.
+  it("ledger is the source of truth: a diverged counter (earlier contention-skip) self-heals on the next recordOutcome", async () => {
+    const correction = makeTestCorrection();
+    const seedResult = await writeCorrection(PROJECT, correction);
+    assert.ok(seedResult.written, "seed correction must be written");
+    const correctionId = seedResult.id ?? correction.id;
+
+    // Two normal live calls — ledger 2, counter 2.
+    for (let i = 0; i < 2; i++) {
+      await recordOutcome({
+        correction_id: correctionId,
+        project: PROJECT,
+        kind: "retrieved",
+        at: new Date().toISOString(),
+        evidence: `live call ${i}`,
+      });
+    }
+
+    // Simulate 3 contention-skipped calls: recordOutcome appends its ledger
+    // line BEFORE the locked counter pass, so a skip leaves a ledger line
+    // with NO matching counter increment. Append those lines directly.
+    const outcomesPath = path.join(testRoot, "projects", PROJECT, "corrections", "_outcomes.jsonl");
+    for (let i = 0; i < 3; i++) {
+      const now = new Date().toISOString();
+      fs.appendFileSync(
+        outcomesPath,
+        JSON.stringify({
+          correction_id: correctionId,
+          project: PROJECT,
+          kind: "retrieved",
+          at: now,
+          recorded_at: now,
+          evidence: `simulated contention-skip ${i}`,
+        }) + "\n",
+        "utf-8",
+      );
+    }
+
+    // Diverged state: ledger 5, materialized counter 2.
+    const before = readCorrections(PROJECT).find((r) => r.id === correctionId);
+    assert.equal(before.retrieved_count, 2, "precondition: counter diverged below the ledger");
+
+    // ONE more live call → ledger 6. Increment semantics would land on 3;
+    // ledger-derived semantics MUST land on 6 (materialized == ledger).
+    await recordOutcome({
+      correction_id: correctionId,
+      project: PROJECT,
+      kind: "retrieved",
+      at: new Date().toISOString(),
+      evidence: "healing call",
+    });
+
+    const ledgerCount = fs
+      .readFileSync(outcomesPath, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l))
+      .filter((e) => e.correction_id === correctionId && e.kind === "retrieved").length;
+    assert.equal(ledgerCount, 6, "precondition: ledger holds all 6 events");
+
+    const after = readCorrections(PROJECT).find((r) => r.id === correctionId);
+    assert.strictEqual(
+      after.retrieved_count,
+      ledgerCount,
+      `materialized retrieved_count (${after.retrieved_count}) must converge to the ledger (${ledgerCount}) ` +
+      `on the next successful locked pass — counters are a cache OF the ledger, not a parallel tally`,
     );
   });
 });

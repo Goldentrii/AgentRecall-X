@@ -1,0 +1,45 @@
+npm notice
+
+
+
+    # Subtest: idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card
+    ok 4 - idempotency: re-running hook-start with the SAME orphaned WM data never produces a second card
+      ---
+      duration_ms: 1584.102372
+      ...
+    # Subtest: e2e crash-rescue round trip: prompts via hook-ambient → simulated crash → rescue → NEXT hook-start's continuity shows it
+    ok 5 - e2e crash-rescue round trip: prompts via hook-ambient → simulated crash → rescue → NEXT hook-start's continuity shows it
+      ---
+      duration_ms: 2911.254152
+      ...
+    1..5
+ok 79 - working-memory wave — hook-start orphan rescue
+  ---
+  duration_ms: 9400.5976
+  type: 'suite'
+  ...
+1..79
+# tests 293
+# suites 77
+# pass 293
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 24429.228936
+CI_CHAIN_EXIT=0
+# tests 1860 # pass 1860 # fail 0 # skipped 0 # todo 0  <- packages/core
+# tests 79 # pass 79 # fail 0 # skipped 0 # todo 0  <- packages/mcp-server
+# tests 41 # pass 41 # fail 0 # skipped 0 # todo 0  <- packages/sdk
+# tests 293 # pass 293 # fail 0 # skipped 0 # todo 0  <- packages/cli
+
+  (This run: fired=2 hits=2 achievable=14; FFR 1/11 lead-in units → Wilson [1.6%, 37.7%].)
+══════════════════════════════════════════════════════════════
+    D6   miss rank=-  palace: decisions/dual-active-dr
+══════════════════════════════════════════════════════════════
+json: /tmp/golden-det-FcrTye/run1.json
+determinism: PASS (byte-identical after stripping generated_utc)
+beta-api                1054    264     264      1         1           OK
+gamma-cli               678     170     170      0         0           OK
+auto → src chars=426 tokens=107  [printed only — cwd-dependent, excluded from artifact]
+median 244 tokens | p95 264 | max 264 (estimator: chars/4, over 3 projects)

@@ -1,0 +1,23 @@
+
+[consistency] AR_ROOT=C:\Users\tong\AppData\Local\Temp\ar-consistency-r3jsqv
+
+[P0-1] session_start blind to incremental writes
+  ✅ session_start does NOT say 'No memory found'
+  ✅ captured answer 'A1' is visible in session_start payload
+[P0-2] salience inversion
+  ✅ top room is 'architecture' (content beats empty defaults)
+  ✅ no empty room ranks above a non-empty room
+  ✅ palace-index architecture.memory_count === 1
+[P0-3] session-1 insight invisible at session-2
+  ✅ insight title surfaces in next session_start
+[P0-2b] named-topic first write counts as content
+  ✅ named-topic room 'decisions' counts >= 1 entry
+[P0-3b] fresh project insight surfaces past a full awareness cap
+  ✅ fresh session-1 insight visible despite full awareness top-3
+[P0-4] promotional link in tool output
+  ✅ session_start payload contains no t.me / telegram URL
+[P1-1] markdown leak in card fields
+  ✅ trajectory field has no leading '##' header
+
+[consistency] PASS 10 / FAIL 0
+

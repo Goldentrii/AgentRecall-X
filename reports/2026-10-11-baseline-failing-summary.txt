@@ -1,0 +1,111 @@
+##### reports/2026-10-11-baseline-test.log
+test at test\ab-experiment.test.mjs:533:3
+  |✖ ab-report: exits 0 on empty ledger (no A/B data) (296.7374ms)
+  |  AssertionError [ERR_ASSERTION]: Got unwanted exception: ab-report must exit 0 on empty ledger
+test at test\ab-experiment.test.mjs:545:3
+  |✖ ab-report --json: exits 0 and emits valid JSON on empty ledger (275.2038ms)
+  |  AssertionError [ERR_ASSERTION]: Got unwanted exception.
+test at test\ab-experiment.test.mjs:565:3
+  |✖ ab-report: correct counts on seeded ledger (3 ON, 2 OFF, no forced) (296.1179ms)
+  |  AssertionError [ERR_ASSERTION]: Got unwanted exception.
+test at test\ab-experiment.test.mjs:600:3
+  |✖ ab-report: forced sessions are excluded from arm counts (423.9515ms)
+  |  AssertionError [ERR_ASSERTION]: Got unwanted exception.
+test at test\ab-experiment.test.mjs:636:3
+  |✖ ab-report: recurred outcomes attribute to the nearest prior session's arm only (335.4265ms)
+  |  AssertionError [ERR_ASSERTION]: Got unwanted exception.
+test at test\archive-write.test.mjs:157:3
+  |✖ never imports / calls syncToSupabase (raw tier is local-only) (3.9778ms)
+  |  Error: ENOENT: no such file or directory, open 'E:\E:\tools\AgentRecall-X\packages\core\dist\storage\archive-write.js'
+test at test\audit-outcome-concurrency.test.mjs:135:3
+  |✖ N child processes x M recordOutcome('retrieved') calls: ledger stays lossless; retrieved_count may undercount (20492.7454ms)
+  |  AssertionError [ERR_ASSERTION]: materialized retrieved_count (461) diverged from the lossless ledger count (480) — this reproduces the unlocked read-modify-write race in recordOutcome (corrections.ts read at line 991, write at line 1054; the function's own comment at line 981 names this exact race for the ledger-only early-return)
+test at test\blind-spots.test.mjs:84:3
+  |✖ writeBlindSpots persists ONLY to personalDir/blind-spots.json (0600), classifyPath===personal (24.6498ms)
+  |  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+test at test\bootstrap-security.test.mjs:85:3
+  |✖ bootstrapImport skips items whose realpath resolves outside the repo's scan root (15.4158ms)
+  |  Error: EPERM: operation not permitted, symlink 'C:\Users\tong\AppData\Local\Temp\ar-sec-esc-21M3EO\secret.txt' -> 'C:\Users\tong\.ar-sec-scan-1791718829607-6dn7wm\legit-repo\escape-link.txt'
+test at test\bootstrap-security.test.mjs:343:3
+  |✖ P0-a rework (2026-08-18): a CLAUDE.md discussing 'ignore all previous instructions' as bare prose survives verbatim (no phrase-mangling); a structural <system-reminder> tag is still stripped (1168.2678ms)
+  |  AssertionError [ERR_ASSERTION]: project-conventions.md must have been written
+test at test\corrections-w2-annotations.test.mjs:159:3
+  |✖ (c1) counts are correct and exhaustively partition `total` (2.3595ms)
+  |  Error: Invalid project name (path escape): w2-kpi-breakdown-proj
+test at test\corrections-w2-annotations.test.mjs:180:3
+  |✖ (c2) every DecayClass/Confidence key is present even at zero (no `?? 0` needed by callers) (0.6293ms)
+  |  Error: Invalid project name (path escape): w2-kpi-empty-proj
+test at test\corrections-w2-annotations.test.mjs:187:3
+  |✖ (c3) breakdown does not perturb any pre-existing KPI field (precision/heeded/recurred/verdict_coverage/etc unchanged) (0.9058ms)
+  |  Error: Invalid project name (path escape): w2-kpi-preexisting-proj
+test at test\corrections-w2-annotations.test.mjs:200:3
+  |✖ (review fix) a corrupted/out-of-union decay_class_override or confidence on disk does not mint a stray Record key — exhaustive-partition invariant holds even on garbage input (0.5786ms)
+  |  Error: Invalid project name (path escape): w2-kpi-corrupted-proj
+test at test\egress-guard.test.mjs:140:3
+  |✖ scrubForCloud redacts AKIA key from content that would be uploaded (0.7074ms)
+  |  Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'e:'
+test at test\egress-guard.test.mjs:155:3
+  |✖ scrubForCloud redacts PEM header AND base64 body (0.3779ms)
+  |  Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'e:'
+test at test\egress-guard.test.mjs:170:3
+  |✖ scrubForCloud on content with no secrets returns content unchanged (modulo injection scrub) (0.37ms)
+  |  Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'e:'
+test at test\identity-trust-completeness.test.mjs:231:3
+  |✖ every journal-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason (1241.9223ms)
+  |  AssertionError [ERR_ASSERTION]: 9 journal-shape unit(s) are neither choked nor allowlisted: helpers\journal-files.ts::hasCaptureLogs, helpers\journal-files.ts::readRecentCaptures, storage\archive-prune.ts::pruneRawArchive, storage\corrections.ts::listUnknownVerdicts, tools-logic\alignment-check.ts::alignmentCheck, tools-logic\journal-merge.ts::journalMerge, tools-logic\journal-write.ts::journalWrite, tools-logic\session-end-reflect.ts::collectRawUnconsumed, tools-logic\session-end.ts::sessionEnd. Classify each in ALLOWLIST_B (with a real, verified reason) or route it through the shared choke.
+test at test\identity-trust-completeness.test.mjs:251:3
+  |✖ every ALLOWLIST_B entry is still flagged by the scanner (stale entries are not silently ignored) (682.1234ms)
+  |  AssertionError [ERR_ASSERTION]: allowlist entry "helpers/journal-files.ts::hasCaptureLogs" is no longer flagged by the scanner — remove the stale entry
+test at test\identity-trust-completeness.test.mjs:399:3
+  |✖ every palace-room-shape UNIT in packages/core/src either calls the shared choke (directly, or via a LIVE-verified trusted wrapper), or is allowlisted with a real reason (613.3029ms)
+  |  AssertionError [ERR_ASSERTION]: 13 palace-room-shape unit(s) are neither choked nor allowlisted: palace\compress.ts::compressTopic, palace\fan-out.ts::fanOut, palace\identity.ts::readIdentity, palace\rooms.ts::countRoomEntries, palace\rooms.ts::ensurePalaceInitialized, tools-logic\alignment-check.ts::alignmentCheck, tools-logic\bootstrap.ts::bootstrapImport, tools-logic\journal-write.ts::journalWrite, tools-logic\knowledge-write.ts::knowledgeWrite, tools-logic\palace-lint.ts::palaceLint, tools-logic\palace-read.ts::palaceRead, tools-logic\palace-write.ts::palaceWrite, tools-logic\session-end.ts::sessionEnd. Classify each in ALLOWLIST_C (with a real, verified reason) or route it through the shared choke.
+test at test\identity-trust-completeness.test.mjs:419:3
+  |✖ every ALLOWLIST_C entry is still flagged by the scanner (stale entries are not silently ignored) (537.3912ms)
+  |  AssertionError [ERR_ASSERTION]: allowlist entry "palace/compress.ts::compressTopic" is no longer flagged by the scanner — remove the stale entry
+test at test\identity-trust-cwd-root-gate.test.mjs:99:3
+  |✖ defense in depth: a PRE-EXISTING broad allowlist entry (predating this fix) must still yield to a nested repo's own git identity (57.6391ms)
+  |  Error: EPERM, Permission denied: \\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311 '\\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311'
+test at test\identity-trust-cwd-root-gate.test.mjs:123:3
+  |✖ legit case preserved: an EXACT allowlist registration (explicit write from a real project root) still wins outright (0.869ms)
+  |  Error: EPERM, Permission denied: \\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311 '\\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311'
+test at test\identity-trust-cwd-root-gate.test.mjs:142:3
+  |✖ CRITICAL-2 regression fix (2026-08-20): a SUBDIRECTORY of an overridden root inherits the override, not raw git identity (0.8305ms)
+  |  Error: EPERM, Permission denied: \\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311 '\\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311'
+test at test\identity-trust-cwd-root-gate.test.mjs:173:3
+  |✖ a genuinely DIFFERENT nested repo under an overridden root still wins on its own identity (directory-identity fix does not reopen CRITICAL-3) (1.0033ms)
+  |  Error: EPERM, Permission denied: \\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311 '\\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311'
+test at test\identity-trust-cwd-root-gate.test.mjs:197:3
+  |✖ a project root with only package.json (no git) can still be registered (0.9764ms)
+  |  Error: EPERM, Permission denied: \\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311 '\\?\C:\Users\tong\AppData\Local\Temp\ar-identity-trust-cwd-root-work-1791718834311'
+test at test\personal-not-backfilled.test.mjs:27:3
+  |✖ the blind-spots file and the whole personal/ dir classify as personal (51.1085ms)
+  |  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+test at test\query-memory-pipeline.test.mjs:1010:5
+  |✖ a rescue-tagged file planted directly in the legacy journal root never surfaces via queryMemory(), while a genuine (tagless, pre-package-shaped) legacy sibling still does (41.297ms)
+  |  AssertionError [ERR_ASSERTION]: the genuine (tagless) legacy sibling must still surface; got []
+test at test\sync-errors.test.mjs:19:3
+  |✖ writes error line to sync-errors.log (42.7721ms)
+  |  AssertionError [ERR_ASSERTION]: log file should exist
+test at test\sync-errors.test.mjs:28:3
+  |✖ caps log at 500 lines (804.3565ms)
+  |  Error: ENOENT: no such file or directory, open 'C:\Users\tong\AppData\Local\Temp\ar-test-jcAFwv\.agent-recall\sync-errors.log'
+test at test\sync.test.mjs:54:3
+  |✖ deriveSlug handles palace paths (4.8331ms)
+  |  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+##### reports/2026-10-11-baseline-test-mcp.log
+test at test\lifecycle-exit.test.mjs:158:3
+  |✖ SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling (4144.0736ms)
+  |  AssertionError [ERR_ASSERTION]: expected a session card carrying the SIGTERM-time gist
+test at test\lifecycle-exit.test.mjs:177:3
+  |✖ SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling (2203.3641ms)
+  |  AssertionError [ERR_ASSERTION]: expected a session card carrying the SIGINT-time gist
+test at test\lifecycle-exit.test.mjs:191:3
+  |✖ idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash (1681.0332ms)
+  |  AssertionError [ERR_ASSERTION]: idempotency guard must produce exactly one card even under a signal race, got 0
+##### reports/2026-10-11-baseline-test-cli.log
+test at test\sync-memory-fence.test.mjs:92:3
+  |✖ writes a blank line between the YAML frontmatter and the fenced body, with real retrieved content inside the fence (3139.9143ms)
+  |  AssertionError [ERR_ASSERTION]: expected sync-memory to write C:\Users\tong\AppData\Local\Temp\ar-sync-memory-fence-home-khnXgC\.claude\projects\-Users-tong\memory\ar_sync_sync-memory-fence-test.md; stdout=Synced to C:\Users\tong\AppData\Local\Temp\ar-sync-memory-fence-root-tkzunc\projects\sync-memory-fence-test\SYNC.md (14 lines)
+test at test\transcript-reader.test.mjs:212:5
+  |✖ new-slug gate: mints a brand-new slug only when content count >= 3 AND ~/Projects/<name> exists (8.5175ms)
+  |  AssertionError [ERR_ASSERTION]: must mint the corroborated new slug; got {"slug":"auto","confidence":0,"candidates":[{"slug":"brand-new-real","count":3}]}

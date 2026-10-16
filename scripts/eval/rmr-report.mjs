@@ -55,6 +55,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 // Evidence-tiered heed split (fix12 hygiene, 2026-09-12): the ADJUDICATED vs
 // LOOSE classification is the canonical core implementation
 // (packages/core/src/storage/heed-tiers.ts) re-exported through the heed-rate
@@ -66,10 +67,10 @@ import { classifyCorrection, aggregate as aggregateHeedTiers } from "./heed-rate
 // ───────────────────────────────────────────────────────────────────────────
 
 const GENERATED_DATE = "2026-07-03";
-const ARTIFACT_PATH = new URL(
+const ARTIFACT_PATH = fileURLToPath(new URL(
   "../../scripts/eval/baselines/rmr-baseline-2026-07-03.json",
   import.meta.url
-).pathname;
+));
 
 // C3 semantic boundary: date when the default-heeded bias was eliminated.
 // Pre-C3 heed events are instrument-generated; post-C3 require positive trigger evidence.
@@ -92,7 +93,7 @@ function wilsonCI(k, n) {
   const p = k / n;
   const z2n = (z * z) / n;
   const centre = p + z2n / 2;
-  const margin = z * Math.sqrt((p * (1 - p)) / n + z2n / 4);
+  const margin = z * Math.sqrt((p * (1 - p)) / n + z2n / (4 * n)); // z²/(4n²) — standard Wilson
   const denom = 1 + z2n;
   return [
     Math.max(0, (centre - margin) / denom),

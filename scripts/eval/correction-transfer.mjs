@@ -31,6 +31,7 @@
  */
 
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   deriveBlindSpots,
@@ -572,6 +573,6 @@ function runSelfTest() {
 
 const invokedDirectly =
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) main();

@@ -1,0 +1,54 @@
+
+> bench:golden
+> node scripts/eval/golden-retrieval.mjs --check-determinism
+
+golden-retrieval: --check-determinism (double child-process run)
+golden fixture lock verified (42 files, 26 queries, hash 3aac650d7558d317…)
+══════════════════════════════════════════════════════════════
+  AgentRecall — Golden Retrieval Harness v1 (synthetic fixture)
+  (HONEST numbers — a low score is a valid result, not a bug)
+══════════════════════════════════════════════════════════════
+  bench_version   golden-retrieval-v1   leg: keyword   k=5
+  corpus_hash     3aac650d7558d317…   n_queries 26
+  node v24.11.1   win32-x64   core 3.4.51   commit cae060a
+
+  category          hit@1          hit@5          Wilson95(hit@5)
+  A known-decision  1/10 10.0%     8/10 80.0%     [49.0%, 94.3%]
+  B cross-project   2/6 33.3%      4/6 66.7%      [30.0%, 90.3%]
+  C freshness       0/4 0.0%       3/4 75.0%      [30.1%, 95.4%]
+  D cjk             1/6 16.7%      4/6 66.7%      [30.0%, 90.3%]
+  OVERALL           4/26 15.4%     19/26 73.1%    [53.9%, 86.3%]
+
+  stale-return (C, confident wrong)  0/4 0.0%  Wilson [0.0%, 49.0%]
+  CJK vs ASCII hit@5                 66.7% vs 75.0%
+
+  per-query (id · hit@5 · rank · top-1 source)
+    A1   HIT  rank=2  corrections: Never run database migrations on Friday deploys
+    A2   HIT  rank=3  palace: decisions/README
+    A3   HIT  rank=2  palace: goals/evolution
+    A4   HIT  rank=1  corrections: Never run database migrations on Friday deploys
+    A5   HIT  rank=2  corrections: Always set a cache TTL explicitly — never rely o
+    A6   miss rank=-  palace: predictions/README
+    A7   HIT  rank=4  palace: alignment/README
+    A8   miss rank=-  corrections: Never run database migrations on Friday deploys
+    A9   HIT  rank=4  corrections: Never run database migrations on Friday deploys
+    A10  HIT  rank=2  corrections: Never run database migrations on Friday deploys
+    B1   HIT  rank=5  palace: alignment/README
+    B2   miss rank=-  palace: alignment/README
+    B3   HIT  rank=1  insight: Parallel workers must never self-review — route 
+    B4   miss rank=-  palace: alignment/README
+    B5   HIT  rank=3  palace: alignment/README
+    B6   HIT  rank=1  insight: Owner preference: prioritize shipping user-visib
+    C1   HIT  rank=3  corrections: Never run database migrations on Friday deploys
+    C2   HIT  rank=3  palace: alignment/README
+    C3   miss rank=-  palace: alignment/README
+    C4   HIT  rank=4  palace: architecture/README
+    D1   HIT  rank=2  corrections: Always set a cache TTL explicitly — never rely o
+    D2   miss rank=-  journal: 2026-08-05 / 结论
+    D3   HIT  rank=2  palace: decisions/dual-active-dr
+    D4   HIT  rank=1  palace: decisions/dual-active-dr
+    D5   HIT  rank=2  palace: decisions/dual-active-dr
+    D6   miss rank=-  palace: decisions/dual-active-dr
+══════════════════════════════════════════════════════════════
+json: C:\Users\tong\AppData\Local\Temp\golden-det-QsWn1h\run1.json
+determinism: PASS (byte-identical after stripping generated_utc)

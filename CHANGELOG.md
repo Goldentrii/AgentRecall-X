@@ -6,6 +6,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Wilson 95% CI in `scripts/eval/rmr-report.mjs` and `scripts/eval/ab-report.mjs`** — the term under the root was `z²/(4n)` instead of the standard `z²/(4n²)`, inflating every interval (0/4 gave [0, 0.73] instead of [0, 0.49]). Now matches `bench-artifact.mjs`'s `wilson95`; regression test `packages/core/test/wilson-report-scripts.test.mjs`. Frozen baselines under `scripts/eval/baselines/` are not regenerated.
+
+### Docs
+
+- README rewritten: session loop, MCP tools + hooks, memory layers, a labelled **The math** section (from `packages/core/src/MATH.md`), measurement table, community. War Room section removed. Previous versions archived in `docs/archive/`. Chinese README re-translated to match.
+
+## [3.5.1] — 2026-10-12
+
+Hardening found by the first real `windows-latest` + 2-vCPU CI runs after 3.5.0 (tag `v3.5.0` does not contain these). All four packages 3.5.1 in lockstep.
+
+### Fixed
+
+- **Heeded-guard regression suite** — the async `writeCorrection`/`recordOutcome` calls are now awaited in the suite; the CI regression step is green again.
+- **Windows portability** — `fileURLToPath` sweep, path jails, cross-platform npm scripts; ports community PRs #24 (@buer5), #19 (@lonelyhty), #22 (@buer5) with Co-authored-by trailers.
+- **SDK per-instance root isolation** via `AsyncLocalStorage` — concurrent SDK instances no longer share a process-global root (closes TOW2-324).
+- **filelock** — progress-aware contention deadline + win32 `EPERM` handling.
+- **Embeddings config cache key** and **updateIndex equal-mtime re-read**.
+- **Linux `npm test`** green as non-root.
+
+### Added
+
+- **Golden retrieval harness** + hash-locked fixture golden-v1 — `npm run bench:golden`; hit@5 73.1% keyword (committed artifact); 80.8% with local embeddings measured locally 2026-10-11 (opt-in model, no committed artifact).
+- **session_start injection-size and latency benches** with committed baselines — `npm run bench:injection`, `npm run bench:latency`.
+- **`windows-latest` CI lane** + `build-and-test` fan-in job.
+
+### Docs
+
+- README numbers relabelled: regenerates-from-this-repo vs self-measured on the owner's private store.
+
+## [3.4.51] — 2026-09-17
+
+- Evolution program P0–P4 final wave (corrections retier, ranking leg, ledgers); shipped as a patch without a changelog entry at the time — see `UPDATE-LOG.md` for the detail.
+
 ## [3.4.50] — 2026-09-12
 
 Dreaming admission math + heed-rate measurement (both independently reviewed with adversarial fix rounds).

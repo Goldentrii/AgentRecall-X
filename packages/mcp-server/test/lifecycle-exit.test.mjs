@@ -155,7 +155,16 @@ async function spawnServerAndCallOneTool(root, toolName, args) {
 }
 
 describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory into a card", () => {
-  it("SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling", async () => {
+  it("SIGTERM: distills the just-captured gist into a card and exits within the 2s ceiling", async (t) => {
+    if (process.platform === "win32") {
+      // POSIX-only trigger: on Windows child.kill("SIGTERM"/"SIGINT") is libuv's
+      // TerminateProcess emulation — the child's process.on(signal) handlers
+      // never run, so the signal-driven distillation path cannot be exercised.
+      // The stdin-close trigger (covered below and in ambient-capture.test.mjs)
+      // is the graceful-exit path that exists on Windows.
+      t.skip("process signals are not deliverable to a child via kill() on Windows");
+      return;
+    }
     const root = isolatedRoot();
     const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "SIGTERM_UNIQUE_TERM_ABC" });
 
@@ -174,7 +183,16 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
     assert.equal(wmFiles.length, 0, "working-memory file must be cleaned up after SIGTERM distillation");
   });
 
-  it("SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling", async () => {
+  it("SIGINT: distills the just-captured gist into a card and exits within the 2s ceiling", async (t) => {
+    if (process.platform === "win32") {
+      // POSIX-only trigger: on Windows child.kill("SIGTERM"/"SIGINT") is libuv's
+      // TerminateProcess emulation — the child's process.on(signal) handlers
+      // never run, so the signal-driven distillation path cannot be exercised.
+      // The stdin-close trigger (covered below and in ambient-capture.test.mjs)
+      // is the graceful-exit path that exists on Windows.
+      t.skip("process signals are not deliverable to a child via kill() on Windows");
+      return;
+    }
     const root = isolatedRoot();
     const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "SIGINT_UNIQUE_TERM_DEF" });
 
@@ -188,7 +206,16 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
     assert.ok(card, "expected a session card carrying the SIGINT-time gist");
   });
 
-  it("idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash", async () => {
+  it("idempotency: SIGTERM followed immediately by SIGINT produces exactly ONE card, no crash", async (t) => {
+    if (process.platform === "win32") {
+      // POSIX-only trigger: on Windows child.kill("SIGTERM"/"SIGINT") is libuv's
+      // TerminateProcess emulation — the child's process.on(signal) handlers
+      // never run, so the signal-driven distillation path cannot be exercised.
+      // The stdin-close trigger (covered below and in ambient-capture.test.mjs)
+      // is the graceful-exit path that exists on Windows.
+      t.skip("process signals are not deliverable to a child via kill() on Windows");
+      return;
+    }
     const root = isolatedRoot();
     const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "IDEMPOTENT_SIGNAL_UNIQUE_TERM" });
 

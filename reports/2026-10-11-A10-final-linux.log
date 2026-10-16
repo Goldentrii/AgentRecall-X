@@ -1,0 +1,33 @@
+HEAD: cd68ce9 fix(core): treat win32 EPERM on lock mkdir as contention (NTFS delete-pending)
+npm notice
+
+LINT_OK
+[consistency] AR_ROOT=/tmp/ar-consistency-i796bW
+[consistency] PASS 10 / FAIL 0
+[funnel] AR_ROOT=/tmp/ar-funnel-TdfSLC
+[funnel] PASS 18 / FAIL 0
+[heeded-guard] PASS 9 / FAIL 0
+[room-slug-guards] AR_ROOT=/tmp/ar-slug-guards-30bstd
+[room-slug-guards] PASS 9 / FAIL 0
+CI_CHAIN_EXIT=0
+=== root npm test tail ===
+    1..5
+ok 79 - working-memory wave — hook-start orphan rescue
+  ---
+  duration_ms: 10003.38274
+  type: 'suite'
+  ...
+1..79
+# tests 293
+# suites 77
+# pass 293
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 27896.054522
+=== per-package (explicit, non-root user 1000) ===
+core exit=0 # tests 1859 # pass 1859 # fail 0 
+mcp-server exit=0 # tests 79 # pass 79 # fail 0 
+sdk exit=0 # tests 41 # pass 41 # fail 0 
+cli exit=0 # tests 293 # pass 293 # fail 0 

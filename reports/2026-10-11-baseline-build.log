@@ -1,0 +1,20 @@
+
+> build
+> npm run build -w packages/core && npm run build -w packages/mcp-server && npm run build -w packages/sdk && npm run build -w packages/cli
+
+
+> agent-recall-core@3.4.51 build
+> tsc
+
+
+> agent-recall-mcp@3.4.51 build
+> tsc && chmod +x dist/index.js
+
+
+> agent-recall-sdk@3.4.51 build
+> tsc
+
+
+> agent-recall-cli@3.4.51 build
+> tsc && chmod +x dist/index.js
+

@@ -1,0 +1,171 @@
+Unable to find image 'node:20' locally
+20: Pulling from library/node
+db53381ee51f: Pulling fs layer
+e5203b2bfeff: Pulling fs layer
+8fcda2b4d799: Pulling fs layer
+2933ecab0f11: Pulling fs layer
+c83419f44309: Pulling fs layer
+76e6b8204a89: Pulling fs layer
+2f2ab6e4eb46: Pulling fs layer
+0b22ec2d9b1a: Pulling fs layer
+c83419f44309: Waiting
+76e6b8204a89: Waiting
+2f2ab6e4eb46: Waiting
+0b22ec2d9b1a: Waiting
+2933ecab0f11: Waiting
+e5203b2bfeff: Download complete
+db53381ee51f: Verifying Checksum
+db53381ee51f: Download complete
+c83419f44309: Verifying Checksum
+c83419f44309: Download complete
+8fcda2b4d799: Verifying Checksum
+8fcda2b4d799: Download complete
+2f2ab6e4eb46: Verifying Checksum
+2f2ab6e4eb46: Download complete
+0b22ec2d9b1a: Download complete
+db53381ee51f: Pull complete
+e5203b2bfeff: Pull complete
+76e6b8204a89: Verifying Checksum
+76e6b8204a89: Download complete
+8fcda2b4d799: Pull complete
+2933ecab0f11: Verifying Checksum
+2933ecab0f11: Download complete
+2933ecab0f11: Pull complete
+c83419f44309: Pull complete
+76e6b8204a89: Pull complete
+2f2ab6e4eb46: Pull complete
+0b22ec2d9b1a: Pull complete
+Digest: sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+Status: Downloaded newer image for node:20
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+> tsc && chmod +x dist/index.js
+
+
+[consistency] AR_ROOT=/tmp/ar-consistency-rLJTee
+
+[P0-1] session_start blind to incremental writes
+  ✅ session_start does NOT say 'No memory found'
+  ✅ captured answer 'A1' is visible in session_start payload
+[P0-2] salience inversion
+  ✅ top room is 'architecture' (content beats empty defaults)
+  ✅ no empty room ranks above a non-empty room
+  ✅ palace-index architecture.memory_count === 1
+[P0-3] session-1 insight invisible at session-2
+  ✅ insight title surfaces in next session_start
+[P0-2b] named-topic first write counts as content
+  ✅ named-topic room 'decisions' counts >= 1 entry
+[P0-3b] fresh project insight surfaces past a full awareness cap
+  ✅ fresh session-1 insight visible despite full awareness top-3
+[P0-4] promotional link in tool output
+  ✅ session_start payload contains no t.me / telegram URL
+[P1-1] markdown leak in card fields
+  ✅ trajectory field has no leading '##' header
+
+[consistency] PASS 10 / FAIL 0
+
+
+[funnel] AR_ROOT=/tmp/ar-funnel-GQIVg0
+
+[T0] normalizeTitle + tokenOverlap unit
+  ✅ near-duplicate titles overlap >= 0.6
+  ✅ clearly-different titles overlap < 0.6
+[T1] near-duplicate insight confirms existing entry
+  ✅ T1: exactly ONE entry for multi-agent review insight
+  ✅ T1: confirmed_count === 2
+  ✅ T1: applies_when merged (has both 'code-review' and 'ternary')
+[T2] clearly-different insight creates a new entry
+  ✅ T2: Supabase insight added as separate entry
+  ✅ T2: Supabase insight confirmed_count === 1
+  ✅ T2: total index has 2 entries
+[T3] SessionEndResult.insights_confirmed / insights_added fields
+  ✅ T3: insights_confirmed === 1 (near-dup confirmed)
+  ✅ T3: insights_added === 0 (no new entry)
+  ✅ T3: insights_added === 1 (new entry)
+  ✅ T3: insights_confirmed === 0 (no confirmation)
+[T4] cap eviction — count>=2 entries survive count-1 flood
+  ✅ T4: ANCHOR-INSIGHT (count=3) survived the count-1 flood
+  ✅ T4: ANCHOR-INSIGHT still has confirmed_count >= 3
+  ✅ T4: index size stays at or below 200
+  ✅ T4: all count>=2 entries are preserved (anchor in count>=2 group)
+[T5] malformed insights-index.json — graceful degradation
+  ✅ T5: session_end does not throw on corrupted insights-index.json
+  ✅ T5: session_end reports success despite corrupted index
+
+[funnel] PASS 18 / FAIL 0
+
+
+[heeded-guard] AR_ROOT=/tmp/ar-heeded-T0puV7
+
+[T1] evidence-grounded heeded path + old default-heeded stays dead
+  ✅ correction written (passes quality gate)
+  ✅ retrieved_count = 1 after one retrieval
+  ✅ T1a: heeded=0 after sessionEnd with unrelated summary + no trigger (old default-heeded dead)
+  ✅ T1a: retrieved_count unaffected (still 1)
+  ✅ T1b: heeded=1 after check-action trigger + sessionEnd (evidence-grounded path)
+  ✅ T1b: heeded_count never exceeds retrieved_count
+  ✅ T1b: precision is in [0,1]
+  ✅ T1c: heeded_count = 1 after TWO same-day session_ends with trigger (1/day guard held)
+  ✅ T1c: heeded_count still ≤ retrieved_count
+
+[heeded-guard] PASS 9 / FAIL 0
+
+
+[room-slug-guards] AR_ROOT=/tmp/ar-slug-guards-k8Uo4F
+
+[G1] createRoom rejects empty slug
+  ✅ createRoom('') throws clear error
+  ✅ createRoom('   ') throws clear error
+[G2] palace_write rejects empty room before side effects
+  ✅ palace_write({room:''}) throws
+  ✅ palace_write({room:'   '}) throws
+[G3] journal_write survives whitespace palace_room
+  ✅ journal_write(whitespace room) does not throw
+  ✅ journal_write(whitespace room) skips palace (palace === null)
+[G4] createRoom persists sanitized slug; palace_write returns it
+  ✅ palace_write('My Room').room === 'My-Room' (sanitized)
+  ✅ no room in listRooms has an empty/blank slug
+  ✅ listRooms reports the sanitized slug 'My-Room'
+
+[room-slug-guards] PASS 9 / FAIL 0
+
+      ...
+    # Subtest: distillOneSession (rescue slug parity)
+        # Subtest: a mixed-case cwd fixture: the recency ledger's slug must equal the card's actual on-disk project directory
+        ok 1 - a mixed-case cwd fixture: the recency ledger's slug must equal the card's actual on-disk project directory
+          ---
+          duration_ms: 5.849187
+          ...
+        # Subtest: when a card ALREADY exists for this sid (hasCard branch), the recency entry still uses the card's real on-disk slug, not a fresh re-guess
+        ok 2 - when a card ALREADY exists for this sid (hasCard branch), the recency entry still uses the card's real on-disk slug, not a fresh re-guess
+          ---
+          duration_ms: 12.767808
+          ...
+        1..2
+    ok 16 - distillOneSession (rescue slug parity)
+      ---
+      duration_ms: 18.957177
+      type: 'suite'
+      ...
+    1..16
+ok 404 - working-memory (v3.4.42)
+  ---
+  duration_ms: 133.331229
+  type: 'suite'
+  ...
+1..404
+# tests 1859
+# suites 417
+# pass 1848
+# fail 11
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 29749.060258
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /ar/packages/core
+npm error workspace agent-recall-core@3.4.51
+npm error location /ar/packages/core
+npm error command failed
+npm error command sh -c node --test test/*.test.mjs
