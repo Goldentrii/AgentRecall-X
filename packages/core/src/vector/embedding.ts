@@ -18,17 +18,42 @@
  * OPT-IN via AGENT_RECALL_EMBEDDINGS). THIS file remains what it was: the
  * dormant CLOUD (OpenAI) seam, still not user-facing, still not on any
  * default path — the sanctioned local path does not use it.
+ *
+ * EGRESS GATE (fix 3.5.2, 2026-10-16, rigorous-eval §5 finding 1): an AMBIENT
+ * OPENAI_API_KEY — set for any other tool on the machine — used to be enough
+ * to select this seam and silently send recall queries and remembered content
+ * to api.openai.com. Cloud embeddings now additionally require the EXPLICIT
+ * opt-in env AGENT_RECALL_CLOUD_EMBEDDINGS=1 (or "true"). The key alone sends
+ * nothing. Not to be confused with AGENT_RECALL_EMBEDDINGS, which gates the
+ * LOCAL ONNX leg (no network). The Supabase embedding providers
+ * (supabase/embedding.ts) are unaffected: they never read OPENAI_API_KEY and
+ * are reachable only via an explicitly configured embedding_api_key.
  */
 
 /** Timeout in ms for the embedding fetch. Not a user-facing env flag — internal seam only. */
 const EMBED_TIMEOUT_MS = parseInt(process.env.AGENT_RECALL_EMBED_TIMEOUT_MS ?? "2000", 10);
 
 /**
+ * Explicit opt-in gate for CLOUD (OpenAI) embeddings. True only when BOTH
+ * AGENT_RECALL_CLOUD_EMBEDDINGS=1|true AND OPENAI_API_KEY are set. Every
+ * path that could send text to api.openai.com on the ambient key must check
+ * this (embed() below checks it itself, as the egress chokepoint).
+ */
+export function cloudEmbeddingsEnabled(): boolean {
+  const flag = process.env.AGENT_RECALL_CLOUD_EMBEDDINGS;
+  if (flag !== "1" && flag !== "true") return false;
+  return !!process.env.OPENAI_API_KEY;
+}
+
+/**
  * Embed a piece of text using OpenAI text-embedding-3-small (1536 dims).
- * Returns null if OPENAI_API_KEY is not set or if the request fails or times out.
+ * Returns null unless cloud embeddings are explicitly opted in
+ * (AGENT_RECALL_CLOUD_EMBEDDINGS=1 AND OPENAI_API_KEY), or if the request
+ * fails or times out.
  * Never throws — callers must handle null and fall back to keyword search.
  */
 export async function embed(text: string): Promise<number[] | null> {
+  if (!cloudEmbeddingsEnabled()) return null;
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 

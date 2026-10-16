@@ -46,7 +46,7 @@ async function runCli(...args) {
 }
 
 function parseFenced(stdout) {
-  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+  if (stdout.startsWith("⟦agentrecall:memory:")) {
     const firstNL = stdout.indexOf("\n");
     const lastNL = stdout.lastIndexOf("\n");
     if (firstNL !== -1 && lastNL > firstNL) return stdout.slice(firstNL + 1, lastNL);

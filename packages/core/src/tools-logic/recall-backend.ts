@@ -121,7 +121,9 @@ export async function getRecallBackend(): Promise<RecallBackend> {
     // Supabase not configured or module not yet available (Task 8).
   }
 
-  // If OPENAI_API_KEY is set and no Supabase config, use local vector backend.
+  // Local vector backend requires EXPLICIT opt-in (AGENT_RECALL_CLOUD_EMBEDDINGS=1
+  // AND OPENAI_API_KEY — see vector/embedding.ts cloudEmbeddingsEnabled). An
+  // ambient OPENAI_API_KEY alone never selects it (egress gate, fix 3.5.2).
   const vectorBackend = new LocalVectorRecallBackend();
   if (vectorBackend.available()) {
     _cachedBackend = vectorBackend;

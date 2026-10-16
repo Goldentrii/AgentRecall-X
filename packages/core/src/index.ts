@@ -613,7 +613,7 @@ export type { RecallResultItem } from "./supabase/recall-backend.js";
 
 // Local vector backend (no-Supabase semantic recall)
 export { LocalVectorRecallBackend } from "./vector/local-vector-backend.js";
-export { embed } from "./vector/embedding.js";
+export { embed, cloudEmbeddingsEnabled } from "./vector/embedding.js";
 export { upsertVector, queryVector, vectorIndexPath } from "./vector/local-vector-store.js";
 export type { VectorItem } from "./vector/local-vector-store.js";
 

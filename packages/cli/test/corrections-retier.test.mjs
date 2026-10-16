@@ -148,8 +148,8 @@ describe("ar corrections retier (evolution p4)", () => {
     );
     assert.equal(exitCode, 0, stderr);
     assert.ok(stdout.includes("tier distribution"), "structural table renders");
-    assert.ok(!stdout.startsWith("⟦agentrecall:memory⟧"), "the structural table itself is not the fenced payload");
-    assert.ok(stdout.includes("⟦agentrecall:memory⟧"), "the archive-candidate listing (rule prose) IS fenced");
+    assert.ok(!stdout.startsWith("⟦agentrecall:memory:"), "the structural table itself is not the fenced payload");
+    assert.ok(stdout.includes("⟦agentrecall:memory:"), "the archive-candidate listing (rule prose) IS fenced");
     assert.ok(stdout.includes("UNIQUE_MARKER_DORMANT_RULE_TEXT"), "the rule text is present (inside the fence)");
   });
 

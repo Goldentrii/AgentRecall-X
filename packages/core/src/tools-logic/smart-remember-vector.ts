@@ -1,7 +1,9 @@
 /**
  * Fire-and-forget vector indexing helper for smart-remember.
  * Imported dynamically so the vector machinery is never loaded in the main
- * save path when OPENAI_API_KEY is absent.
+ * save path without the explicit cloud-embeddings opt-in
+ * (AGENT_RECALL_CLOUD_EMBEDDINGS=1 AND OPENAI_API_KEY — egress gate, fix
+ * 3.5.2; embed() itself re-checks the same gate and returns null otherwise).
  */
 
 import { embed } from "../vector/embedding.js";

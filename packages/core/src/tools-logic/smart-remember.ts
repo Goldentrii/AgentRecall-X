@@ -17,6 +17,7 @@ import { getRoot } from "../types.js";
 import { resolveProject } from "../storage/project.js";
 import { getSessionId } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
+import { cloudEmbeddingsEnabled } from "../vector/embedding.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -302,8 +303,11 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
   }
 
   // Fire-and-forget vector indexing — never blocks the save path.
-  // Only runs when OPENAI_API_KEY is set; silently skipped otherwise.
-  if (file_path && input.project) {
+  // Only runs on EXPLICIT cloud-embeddings opt-in (AGENT_RECALL_CLOUD_EMBEDDINGS=1
+  // AND OPENAI_API_KEY — egress gate, fix 3.5.2); silently skipped otherwise.
+  // embed() re-checks the same gate, but gating here too keeps the vector
+  // machinery entirely unloaded on the default local path.
+  if (file_path && input.project && cloudEmbeddingsEnabled()) {
     const itemId =
       route === "palace_write" &&
       typeof resultObj?.room === "string" &&

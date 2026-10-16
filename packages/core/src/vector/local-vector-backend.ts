@@ -1,20 +1,24 @@
 /**
  * LocalVectorRecallBackend — semantic recall using local vectra index.
  *
- * Selected when OPENAI_API_KEY is set and no Supabase config is present.
+ * Selected only on EXPLICIT opt-in — AGENT_RECALL_CLOUD_EMBEDDINGS=1 AND
+ * OPENAI_API_KEY — and no Supabase config present. An ambient OPENAI_API_KEY
+ * alone must never select this backend (egress gate, fix 3.5.2 — see
+ * vector/embedding.ts).
  * Falls back to an empty result set (not an error) when embedding fails or
  * the index has no data yet — the caller (smartRecall) will then use
  * keyword search as a safety net.
  */
 
-import { embed } from "./embedding.js";
+import { embed, cloudEmbeddingsEnabled } from "./embedding.js";
 import { queryVector } from "./local-vector-store.js";
 import type { SmartRecallResultItem } from "../tools-logic/smart-recall.js";
 import { calibratedConfidence } from "../tools-logic/confidence.js";
 
 export class LocalVectorRecallBackend {
   available(): boolean {
-    return !!process.env.OPENAI_API_KEY;
+    // Explicit opt-in only — the ambient key alone selects nothing.
+    return cloudEmbeddingsEnabled();
   }
 
   async search(

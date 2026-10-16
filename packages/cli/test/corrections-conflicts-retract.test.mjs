@@ -48,7 +48,7 @@ const NEW_RULE = "AgentRecall version 3.5.0 is deployed to prod";
 
 // Same fence-strip convention as cli.test.mjs / outcomes-audit.test.mjs.
 function parseFenced(stdout) {
-  if (stdout.startsWith("⟦agentrecall:memory⟧")) {
+  if (stdout.startsWith("⟦agentrecall:memory:")) {
     const firstNL = stdout.indexOf("\n");
     const lastNL = stdout.lastIndexOf("\n");
     if (firstNL !== -1 && lastNL > firstNL) {
