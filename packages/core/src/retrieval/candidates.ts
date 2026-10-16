@@ -236,6 +236,23 @@ export interface ReadTierCandidatesOpts {
    */
   includeRawArchive?: boolean;
   /**
+   * journal tier only (perf/lexical-index, 2026-10-16). When true, SKIPS the
+   * live and rollup-archive halves entirely and returns ONLY what
+   * `includeRawArchive` opted into — for callers that consume exclusively
+   * `sourceKind: "journal-archive-raw"` candidates (query-memory.ts's
+   * `queryArchiveFallback`, which previously paid a full live-journal
+   * read-and-trust-tag pass per low-confidence query only to `.filter()`
+   * every live/rollup candidate straight back out — ~0.8 s/query at 10k
+   * entries, the 2026-10-15 scale eval's p95 driver). Output is IDENTICAL
+   * to `readTierCandidates("journal", p, {includeRawArchive: true, ...})
+   * .filter((c) => c.sourceKind === "journal-archive-raw")` by construction
+   * (the raw half below is untouched; the skipped halves never produce
+   * raw-archive candidates) — pinned by lexical-index.test.mjs. A narrowing
+   * (subset) flag only: it can never ADD surface area, so the raw tier's
+   * opt-in safety property above is unchanged.
+   */
+  rawArchiveOnly?: boolean;
+  /**
    * palace-room tier only. When set, restricts to a single room slug
    * (matches `palaceSearch`'s `input.room` filter). Omit to read every
    * room.
@@ -386,7 +403,9 @@ function readJournalCandidates(project: string, opts: ReadTierCandidatesOpts): M
   // Deliberately called with includeArchive=false here — see the rollup-
   // archive half below for why archive/ is scanned independently rather
   // than via listJournalFiles(project, true).
-  const entries = listJournalFiles(project, false);
+  // rawArchiveOnly (2026-10-16): a raw-archive-only caller skips this half
+  // (and the rollup half below) — see ReadTierCandidatesOpts.rawArchiveOnly.
+  const entries = opts.rawArchiveOnly ? [] : listJournalFiles(project, false);
   for (const entry of entries) {
     const sourcePath = path.join(entry.dir, entry.file);
     const content = safeReadFile(sourcePath);
@@ -417,7 +436,7 @@ function readJournalCandidates(project: string, opts: ReadTierCandidatesOpts): M
   // independently here, matching journal-search.ts's broader (no-date-match)
   // filter, is what makes this reader an honest superset of BOTH existing
   // scanners rather than silently inheriting the narrower one's gap.
-  if (opts.includeRollupArchive) {
+  if (opts.includeRollupArchive && !opts.rawArchiveOnly) {
     const archiveDir = path.join(primaryDir, "archive");
     let archiveFiles: string[] = [];
     try {
