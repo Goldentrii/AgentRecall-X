@@ -403,21 +403,24 @@ describe("regex safety: no catastrophic backtracking", () => {
   // any absolute number is a bet on machine load). What the test must catch
   // is the CLASS regression: super-linear backtracking. Linear patterns give
   // time(8x)/time(1x) ≈ 8 (plus noise); quadratic gives ≈ 64; catastrophic
-  // is unbounded. Assert ratio < 20 on medians-of-3 — load scales numerator
-  // and denominator together, so the ratio is load-robust. A very generous
+  // is unbounded. Assert ratio < 40 on min-of-5 — the minimum is the run least
+  // disturbed by GC/scheduler noise, and 40 sits between the worst linear
+  // ratio observed on a loaded 2-vCPU windows-latest runner (28.3, PR #43 CI)
+  // and the quadratic signature (≈ 64). Locally, every fixture doubles
+  // cleanly 1x→32x. A very generous
   // 2 s absolute ceiling on the 8x run stays as a backstop that only true
   // catastrophic blowup (or a hung engine) can hit.
-  const RATIO_MAX = 20;
+  const RATIO_MAX = 40;
   const CEILING_8X_MS = 2_000;
 
-  function medianScrubMs(input) {
-    const times = [];
-    for (let i = 0; i < 3; i++) {
+  function minScrubMs(input) {
+    let best = Infinity;
+    for (let i = 0; i < 5; i++) {
       const t0 = performance.now();
       guard.scrubForExport(input);
-      times.push(performance.now() - t0);
+      best = Math.min(best, performance.now() - t0);
     }
-    return times.sort((a, b) => a - b)[1];
+    return best;
   }
 
   for (const t of ADVERSARIAL) {
@@ -425,8 +428,9 @@ describe("regex safety: no catastrophic backtracking", () => {
       const in1 = t.make(1);
       const in8 = t.make(8);
       guard.scrubForExport(in1); // warm-up: shed first-run JIT/regex-compile cost
-      const t1 = medianScrubMs(in1);
-      const t8 = medianScrubMs(in8);
+      guard.scrubForExport(in8); // warm-up: first large-string allocation/GC
+      const t1 = minScrubMs(in1);
+      const t8 = minScrubMs(in8);
       // Floor the denominator at 0.5 ms: timer jitter on a sub-ms base run
       // must not explode the ratio. A real quadratic still fails — 8x of a
       // quadratic sub-ms 100 KB run lands ≥ tens of ms → ratio ≥ 60.
