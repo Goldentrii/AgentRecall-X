@@ -8,7 +8,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [3.5.2] — 2026-10-16
+
+Security + retrieval hardening from the 2026-10-15 rigorous eval (`reports/2026-10-15-rigorous-eval.md`) and two independent reviews (`reports/2026-10-16-review-security.md`, `reports/2026-10-16-review-correctness.md`). All four packages 3.5.2 in lockstep. 3.5.0 and 3.5.1 were tagged on GitHub but not published to npm; 3.5.2 is the first npm release since 3.4.51 and includes them.
+
+### Security
+
+- **No ambient cloud egress.** An `OPENAI_API_KEY` in the environment no longer selects the OpenAI embedding backend or sends recall/remember text to `api.openai.com` (behaviour present since v3.4.15). Cloud embeddings now require explicit `AGENT_RECALL_CLOUD_EMBEDDINGS=1` **and** a key; the gate lives inside `embed()` so no import path bypasses it. Regression test `packages/core/test/egress-cloud-embeddings-gate.test.mjs` intercepts `fetch`.
+- **Memory fence nonce.** `fenceMemory()` delimiters carry a per-render 64-bit CSPRNG nonce (`⟦agentrecall:memory:<16 hex>⟧`); forged close delimiters in stored content cannot match. CSPRNG failure throws (fail closed) instead of returning unfenced text.
+- **Secret scrubbing.** `scrubForCloud` now redacts secret *values*: `key=value` / JSON pairs with secret-like key names, AWS secret access keys, URL-embedded credentials (`scheme://user:pass@host`, any scheme, IP hosts), `Authorization`/`Bearer` tokens, Slack webhook URLs, `glpat-` / `xoxa-` / `xoxs-` prefixes.
+- **Egress-only PII + entropy scrub.** `scrubForExport` additionally redacts email, IBAN (mod-97), card PAN (IIN + Luhn) and high-entropy tokens — on export/sync only, so local journals keep the owner's own data. The Supabase sync and backfill paths now run `scrubForExport` fail-closed: a scrub error uploads nothing.
+- Fixed a quadratic-backtracking regex in the key/value secret rule (~600 ms per 100 KB → linear); ReDoS guard test asserts 8×-input scaling.
+- `logSyncError` can no longer turn a failed sync into an unhandled rejection.
+
 ### Fixed
+
+- **Stale fact outranked its replacement in hybrid recall** (e.g. old "100 requests per minute" above newer "500"). Marker-less `N <unit> per <unit>` rate facts now participate in contradiction detection, and a superseded item's fused score is capped just below its superseder when date order is unambiguous. Generic units (`time`, `occurrence`) are excluded to avoid cross-topic supersession. Golden-set scores unchanged.
+
+### Performance
+
+- **Persistent incremental lexical index** for the journal tier (keyed by file size + mtime, crash-safe writes, rebuild-on-corrupt, brute-force fallback via `AGENT_RECALL_LEXICAL_INDEX=0`). Rankings are identical to brute force (equivalence-tested). In-process caches are LRU-bounded (`AGENT_RECALL_LEXICAL_MAX_PROJECTS`, default 4; `AGENT_RECALL_LEXICAL_MAX_CONTENT_MB`, default 256). Measured on Windows: 10k entries recall p50 1266 → ~220–280 ms, 1k entries 123 → ~56 ms; `bench:latency` recall p95 347 → 118 ms.
+
+### Fixed (eval tooling)
 
 - **Wilson 95% CI in `scripts/eval/rmr-report.mjs` and `scripts/eval/ab-report.mjs`** — the term under the root was `z²/(4n)` instead of the standard `z²/(4n²)`, inflating every interval (0/4 gave [0, 0.73] instead of [0, 0.49]). Now matches `bench-artifact.mjs`'s `wilson95`; regression test `packages/core/test/wilson-report-scripts.test.mjs`. Frozen baselines under `scripts/eval/baselines/` are not regenerated.
 
