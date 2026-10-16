@@ -153,7 +153,7 @@ export interface SecretScanResult {
 // Every regex here is linear-time by construction: fixed-string alternations,
 // plain character classes (no ambiguous nested quantifiers), and bounded
 // repetition counts. See content-guard-hardening.test.mjs "regex safety" for
-// the 100 KB adversarial-input budget (< 50 ms).
+// the adversarial-input linear-scaling assertion (1x → 8x time ratio).
 // ---------------------------------------------------------------------------
 
 /**
