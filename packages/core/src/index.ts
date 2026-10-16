@@ -1009,6 +1009,11 @@ export type { ContradictionItem, ContradictionResult } from "./retrieval/contrad
 // (see that file's own header). Exported here too, alongside its sibling
 // contradiction-stage exports above, so a test can exercise it directly.
 export { extractHighPrecisionVersionTokens } from "./retrieval/contradiction.js";
+// 3.5.2 (2026-10-16, adversarial T5a) — the marker-less `NUMBER unit per
+// unit` rate-fact extractor that joined grammarConflict as a second branch.
+// Exported for direct unit-testing, the extractHighPrecisionVersionTokens
+// precedent above.
+export { extractRateFactTokens } from "./retrieval/contradiction.js";
 
 // fix7 (2026-09-12, plan-v2 #7) — OPT-IN local embeddings for the semantic-
 // paraphrase retrieval gap. Everything here is inert unless the

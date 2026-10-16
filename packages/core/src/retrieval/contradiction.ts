@@ -282,11 +282,24 @@ export interface ContradictionResult {
  */
 function grammarConflict(a: ContradictionItem, b: ContradictionItem): boolean {
   const av = extractHighPrecisionVersionTokens(a.text);
-  if (av.size === 0) return false;
-  const bv = extractHighPrecisionVersionTokens(b.text);
-  for (const [key, val] of av) {
-    const bval = bv.get(key);
-    if (bval && bval !== val) return true;
+  if (av.size > 0) {
+    const bv = extractHighPrecisionVersionTokens(b.text);
+    for (const [key, val] of av) {
+      const bval = bv.get(key);
+      if (bval && bval !== val) return true;
+    }
+  }
+  // 3.5.2 (2026-10-16, adversarial T5a — see extractRateFactTokens below):
+  // marker-less `NUMBER unit per unit` rate facts join the grammar as a
+  // SECOND, independently-anchored branch. Same comparison discipline as the
+  // version branch: shared fact-key + differing value → conflict.
+  const ar = extractRateFactTokens(a.text);
+  if (ar.size > 0) {
+    const br = extractRateFactTokens(b.text);
+    for (const [key, val] of ar) {
+      const bval = br.get(key);
+      if (bval && bval !== val) return true;
+    }
   }
   return false;
 }
@@ -331,6 +344,92 @@ export function extractHighPrecisionVersionTokens(text: string): Map<string, str
     if (key.length > 0) {
       result.set(key, m[2]);
     }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// 3.5.2 rate-fact grammar (2026-10-16, adversarial T5a,
+// reports/2026-10-15-rigorous-eval.md Finding 2 / §7 item 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * 3.5.2 UNIT NORMALIZATION for `extractRateFactTokens` — maps common
+ * abbreviations onto their full word and strips a plural `s`, so
+ * "50 req per min" and "75 requests per minute" produce the SAME fact-key.
+ * Deliberately tiny: only the unambiguous time/request abbreviations that
+ * appear in ordinary rate-limit prose. Plural stripping is length-gated
+ * (≥4 chars, not `ss`-final) so short abbreviations that END in `s` by
+ * construction ("rps", "ms", "qps") are never mangled into non-words.
+ */
+const RATE_UNIT_ALIASES: Record<string, string> = {
+  min: "minute",
+  mins: "minute",
+  sec: "second",
+  secs: "second",
+  hr: "hour",
+  hrs: "hour",
+  req: "request",
+  reqs: "request",
+};
+
+function normalizeRateUnit(word: string): string {
+  const w = word.toLowerCase();
+  const aliased = RATE_UNIT_ALIASES[w];
+  if (aliased) return aliased;
+  if (w.length >= 4 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
+/**
+ * 3.5.2 (2026-10-16) — marker-less `NUMBER unit per unit` rate-fact
+ * extractor, the grammar extension the 2026-10-15 rigorous eval's §7 item 2
+ * called for. Adversarial T5a proved the gap: "API rate limit set to 100
+ * requests per minute" vs "raised to 500 requests per minute" carries no
+ * `v/@/version` marker, so `extractHighPrecisionVersionTokens` extracts
+ * nothing, the stale fact gets no `supersededBy` annotation, and (under the
+ * hybrid leg, whose semantic votes carry no recency signal) the superseded
+ * 100-limit deterministically outranked its own replacement.
+ *
+ * PRECISION ANCHOR — why this is NOT the removed kv/status/bare-number
+ * grammar coming back (W5a salvage HIGH-1/HIGH-2; STEP 4b): the full
+ * `<number> <unit-word> per <unit-word>` frame is required, making the match
+ * self-describing the same way the mandatory version marker is:
+ *   - a bare count ("30 days", "3 files", "two pages") has no `per` → no token;
+ *   - "$5 per user" (number directly before `per`, no unit word between) → no
+ *     token — the unit word is mandatory;
+ *   - IPs / dot-dates / dotted step numbers ("10.0.0.1", "08.15.2026",
+ *     "step 1.2.3") never present a whitespace-separated `N unit per unit`
+ *     frame, and the `(?<![\d.])` lookbehind stops a dotted run's tail
+ *     digits from posing as the number;
+ *   - the TWO-word key (`unit-per-unit`, e.g. `request-per-minute`) gives
+ *     the topical protection the removed one-word kv keys ("priority",
+ *     "env") never had.
+ * Residual risk, accepted and documented like the version branch's own
+ * 4-component-semver note: two topically-DIFFERENT facts that share an
+ * identical rate frame ("ingested 100 records per day" vs "exported 500
+ * records per day") can still collide when both match the same query within
+ * one tier's top candidates AND carry different dates. The blast radius is
+ * the bounded relative cap (see query-memory.ts's `applySupersessionCap`) —
+ * both items are still returned and annotated, never dropped — not the
+ * global ×0.5 inversion class STEP 4a removed.
+ *
+ * Values are numeric-normalized (`String(Number(...))`: "500" === "500.0")
+ * and keys unit-normalized (see `normalizeRateUnit`). Same Map semantics as
+ * the version extractor: a later mention of the same key within ONE text
+ * overwrites the earlier one.
+ *
+ * EXPORTED for direct unit-testing (the `extractHighPrecisionVersionTokens`
+ * precedent) and for any future `conflict-scan.ts`-style consumer.
+ */
+export function extractRateFactTokens(text: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const pattern = /(?<![\d.])(\d+(?:\.\d+)?)\s+([a-z][a-z-]{0,30})\s+per\s+([a-z][a-z-]{0,30})\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    const value = String(Number(m[1]));
+    const key = `${normalizeRateUnit(m[2])}-per-${normalizeRateUnit(m[3])}`;
+    result.set(key, value);
   }
   return result;
 }
