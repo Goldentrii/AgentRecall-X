@@ -18,9 +18,18 @@ export function register(server: McpServer): void {
         .describe("Limit search to a specific section type."),
       include_palace: z.boolean().default(false)
         .describe("Also search palace rooms (slower but more comprehensive)"),
+      limit: z
+        .number()
+        .int()
+        .default(25)
+        .describe("Maximum number of results to return."),
+      since: z
+        .string()
+        .optional()
+        .describe('ISO date ("2026-05-01") or relative duration ("7d"). Filters journal results.'),
     },
-  }, async ({ query, project, section, include_palace }) => {
-    const result = await journalSearch({ query, project, section, include_palace });
+  }, async ({ query, project, section, include_palace, limit, since }) => {
+    const result = await journalSearch({ query, project, section, include_palace, limit, since });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   });
 }
