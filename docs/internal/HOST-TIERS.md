@@ -60,6 +60,44 @@ The Tier-B "AGENT" claims are **structurally in place** (the carrier verifiably 
 
 ## How a host's tier is determined (as-built)
 
-The current signal is **binary and real**: the `CLAUDE_CODE_HOOKS` env var. When it is set (Claude Code), the host is Tier A and `session_start` suppresses the "call `brief()` for lifecycle rules" pointer because the hooks auto-drive the lifecycle (`packages/mcp-server/src/tools/session-start.ts:152`). When it is absent, the host is treated as Tier B and the agent-driver pointers/instructions are surfaced. There is **no runtime hook-probing** (not observable; produces confident-wrong answers).
+Tier resolution is centralized in `resolveHostProfile()` (`packages/core/src/host-profile.ts`) and `isHookOwnedHost()`:
 
-**Deferred:** a multi-value `AR_HOST` profile selector (`claude-code` | `openclaw` | `codex` | `chatbox` | `generic`) and the optional `settings.json` "hooks present?" check to promote OpenClaw to Tier A. Not built yet — today the split is the binary `CLAUDE_CODE_HOOKS` signal above, with everything non-Claude defaulting to the conservative Tier-B agent-driven path.
+1. **Explicit `AR_HOST` override (always wins):**
+   - `claude-code` → **Tier A** (`hook-driven`)
+   - `codex` | `cursor` | `raw` | `openclaw` | `chatbox` | `generic` → **Tier B** (`agent-driven`)
+   - `sdk` | `cli` → **Tier C** (`manual`)
+   - Any unrecognized explicit value conservatively resolves to **Tier B** (never Tier A).
+2. **Best-effort environment inference (when `AR_HOST` is unset):**
+   - `CLAUDECODE` or any `CLAUDE_CODE_*` environment variable present → **Tier A** (`hook-driven`).
+   - Otherwise → **Tier B** (`agent-driven`).
+3. **Graceful MCP disconnect backstop (C-3, `packages/mcp-server/src/lib/lifecycle-exit.ts`):**
+   - On non-hook-owned hosts (`!isHookOwnedHost()`, i.e. Tier B such as Codex and Cursor), the MCP server registers `stdin` `end`/`close` and `SIGTERM`/`SIGINT` handlers to distill the current session's working memory into a session card immediately upon client disconnect (with C-2's orphan-rescue sweep covering uncatchable `SIGKILL`).
+
+## Codex / Tier-B explicit session-end + export pattern (backlog #7)
+
+Because Tier-B hosts (OpenAI Codex CLI, Cursor, raw MCP clients) do not expose host-level `SessionStart`/`Stop` shell hooks, deterministic cross-session durability and external belief-store sync follow the explicit 4-step sequence:
+
+```text
+1. ENTRY            → Agent calls MCP tool `session_start` before acting
+2. WORK / CORRECT   → Agent calls `remember(type: "correction")` on user corrections
+                      and `check(action_description)` before irreversible actions
+3. EXPLICIT EXIT    → Agent calls MCP tool `session_end` on "save" / task completion
+4. SCRUBBED EXPORT  → Run CLI `ar corrections export [--all-projects] | ar scrub`
+                      (or `AR_MEMORY_BACKEND=<adapter> ar corrections export --to-backend`)
+```
+
+Recommended Codex MCP configuration (`~/.codex/config.toml` or MCP client config):
+
+```json
+{
+  "mcpServers": {
+    "agent-recall": {
+      "command": "npx",
+      "args": ["-y", "agent-recall-mcp"],
+      "env": {
+        "AR_HOST": "codex"
+      }
+    }
+  }
+}
+```
