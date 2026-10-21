@@ -116,6 +116,22 @@ describe("3.5.2 freshness supersession — rate fact-keys + bounded post-fusion 
       assert.equal(jobs.supersededBy.get(0), 1, "a genuine non-denylisted unit ('jobs per day') must still resolve supersession");
     });
 
+    it("A5 — normalizes sibilant -es plural rate units (LOW-1 review fix: buses, boxes, batches, addresses)", () => {
+      const pairs = [
+        ["10 buses per hour", "5 bus per hour"],
+        ["20 boxes per day", "10 box per day"],
+        ["100 batches per minute", "50 batch per minute"],
+        ["30 addresses per second", "15 address per second"],
+      ];
+      for (const [pluralText, singularText] of pairs) {
+        const p = core.extractRateFactTokens(pluralText);
+        const s = core.extractRateFactTokens(singularText);
+        assert.equal(p.size, 1);
+        assert.equal(s.size, 1);
+        assert.equal([...p.keys()][0], [...s.keys()][0], `${pluralText} and ${singularText} must share a normalized key`);
+      }
+    });
+
     it("A3 — number-shaped prose that is NOT a rate extracts nothing (precision anchor)", () => {
       const cases = [
         "Log retention shortened to 30 days to cut ingest costs.", // bare count, no `per`

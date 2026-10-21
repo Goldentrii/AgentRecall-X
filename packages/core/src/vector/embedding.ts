@@ -40,7 +40,7 @@ const EMBED_TIMEOUT_MS = parseInt(process.env.AGENT_RECALL_EMBED_TIMEOUT_MS ?? "
  * this (embed() below checks it itself, as the egress chokepoint).
  */
 export function cloudEmbeddingsEnabled(): boolean {
-  const flag = process.env.AGENT_RECALL_CLOUD_EMBEDDINGS;
+  const flag = process.env.AGENT_RECALL_CLOUD_EMBEDDINGS?.trim().toLowerCase();
   if (flag !== "1" && flag !== "true") return false;
   return !!process.env.OPENAI_API_KEY;
 }

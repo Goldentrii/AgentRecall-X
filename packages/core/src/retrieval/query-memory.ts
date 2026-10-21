@@ -1764,6 +1764,13 @@ function fuseCanonical(rrfMap: Map<string, RRFEntry>): Map<string, RRFEntry> {
     if (existing) {
       existing.score += entry.score;
       for (const s of entry.sources) existing.sources.add(s);
+      if (!existing.item.supersededBy && entry.item.supersededBy) {
+        existing.item = {
+          ...existing.item,
+          supersededBy: entry.item.supersededBy,
+          conflictsWith: entry.item.conflictsWith ?? existing.item.conflictsWith,
+        };
+      }
     } else {
       canonical.set(key, { score: entry.score, item: entry.item, sources: new Set(entry.sources) });
     }

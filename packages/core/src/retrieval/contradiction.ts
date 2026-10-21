@@ -371,12 +371,14 @@ const RATE_UNIT_ALIASES: Record<string, string> = {
   hrs: "hour",
   req: "request",
   reqs: "request",
+  buses: "bus",
 };
 
 function normalizeRateUnit(word: string): string {
   const w = word.toLowerCase();
   const aliased = RATE_UNIT_ALIASES[w];
   if (aliased) return aliased;
+  if (w.length >= 4 && /(?:ss|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2);
   if (w.length >= 4 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
   return w;
 }

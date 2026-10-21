@@ -122,6 +122,8 @@ describe("cloudEmbeddingsEnabled() — opt-in truth table", () => {
     assert.equal(cloudEmbeddingsEnabled(), true);
     process.env.AGENT_RECALL_CLOUD_EMBEDDINGS = "true";
     assert.equal(cloudEmbeddingsEnabled(), true);
+    process.env.AGENT_RECALL_CLOUD_EMBEDDINGS = " TRUE ";
+    assert.equal(cloudEmbeddingsEnabled(), true);
   });
 });
 
