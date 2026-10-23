@@ -1,12 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = path.join(__dirname, "..");
 const ENTRY = path.join(__dirname, "..", "dist", "index.js");
 
 describe("MCP server smoke tests", () => {
@@ -73,5 +75,35 @@ describe("MCP server smoke tests", () => {
     assert.ok(stdout.includes("Legacy:"));
     assert.ok(stdout.includes("npx agent-recall-mcp"));
     assert.ok(stdout.includes("--full"));
+  });
+
+  it("npm package exposes a runnable agent-recall-mcp bin", async () => {
+    const pkg = JSON.parse(
+      await readFile(path.join(PACKAGE_ROOT, "package.json"), "utf8")
+    );
+    assert.equal(pkg.bin?.["agent-recall-mcp"], "dist/index.js");
+
+    const binSource = await readFile(
+      path.join(PACKAGE_ROOT, pkg.bin["agent-recall-mcp"]),
+      "utf8"
+    );
+    assert.ok(
+      binSource.startsWith("#!/usr/bin/env node"),
+      "dist/index.js must keep the node shebang so npm links a runnable bin"
+    );
+
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["pack", "--dry-run", "--json"],
+      { cwd: PACKAGE_ROOT }
+    );
+    const [packed] = JSON.parse(stdout);
+    const packedPaths = new Set(packed.files.map((file) => file.path));
+
+    assert.ok(packedPaths.has("package.json"));
+    assert.ok(
+      packedPaths.has("dist/index.js"),
+      "npm package must include the bin target used by npx/npm exec"
+    );
   });
 });
