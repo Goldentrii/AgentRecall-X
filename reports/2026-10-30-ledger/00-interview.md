@@ -115,3 +115,13 @@ W2, W3, W4 run in parallel after W1 (disjoint files: W2 = `ledger/verify|trace|b
 Ledgered targets (what `verify` scans for orphans): `projects/*/journal/*.md` (excluding `index.md`, `_index.md`, `*-log.md` capture logs are ledgered as `journal.capture`), `projects/*/palace/**/*.md`, `projects/*/palace/corrections.json`, `projects/*/skills/**`, `insights-index.json`. Derived/ignored: `index.jsonl`, `palace-index.json`, `_room.json`, `graph.json`, `recent-sessions.jsonl`, `cwd-allowlist.json`, `owner.json`, `index/`, `telemetry/`, `ledger/` itself.
 
 `verify` finding kinds: `orphan` (ledgered-class file with no event), `drift` (latest event hash ≠ file hash), `missing` (latest event says file exists, file gone, no `*.delete`), `chain` (parent ≠ previous head), `unknown-via` (never expected; schema violation).
+
+### §8 amendments (2026-10-30, after W3's class enumeration — normative)
+
+- **Corrections** are per-record files `projects/<p>/corrections/<date>--<slug>.json`, not `palace/corrections.json` (which does not exist). Ledgered: the record files. Derived: `corrections/_index.md`, `_outcomes.jsonl`, `_rejected.jsonl`.
+- **Excluded from the palace orphan scan**: `palace/log.md` (operation log), every `_index.md`, `palace/rooms/_index.md`. `palace/archive/**` stays ledgered (palace-lint records the arrival).
+- **Move convention**: an event whose `meta.moved_to` is set sits on the path that LEFT the ledgered set (`journal.archive`, `journal.merge` source, `journal.rollup` entries/logs, `palace.consolidate` room-archive, `project.claim` left side) and carries the PRE-move hash. `verify` treats it as terminal for that path: never `missing`, never `drift`. The arrival is a separate event on the new path.
+- **Project birth**: `project.create` (target `null`) is emitted when a project directory is first created; it may land after the first scaffold events (queue vs direct append race) — chain integrity is unaffected, chronological `ts` order is not guaranteed. Tests select events by `type`, never by index.
+- **Legacy** `projects/<p>/knowledge/<cat>.md` is ledgered as `knowledge.write` though outside the orphan globs — harmless; `verify` only hash-checks it.
+- `journal.cold_start` has no mutating module (cold start is a read + scaffold); the enum member stays reserved.
+- **Trace line** prints the full 26-char ULID, not `id[0:8]` (the time prefix collides within ~256 ms). `ar trace` on a project with zero events prints `No ledger events for <slug>. Run: ar ledger backfill --project <slug>` and exits 0.
