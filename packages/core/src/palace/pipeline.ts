@@ -13,11 +13,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { palaceDir } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { generateFrontmatter } from "./obsidian.js";
 import { sanitizeName } from "../storage/sanitize.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger } from "../storage/ledger-queue.js";
 
 export type PhaseStatus = "active" | "closed" | "abandoned";
 
@@ -331,8 +334,19 @@ export function writeMilestone(
   // params. Previously only the caller's post-write syncPipelineFile() re-read
   // + scrubbed a copy for Supabase; the on-disk milestone file itself stayed raw.
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, scrubForCloud(renderMilestone(meta, sections)), { encoding: "utf-8", mode: 0o600 });
+  const rendered = scrubForCloud(renderMilestone(meta, sections));
+  fs.writeFileSync(tmp, rendered, { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filePath); // atomic on same filesystem
+  // Provenance (ledger): sync write path, so the append goes through the
+  // in-process queue (never throws; a lost event is an orphan in verify).
+  enqueueLedger(() => appendLedgerEvent({
+    type: "palace.write",
+    project,
+    target: filePath,
+    sha256: createHash("sha256").update(Buffer.from(rendered, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(rendered, "utf-8"),
+    meta: { kind: "milestone", file: path.basename(filePath), status: meta.status },
+  }));
   return filePath;
 }
 

@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveProject } from "../storage/project.js";
+import { createHash } from "node:crypto";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { ensurePalaceInitialized, createRoom, roomExists, updateRoomMeta, recordAccess, regenerateRoomsIndex } from "../palace/rooms.js";
@@ -12,6 +13,8 @@ import { appendToLog } from "../palace/log.js";
 import { generateSlug } from "../helpers/auto-name.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface PalaceWriteInput {
   room: string;
@@ -53,7 +56,9 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   const slug = await resolveProject(input.project);
   const importance: Importance = input.importance ?? "medium";
   const content = stripFrontmatterFromContent(input.content);
+  const projectCreated = watchProjectCreate(slug);
   ensurePalaceInitialized(slug);
+  await projectCreated();
 
   if (!roomExists(slug, input.room)) {
     createRoom(slug, input.room, input.room.charAt(0).toUpperCase() + input.room.slice(1), `Auto-created room for ${input.room}`, []);
@@ -81,6 +86,7 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   const timestamp = new Date().toISOString();
 
   const fileExistedBefore = fs.existsSync(targetFile);
+  let written: string; // exact bytes this call wrote (hashed for the ledger; not re-read)
 
   // Scrub BEFORE the local write (content-guard.ts: this used to run only on the
   // cloud-sync copy via the re-read further below, leaving the on-disk palace file
@@ -99,11 +105,13 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
     }
 
     fs.writeFileSync(targetFile, existing, "utf-8");
+    written = existing;
   } else {
     if (fileExistedBefore) {
       const existing = fs.readFileSync(targetFile, "utf-8");
       const entry = scrubForCloud(`\n### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`);
-      fs.writeFileSync(targetFile, existing + entry, "utf-8");
+      written = existing + entry;
+      fs.writeFileSync(targetFile, written, "utf-8");
     } else {
       const fm = generateFrontmatter({ room: input.room, topic: targetTopic, created: timestamp, importance, tags: input.tags ?? [] });
       // Wrap the first write in a `### DATE — importance` entry block (same as the
@@ -111,9 +119,20 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
       // `### ` headers — would report 0 for a brand-new topic file, sorting a room
       // with real content as "empty" and zeroing its salience.
       const entry = scrubForCloud(`### ${timestamp.slice(0, 10)} — ${importance}\n\n${content}\n`);
-      fs.writeFileSync(targetFile, `${fm}# ${input.room} / ${targetTopic}\n\n${entry}`, "utf-8");
+      written = `${fm}# ${input.room} / ${targetTopic}\n\n${entry}`;
+      fs.writeFileSync(targetFile, written, "utf-8");
     }
   }
+
+  // Provenance (ledger): the palace file write above has definitely succeeded.
+  await appendLedgerEvent({
+    type: "palace.write",
+    project: slug,
+    target: targetFile,
+    sha256: createHash("sha256").update(Buffer.from(written, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(written, "utf-8"),
+    meta: { room: safeRoom, topic: safeTopic, is_new: !fileExistedBefore },
+  });
 
   // Use the sanitized slug for all routing + the returned result so it matches what
   // createRoom persisted to _room.json (meta.slug = sanitizeSlug(slug)). Passing the
@@ -139,6 +158,8 @@ export async function palaceWrite(input: PalaceWriteInput): Promise<PalaceWriteR
   regenerateRoomsIndex(slug);
 
   appendToLog(slug, "palace_write", { room: safeRoom, topic: targetTopic, importance, fan_out_rooms: fanOutResult.updatedRooms });
+
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
 
   return {
     success: true,

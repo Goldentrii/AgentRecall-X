@@ -1,11 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { journalDir, palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { ensurePalaceInitialized, roomExists } from "../palace/rooms.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface AlignmentCheckInput {
   goal: string;
@@ -31,8 +33,10 @@ const VALID_CATEGORIES = new Set(["goal", "scope", "priority", "technical", "aes
 export async function alignmentCheck(input: AlignmentCheckInput): Promise<AlignmentCheckResult> {
   const slug = await resolveProject(input.project);
   const date = todayISO();
+  const projectCreated = watchProjectCreate(slug);
   const dir = journalDir(slug);
   ensureDir(dir);
+  await projectCreated();
 
   // Validate category at core entry — it flows directly into path.join for the palace file
   const rawCategory = input.category ?? "goal";
@@ -61,6 +65,8 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
   } else {
     fs.appendFileSync(logPath, entry, "utf-8");
   }
+  // Provenance (ledger): the alignment log is a journal/*.md file.
+  await appendLedgerEvent({ type: "journal.write", project: slug, target: logPath, meta: { file: path.basename(logPath), kind: "alignment" } });
 
   try {
     ensurePalaceInitialized(slug);
@@ -79,9 +85,11 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
           const goalKey = input.goal.slice(0, 60);
           if (!existing.includes(`### ${date}`) || !existing.includes(goalKey)) {
             fs.appendFileSync(alignFile, palaceEntry, "utf-8");
+            await appendLedgerEvent({ type: "palace.write", project: slug, target: alignFile, meta: { room: "alignment", topic: safeCategory } });
           }
         } else {
           fs.writeFileSync(alignFile, `# alignment / ${category}\n${palaceEntry}`, "utf-8");
+          await appendLedgerEvent({ type: "palace.write", project: slug, target: alignFile, meta: { room: "alignment", topic: safeCategory } });
         }
       }
       await updatePalaceIndex(slug);
@@ -90,5 +98,6 @@ export async function alignmentCheck(input: AlignmentCheckInput): Promise<Alignm
     // Palace integration is optional
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return { success: true, date, confidence: input.confidence, delta: input.delta || "pending", file: logPath };
 }

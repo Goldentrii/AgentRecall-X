@@ -25,6 +25,8 @@ import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
 import { getSessionId, getCachedSessionEnd, setCachedSessionEnd } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 import { enqueueConsolidation } from "../storage/consolidation-queue.js";
 import { runSafetyConsolidation } from "./safety-consolidation.js";
 import { autoClassifySig, autoClassifyTheme } from "../helpers/journal-sig-theme.js";
@@ -1050,6 +1052,20 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   // overwrites this entry with its own new result.
   setCachedSessionEnd(slug, fingerprint, result);
   recordLifecycleEvent("session_end", sessionId, slug, false);
+
+  // Provenance (ledger): the session's own journal write is recorded by
+  // journalWrite as journal.write; this marks the end of the session.
+  await flushLedgerQueue(); // scaffold/skill events queued by sync helpers
+  await appendLedgerEvent({
+    type: "session.end",
+    project: slug,
+    target: null,
+    meta: {
+      journal_written: journalWritten,
+      insights_added: insightsAdded,
+      insights_confirmed: insightsConfirmed,
+    },
+  });
 
   return result;
 }

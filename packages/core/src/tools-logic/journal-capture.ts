@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { journalDir, sanitizeSlug, sanitizeProject } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { withLock } from "../storage/filelock.js";
@@ -13,6 +13,8 @@ import { updatePalaceIndex } from "../palace/index-manager.js";
 import { captureLogFileName } from "../storage/session.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface JournalCaptureInput {
   question: string;
@@ -34,8 +36,10 @@ export interface JournalCaptureResult {
 export async function journalCapture(input: JournalCaptureInput): Promise<JournalCaptureResult> {
   const slug = await resolveProject(input.project);
   const date = todayISO();
+  const projectCreated = watchProjectCreate(slug);
   const dir = journalDir(slug);
   ensureDir(dir);
+  await projectCreated();
 
   // Auto-tag: generate tags from content when none provided
   let autoTags: string[] | undefined;
@@ -100,6 +104,15 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
     return { logPath: lp, entryNum: num };
   });
 
+  // Provenance (ledger): the capture-log write has definitely succeeded and
+  // the day-lock is released ("ledger" is a leaf lock).
+  await appendLedgerEvent({
+    type: "journal.capture",
+    project: slug,
+    target: logPath,
+    meta: { file: path.basename(logPath), entry: entryNum },
+  });
+
   // Index regeneration runs AFTER the lock is released (derived state,
   // last-writer-wins — naming-v2 spec §5).
   regenerateJournalIndex(slug);
@@ -126,6 +139,8 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
         fs.writeFileSync(targetPath, `# ${input.palace_room} / captures\n${captureEntry}`, "utf-8");
       }
 
+      await appendLedgerEvent({ type: "palace.write", project: slug, target: targetPath, meta: { room: safeRoom, topic: "captures" } });
+
       await fanOut(slug, input.palace_room, "captures", `${input.question} ${input.answer}`, [], "medium");
       await updatePalaceIndex(slug);
       palaceResult = { room: input.palace_room };
@@ -134,5 +149,6 @@ export async function journalCapture(input: JournalCaptureInput): Promise<Journa
     }
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return { success: true, entry_number: entryNum, palace: palaceResult, auto_tags: autoTags, file_path: logPath };
 }

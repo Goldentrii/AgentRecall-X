@@ -5,7 +5,9 @@
  * Target: <400 tokens output. No awareness duplication.
  */
 
-import { resolveProject, isValidProjectSlug } from "../storage/project.js";
+import { resolveProject, isValidProjectSlug, watchProjectCreate } from "../storage/project.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
@@ -512,7 +514,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // not scaffold a palace anywhere, and everything below degrades to empty
   // reads for the sentinel. Call left unconditional so the gate lives in ONE
   // place (the function itself), not per-caller.
+  const projectCreated = watchProjectCreate(slug);
   ensurePalaceInitialized(slug);
+  await projectCreated();
 
   // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
   // workable identity for one MCP-server lifetime. claimSessionStartOnce
@@ -1475,6 +1479,13 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // dup=true means this call's write-phase was idempotent-suppressed (a
   // repeat session_start for this process's session + project).
   recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
+
+  // Provenance (ledger): one session.start per (session, project), mirroring
+  // the idempotent once-per-session write side effects above.
+  if (isFirstCallThisSession) {
+    await appendLedgerEvent({ type: "session.start", project: slug, target: null, meta: {} });
+  }
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
 
   return result;
 }

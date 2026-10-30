@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { journalDir } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { listJournalFiles, updateIndex } from "../helpers/journal-files.js";
 import { groupByWeek, synthesizeWeek } from "../helpers/rollup.js";
 import { stateFilePath } from "./journal-state.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { fileDigest } from "../storage/ledger-queue.js";
 
 export interface JournalRollupInput {
   min_age_days?: number;
@@ -73,14 +76,33 @@ export async function journalRollup(input: JournalRollupInput): Promise<JournalR
     const summary = synthesizeWeek(wk, weekEntries);
     fs.writeFileSync(path.join(dir, summaryFile), summary, "utf-8");
     result.summariesCreated.push(summaryFile);
+    // Provenance (ledger): the weekly summary is a new journal file.
+    await appendLedgerEvent({
+      type: "journal.rollup",
+      project: slug,
+      target: path.join(dir, summaryFile),
+      sha256: createHash("sha256").update(Buffer.from(summary, "utf-8")).digest("hex"),
+      bytes: Buffer.byteLength(summary, "utf-8"),
+      meta: { file: summaryFile, entries: weekEntries.length },
+    });
 
     ensureDir(archiveDir);
     for (const entry of weekEntries) {
       const srcPath = path.join(entry.dir, entry.file);
       const destPath = path.join(archiveDir, entry.file);
       if (fs.existsSync(srcPath)) {
+        // Hash BEFORE the move: the event sits on the path that left journal/*.md.
+        const entryDigest = fileDigest(srcPath);
         fs.copyFileSync(srcPath, destPath);
         fs.unlinkSync(srcPath);
+        await appendLedgerEvent({
+          type: "journal.rollup",
+          project: slug,
+          target: srcPath,
+          sha256: entryDigest.sha256,
+          bytes: entryDigest.bytes,
+          meta: { file: entry.file, moved_to: `archive/${entry.file}`, rolled_into: summaryFile },
+        });
 
         const stateSrc = stateFilePath(slug, entry.date);
         if (fs.existsSync(stateSrc)) {
@@ -90,8 +112,17 @@ export async function journalRollup(input: JournalRollupInput): Promise<JournalR
 
         const logSrc = path.join(entry.dir, `${entry.date}-log.md`);
         if (fs.existsSync(logSrc)) {
+          const logDigest = fileDigest(logSrc);
           fs.copyFileSync(logSrc, path.join(archiveDir, `${entry.date}-log.md`));
           fs.unlinkSync(logSrc);
+          await appendLedgerEvent({
+            type: "journal.rollup",
+            project: slug,
+            target: logSrc,
+            sha256: logDigest.sha256,
+            bytes: logDigest.bytes,
+            meta: { file: path.basename(logSrc), moved_to: `archive/${entry.date}-log.md`, rolled_into: summaryFile },
+          });
         }
       }
       result.entriesArchived++;

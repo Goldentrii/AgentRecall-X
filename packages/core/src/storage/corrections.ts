@@ -13,6 +13,8 @@ import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { watchProjectCreate } from "./project.js";
 import { tokenizeWords, HAN_RUN_RE } from "../helpers/tokenize.js";
 import type { Confidence, DecayClass } from "../types.js";
 
@@ -1369,7 +1371,9 @@ export async function writeCorrection(
   }
 
   const dir = correctionsDir(project);
+  const projectCreated = watchProjectCreate(project);
   ensureDir(dir);
+  await projectCreated();
 
   // Auto-detect severity if not already set (BEFORE scrubbing — detectSeverity's
   // language heuristics are tuned against real human_correction phrasing, not
@@ -1402,7 +1406,10 @@ export async function writeCorrection(
   // DIFFERENT corrections' index writes race). Mirrors retractCorrection /
   // recordOutcome below and the existing `palace-index-${project}` /
   // `digest-${project}` lock pattern elsewhere in this codebase.
-  return withLock(`corrections-${project}`, (): WriteCorrectionResult => {
+  // Provenance (ledger): which record file the locked section wrote. The event
+  // is appended AFTER the lock is released ("ledger" is a leaf lock).
+  const wrote: { file: string | null; merged: boolean } = { file: null, merged: false };
+  const writeResult = await withLock(`corrections-${project}`, (): WriteCorrectionResult => {
     // ── P1: on-write consolidation (refine-not-overwrite) ─────────────────────
     // Borrow Hindsight's consolidation idea, AR-native: instead of accumulating a
     // new dated file for a re-stated rule, fold it into the most similar ACTIVE
@@ -1457,6 +1464,8 @@ export async function writeCorrection(
       writeRecordAtomic(path.join(dir, mfile), merged);
       // W2-1: regenerate the materialized index on every corrections mutation.
       regenerateCorrectionsIndex(project);
+      wrote.file = path.join(dir, mfile);
+      wrote.merged = true;
       return { written: true, merged: true, id: merged.id };
     }
 
@@ -1486,9 +1495,19 @@ export async function writeCorrection(
     writeRecordAtomic(filepath, record);
     // W2-1: regenerate the materialized index on every corrections mutation.
     regenerateCorrectionsIndex(project);
+    wrote.file = filepath;
 
     return { written: true, merged: false, id: record.id };
   });
+  if (wrote.file) {
+    await appendLedgerEvent({
+      type: "correction.write",
+      project,
+      target: wrote.file,
+      meta: { id: writeResult.id, severity: record.severity, ...(wrote.merged ? { merged: true } : {}) },
+    });
+  }
+  return writeResult;
 }
 
 /**
@@ -1611,7 +1630,8 @@ export async function retractCorrection(
   // above and recordOutcome below. Locked with `corrections-${project}`
   // (PROJECT-scoped, matching regenerateCorrectionsIndex's one-shared-file-
   // per-project shape; not per-correction-id — see writeCorrection's note).
-  return withLock(`corrections-${project}`, (): RetractCorrectionResult => {
+  const retractHolder: { file: string | null } = { file: null };
+  const retractResult = await withLock(`corrections-${project}`, (): RetractCorrectionResult => {
     // Find the correction record by id
     const all = readCorrections(project);
     const target = all.find((r) => r.id === id);
@@ -1637,9 +1657,19 @@ export async function retractCorrection(
     writeRecordAtomic(filepath, updated);
     // W2-1: regenerate the materialized index on every corrections mutation.
     regenerateCorrectionsIndex(project);
+    retractHolder.file = filepath;
 
     return { success: true, id };
   });
+  if (retractHolder.file) {
+    await appendLedgerEvent({
+      type: "correction.retract",
+      project,
+      target: retractHolder.file,
+      meta: { id, ...(reason !== undefined ? { reason } : {}) },
+    });
+  }
+  return retractResult;
 }
 
 /**
@@ -1757,6 +1787,7 @@ export async function recordOutcome(outcome: CorrectionOutcome): Promise<void> {
   //      misdiagnosis can no longer skip the pass at all. See
   //      AcquireLockOptions in filelock.ts.
   try {
+  const counterFile: { file: string | null } = { file: null };
   await withLock(`corrections-${outcome.project}`, () => {
     // Update the per-correction file's counters.
     const target = readCorrections(outcome.project).find((r) => r.id === outcome.correction_id);
@@ -1805,7 +1836,18 @@ export async function recordOutcome(outcome: CorrectionOutcome): Promise<void> {
     // failure_class are all unchanged — so they deliberately skip this call,
     // preserving the existing hot-path optimization documented above.)
     regenerateCorrectionsIndex(outcome.project);
+    counterFile.file = filepath;
   }, { waitForLiveHolder: true });
+  // Provenance (ledger): the counter rewrite changed the record file's bytes,
+  // so it is a correction.write (meta.kind says why). Appended after the lock.
+  if (counterFile.file) {
+    await appendLedgerEvent({
+      type: "correction.write",
+      project: outcome.project,
+      target: counterFile.file,
+      meta: { id: outcome.correction_id, kind: "outcome-counters", outcome: outcome.kind },
+    });
+  }
   } catch (err) {
     if (err instanceof LockContentionError) {
       console.error(
@@ -1858,7 +1900,8 @@ export async function setCorrectionTier(
 ): Promise<SetCorrectionTierResult> {
   const dir = correctionsDir(project);
   try {
-    return await withLock(`corrections-${project}`, (): SetCorrectionTierResult => {
+    const tierFile: { file: string | null } = { file: null };
+    const tierResult = await withLock(`corrections-${project}`, (): SetCorrectionTierResult => {
       const target = readCorrections(project).find((r) => r.id === id);
       if (!target) return { written: false, error: `correction not found: ${id}` };
       if (target.tier === tier) return { written: false }; // already correct — idempotent no-op
@@ -1873,8 +1916,13 @@ export async function setCorrectionTier(
       // keeps the invariant "every mutation regenerates the index" uniform
       // rather than carving out a silent exception for this one writer.
       regenerateCorrectionsIndex(project);
+      tierFile.file = filepath;
       return { written: true };
     });
+    if (tierFile.file) {
+      await appendLedgerEvent({ type: "correction.write", project, target: tierFile.file, meta: { id, kind: "tier", tier } });
+    }
+    return tierResult;
   } catch (err) {
     if (err instanceof LockContentionError) {
       console.error(
@@ -2335,7 +2383,8 @@ export async function runOutcomesRebuild(
   // could append new ledger lines or rewrite a correction file between any
   // earlier unlocked plan computation and acquiring this lock. Same lock name
   // as writeCorrection/retractCorrection/recordOutcome above.
-  return withLock(`corrections-${project}`, (): OutcomesRebuildResult => {
+  const rebuiltFiles: string[] = [];
+  const rebuildResult = await withLock(`corrections-${project}`, (): OutcomesRebuildResult => {
     const dir = correctionsDir(project);
     const plan = computeLedgerDivergence(project);
     let wrote = 0;
@@ -2363,6 +2412,7 @@ export async function runOutcomesRebuild(
         findExistingCorrectionFile(dir, updated.id) ??
         `${updated.date}--${slugify(updated.rule || updated.id)}.json`;
       writeRecordAtomic(path.join(dir, filename), updated);
+      rebuiltFiles.push(path.join(dir, filename));
       wrote++;
     }
 
@@ -2384,6 +2434,11 @@ export async function runOutcomesRebuild(
       },
     };
   });
+  // Provenance (ledger): each rewritten record file, appended after the lock.
+  for (const file of rebuiltFiles) {
+    await appendLedgerEvent({ type: "correction.write", project, target: file, meta: { kind: "outcomes-rebuild" } });
+  }
+  return rebuildResult;
 }
 
 /**

@@ -78,4 +78,35 @@ export const LEDGER_META_MAX_BYTES = 512;
  * appendLedgerEvent(. Enforced by test/ledger-no-unledgered-mutation.test.mjs
  * (D11) — a new unledgered mutation fails CI.
  */
-export const MUTATION_ALLOWLIST: readonly string[] = ["tools-logic/journal-write"];
+export const MUTATION_ALLOWLIST: readonly string[] = [
+  // tools-logic (one per mutating tool)
+  "tools-logic/journal-write",
+  "tools-logic/journal-capture",
+  "tools-logic/journal-archive",
+  "tools-logic/journal-merge",
+  "tools-logic/journal-rollup",
+  "tools-logic/palace-write",
+  "tools-logic/knowledge-write",
+  "tools-logic/skill-write",
+  "tools-logic/session-start",
+  "tools-logic/session-end",
+  "tools-logic/alignment-check",
+  "tools-logic/nudge",
+  "tools-logic/context-synthesize",
+  "tools-logic/palace-lint",
+  "tools-logic/bootstrap",
+  // palace (shared writers: scaffolding, consolidation, skills, pipeline)
+  "palace/rooms",
+  "palace/consolidate",
+  "palace/compress",
+  "palace/fan-out",
+  "palace/identity",
+  "palace/insights-index",
+  "palace/pipeline",
+  "palace/skills",
+  // storage
+  "storage/corrections",
+  "storage/unclaimed",
+  "storage/session-card",
+  "storage/project",
+];

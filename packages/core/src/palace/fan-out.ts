@@ -9,6 +9,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { extractWikilinks, addBackReference } from "./obsidian.js";
 import { addEdge, getConnectionCount } from "./graph.js";
@@ -16,6 +17,7 @@ import { getRoomMeta, updateRoomMeta, listRooms } from "./rooms.js";
 import { computeSalience } from "./salience.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { Importance } from "../types.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 
 const MAX_AUTO_EDGES = 5;
 
@@ -52,6 +54,15 @@ export async function fanOut(
       if (updated !== readmeContent) {
         fs.writeFileSync(targetReadme, updated, "utf-8");
         result.updatedRooms.push(targetRoom);
+        // Provenance (ledger): the back-reference rewrote a palace README.
+        await appendLedgerEvent({
+          type: "palace.write",
+          project,
+          target: targetReadme,
+          sha256: createHash("sha256").update(Buffer.from(updated, "utf-8")).digest("hex"),
+          bytes: Buffer.byteLength(updated, "utf-8"),
+          meta: { room: targetRoom, kind: "backref", from: `${sourceRoom}/${sourceTopic}` },
+        });
       }
     }
 

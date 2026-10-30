@@ -23,6 +23,8 @@ import { generateFrontmatter } from "./obsidian.js";
 import { updatePalaceIndex } from "./index-manager.js";
 import { appendToLog } from "./log.js";
 import { markKeystones } from "./keystone.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 import { runDecayPass, type DecayReport } from "./decay-pass.js";
 
 export interface ConsolidationResult {
@@ -135,6 +137,7 @@ export async function consolidateJournalToPalace(
         const existing = fs.readFileSync(topicPath, "utf-8");
         if (existing.includes(`### ${entry.date}`)) continue;
         fs.appendFileSync(topicPath, memoryEntry, "utf-8");
+        await appendLedgerEvent({ type: "palace.consolidate", project, target: topicPath, meta: { room: route.room, topic: route.topic, source: entry.date } });
         await touchRoom(project, route.room);
       } else {
         fs.writeFileSync(
@@ -142,6 +145,7 @@ export async function consolidateJournalToPalace(
           `${fm}# ${route.room} / ${route.topic}\n${memoryEntry}`,
           "utf-8"
         );
+        await appendLedgerEvent({ type: "palace.consolidate", project, target: topicPath, meta: { room: route.room, topic: route.topic, source: entry.date } });
         await touchRoom(project, route.room);
       }
 
@@ -167,12 +171,14 @@ export async function consolidateJournalToPalace(
         const existing = fs.readFileSync(evoPath, "utf-8");
         if (!existing.includes(`### ${entry.date}`)) {
           fs.appendFileSync(evoPath, evoEntry, "utf-8");
+          await appendLedgerEvent({ type: "palace.consolidate", project, target: evoPath, meta: { room: "goals", topic: "evolution", source: entry.date } });
           await touchRoom(project, "goals");
           result.memoriesCreated++;
         }
       } else {
         const fm = generateFrontmatter({ room: "goals", topic: "evolution", created: new Date().toISOString(), source: "consolidation" });
         fs.writeFileSync(evoPath, `${fm}# goals / evolution\n${evoEntry}`, "utf-8");
+        await appendLedgerEvent({ type: "palace.consolidate", project, target: evoPath, meta: { room: "goals", topic: "evolution", source: entry.date } });
         await touchRoom(project, "goals");
         result.memoriesCreated++;
       }
@@ -221,5 +227,6 @@ export async function consolidateJournalToPalace(
       : null,
   });
 
+  await flushLedgerQueue(); // room/identity/skill events queued by sync helpers
   return result;
 }

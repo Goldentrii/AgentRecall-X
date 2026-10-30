@@ -19,6 +19,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { palaceDir } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
 import { sanitizeName } from "../storage/sanitize.js";
@@ -26,6 +27,8 @@ import { generateFrontmatter } from "./obsidian.js";
 import { initFsrs, reinforce, score, type FsrsState, type FsrsScore } from "./fsrs.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger } from "../storage/ledger-queue.js";
 
 export interface SkillMeta {
   /** Stable kebab-case slug, unique within project. */
@@ -248,7 +251,12 @@ function findExistingSkillFile(dir: string, order: number): string | undefined {
   }
 }
 
-export function writeSkill(project: string, meta: SkillMeta, body: SkillBody, order?: number): string {
+/**
+ * `opts.ledger: false` = the caller records the skill.write event itself
+ * (tools-logic/skill-write awaits its own); every other caller (reinforce-on-
+ * recall, archive flags, promotion) is recorded here through the ledger queue.
+ */
+export function writeSkill(project: string, meta: SkillMeta, body: SkillBody, order?: number, opts: { ledger?: boolean } = {}): string {
   const dir = skillsDir(project);
   ensureDir(dir);
   // P0-a (2026-08-18): scrub every free-text field BEFORE slug/filename
@@ -296,8 +304,21 @@ export function writeSkill(project: string, meta: SkillMeta, body: SkillBody, or
   }
   // Atomic write
   const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmp, renderSkill(finalMeta, scrubbedBody), { encoding: "utf-8", mode: 0o600 });
+  const rendered = renderSkill(finalMeta, scrubbedBody);
+  fs.writeFileSync(tmp, rendered, { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, filePath);
+  if (opts.ledger !== false) {
+    // Provenance (ledger): sync write path, so the append goes through the
+    // in-process queue (never throws; a lost event is an orphan in verify).
+    enqueueLedger(() => appendLedgerEvent({
+      type: "skill.write",
+      project,
+      target: filePath,
+      sha256: createHash("sha256").update(Buffer.from(rendered, "utf-8")).digest("hex"),
+      bytes: Buffer.byteLength(rendered, "utf-8"),
+      meta: { file: path.basename(filePath), skill: finalMeta.slug },
+    }));
+  }
   return filePath;
 }
 

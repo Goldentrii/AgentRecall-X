@@ -21,10 +21,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { palaceDir, sanitizeSlug } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { getRoot } from "../types.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger } from "../storage/ledger-queue.js";
 
 export interface CompressEntry {
   date: string;
@@ -225,6 +228,7 @@ export function compressTopic(
     archivePath = path.join(archiveDir, `${safeTopic}-${todayISO()}-${ts}-${Math.random().toString(36).slice(2, 6)}.md`);
   }
   fs.copyFileSync(topicPath, archivePath);
+  const archivedBytes = fs.readFileSync(archivePath);
 
   // Extract the header (everything before the first ### DATE block)
   const headerMatch = content.match(/^([\s\S]*?)(?=^### \d{4}-\d{2}-\d{2})/m);
@@ -245,6 +249,25 @@ export function compressTopic(
   ].join("\n").trim() + "\n";
 
   fs.writeFileSync(topicPath, newContent, "utf-8");
+
+  // Provenance (ledger): sync write path, queued (never throws). The archive
+  // copy is a palace/**/*.md file too, so it gets its own event.
+  enqueueLedger(() => appendLedgerEvent({
+    type: "palace.consolidate",
+    project,
+    target: archivePath,
+    sha256: createHash("sha256").update(archivedBytes).digest("hex"),
+    bytes: archivedBytes.length,
+    meta: { room: safeRoom, topic: safeTopic, kind: "compress-archive" },
+  }));
+  enqueueLedger(() => appendLedgerEvent({
+    type: "palace.consolidate",
+    project,
+    target: topicPath,
+    sha256: createHash("sha256").update(Buffer.from(newContent, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(newContent, "utf-8"),
+    meta: { room: safeRoom, topic: safeTopic, kind: "compress", clusters: clusters.length },
+  }));
 
   result.clustersMerged = clusters.length;
   result.archivedEntries = entries.length - nonClustered.length - clusters.length;

@@ -1,5 +1,7 @@
 import { resolveProject } from "../storage/project.js";
 import { writeSkill, type SkillBody } from "../palace/skills.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface SkillWriteInput {
   project?: string;
@@ -57,7 +59,11 @@ export async function skillWrite(input: SkillWriteInput): Promise<SkillWriteResu
     created: now,
     updated: now,
     source: input.source ?? "manual",
-  }, body);
+  }, body, undefined, { ledger: false });
+
+  // Provenance (ledger): the skill file write has definitely succeeded.
+  await appendLedgerEvent({ type: "skill.write", project: slug, target: filePath, meta: { file: filePath.split(/[\\/]/).pop(), skill: name, topic } });
+  await flushLedgerQueue();
 
   return {
     success: true,

@@ -10,10 +10,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ensurePalaceInitialized } from "../palace/rooms.js";
+import { watchProjectCreate } from "../storage/project.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 import { writeIdentity } from "../palace/identity.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { palaceWrite } from "./palace-write.js";
@@ -881,7 +884,9 @@ export async function bootstrapImport(
 
       try {
         // Ensure palace initialized (idempotent)
+        const projectCreated = watchProjectCreate(proj.slug);
         ensurePalaceInitialized(proj.slug);
+        await projectCreated();
         if (!createdThisProject) {
           projectsCreated++;
           createdThisProject = true;
@@ -923,6 +928,14 @@ export async function bootstrapImport(
                     `> ${description}`,
                   );
                   fs.writeFileSync(identityPath, updated, "utf-8");
+                  await appendLedgerEvent({
+                    type: "palace.write",
+                    project: proj.slug,
+                    target: identityPath,
+                    sha256: createHash("sha256").update(Buffer.from(updated, "utf-8")).digest("hex"),
+                    bytes: Buffer.byteLength(updated, "utf-8"),
+                    meta: { kind: "identity", via_tool: "bootstrap" },
+                  });
                 }
               }
             }
@@ -1127,6 +1140,7 @@ export async function bootstrapImport(
     }
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return {
     projects_created: projectsCreated,
     items_imported: itemsImported,

@@ -15,6 +15,8 @@ import { roomReadmeContent } from "./obsidian.js";
 import { computeSalience } from "./salience.js";
 import { getConnectionCount } from "./graph.js";
 import { withLock } from "../storage/filelock.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger } from "../storage/ledger-queue.js";
 
 function roomMetaPath(projectPalaceDir: string, roomSlug: string): string {
   const safe = sanitizeSlug(roomSlug);
@@ -61,10 +63,31 @@ export function createRoom(
 
   writeJsonAtomic(path.join(roomPath, "_room.json"), meta);
 
+  // Provenance (ledger): createRoom is sync and reached from many sync paths
+  // (ensurePalaceInitialized), so the events go through the in-process ledger
+  // queue; the append never throws and a lost event surfaces as an orphan in verify.
+  // _room.json is derived/mutable metadata: record the creation, not a hash.
+  enqueueLedger(() => appendLedgerEvent({
+    type: "palace.room.create",
+    project,
+    target: path.join(roomPath, "_room.json"),
+    sha256: null,
+    meta: { room: safeSlug },
+  }));
+
   // Create README.md with Obsidian-compatible frontmatter
   const readmePath = path.join(roomPath, "README.md");
   if (!fs.existsSync(readmePath)) {
-    fs.writeFileSync(readmePath, roomReadmeContent(meta), "utf-8");
+    const readme = roomReadmeContent(meta);
+    fs.writeFileSync(readmePath, readme, "utf-8");
+    enqueueLedger(() => appendLedgerEvent({
+      type: "palace.write",
+      project,
+      target: readmePath,
+      sha256: crypto.createHash("sha256").update(Buffer.from(readme, "utf-8")).digest("hex"),
+      bytes: Buffer.byteLength(readme, "utf-8"),
+      meta: { room: safeSlug, kind: "readme" },
+    }));
   }
 
   return meta;
@@ -226,11 +249,17 @@ export function ensurePalaceInitialized(project: string): void {
   // Create identity.md
   const identityPath = path.join(pd, "identity.md");
   if (!fs.existsSync(identityPath)) {
-    fs.writeFileSync(
-      identityPath,
-      `---\nproject: ${project}\ncreated: ${new Date().toISOString()}\n---\n\n# ${project}\n\n> _(fill in: 1-line purpose, primary language, key constraint)_\n`,
-      "utf-8"
-    );
+    const identity = `---\nproject: ${project}\ncreated: ${new Date().toISOString()}\n---\n\n# ${project}\n\n> _(fill in: 1-line purpose, primary language, key constraint)_\n`;
+    fs.writeFileSync(identityPath, identity, "utf-8");
+    // Provenance (ledger): sync scaffold path, queued (see createRoom).
+    enqueueLedger(() => appendLedgerEvent({
+      type: "palace.write",
+      project,
+      target: identityPath,
+      sha256: crypto.createHash("sha256").update(Buffer.from(identity, "utf-8")).digest("hex"),
+      bytes: Buffer.byteLength(identity, "utf-8"),
+      meta: { kind: "identity" },
+    }));
   }
 
   // Create palace-index.json
