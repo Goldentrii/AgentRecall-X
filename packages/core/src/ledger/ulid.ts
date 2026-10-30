@@ -2,6 +2,10 @@
  * Hand-rolled ULID (spec D3): 10 chars Crockford base32 time (48-bit ms,
  * big-endian) + 16 chars random (80-bit). Monotonic within the same ms.
  * No npm dependency (no supply-chain audit needed).
+ *
+ * A backwards clock never produces a smaller id (effectiveMs = max(now, last)).
+ * CHAIN order (parent links) is authoritative for ordering; the id time prefix
+ * is advisory only.
  */
 import { randomBytes } from "node:crypto";
 
@@ -34,7 +38,14 @@ function encodeRandom(bytes: Uint8Array): string {
   return out;
 }
 
+/** Test helper: forget the monotonic clock (ulid pins time to the max seen). */
+export function resetUlidClock(): void {
+  lastMs = -1;
+  lastRand = null;
+}
+
 export function ulid(nowMs: number = Date.now()): string {
+  nowMs = Math.max(nowMs, lastMs);
   let rand: Uint8Array;
   if (nowMs === lastMs && lastRand) {
     rand = Uint8Array.from(lastRand);

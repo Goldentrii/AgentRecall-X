@@ -22,8 +22,8 @@ export function writeHeads(heads: LedgerHeads, root: string = getRoot()): void {
   writeJsonAtomic(path.join(root, LEDGER_HEADS_FILE), heads);
 }
 
-/** Recompute every project's head from events.jsonl (file order), skipping unparsable lines. */
-export function rebuildHeads(root: string = getRoot()): { projects: number; events: number; badLines: number } {
+/** Recompute every project's head from events.jsonl (file order), skipping unparsable lines. Pure: writes nothing. */
+export function computeHeads(root: string = getRoot()): { heads: LedgerHeads; events: number; badLines: number } {
   const heads: LedgerHeads = {};
   let events = 0;
   let badLines = 0;
@@ -50,6 +50,12 @@ export function rebuildHeads(root: string = getRoot()): { projects: number; even
       }
     }
   }
+  return { heads, events, badLines };
+}
+
+/** computeHeads + writeHeads. Not locked: run with no concurrent writers (or under withLock("ledger")). */
+export function rebuildHeads(root: string = getRoot()): { projects: number; events: number; badLines: number } {
+  const { heads, events, badLines } = computeHeads(root);
   writeHeads(heads, root);
   return { projects: Object.keys(heads).length, events, badLines };
 }

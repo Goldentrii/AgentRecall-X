@@ -2,7 +2,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-const { ulid, ulidTime, isUlid } = await import("../dist/index.js");
+const { ulid, ulidTime, isUlid, resetUlidClock } = await import("../dist/index.js");
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -15,6 +15,7 @@ describe("ledger ulid", () => {
 
   it("time prefix decodes back to the ms used", () => {
     for (const t of [0, 1700000000000, 2 ** 48 - 1]) {
+      resetUlidClock(); // ulid pins time to the max seen; start each probe fresh
       assert.equal(ulidTime(ulid(t)), t);
     }
   });
@@ -29,6 +30,14 @@ describe("ledger ulid", () => {
   it("10k ids are unique", () => {
     const ids = new Set(Array.from({ length: 10_000 }, () => ulid()));
     assert.equal(ids.size, 10_000);
+  });
+
+  it("a backwards clock never produces a smaller id", () => {
+    resetUlidClock();
+    const T = 1800000000000;
+    const first = ulid(T);
+    const second = ulid(T - 1000);
+    assert.ok(second > first);
   });
 
   it("isUlid accepts a real id and rejects malformed ones", () => {

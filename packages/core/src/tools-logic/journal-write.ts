@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { journalDir, palaceDir, sanitizeSlug, sanitizeProject } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
@@ -134,6 +135,9 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     type: "journal.write",
     project: slug,
     target: filePath, // absolute; append converts it inside its own try
+    // Hash exactly what THIS call wrote (not a re-read: a concurrent writer may have touched the file since).
+    sha256: createHash("sha256").update(Buffer.from(updated, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(updated, "utf-8"),
     meta: { file: path.basename(filePath), ...(input.section ? { section: input.section } : {}) },
   });
 
@@ -153,6 +157,13 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     ensurePalaceInitialized(slug);
     if (!roomExists(slug, input.palace_room)) {
       createRoom(slug, input.palace_room, input.palace_room.charAt(0).toUpperCase() + input.palace_room.slice(1), "Auto-created from journal_write", []);
+      await appendLedgerEvent({
+        type: "palace.room.create",
+        project: slug,
+        target: path.join(palaceDir(slug), "rooms", sanitizeSlug(input.palace_room), "_room.json"),
+        sha256: null, // _room.json is derived/mutable metadata: record the creation, not a hash
+        meta: { room: input.palace_room },
+      });
     }
 
     const pd = palaceDir(slug);
@@ -170,6 +181,8 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
       const fm = generateFrontmatter({ room: input.palace_room, topic: topicFile, created: timestamp, source: "journal_write" });
       fs.writeFileSync(targetPath, `${fm}# ${input.palace_room} / ${topicFile}\n${entry}`, "utf-8");
     }
+
+    await appendLedgerEvent({ type: "palace.write", project: slug, target: targetPath, meta: { room: input.palace_room } });
 
     const fanOutResult = await fanOut(slug, input.palace_room, topicFile, input.content, [], "medium");
     await updatePalaceIndex(slug);
