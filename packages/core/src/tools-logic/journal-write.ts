@@ -14,6 +14,7 @@ import { journalFileName, type SaveType } from "../storage/session.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 
 export interface JournalWriteInput {
   content: string;
@@ -124,6 +125,16 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     const scrubbed = scrubForCloud(upd);
     fs.writeFileSync(fp, scrubbed, "utf-8");
     return { filePath: fp, updated: scrubbed };
+  });
+
+  // Provenance (ledger D8): the file write above has definitely succeeded.
+  // appendLedgerEvent never throws; it runs after the day-lock is released
+  // ("ledger" is a leaf lock — no nesting with journal-day-*).
+  await appendLedgerEvent({
+    type: "journal.write",
+    project: slug,
+    target: filePath, // absolute; append converts it inside its own try
+    meta: { file: path.basename(filePath), ...(input.section ? { section: input.section } : {}) },
   });
 
   // Index regeneration runs AFTER the lock is released — both index.md

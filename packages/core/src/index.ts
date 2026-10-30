@@ -1068,3 +1068,6 @@ export { buildEmbeddingsIndex, embeddingsStatus } from "./embeddings/indexer.js"
 export type { BuildEmbeddingsOptions, BuildEmbeddingsReport, EmbeddingsStatus } from "./embeddings/indexer.js";
 export { runSemanticLeg } from "./retrieval/semantic-leg.js";
 export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./retrieval/semantic-leg.js";
+
+// Ledger (provenance events, heads, trace)
+export * from "./ledger/index.js";
