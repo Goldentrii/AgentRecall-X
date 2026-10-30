@@ -8,10 +8,12 @@ Dispatch/cost table: `python scripts/phase-report.py --session 7818e012-5426-49a
 | W1 core library | sonnet-5-5 | e0a6d81 + f32d92c (A1) + c8ddb9c (A2) | ulid 6, append 16→33→35 (incl. 2-process test) | green; CHALLENGED F1 correctly before RT reported it; 2 load-induced flakes seen once on the merged tree while W2's suite ran in parallel, rerun 39/39 |
 | W2 verify/trace/backfill + CLI | sonnet-5-5 | e073f42 + _A2 pending_ | verify 11, cli 11 | green alone; 6 integration failures after W3 → A2 |
 | W3 class-fix wiring | sonnet-5-5 | 6c0fc43 | enforcement 4, class 17 | 28 modules wired, 37 derived, 0 not_fixed; RED proof via stash |
-| W4 MCP + commands | sonnet-5-5 | _pending_ | | |
-| R code-reviewer | sonnet-5-5 | | | |
+| W4 MCP + commands | sonnet-5-5 | e8f12e4 | mcp 7, commands 5 | green; found journal_write absent from default MCP surface, no fallback branch existed in arsave; fence-manifest entries added by orchestrator (5163418) |
+| R code-reviewer | sonnet-5-5 | review-R.md | — | 0 CRIT / 0 HIGH / 4 MED / 11 LOW → W5 fix round (M1 M2 M4 L3 L5 L6 L7); M3 L1 L2 L4 L8–L11 deferred |
+| W5 fix round | sonnet-5-5 | _pending_ | | |
 | V verifier | sonnet-5-5 | | | → verify.md (SW-10) |
 
+**Suites @ 5163418 (pre-W5):** core 2128/0 · cli 306/0 · sdk 41/0 · mcp-server 86/0 = 2561 tests, 0 fail (baseline 2473).
 **Did:** spec with 14 decisions + normative schema; W1–W3 merged on `feat/ledger`; preview on a copy of the real store: 518 files → backfill 20 s → `verify: clean`, 42 projects with born/last dates, `orbitcard-clone` trace shows the 7 template files that this morning's `recall` bug created.
 **Decided:** hashes not content (D6); reads not ledgered (D5); local-only (D7); append never throws (D8); semantic events via per-site wiring + enforcement test because no fs choke point exists (W3).
 **Deviated:** W4 sequenced after W2 (needs `verifyLedger`); W1 dispatched before validator ran (cosmetic loop-shape flag); spec §8 amended after W3 (corrections paths, exclusions, move convention, full-ULID trace line); SW-3 "exactly three events" impossible once the class is closed → chain properties asserted instead.
