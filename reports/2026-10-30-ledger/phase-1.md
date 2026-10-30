@@ -6,11 +6,11 @@ Dispatch/cost table: `python scripts/phase-report.py --session 7818e012-5426-49a
 |---|---|---|---|---|
 | RT adversarial-falsify | sonnet-5-5 | — | — | RECOMPILE: 17 findings (5 CRIT, 3 gating HIGH); 12 applied as W1 A1, 3 process-only, 2 waived (out of W1 scope) |
 | W1 core library | sonnet-5-5 | e0a6d81 + f32d92c (A1) + c8ddb9c (A2) | ulid 6, append 16→33→35 (incl. 2-process test) | green; CHALLENGED F1 correctly before RT reported it; 2 load-induced flakes seen once on the merged tree while W2's suite ran in parallel, rerun 39/39 |
-| W2 verify/trace/backfill + CLI | sonnet-5-5 | e073f42 + _A2 pending_ | verify 11, cli 11 | green alone; 6 integration failures after W3 → A2 |
+| W2 verify/trace/backfill + CLI | sonnet-5-5 | e073f42 + 386afed (A2) | verify 11→16, cli 11→12 | green alone; 6 integration failures after W3 were test assumptions (indexing by position) + 3 real verify rules → A2 |
 | W3 class-fix wiring | sonnet-5-5 | 6c0fc43 | enforcement 4, class 17 | 28 modules wired, 37 derived, 0 not_fixed; RED proof via stash |
 | W4 MCP + commands | sonnet-5-5 | e8f12e4 | mcp 7, commands 5 | green; found journal_write absent from default MCP surface, no fallback branch existed in arsave; fence-manifest entries added by orchestrator (5163418) |
 | R code-reviewer | sonnet-5-5 | review-R.md | — | 0 CRIT / 0 HIGH / 4 MED / 11 LOW → W5 fix round (M1 M2 M4 L3 L5 L6 L7); M3 L1 L2 L4 L8–L11 deferred |
-| W5 fix round | sonnet-5-5 | _pending_ | | |
+| W5 fix round | sonnet-5-5 | d247fbc | mcp +1, verify +1, cli +2 | M1 (trace read-only, RED-tested), M2 (30 exit sites flush first, RED-tested), M4 (bad-line = warn), L3 L5 L6 L7; M3 L1 L2 L4 L8–L11 deferred with reasons |
 | V verifier | sonnet-5-5 | | | → verify.md (SW-10) |
 
 **Suites @ 5163418 (pre-W5):** core 2128/0 · cli 306/0 · sdk 41/0 · mcp-server 86/0 = 2561 tests, 0 fail (baseline 2473).
