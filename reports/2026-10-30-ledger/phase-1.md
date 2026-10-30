@@ -5,7 +5,7 @@ Dispatch/cost table: `python scripts/phase-report.py --session 7818e012-5426-49a
 | worker | model | commit(s) | tests added | result |
 |---|---|---|---|---|
 | RT adversarial-falsify | sonnet-5-5 | — | — | RECOMPILE: 17 findings (5 CRIT, 3 gating HIGH); 12 applied as W1 A1, 3 process-only, 2 waived (out of W1 scope) |
-| W1 core library | sonnet-5-5 | e0a6d81 + f32d92c (A1) + _A2 pending_ | ulid 6, append 16→33 | green; CHALLENGED F1 correctly before RT reported it |
+| W1 core library | sonnet-5-5 | e0a6d81 + f32d92c (A1) + c8ddb9c (A2) | ulid 6, append 16→33→35 (incl. 2-process test) | green; CHALLENGED F1 correctly before RT reported it; 2 load-induced flakes seen once on the merged tree while W2's suite ran in parallel, rerun 39/39 |
 | W2 verify/trace/backfill + CLI | sonnet-5-5 | e073f42 + _A2 pending_ | verify 11, cli 11 | green alone; 6 integration failures after W3 → A2 |
 | W3 class-fix wiring | sonnet-5-5 | 6c0fc43 | enforcement 4, class 17 | 28 modules wired, 37 derived, 0 not_fixed; RED proof via stash |
 | W4 MCP + commands | sonnet-5-5 | _pending_ | | |
