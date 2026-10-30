@@ -123,6 +123,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
   }
   for (const [target, ev] of latest) {
     if (deleted.has(ev.project)) continue;
+    if (ev.meta && ev.meta.moved_to) continue; // move convention: the path left the ledgered set, the event is terminal
     if (ev.sha256 === null) continue; // event carried no hash (derived file, or absent at write time)
     const abs = path.join(root, target);
     if (!fs.existsSync(abs)) {

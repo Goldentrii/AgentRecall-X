@@ -11,7 +11,7 @@ export function traceProject(
   return readEvents({ project, since: opts.since, limit: opts.limit }, root);
 }
 
-/** `<ts> <type> <via> <target|-> <id[0:8]>` — exactly five space-separated fields. */
+/** `<ts> <type> <via> <target|-> <id>` — exactly five space-separated fields; the full 26-char id (the 8-char time prefix collides within ~256 ms). */
 export function formatTraceLine(ev: LedgerEvent): string {
-  return `${ev.ts} ${ev.type} ${ev.via} ${ev.target ?? "-"} ${ev.id.slice(0, 8)}`;
+  return `${ev.ts} ${ev.type} ${ev.via} ${ev.target ?? "-"} ${ev.id}`;
 }

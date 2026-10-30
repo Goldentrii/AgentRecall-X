@@ -10,8 +10,9 @@ import { PROJECTS_DIRNAME } from "../storage/paths.js";
 /** Human-readable form of the ledgered-class globs (spec §8). */
 export const LEDGERED_GLOBS: readonly string[] = [
   "projects/*/journal/*.md (except index.md, _index.md)",
-  "projects/*/palace/**/*.md",
+  "projects/*/palace/**/*.md (except log.md, _index.md)",
   "projects/*/palace/corrections.json",
+  "projects/*/corrections/*.json (except _-prefixed: _index.md, _outcomes.jsonl, _rejected.jsonl are derived)",
   "projects/*/skills/**",
   "insights-index.json",
 ];
@@ -44,8 +45,10 @@ export function isLedgeredTarget(rel: string): boolean {
   const inner = m[2];
   const base = inner.slice(inner.lastIndexOf("/") + 1);
   if (/^journal\/[^/]+\.md$/.test(inner)) return base !== "index.md" && base !== "_index.md";
+  if (/^corrections\/[^/]+\.json$/.test(inner)) return !base.startsWith("_");
   if (inner === "palace/corrections.json") return true;
-  if (inner.startsWith("palace/")) return base.endsWith(".md");
+  // palace/log.md is the operation log; every _index.md is a regenerated index
+  if (inner.startsWith("palace/")) return base.endsWith(".md") && base !== "_index.md" && inner !== "palace/log.md";
   if (inner.startsWith("skills/")) return true;
   return false;
 }

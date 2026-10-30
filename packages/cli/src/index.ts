@@ -203,7 +203,7 @@ DIAGNOSTICS:
       Every later bare run reports only NEW findings since that baseline; exit 1 only on a NEW red finding.
   ar trace <project> [--since <iso|7d>] [--limit N] [--json]
       Provenance timeline of one project from ledger/events.jsonl (oldest first):
-      <ts> <type> <via> <target> <id[0:8]>. Read-only.
+      <ts> <type> <via> <target> <id>. Read-only.
   ar verify [project] [--json]
       READ-ONLY ledger audit: orphan / drift / missing / chain / unknown-via findings. NEVER repairs.
       Exit 0 when clean, 2 when there are findings.
@@ -4525,6 +4525,7 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
       const events = core.traceProject(slug, { since: getFlag("--since", rest), limit });
       if (hasFlag("--json", rest)) output(events);
       else if (events.length > 0) output(events.map((ev) => core.formatTraceLine(ev)).join("\n"));
+      else output(`No ledger events for ${slug}. Run: ar ledger backfill --project ${slug}`);
       break;
     }
     case "verify": {
@@ -4617,6 +4618,9 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
       printHelp();
       process.exit(1);
   }
+
+  // Sync mutators (createRoom, writeSkill, claim, ...) enqueue their ledger events; don't exit before they land.
+  await core.flushLedgerQueue();
 }
 
 main().catch((err: unknown) => {

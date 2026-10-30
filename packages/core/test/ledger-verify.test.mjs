@@ -46,10 +46,12 @@ describe("ledger verify / trace / backfill", () => {
     core.resetLedgerContext();
   });
 
+  const kind = (res, k) => res.findings.filter((f) => f.kind === k);
+
   /** One journalWrite on a fresh root: genesis (_global) + one journal.write. */
   async function seed() {
     await core.journalWrite({ project: PROJECT, content: "verify probe entry" });
-    seedEvent = readLines().find((e) => e.project === PROJECT);
+    seedEvent = readLines().find((e) => e.project === PROJECT && e.type === "journal.write");
     assert.ok(seedEvent, "journalWrite must yield a ledger event");
     return seedEvent;
   }
@@ -58,7 +60,7 @@ describe("ledger verify / trace / backfill", () => {
     await seed();
     const res = core.verifyLedger(PROJECT);
     assert.deepEqual(res.findings, []);
-    assert.equal(res.scanned.events, 1);
+    assert.ok(res.scanned.events >= 1);
     assert.ok(res.scanned.files >= 1);
     // no project: the genesis note is not a finding either
     assert.deepEqual(core.verifyLedger().findings, []);
@@ -94,7 +96,7 @@ describe("ledger verify / trace / backfill", () => {
 
   it("e: corrupted parent is exactly one chain finding", async () => {
     await seed();
-    writeLines(readLines().map((e) => (e.project === PROJECT ? { ...e, parent: "01BROKENPARENT0000000000000" } : e)));
+    writeLines(readLines().map((e) => (e.id === seedEvent.id ? { ...e, parent: "01BROKENPARENT0000000000000" } : e)));
     const res = core.verifyLedger(PROJECT);
     assert.equal(res.findings.length, 1, JSON.stringify(res.findings));
     assert.equal(res.findings[0].kind, "chain");
@@ -115,7 +117,7 @@ describe("ledger verify / trace / backfill", () => {
 
   it("f: unknown via is exactly one unknown-via finding", async () => {
     await seed();
-    writeLines(readLines().map((e) => (e.project === PROJECT ? { ...e, via: "telepathy" } : e)));
+    writeLines(readLines().map((e) => (e.id === seedEvent.id ? { ...e, via: "telepathy" } : e)));
     const res = core.verifyLedger(PROJECT);
     assert.equal(res.findings.length, 1);
     assert.equal(res.findings[0].kind, "unknown-via");
@@ -165,17 +167,68 @@ describe("ledger verify / trace / backfill", () => {
     assert.equal(fs.existsSync(path.join(TEST_ROOT, "ledger")), false);
   });
 
+  // --- spec §8 amendments ---
+
+  it("a2: corrections records are ledgered-class; _-prefixed files are derived", async () => {
+    await seed();
+    const dir = path.join(TEST_ROOT, "projects", PROJECT, "corrections");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "2026-10-30--rule.json"), "{}");
+    for (const f of ["_index.md", "_outcomes.jsonl", "_rejected.jsonl"]) fs.writeFileSync(path.join(dir, f), "x");
+    const orphans = kind(core.verifyLedger(PROJECT), "orphan");
+    assert.deepEqual(orphans.map((f) => f.target), [`projects/${PROJECT}/corrections/2026-10-30--rule.json`]);
+  });
+
+  it("b2: palace/log.md and _index.md files are never orphans", async () => {
+    await seed();
+    const pal = path.join(TEST_ROOT, "projects", PROJECT, "palace");
+    fs.mkdirSync(path.join(pal, "rooms"), { recursive: true });
+    fs.writeFileSync(path.join(pal, "log.md"), "x");
+    fs.writeFileSync(path.join(pal, "rooms", "_index.md"), "x");
+    fs.writeFileSync(path.join(pal, "rooms", "real.md"), "x");
+    const orphans = kind(core.verifyLedger(PROJECT), "orphan");
+    assert.deepEqual(orphans.map((f) => f.target), [`projects/${PROJECT}/palace/rooms/real.md`]);
+  });
+
+  it("c2: an event with meta.moved_to is terminal: no missing, no drift", async () => {
+    const ev = await seed();
+    const lines = readLines();
+    writeLines(lines.map((e) => (e.id === ev.id ? { ...e, meta: { moved_to: "elsewhere.md" } } : e)));
+    fs.rmSync(path.join(TEST_ROOT, ev.target));
+    assert.deepEqual(core.verifyLedger(PROJECT).findings, []);
+  });
+
+  it("d2/e2: project.create (null target) and legacy knowledge files raise no orphan/missing", async () => {
+    await seed();
+    const know = path.join(TEST_ROOT, "projects", PROJECT, "knowledge");
+    fs.mkdirSync(know, { recursive: true });
+    fs.writeFileSync(path.join(know, "cat.md"), "x");
+    assert.deepEqual(core.verifyLedger(PROJECT).findings, []);
+    // once ledgered, a legacy file is hash-checked
+    await core.appendLedgerEvent({ type: "knowledge.write", project: PROJECT, target: path.join(know, "cat.md") });
+    fs.appendFileSync(path.join(know, "cat.md"), "y");
+    assert.deepEqual(kind(core.verifyLedger(PROJECT), "drift").length, 1);
+  });
+
+  it("scaffold: journalWrite with palace_room verifies clean", async () => {
+    await core.journalWrite({ project: PROJECT, content: "room entry", palace_room: "goals" });
+    await core.flushLedgerQueue();
+    assert.deepEqual(core.verifyLedger(PROJECT).findings, []);
+  });
+
   it("trace: oldest first, five fields, since/limit", async () => {
     await seed();
     await core.journalWrite({ project: PROJECT, content: "second entry" });
     const all = core.traceProject(PROJECT);
-    assert.equal(all.length, 2);
-    assert.deepEqual(core.traceProject(PROJECT, { limit: 1 }).map((e) => e.id), [all[1].id]);
-    assert.equal(core.traceProject(PROJECT, { since: "1h" }).length, 2);
+    assert.equal(all.filter((e) => e.type === "journal.write").length, 2);
+    assert.deepEqual(core.traceProject(PROJECT, { limit: 1 }).map((e) => e.id), [all[all.length - 1].id]);
+    assert.equal(core.traceProject(PROJECT, { since: "1h" }).length, all.length);
     assert.throws(() => core.traceProject(PROJECT, { since: "garbage" }), RangeError);
-    const fields = core.formatTraceLine(all[0]).split(" ");
+    const jw = all.find((e) => e.type === "journal.write");
+    const fields = core.formatTraceLine(jw).split(" ");
     assert.equal(fields.length, 5);
     assert.equal(fields[1], "journal.write");
-    assert.equal(fields[4].length, 8);
+    assert.equal(fields[4], jw.id);
+    assert.equal(fields[4].length, 26);
   });
 });
