@@ -73,6 +73,12 @@ When restoring or mirroring this store: copy \`sync\` plus everything under
 them — never move \`config.json\` between machines); let \`regenerable\`
 rebuild itself on next use.
 
+The \`ledger/\` directory is the provenance record: \`ledger/events.jsonl\` is
+append-only (one JSON line per mutation — never edit it), \`ledger/heads.json\`
+holds derived per-project head pointers (rebuildable from the events), and
+\`ledger/errors.log\` records append failures. Inspect it with
+\`ar trace <project>\`, \`ar verify\` and \`ar ledger backfill\`.
+
 ## Naming grammar (condensed self-contained summary)
 
 - \`--\` is the FIELD delimiter; a plain \`-\` only ever appears INSIDE a field.

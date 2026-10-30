@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { VERSION, setRoot } from "agent-recall-core";
-import type { Importance, WalkDepth } from "agent-recall-core";
+import type { Importance, WalkDepth, LedgerEventType, LedgerVia } from "agent-recall-core";
 import { detectCorrection, scopeToTriggerSentences } from "./utils/correction-detector.js";
 import {
   extractTopicKeywords,
@@ -43,6 +43,15 @@ function getFlag(flag: string, flagArgs: string[]): string | undefined {
 function hasFlag(flag: string, flagArgs: string[]): boolean {
   return flagArgs.includes(flag);
 }
+
+// Closed enums of the ledger event schema (packages/core/src/ledger/types.ts), as runtime lists.
+const LEDGER_EVENT_TYPES: string[] = [
+  "project.create", "project.delete", "project.claim", "session.start", "session.end",
+  "journal.write", "journal.capture", "journal.archive", "journal.merge", "journal.rollup", "journal.cold_start",
+  "palace.write", "palace.room.create", "palace.consolidate", "knowledge.write", "skill.write",
+  "insight.add", "insight.confirm", "correction.write", "correction.retract", "ledger.backfill", "ledger.note",
+];
+const LEDGER_VIAS: string[] = ["mcp", "cli", "hook", "file-fallback", "backfill", "library"];
 
 /**
  * L2 fix (review, 2026-07-31): word-boundary truncation with an ellipsis,
@@ -192,6 +201,16 @@ DIAGNOSTICS:
       command can make is its own baseline file, and only with --baseline-update.
       First run: \`ar hygiene --baseline-update\` to seed the baseline against everything already there.
       Every later bare run reports only NEW findings since that baseline; exit 1 only on a NEW red finding.
+  ar trace <project> [--since <iso|7d>] [--limit N] [--json]
+      Provenance timeline of one project from ledger/events.jsonl (oldest first):
+      <ts> <type> <via> <target> <id[0:8]>. Read-only.
+  ar verify [project] [--json]
+      READ-ONLY ledger audit: orphan / drift / missing / chain / unknown-via findings. NEVER repairs.
+      Exit 0 when clean, 2 when there are findings.
+  ar ledger tail [-n 20] [--project <slug>]   Last n ledger events
+  ar ledger backfill [--dry-run] [--project <slug>]   Record a ledger.backfill event for files that have none
+  ar ledger append --type <type> --project <slug> [--target <path>] [--via <via>] [--note <text>]
+      Record an event by hand (default --via file-fallback); prints the event id. Unknown --type/--via: exit 1.
   ar rooms             Show palace rooms with entry counts and topic keywords
   ar sync-memory       Sync AgentRecall → Claude auto-memory (corrections + insights + rooms)
   ar health [--json]   Fail-loud hook health (continuity wave): recent hook failures (24h count + last
@@ -266,6 +285,9 @@ async function main(): Promise<void> {
     const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
     output(core.fenceMemory(text));
   }
+
+  // Ledger provenance: who is mutating the store (hooks vs. a human at the CLI).
+  core.setLedgerContext(command.startsWith("hook-") ? { via: "hook", actor: "hook" } : { via: "cli", actor: "user" });
 
   switch (command) {
     case "read": {
@@ -4482,6 +4504,110 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
             throw e;
           }
         }
+      }
+      break;
+    }
+
+    case "trace": {
+      const slug = rest[0] && !rest[0].startsWith("-") ? rest[0] : project;
+      if (!slug) {
+        process.stderr.write("Usage: ar trace <project> [--since <iso|7d>] [--limit N] [--json]\n");
+        process.exitCode = 1;
+        break;
+      }
+      const limitRaw = getFlag("--limit", rest);
+      const limit = limitRaw !== undefined ? Number(limitRaw) : undefined;
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+        process.stderr.write(`Error: --limit must be a non-negative integer, got "${limitRaw}"\n`);
+        process.exitCode = 1;
+        break;
+      }
+      const events = core.traceProject(slug, { since: getFlag("--since", rest), limit });
+      if (hasFlag("--json", rest)) output(events);
+      else if (events.length > 0) output(events.map((ev) => core.formatTraceLine(ev)).join("\n"));
+      break;
+    }
+    case "verify": {
+      // READ-ONLY: never repairs. Exit 2 when there are findings so scripts can gate on it.
+      const slug = rest[0] && !rest[0].startsWith("-") ? rest[0] : project;
+      const result = core.verifyLedger(slug);
+      if (hasFlag("--json", rest)) {
+        output(result);
+      } else {
+        const lines = result.findings.map((f) => `${f.kind}  ${f.project}  ${f.target ?? "-"}  ${f.detail}`);
+        const { files, events } = result.scanned;
+        lines.push(
+          result.findings.length === 0
+            ? `verify: clean (files ${files}, events ${events})`
+            : `verify: ${result.findings.length} findings (files ${files}, events ${events})`,
+        );
+        output(lines.join("\n"));
+      }
+      if (result.findings.length > 0) process.exitCode = 2;
+      break;
+    }
+    case "ledger": {
+      const sub = rest[0];
+      const ledgerUsage =
+        "Usage:\n" +
+        "  ar ledger tail [-n 20] [--project <slug>]\n" +
+        "  ar ledger backfill [--dry-run] [--project <slug>]\n" +
+        "  ar ledger append --type <type> --project <slug> [--target <path>] [--via <via>] [--note <text>]\n";
+      switch (sub) {
+        case "tail": {
+          const nRaw = getFlag("-n", rest) ?? "20";
+          const n = Number(nRaw);
+          if (!Number.isInteger(n) || n < 0) {
+            process.stderr.write(`Error: -n must be a non-negative integer, got "${nRaw}"\n`);
+            process.exitCode = 1;
+            break;
+          }
+          const events = core.readEvents({ project, limit: n });
+          if (events.length > 0) output(events.map((ev) => core.formatTraceLine(ev)).join("\n"));
+          break;
+        }
+        case "backfill": {
+          const res = await core.backfillLedger({ dryRun: hasFlag("--dry-run", rest), project });
+          output([`backfill: candidates ${res.candidates}, written ${res.written}`, ...res.targets].join("\n"));
+          break;
+        }
+        case "append": {
+          const type = getFlag("--type", rest);
+          const via = getFlag("--via", rest) ?? "file-fallback";
+          if (!type || !LEDGER_EVENT_TYPES.includes(type)) {
+            process.stderr.write(`Error: --type must be one of: ${LEDGER_EVENT_TYPES.join(", ")}\n`);
+            process.exitCode = 1;
+            break;
+          }
+          if (!LEDGER_VIAS.includes(via)) {
+            process.stderr.write(`Error: --via must be one of: ${LEDGER_VIAS.join(", ")}\n`);
+            process.exitCode = 1;
+            break;
+          }
+          if (!project) {
+            process.stderr.write(`Error: --project is required\n${ledgerUsage}`);
+            process.exitCode = 1;
+            break;
+          }
+          const note = getFlag("--note", rest);
+          core.setLedgerContext({ via: via as LedgerVia, actor: "user" });
+          const ev = await core.appendLedgerEvent({
+            type: type as LedgerEventType,
+            project,
+            target: getFlag("--target", rest),
+            meta: note ? { note } : {},
+          });
+          if (!ev) {
+            process.stderr.write("Error: ledger append failed (see ledger/errors.log in the store)\n");
+            process.exitCode = 1;
+            break;
+          }
+          output(ev.id);
+          break;
+        }
+        default:
+          process.stderr.write(`Unknown ledger subcommand: ${sub ?? "(none)"}\n${ledgerUsage}`);
+          process.exitCode = 1;
       }
       break;
     }
