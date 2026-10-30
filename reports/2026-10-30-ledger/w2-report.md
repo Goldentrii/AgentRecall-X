@@ -79,3 +79,25 @@ Behaviour W4 needs: verifyLedger("p") ignores `_global` and the genesis note; ve
 e073f42
 
 FEEDBACK_HINTS: Step 11f contradicts the heads-vs-last-event comparison the orchestrator added; step 1/13 baselines should be run via a stash or a recorded W1 number; mention that parallel agents make default-concurrency suite runs flaky (use --test-concurrency=2); the F2 projects-literal guard bans path.join(..., "projects") outside storage/paths.ts and should be in the brief's constraints.
+
+## A2 AMENDMENT
+Commit 386afed on ledger/w2b (cut from feat/ledger bfec329). Files: packages/core/src/ledger/{walk,verify,trace}.ts, packages/cli/src/index.ts, packages/core/test/ledger-verify.test.mjs, packages/cli/test/ledger-cli.test.mjs.
+
+RULES
+- A2.2a walk.ts: `projects/<p>/corrections/*.json` is ledgered-class; `_`-prefixed names (_index.md, _outcomes.jsonl, _rejected.jsonl) are derived.
+- A2.2b walk.ts: `palace/log.md` and every `_index.md` are excluded from the orphan scan; palace/archive/** stays ledgered.
+- A2.2c verify.ts: latest event of a path with `meta.moved_to` is terminal (no missing, no drift).
+- A2.2d/e: project.create (target null) is skipped by hash and orphan logic; legacy knowledge/<cat>.md is never an orphan (outside the globs) but is hash-checked once an event exists (tested: drift detected).
+- A2.3: formatTraceLine prints the full 26-char id; `ar trace <p>` with zero events prints `No ledger events for <p>. Run: ar ledger backfill --project <p>`, exit 0 (`--json` still prints `[]`).
+- A2.4: `await core.flushLedgerQueue()` at the end of main() in the CLI (single normal-completion point).
+
+E-FAILURE ROOT CAUSE: verify did NOT double-report. The old test rewrote the parent of every event of the project (project.create AND journal.write) = 2 corruptions = 2 findings. The test now corrupts the journal.write event only: exactly 1 chain finding. Tests now select events by type, never by index or total count.
+
+INTEGRATION CHECK: on a fresh root, journalWrite with palace_room "goals" then flushLedgerQueue then verifyLedger(project) gives 0 findings (rooms.ts ledgers README.md as palace.write and _room.json as palace.room.create sha null; both already consistent with walk.ts, no change needed).
+
+TESTS (env under E:/Users/tong/tmp/w2b/): ledger-verify 16/16; ledger-cli 12/12; cli suite (concurrency 2) tests 306, pass 306, fail 0; core suite (concurrency 2) tests 2118, pass 2117, fail 0, skipped 1; `npm run lint` exit 0. Real-store check (find newer than start): only projects/arx-ledger/ (orchestrator SOPs), nothing else.
+
+OPEN
+- Explicit `process.exit()` paths inside CLI cases (hook-*, errors) bypass the final flush; a sync mutator followed directly by process.exit can still lose a queued event (backfill heals it). Not changed: patching process.exit globally alters semantics.
+- No existing CLI command was found that scaffolds a palace on its own other than via the library paths covered by the core scaffold test; CLI-level scaffold+verify was not added.
+- reports/.../00-interview.md shows as modified in this worktree (orchestrator's amendment edit, not mine, not committed).
