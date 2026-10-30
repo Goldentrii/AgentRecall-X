@@ -68,7 +68,7 @@ describe("ar trace / verify / ledger (CLI wiring)", () => {
     assert.equal(f[1], "journal.write");
     assert.equal(f[2], "cli");
     assert.equal(f[3], JOURNAL_REL);
-    assert.equal(f[4].length, 8);
+    assert.equal(f[4].length, 26);
   });
 
   it("b: trace --json is a JSON array", async () => {
@@ -136,6 +136,12 @@ describe("ar trace / verify / ledger (CLI wiring)", () => {
     const s = await runAr("trace", PROJECT, "--since", "garbage");
     assert.equal(s.exitCode, 1);
     assert.match(s.stderr, /unparsable since/);
+  });
+
+  it("trace on a project with no events prints a hint and exits 0", async () => {
+    const r = await runAr("trace", "no-such-project");
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.match(r.stdout, /No ledger events for no-such-project\. Run: ar ledger backfill --project no-such-project/);
   });
 
   it("help lists the new commands", async () => {
