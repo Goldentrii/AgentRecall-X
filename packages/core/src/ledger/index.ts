@@ -4,3 +4,7 @@ export * from "./context.js";
 export * from "./heads.js";
 export * from "./read.js";
 export * from "./append.js";
+export * from "./walk.js";
+export * from "./verify.js";
+export * from "./trace.js";
+export * from "./backfill.js";
