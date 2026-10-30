@@ -121,6 +121,8 @@ describe("ledger verify / trace / backfill", () => {
     const res = core.verifyLedger(PROJECT);
     assert.equal(res.findings.length, 1);
     assert.equal(res.findings[0].kind, "unknown-via");
+    assert.equal(res.findings[0].severity, "error");
+    assert.equal(res.errors, 1);
   });
 
   it("f2: an unparsable line is counted and reported", async () => {
@@ -129,7 +131,10 @@ describe("ledger verify / trace / backfill", () => {
     const res = core.verifyLedger(PROJECT);
     assert.equal(res.scanned.badLines, 1);
     assert.equal(res.findings.length, 1);
-    assert.equal(res.findings[0].kind, "unknown-via");
+    assert.equal(res.findings[0].kind, "bad-line");
+    assert.equal(res.findings[0].severity, "warn");
+    assert.equal(res.errors, 0);
+    assert.equal(res.warnings, 1);
   });
 
   it("g: backfill dry-run, write, idempotence", async () => {
@@ -163,7 +168,7 @@ describe("ledger verify / trace / backfill", () => {
 
   it("h: verify on a root without a ledger writes nothing", () => {
     const res = core.verifyLedger();
-    assert.deepEqual(res, { findings: [], scanned: { files: 0, events: 0, projects: 0, badLines: 0 } });
+    assert.deepEqual(res, { findings: [], errors: 0, warnings: 0, scanned: { files: 0, events: 0, projects: 0, badLines: 0 } });
     assert.equal(fs.existsSync(path.join(TEST_ROOT, "ledger")), false);
   });
 

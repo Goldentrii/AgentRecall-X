@@ -151,3 +151,73 @@ describe("ar trace / verify / ledger (CLI wiring)", () => {
     assert.match(stdout, /ar ledger backfill/);
   });
 });
+
+/** Run the CLI against an arbitrary store with pinned HOME, optional stdin. */
+function runArAt(root, home, stdin, env, ...args) {
+  return new Promise((resolve) => {
+    const child = spawn("node", [CLI, "--root", root, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, AGENT_RECALL_ROOT: root, HOME: home, USERPROFILE: home, ...env },
+    });
+    const out = [];
+    const err = [];
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("close", (code) => {
+      resolve({ stdout: Buffer.concat(out).toString("utf-8"), stderr: Buffer.concat(err).toString("utf-8"), exitCode: code ?? 1 });
+    });
+    child.stdin.end(stdin ?? "");
+  });
+}
+
+describe("ar verify severity + exit flush (review R: M4, M2)", () => {
+  const dirs = [];
+  const fresh = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-ledger-cli-w5-"));
+    dirs.push(dir);
+    const home = path.join(dir, "home");
+    fs.mkdirSync(home);
+    return { dir, home, root: path.join(dir, "store") };
+  };
+  after(() => {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it("M4: a store whose only finding is a bad line verifies clean (exit 0) with a warning count", async () => {
+    const { root, home } = fresh();
+    const seed = await runArAt(root, home, "", {}, "ledger", "append", "--type", "ledger.note", "--project", PROJECT);
+    assert.equal(seed.exitCode, 0, seed.stderr);
+    fs.appendFileSync(path.join(root, "ledger", "events.jsonl"), "{torn\n");
+    const r = await runArAt(root, home, "", {}, "verify");
+    assert.equal(r.exitCode, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /bad-line \(warn\)/);
+    assert.match(r.stdout, /verify: clean \(files \d+, events \d+\) · 1 warning$/m);
+    const j = JSON.parse((await runArAt(root, home, "", {}, "verify", "--json")).stdout);
+    assert.equal(j.errors, 0);
+    assert.equal(j.warnings, 1);
+    assert.equal(j.findings[0].severity, "warn");
+  });
+
+  it("M2: hook-end exits through a bounded flush, so the session card's journal.write lands in the ledger", async () => {
+    const { dir, root, home } = fresh();
+    const proj = path.join(dir, "proj");
+    fs.mkdirSync(proj);
+    const transcript = path.join(dir, "t.jsonl");
+    fs.writeFileSync(
+      transcript,
+      [
+        { type: "user", message: { role: "user", content: "please implement the ledger verify thing now" }, sessionId: "sess-w5", cwd: proj, timestamp: "2026-10-30T10:00:00Z" },
+        { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Done. I implemented the verify thing and wrote tests." }] }, sessionId: "sess-w5", timestamp: "2026-10-30T10:01:00Z" },
+      ].map((l) => JSON.stringify(l)).join("\n") + "\n",
+    );
+    const stdin = JSON.stringify({ transcript_path: transcript, session_id: "sess-w5", cwd: proj });
+    const r = await runArAt(root, home, stdin, { AGENT_CRAFT_HOME: path.join(dir, "craft"), AGENT_RECALL_PROJECT: "w5-hook-probe" }, "hook-end");
+    assert.equal(r.exitCode, 0, r.stderr);
+    const events = fs.readFileSync(path.join(root, "ledger", "events.jsonl"), "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const card = events.find((e) => e.type === "journal.write" && typeof e.target === "string" && e.target.includes("--card--"));
+    assert.ok(card, "card journal.write must be recorded before exit: " + events.map((e) => e.type).join(","));
+    const v = await runArAt(root, home, "", {}, "verify");
+    assert.equal(v.exitCode, 0, v.stdout);
+  });
+});
+

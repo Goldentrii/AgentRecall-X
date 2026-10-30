@@ -66,7 +66,8 @@ hand-edit it — the next write to that store overwrites it wholesale.
 |---|---|---|
 | sync | pinned, source-of-truth; safe and intended to sync elsewhere | \`status.md\`, \`awareness.md\`, \`ARCHITECTURE.md\`, \`projects/**\` |
 | never-sync | secrets or machine-local locks; must never leave this machine or be echoed anywhere | \`config.json\` (contains credentials — do not read or print it), \`*.lock\`, \`.hook-*-lock\`, \`tmp/\` |
-| regenerable | derived caches; safe to delete, rebuilt automatically on next use | \`dashboard.json\`, \`dashboard.html\`, \`dashboard-legacy.html\`, \`scoreboard.json\`, \`feedback-log.json\`, \`insights-index.json\`, \`arstatus-cache.json\`, \`awareness-archive.json\`, \`awareness-state.json\`, \`static/\`, \`.ambient-counter-*\`, \`.consolidation-queue/\` |
+| regenerable | derived caches; safe to delete, rebuilt automatically on next use | \`dashboard.json\`, \`dashboard.html\`, \`dashboard-legacy.html\`, \`scoreboard.json\`, \`feedback-log.json\`, \`arstatus-cache.json\`, \`awareness-archive.json\`, \`awareness-state.json\`, \`static/\`, \`.ambient-counter-*\`, \`.consolidation-queue/\` |
+| ledgered | hash-checked by \`ar verify\` | \`insights-index.json\` — do not delete or regenerate by hand; it produces a drift/missing finding |
 
 When restoring or mirroring this store: copy \`sync\` plus everything under
 \`projects/\`; skip \`never-sync\` (rotate credentials instead of copying
@@ -76,7 +77,10 @@ rebuild itself on next use.
 The \`ledger/\` directory is the provenance record: \`ledger/events.jsonl\` is
 append-only (one JSON line per mutation — never edit it), \`ledger/heads.json\`
 holds derived per-project head pointers (rebuildable from the events), and
-\`ledger/errors.log\` records append failures. Inspect it with
+\`ledger/errors.log\` records append failures. Classification: local-only.
+Never synced, never mirrored by copy-everything routines, never regenerated.
+\`events.jsonl\` is append-only; \`heads.json\` is derived and rebuildable
+(\`ar ledger backfill\` / rebuildHeads). Inspect it with
 \`ar trace <project>\`, \`ar verify\` and \`ar ledger backfill\`.
 
 ## Naming grammar (condensed self-contained summary)

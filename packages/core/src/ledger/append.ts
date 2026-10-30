@@ -54,6 +54,19 @@ function sanitizeMeta(meta: Record<string, unknown>): Record<string, unknown> {
   }
 }
 
+const GENESIS_ROOT_MAX = 260;
+
+/** Genesis meta: other fields sanitized, root kept verbatim (cut from the left when the total would exceed the meta budget). */
+function genesisMeta(root: string): Record<string, unknown> {
+  const rest = sanitizeMeta({ kind: "genesis", host: resolveHostProfile().tier, version: VERSION });
+  let r = root.replaceAll("\\", "/");
+  if (r.length > GENESIS_ROOT_MAX) r = "…" + r.slice(r.length - GENESIS_ROOT_MAX + 1);
+  while (r.length > 1 && Buffer.byteLength(JSON.stringify({ ...rest, root: r })) > LEDGER_META_MAX_BYTES) {
+    r = "…" + r.slice(Math.max(2, Math.ceil(r.length / 8)));
+  }
+  return { ...rest, root: r };
+}
+
 interface EventFields {
   type: LedgerAppendInput["type"];
   project: string;
@@ -176,7 +189,7 @@ async function appendOnce(input: LedgerAppendInput): Promise<LedgerEvent | null>
             target: null,
             sha256: null,
             bytes: null,
-            meta: { kind: "genesis", root: root.replaceAll("\\", "/"), host: resolveHostProfile().tier, version: VERSION },
+            meta: genesisMeta(root),
           });
         }
         return writeEvent(root, { type: input.type, project: input.project, ts: input.ts, target, sha256, bytes, meta });

@@ -21,13 +21,24 @@
  * of that durability guarantee, never a replacement for it.
  */
 
-import { getSessionId, distillSessionToCard, isHookOwnedHost } from "agent-recall-core";
+import { getSessionId, distillSessionToCard, isHookOwnedHost, flushLedgerQueue } from "agent-recall-core";
 
 /** Hard ceiling on how long this handler may delay process exit (design doc C-3 guard). */
 const EXIT_TIMEOUT_MS = 2000;
 
 /** Idempotency guard — `stdin` "end" AND "close" can both fire, and a signal could race either. */
 let fired = false;
+
+/**
+ * Let queued ledger appends (the card's journal.write / project.create) land
+ * before exiting, bounded so a wedged lock can never hold the process open.
+ * Never rejects.
+ */
+function exitAfterFlush(code: number): Promise<void> {
+  const flush = Promise.resolve().then(() => flushLedgerQueue()).catch(() => undefined);
+  const cap = new Promise<void>((resolve) => setTimeout(resolve, 1500));
+  return Promise.race([flush, cap]).finally(() => process.exit(code));
+}
 
 function runOnce(): void {
   if (fired) return;
@@ -53,8 +64,8 @@ function runOnce(): void {
     // distillSessionToCard never throws by its own contract — guard kept
     // for defense-in-depth only, matching every other C-2/C-3 call site.
   } finally {
-    clearTimeout(forceExit);
-    process.exit(0);
+    // forceExit stays armed as the hard ceiling; exitAfterFlush is bounded below it.
+    void exitAfterFlush(0);
   }
 }
 
