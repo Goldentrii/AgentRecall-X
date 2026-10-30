@@ -34,6 +34,7 @@ export const MANIFEST = [
   { channel: "mcp_tool", id: "remember", status: "allowlisted", reason: "write confirmation only — destination file path and a retrieval hint derived from THIS call's own submitted content, no retrieved stored content is returned." },
   { channel: "mcp_tool", id: "recall", status: "fenced", file: "packages/mcp-server/src/tools/recall.ts" },
   { channel: "mcp_tool", id: "check", status: "fenced", file: "packages/mcp-server/src/tools/check.ts" },
+  { channel: "mcp_tool", id: "trace", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs, finding kinds) — never stored content bodies." },
   { channel: "mcp_tool", id: "check_action", status: "fenced", file: "packages/mcp-server/src/tools/check-action.ts" },
   { channel: "mcp_tool", id: "pipeline_open", status: "fenced", file: "packages/mcp-server/src/tools/pipeline-open.ts" },
   { channel: "mcp_tool", id: "pipeline_close", status: "allowlisted", reason: "echoes back THIS call's own just-submitted what_was_hard/how_solved/synthesis fields (same-turn trust) — no readback of a prior phase's stored text, unlike pipeline_open's closed_previous." },
@@ -67,6 +68,9 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "list", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "search", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "state", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subcommand", id: "trace", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs, finding kinds) — never stored content bodies." },
+  { channel: "cli_subcommand", id: "verify", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs, finding kinds) — never stored content bodies." },
+  { channel: "cli_subcommand", id: "ledger", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs, finding kinds) — never stored content bodies." },
   { channel: "cli_subcommand", id: "cold-start", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "archive", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "rollup", status: "fenced", file: "packages/cli/src/index.ts" },
@@ -126,6 +130,9 @@ export const MANIFEST = [
   // see fence-ast.mjs's extractSubActions header comment for the documented
   // approximation this represents) ────────────────────────────────────────
   { channel: "cli_subaction", id: "embeddings.setup", status: "allowlisted", reason: "fix7: runtime-install + model-download progress, paths, dims, and template next-step strings only — the verification probe embeds a hardcoded literal, never store content." },
+  { channel: "cli_subaction", id: "ledger.tail", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs) — never stored content bodies." },
+  { channel: "cli_subaction", id: "ledger.backfill", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs) — never stored content bodies." },
+  { channel: "cli_subaction", id: "ledger.append", status: "allowlisted", reason: "ledger metadata only (timestamps, event types, via, store-relative paths, ULIDs) — never stored content bodies." },
   { channel: "cli_subaction", id: "embeddings.rebuild", status: "allowlisted", reason: "fix7: build report only (model id, chunk/vector counts, prune/reuse counts, durations, index path) — chunk TEXT never leaves core and is not printed." },
   { channel: "cli_subaction", id: "embeddings.status", status: "allowlisted", reason: "fix7: flag state, model id/dim, runtime/model presence booleans, index path/count/bytes/built-at — structural metadata, no prose fields." },
   { channel: "cli_subaction", id: "palace.read", status: "fenced", file: "packages/cli/src/index.ts" },
