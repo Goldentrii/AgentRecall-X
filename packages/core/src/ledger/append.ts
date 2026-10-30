@@ -2,6 +2,10 @@
  * appendLedgerEvent — the single write path of the ledger (spec D2/D8/D9).
  * NEVER throws into the caller: the mutation it records has already succeeded;
  * the ledger is observability, not a gate. verify catches a gap as an orphan.
+ *
+ * Concurrency: in-process: promise-serialized; cross-process: file lock
+ * "ledger" (leaf), 2 s bound; a dropped cross-process append is logged to
+ * errors.log and surfaces as an orphan that backfill heals.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -121,7 +125,21 @@ function writeEvent(root: string, f: EventFields): LedgerEvent {
   return ev;
 }
 
-export async function appendLedgerEvent(input: LedgerAppendInput): Promise<LedgerEvent | null> {
+/**
+ * Module-level chain: appends from one process run strictly one after another,
+ * so they never contend on the file lock (only other processes do). The chain
+ * never rejects (appendOnce never throws), so one failure cannot wedge it.
+ */
+let tail: Promise<unknown> = Promise.resolve();
+
+export function appendLedgerEvent(input: LedgerAppendInput): Promise<LedgerEvent | null> {
+  const run = (): Promise<LedgerEvent | null> => appendOnce(input);
+  const result = tail.then(run, run);
+  tail = result;
+  return result;
+}
+
+async function appendOnce(input: LedgerAppendInput): Promise<LedgerEvent | null> {
   try {
     const root = getRoot();
     ensureDir(path.join(root, LEDGER_DIR));

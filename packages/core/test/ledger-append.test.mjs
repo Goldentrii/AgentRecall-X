@@ -242,9 +242,11 @@ describe("ledger append", () => {
       jobs.push(core.appendLedgerEvent({ type: "ledger.note", project: "p1" }));
       jobs.push(core.appendLedgerEvent({ type: "ledger.note", project: "p2" }));
     }
-    await Promise.all(jobs);
+    const results = await Promise.all(jobs);
+    assert.ok(results.every((r) => r !== null), "no in-process append may be dropped");
     const all = core.readEvents().filter((e) => e.project === "p1" || e.project === "p2");
     assert.equal(all.length, 50);
+    assert.equal(rawLines().length, 51, "50 events + 1 genesis");
     for (const p of ["p1", "p2"]) {
       const evs = all.filter((e) => e.project === p);
       assert.equal(evs.length, 25);
@@ -255,6 +257,53 @@ describe("ledger append", () => {
     const before = fs.readFileSync(hp);
     core.rebuildHeads();
     assert.ok(before.equals(fs.readFileSync(hp)));
+  });
+
+  it("A2.1: 50 concurrent first-appends on a fresh root write exactly one genesis line", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 50 }, (_, i) => core.appendLedgerEvent({ type: "ledger.note", project: "p" + (i % 5) })),
+    );
+    assert.ok(results.every((r) => r !== null));
+    const lines = rawLines().map((l) => JSON.parse(l));
+    assert.equal(lines.length, 51);
+    assert.equal(lines.filter((e) => e.meta?.kind === "genesis").length, 1);
+    assert.equal(lines[0].meta.kind, "genesis");
+  });
+
+  it("A2.2: two processes appending 20 events each keep both chains and heads intact", async () => {
+    const distUrl = new URL("../dist/index.js", import.meta.url).href;
+    const code = `
+      const core = await import(${JSON.stringify(distUrl)});
+      core.setRoot(process.env.AGENT_RECALL_ROOT);
+      const proj = process.argv[1];
+      let dropped = 0;
+      for (let i = 0; i < 20; i++) if (!(await core.appendLedgerEvent({ type: "ledger.note", project: proj }))) dropped++;
+      process.exit(dropped ? 3 : 0);
+    `;
+    const { spawn } = await import("node:child_process");
+    const run = (proj) =>
+      new Promise((resolve) => {
+        const c = spawn(process.execPath, ["--input-type=module", "-e", code, proj], {
+          env: { ...process.env, AGENT_RECALL_ROOT: TEST_ROOT },
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        let err = "";
+        c.stderr.on("data", (d) => (err += d));
+        c.on("close", (status) => resolve({ status, err }));
+      });
+    const [a, b] = await Promise.all([run("xa"), run("xb")]);
+    assert.equal(a.status, 0, a.err);
+    assert.equal(b.status, 0, b.err);
+    const all = core.readEvents();
+    for (const p of ["xa", "xb"]) {
+      const evs = all.filter((e) => e.project === p);
+      assert.equal(evs.length, 20);
+      evs.forEach((e, i) => assert.equal(e.parent, i === 0 ? null : evs[i - 1].id));
+      assert.equal(core.readHeads()[p].count, 20);
+      assert.equal(core.readHeads()[p].head, evs.at(-1).id);
+    }
+    assert.equal(all.filter((e) => e.meta?.kind === "genesis").length, 1);
+    assert.equal(core.readEventsWithStats().badLines, 0);
   });
 
   it("A1.9: ledger is local-only (no supabase reference) and lives outside projects/", () => {
