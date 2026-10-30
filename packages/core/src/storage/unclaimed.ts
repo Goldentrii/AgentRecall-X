@@ -37,6 +37,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { ensureDir, safeIsoDateOrToday } from "./fs-utils.js";
 import { getRoot } from "../types.js";
 import {
@@ -46,11 +47,39 @@ import {
   unclaimedSessionDir,
   UNCLAIMED_PROJECT,
 } from "./paths.js";
-import { isValidProjectSlug } from "./project.js";
+import { isValidProjectSlug, watchProjectCreate } from "./project.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger, fileDigest } from "./ledger-queue.js";
 import { recordHookFailure } from "./hook-health.js";
 // Type-only import — erased at compile time, so session-card.ts's own runtime
 // import of stageUnclaimedCard from THIS module never forms an import cycle.
 import type { SessionCardResult, WriteSessionCardResult } from "./session-card.js";
+
+/**
+ * Provenance (ledger): one moved file is two events — one on the path it LEFT
+ * (hashed from the bytes read before the rename, meta.moved_to) and one on the
+ * path it ARRIVED at. Queued: claim/undo are sync (never throws; a lost event
+ * is an orphan in verify).
+ */
+function queueMoveEvents(
+  fromProject: string,
+  toProject: string,
+  from: string,
+  to: string,
+  digest: { sha256: string; bytes: number },
+  meta: Record<string, unknown>,
+): void {
+  const { sha256, bytes } = digest;
+  const rel = (p: string): string => path.relative(getRoot(), p).replaceAll("\\", "/");
+  enqueueLedger(() => appendLedgerEvent({
+    type: "project.claim", project: fromProject, target: from, sha256, bytes,
+    meta: { ...meta, moved_to: rel(to) },
+  }));
+  enqueueLedger(() => appendLedgerEvent({
+    type: "project.claim", project: toProject, target: to, sha256, bytes,
+    meta: { ...meta, moved_from: rel(from) },
+  }));
+}
 
 /** 14-day TTL before a staged session dir is moved to `_archive/`. */
 export const UNCLAIMED_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -225,6 +254,11 @@ export function archiveExpiredUnclaimed(now: number = Date.now()): number {
       }
       fs.renameSync(dir, dest);
       moved++;
+      // Provenance (ledger): staged files left their recorded paths.
+      enqueueLedger(() => appendLedgerEvent({
+        type: "ledger.note", project: UNCLAIMED_PROJECT, target: null,
+        meta: { kind: "unclaimed-archive", sid, moved_to: path.relative(getRoot(), dest).replaceAll("\\", "/") },
+      }));
     } catch (err) {
       recordHookFailure("unclaimed-ttl", err);
       // per-dir isolation — continue the sweep
@@ -280,6 +314,13 @@ export function stageUnclaimedCard(card: SessionCardResult): WriteSessionCardRes
   const tmp = dest + ".tmp." + process.pid;
   fs.writeFileSync(tmp, card.markdown, "utf-8");
   fs.renameSync(tmp, dest);
+  // Provenance (ledger): staged card = a journal write into the sentinel namespace.
+  enqueueLedger(() => appendLedgerEvent({
+    type: "journal.write", project: UNCLAIMED_PROJECT, target: dest,
+    sha256: createHash("sha256").update(Buffer.from(card.markdown, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(card.markdown, "utf-8"),
+    meta: { file: path.basename(dest), kind: "card" },
+  }));
   return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8"), slug: UNCLAIMED_PROJECT };
 }
 
@@ -358,8 +399,10 @@ export function claimUnclaimedSession(sid: string, project: string): ClaimResult
     throw new Error(`No unclaimed session "${sid}". Run \`ar claim --list\` to see stageable sessions.`);
   }
 
+  const projectCreated = watchProjectCreate(project);
   const destJournal = journalDir(project);
   ensureDir(destJournal);
+  enqueueLedger(() => projectCreated());
 
   const moved: Array<{ from: string; to: string }> = [];
   const skipped: Array<{ from: string; to: string }> = [];
@@ -369,8 +412,10 @@ export function claimUnclaimedSession(sid: string, project: string): ClaimResult
       skipped.push({ from, to });
       return;
     }
+    const digest = fileDigest(from);
     fs.renameSync(from, to);
     moved.push({ from, to });
+    queueMoveEvents(UNCLAIMED_PROJECT, project, from, to, digest, { op: "claim", sid: sanitizeSlug(sid) });
   };
 
   // fix5 review MEDIUM-3 (2026-09-11): the manifest entry used to be
@@ -478,8 +523,10 @@ export function undoClaimUnclaimedSession(sid: string): ClaimResult {
       continue;
     }
     ensureDir(path.dirname(pair.from));
+    const digest = fileDigest(pair.to);
     fs.renameSync(pair.to, pair.from);
     moved.push({ from: pair.to, to: pair.from });
+    queueMoveEvents(String(target.project ?? ""), UNCLAIMED_PROJECT, pair.to, pair.from, digest, { op: "undo-claim", sid: safeSid });
   }
 
   const result: ClaimResult = { moved, skipped, project: String(target.project ?? ""), sid: safeSid };

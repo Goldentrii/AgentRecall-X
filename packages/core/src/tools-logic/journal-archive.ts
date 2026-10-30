@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { journalDir } from "../storage/paths.js";
 import { ensureDir } from "../storage/fs-utils.js";
@@ -7,6 +8,7 @@ import { listJournalFiles, updateIndex } from "../helpers/journal-files.js";
 import { extractSection } from "../helpers/sections.js";
 import { stateFilePath } from "./journal-state.js";
 import { isRescueSourcedContent } from "../helpers/journal-filter.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 
 export interface JournalArchiveInput {
   older_than_days?: number;
@@ -36,7 +38,8 @@ export async function journalArchive(input: JournalArchiveInput): Promise<Journa
 
     if (ageDays > olderThanDays) {
       const srcPath = path.join(entry.dir, entry.file);
-      const content = fs.readFileSync(srcPath, "utf-8");
+      const raw = fs.readFileSync(srcPath);
+      const content = raw.toString("utf-8");
       // Identity-trust (CRITICAL-1 followup, 2026-08-20): `listJournalFiles`
       // does not exclude `--card--` files, so a working-memory-rescue card
       // aged past `olderThanDays` is archived (moved) here like any other
@@ -51,6 +54,17 @@ export async function journalArchive(input: JournalArchiveInput): Promise<Journa
       const destPath = path.join(archiveDir, entry.file);
       fs.copyFileSync(srcPath, destPath);
       fs.unlinkSync(srcPath);
+      // Provenance (ledger): the move has definitely succeeded. The event
+      // sits on the path that LEFT the ledgered set (journal/*.md), hashed
+      // from the bytes read before the move; meta.moved_to says where it went.
+      await appendLedgerEvent({
+        type: "journal.archive",
+        project: slug,
+        target: srcPath,
+        sha256: createHash("sha256").update(raw).digest("hex"),
+        bytes: raw.length,
+        meta: { file: entry.file, moved_to: `archive/${entry.file}` },
+      });
 
       const stateSrc = stateFilePath(slug, entry.date);
       if (fs.existsSync(stateSrc)) {

@@ -1071,3 +1071,4 @@ export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./ret
 
 // Ledger (provenance events, heads, trace)
 export * from "./ledger/index.js";
+export { enqueueLedger, flushLedgerQueue } from "./storage/ledger-queue.js";

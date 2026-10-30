@@ -22,8 +22,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { journalDir, sanitizeSlug } from "./paths.js";
-import { isValidProjectSlug } from "./project.js";
+import { isValidProjectSlug, watchProjectCreate } from "./project.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { enqueueLedger } from "./ledger-queue.js";
 import { stageUnclaimedCard } from "./unclaimed.js";
 import { ensureDir, todayISO, safeIsoDateOrToday, truncateUtf8Bytes } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
@@ -355,6 +358,7 @@ export function writeSessionCard(card: SessionCardResult): WriteSessionCardResul
 
     const slug = sanitizeSlug(card.slug); // slug is caller-controlled; harden before path.join
     const sid = sanitizeSlug(card.sid); // sid is UNTRUSTED (from hook stdin) — sanitize first
+    const projectCreated = watchProjectCreate(slug);
     const dir = journalDir(slug);
     // The ACTUAL on-disk slug directory name, AFTER journalDir's case-fold
     // EXISTING-DIR-reuse resolution — see WriteSessionCardResult.slug's doc
@@ -362,6 +366,7 @@ export function writeSessionCard(card: SessionCardResult): WriteSessionCardResul
     // callers must record wherever "where this card lives" needs persisting.
     const resolvedSlug = path.basename(path.dirname(dir));
     ensureDir(dir);
+    enqueueLedger(() => projectCreated());
 
     // fix5 review MEDIUM-2 (2026-09-11): `card.date` can arrive from hook
     // stdin (`meta.date`) — validate the shape before it enters the filename
@@ -374,6 +379,14 @@ export function writeSessionCard(card: SessionCardResult): WriteSessionCardResul
     const tmp = dest + ".tmp." + process.pid;
     fs.writeFileSync(tmp, card.markdown, "utf-8");
     fs.renameSync(tmp, dest);
+    // Provenance (ledger): the card is a journal/*.md file. Sync write path,
+    // so the append is queued (never throws; a lost event is an orphan).
+    enqueueLedger(() => appendLedgerEvent({
+      type: "journal.write", project: resolvedSlug, target: dest,
+      sha256: createHash("sha256").update(Buffer.from(card.markdown, "utf-8")).digest("hex"),
+      bytes: Buffer.byteLength(card.markdown, "utf-8"),
+      meta: { file: path.basename(dest), kind: "card" },
+    }));
 
     return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8"), slug: resolvedSlug };
   } catch (err) {

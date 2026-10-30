@@ -10,10 +10,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { journalDir } from "../storage/paths.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { updateIndex } from "../helpers/journal-files.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 
 export interface JournalMergeInput {
   /** The older file to merge INTO (target) */
@@ -97,6 +99,35 @@ export async function journalMerge(input: JournalMergeInput): Promise<MergeRecei
   const backupName = input.source_file.replace(".md", ".merged.md");
   const backupPath = path.join(dir, backupName);
   fs.renameSync(sourcePath, backupPath);
+
+  // Provenance (ledger): both writes have definitely succeeded. The target is
+  // recorded with its new bytes; the source with its pre-move bytes (it left
+  // its name; meta.moved_to names the .merged.md backup).
+  await appendLedgerEvent({
+    type: "journal.merge",
+    project: slug,
+    target: targetPath,
+    sha256: createHash("sha256").update(Buffer.from(merged, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(merged, "utf-8"),
+    meta: { file: input.target_file, merged_from: input.source_file },
+  });
+  await appendLedgerEvent({
+    type: "journal.merge",
+    project: slug,
+    target: sourcePath,
+    sha256: createHash("sha256").update(Buffer.from(sourceContent, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(sourceContent, "utf-8"),
+    meta: { file: input.source_file, moved_to: backupName, merged_into: input.target_file },
+  });
+  // The .merged.md backup still matches journal/*.md: give it its own event.
+  await appendLedgerEvent({
+    type: "journal.merge",
+    project: slug,
+    target: backupPath,
+    sha256: createHash("sha256").update(Buffer.from(sourceContent, "utf-8")).digest("hex"),
+    bytes: Buffer.byteLength(sourceContent, "utf-8"),
+    meta: { file: backupName, backup_of: input.source_file },
+  });
 
   // Update journal index
   updateIndex(slug);

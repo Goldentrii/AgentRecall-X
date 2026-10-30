@@ -1,13 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { palaceDir, projectSubPath } from "../storage/paths.js";
 import { ensurePalaceInitialized, roomExists, createRoom } from "../palace/rooms.js";
 import { fanOut } from "../palace/fan-out.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { generateSlug } from "../helpers/auto-name.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface KnowledgeWriteInput {
   project?: string;
@@ -56,18 +58,27 @@ export async function knowledgeWrite(input: KnowledgeWriteInput): Promise<Knowle
   // F2 fix (independent review, 2026-07-20): was a naive local sanitizer (no
   // lowercase, no existing-dir reuse) — routes through paths.ts now, so
   // knowledge/ always lands next to the SAME project's journal/palace.
+  const projectCreated = watchProjectCreate(slug);
   const knowledgeDir = projectSubPath(slug, "knowledge");
   ensureDir(knowledgeDir);
+  await projectCreated();
   const legacyPath = path.join(knowledgeDir, `${safeCategory}.md`);
 
+  let legacyChanged = false;
   if (!fs.existsSync(legacyPath)) {
+    legacyChanged = true;
     fs.writeFileSync(legacyPath, `# Knowledge — ${input.category}\n\n${entry}`, "utf-8");
   } else {
     const legacyContent = fs.readFileSync(legacyPath, "utf-8");
     // Dedup: skip if same title already recorded today
     if (!legacyContent.includes(`### ${input.title} (${slug}, ${date})`)) {
       fs.appendFileSync(legacyPath, entry, "utf-8");
+      legacyChanged = true;
     }
+  }
+  // Provenance (ledger): the legacy knowledge/ file write has definitely succeeded.
+  if (legacyChanged) {
+    await appendLedgerEvent({ type: "knowledge.write", project: slug, target: legacyPath, meta: { category: safeCategory, title: input.title, tier: "legacy" } });
   }
 
   let palaceResult: KnowledgeWriteResult["palace"] = null;
@@ -81,13 +92,19 @@ export async function knowledgeWrite(input: KnowledgeWriteInput): Promise<Knowle
     const topicPath = path.join(pd, "rooms", "knowledge", `${safeCategory}.md`);
     ensureDir(path.dirname(topicPath));
 
+    let topicChanged = false;
     if (!fs.existsSync(topicPath)) {
+      topicChanged = true;
       fs.writeFileSync(topicPath, `# knowledge / ${input.category}\n\n${entry}`, "utf-8");
     } else {
       const topicContent = fs.readFileSync(topicPath, "utf-8");
       if (!topicContent.includes(`### ${input.title} (${slug}, ${date})`)) {
         fs.appendFileSync(topicPath, entry, "utf-8");
+        topicChanged = true;
       }
+    }
+    if (topicChanged) {
+      await appendLedgerEvent({ type: "knowledge.write", project: slug, target: topicPath, meta: { category: safeCategory, title: input.title, room: "knowledge" } });
     }
 
     await fanOut(slug, "knowledge", safeCategory, `${input.title}: ${input.what_happened}`, [], severity === "critical" ? "high" : "medium");
@@ -97,5 +114,6 @@ export async function knowledgeWrite(input: KnowledgeWriteInput): Promise<Knowle
     // Palace integration is optional
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return { success: true, project: slug, category: safeCategory, title: input.title, severity, file: legacyPath, palace: palaceResult };
 }

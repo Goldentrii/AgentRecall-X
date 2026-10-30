@@ -11,6 +11,8 @@ import { fanOut } from "../palace/fan-out.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface ContextSynthesizeInput {
   entries?: number;
@@ -182,6 +184,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
           const fm = generateFrontmatter({ room: "architecture", topic: "decisions", created: new Date().toISOString(), source: "consolidation" });
           fs.writeFileSync(decPath, `${fm}# architecture / decisions\n${entry}`, "utf-8");
         }
+        await appendLedgerEvent({ type: "palace.consolidate", project: slug, target: decPath, meta: { room: "architecture", topic: "decisions", via_tool: "context_synthesize" } });
         await fanOut(slug, "architecture", "decisions", decisionsData, ["goals"], "high");
         consolidated++;
       }
@@ -197,6 +200,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
           const fm = generateFrontmatter({ room: "goals", topic: "evolution", created: new Date().toISOString(), source: "consolidation" });
           fs.writeFileSync(evoPath, `${fm}# goals / evolution\n${entry}`, "utf-8");
         }
+        await appendLedgerEvent({ type: "palace.consolidate", project: slug, target: evoPath, meta: { room: "goals", topic: "evolution", via_tool: "context_synthesize" } });
         consolidated++;
       }
 
@@ -211,6 +215,7 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
           const fm = generateFrontmatter({ room: "blockers", topic: "history", created: new Date().toISOString(), source: "consolidation" });
           fs.writeFileSync(blkPath, `${fm}# blockers / history\n${entry}`, "utf-8");
         }
+        await appendLedgerEvent({ type: "palace.consolidate", project: slug, target: blkPath, meta: { room: "blockers", topic: "history", via_tool: "context_synthesize" } });
         consolidated++;
       }
 
@@ -220,5 +225,6 @@ export async function contextSynthesize(input: ContextSynthesizeInput): Promise<
     }
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return { project: slug, entries_analyzed: toRead.length, palace_rooms: palaceRoomCount, consolidated, synthesis: syn };
 }

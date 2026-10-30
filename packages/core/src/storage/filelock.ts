@@ -49,6 +49,10 @@
  *   "awareness-state" → "awareness"
  *   "dream-admission" → "insights-index"
  *   "dream-admission" → "awareness-state" → "awareness"
+ *   "dream-admission" → "ledger"   (addIndexedInsight's insight.add/confirm event)
+ * "ledger" is a LEAF: appendLedgerEvent takes it last and releases it before
+ * returning, never acquiring another lock inside. Every other call site
+ * appends only after its own lock is released.
  * awareness.ts acquires "awareness" (awareness.md render) while holding
  * "awareness-state" (awareness-state.json + awareness-archive.json RMW).
  * fix10: dream-admission.ts wraps its whole nightly run (a long async

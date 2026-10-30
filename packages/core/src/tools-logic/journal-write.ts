@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { journalDir, palaceDir, sanitizeSlug, sanitizeProject } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { withLock } from "../storage/filelock.js";
@@ -16,6 +16,7 @@ import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js"
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface JournalWriteInput {
   content: string;
@@ -76,8 +77,10 @@ function classifyContent(content: string): { room: string; reason: string } | nu
 export async function journalWrite(input: JournalWriteInput): Promise<JournalWriteResult> {
   const slug = await resolveProject(input.project);
   const date = todayISO();
+  const projectCreated = watchProjectCreate(slug);
   const dir = journalDir(slug);
   ensureDir(dir);
+  await projectCreated();
 
   // W2-4 (naming-v2 spec §5 — known TOCTOU): the same-day filename DECISION
   // (journalFileName's internal readdirSync "does today's file already
@@ -156,14 +159,8 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
   if (input.palace_room && input.palace_room.trim()) {
     ensurePalaceInitialized(slug);
     if (!roomExists(slug, input.palace_room)) {
+      // createRoom records palace.room.create itself (rooms.ts, ledger queue).
       createRoom(slug, input.palace_room, input.palace_room.charAt(0).toUpperCase() + input.palace_room.slice(1), "Auto-created from journal_write", []);
-      await appendLedgerEvent({
-        type: "palace.room.create",
-        project: slug,
-        target: path.join(palaceDir(slug), "rooms", sanitizeSlug(input.palace_room), "_room.json"),
-        sha256: null, // _room.json is derived/mutable metadata: record the creation, not a hash
-        meta: { room: input.palace_room },
-      });
     }
 
     const pd = palaceDir(slug);
@@ -211,5 +208,6 @@ export async function journalWrite(input: JournalWriteInput): Promise<JournalWri
     }
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   return { success: true, date, file: filePath, palace: palaceResult, routing_hint: routingHint };
 }

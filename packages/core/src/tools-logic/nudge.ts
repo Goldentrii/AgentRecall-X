@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveProject } from "../storage/project.js";
+import { resolveProject, watchProjectCreate } from "../storage/project.js";
 import { journalDir } from "../storage/paths.js";
 import { ensureDir, todayISO } from "../storage/fs-utils.js";
 import { scrubForCloud } from "../storage/content-guard.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 
 export interface NudgeInput {
   past_statement: string;
@@ -23,8 +24,10 @@ export interface NudgeResult {
 export async function nudge(input: NudgeInput): Promise<NudgeResult> {
   const slug = await resolveProject(input.project);
   const date = todayISO();
+  const projectCreated = watchProjectCreate(slug);
   const dir = journalDir(slug);
   ensureDir(dir);
+  await projectCreated();
 
   const category = input.category ?? "goal";
   const time = new Date().toISOString().slice(11, 19);
@@ -43,6 +46,9 @@ export async function nudge(input: NudgeInput): Promise<NudgeResult> {
   } else {
     fs.appendFileSync(logPath, entry, "utf-8");
   }
+
+  // Provenance (ledger): the alignment log is a journal/*.md file.
+  await appendLedgerEvent({ type: "journal.write", project: slug, target: logPath, meta: { file: path.basename(logPath), kind: "nudge" } });
 
   return { success: true, date, category, file: logPath };
 }

@@ -15,6 +15,7 @@ import { ensureDir } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { withLock } from "../storage/filelock.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 import { tokenizeWords, NON_ASCII_RE } from "../helpers/tokenize.js";
 
 // ── Stopwords for title normalization ────────────────────────────────────────
@@ -175,7 +176,10 @@ export function writeInsightsIndex(index: InsightsIndex): void {
  * Returns null only when the cap is full of count>=2 entries (no room for count-1).
  */
 export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): Promise<IndexedInsight | null> {
-  return withLock("insights-index", () => {
+  // Provenance (ledger): which mutation the locked section performed. The
+  // event is appended AFTER the lock is released ("ledger" is a leaf lock).
+  const ledger: { type: "insight.add" | "insight.confirm" | null } = { type: null };
+  const outcome = await withLock("insights-index", () => {
   const index = readInsightsIndex();
   const now = new Date().toISOString();
 
@@ -199,6 +203,7 @@ export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "co
       ];
     }
     writeInsightsIndex(index);
+    ledger.type = "insight.confirm";
     return existing;
   }
 
@@ -238,8 +243,19 @@ export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "co
 
   index.insights.push(newInsight);
   writeInsightsIndex(index);
+  ledger.type = "insight.add";
   return newInsight;
   }); // end withLock
+
+  if (ledger.type && outcome) {
+    await appendLedgerEvent({
+      type: ledger.type,
+      project: outcome.projects?.length === 1 && outcome.projects[0] ? outcome.projects[0] : "_global",
+      target: indexPath(),
+      meta: { id: outcome.id, title: outcome.title, confirmed_count: outcome.confirmed_count },
+    });
+  }
+  return outcome;
 }
 
 /**

@@ -7,7 +7,8 @@ import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getLegacyRoot } from "../types.js";
-import { projectsRootDir, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
+import { projectsRootDir, projectSubPath, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
+import { appendLedgerEvent } from "../ledger/append.js";
 import type { ProjectInfo } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -395,12 +396,39 @@ export async function resolveProject(
     const cwd = process.cwd();
     if (isProjectRoot(cwd)) {
       const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
+      // The allowlist write is the first thing that creates projects/<slug>/
+      // for a brand-new project, so project.create is recorded here too.
+      const projectCreated = watchProjectCreate(project);
       addCwdToAllowlist(project, cwd);
+      await projectCreated();
     }
   } catch {
     // never let allowlist write break resolution
   }
   return project;
+}
+
+/**
+ * Provenance (ledger): call BEFORE a mutation that may create the project's
+ * directory, then `await` the returned function once the dir exists. Records
+ * project.create exactly when the dir was absent before and is present now.
+ * Never throws; the `_unclaimed` sentinel is not a project and is skipped.
+ */
+export function watchProjectCreate(slug: string): () => Promise<void> {
+  let existed = true;
+  try {
+    existed = isUnclaimedProject(slug) || fs.existsSync(projectSubPath(slug));
+  } catch {
+    return async () => {};
+  }
+  return async () => {
+    if (existed) return;
+    try {
+      const dir = projectSubPath(slug);
+      if (!fs.existsSync(dir)) return;
+      await appendLedgerEvent({ type: "project.create", project: slug, target: null, meta: { dir: path.basename(dir) } });
+    } catch { /* ledger is observability, never a gate */ }
+  };
 }
 
 /**

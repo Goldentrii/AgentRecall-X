@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
@@ -7,6 +8,8 @@ import { getConnectionCount } from "../palace/graph.js";
 import { computeSalience, ARCHIVE_THRESHOLD } from "../palace/salience.js";
 import { updatePalaceIndex } from "../palace/index-manager.js";
 import { appendToLog } from "../palace/log.js";
+import { appendLedgerEvent } from "../ledger/append.js";
+import { flushLedgerQueue } from "../storage/ledger-queue.js";
 
 export interface LintIssue {
   type: "stale" | "orphan" | "low_salience" | "empty" | "missing_readme";
@@ -72,11 +75,29 @@ export async function palaceLint(input: PalaceLintInput): Promise<PalaceLintResu
         const archiveDir = path.join(pd, "archive", room.slug);
         fs.mkdirSync(archiveDir, { recursive: true });
         const files = fs.readdirSync(roomPath);
+        // Hash the .md files BEFORE the room dir is removed (ledger: *.delete-style).
+        const hashed = files.filter((f) => f.endsWith(".md")).map((f) => {
+          const raw = fs.readFileSync(path.join(roomPath, f));
+          return { file: f, raw, sha256: createHash("sha256").update(raw).digest("hex") };
+        });
         for (const file of files) {
           fs.copyFileSync(path.join(roomPath, file), path.join(archiveDir, file));
         }
         fs.rmSync(roomPath, { recursive: true });
         fixed++;
+        // Provenance (ledger): each .md left rooms/<room>/ and arrived in archive/<room>/.
+        for (const h of hashed) {
+          await appendLedgerEvent({
+            type: "palace.consolidate", project: slug, target: path.join(roomPath, h.file),
+            sha256: h.sha256, bytes: h.raw.length,
+            meta: { room: room.slug, kind: "room-archive", moved_to: `archive/${room.slug}/${h.file}` },
+          });
+          await appendLedgerEvent({
+            type: "palace.consolidate", project: slug, target: path.join(archiveDir, h.file),
+            sha256: h.sha256, bytes: h.raw.length,
+            meta: { room: room.slug, kind: "room-archive", moved_from: `rooms/${room.slug}/${h.file}` },
+          });
+        }
       }
     }
 
@@ -113,6 +134,7 @@ export async function palaceLint(input: PalaceLintInput): Promise<PalaceLintResu
     } catch { /* ignore */ }
   }
 
+  await flushLedgerQueue(); // room/identity scaffold events queued by sync helpers
   appendToLog(slug, "palace_lint", { issues_found: issues.length, fixed, rooms_checked: rooms.length });
 
   return { project: slug, issues, total_issues: issues.length, fixed, rooms_checked: rooms.length };
