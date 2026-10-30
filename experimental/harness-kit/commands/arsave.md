@@ -186,6 +186,14 @@ This single call:
 - Consolidates decisions/goals/blockers into palace rooms
 - Archives demoted insights (not deleted — moved to awareness-archive.json)
 
+**If `session_end` fails or times out (MCP unavailable)**, write the journal entry directly to `projects/<slug>/journal/<file>.md` under the store root, then — MANDATORY — record the degraded save in the ledger:
+
+```bash
+ar ledger append --type ledger.note --via file-fallback --project <slug> --target projects/<slug>/journal/<file>.md --note "MCP unavailable; journal written directly"
+```
+
+This makes the degraded save visible in `ar trace <slug>` and lets `ar verify` explain the orphan.
+
 ### Step 4: Verify promotion
 
 After `session_end`, verify that content actually made it to the right places:
@@ -200,6 +208,14 @@ remember({
   context: "architecture decision"  // hints the router
 })
 ```
+
+### Step 4b: Verify the ledger (after EVERY save path — MCP success or fallback)
+
+```bash
+ar verify <slug>
+```
+
+Render the result as one `Verify` row on the save card (Step 5). If findings > 0, list them under the card, one line each, copied from the command's output. Do not try to fix them in /arsave.
 
 ### Step 5: Output the save card
 
@@ -225,7 +241,16 @@ Render the following card. Replace all `<placeholders>` with real values from th
 
   Insights      <store-root>/insights-index.json
                 └─ cross-project index updated
+
+  Verify        clean | <n> findings  (ar verify <slug>)
 ──────────────────────────────────────────────────────────────
+```
+
+If `ar verify <slug>` reported findings, list them under the card, one line each:
+
+```
+⚠  Verify: <n> findings
+   <finding line from ar verify output>
 ```
 
 Omit the `Intention` line entirely if intention was already captured in a prior session (not written this save).

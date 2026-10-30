@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { VERSION, getRoot, getLegacyRoot } from "agent-recall-core";
+import { VERSION, getRoot, getLegacyRoot, setLedgerContext } from "agent-recall-core";
 import { server } from "./server.js";
 import { installAmbientCapture } from "./lib/ambient-capture.js";
 import { installLifecycleExitHandlers } from "./lib/lifecycle-exit.js";
@@ -12,6 +12,7 @@ import { register as registerRemember } from "./tools/remember.js";
 import { register as registerRecall } from "./tools/recall.js";
 import { register as registerSessionEnd } from "./tools/session-end.js";
 import { register as registerCheck } from "./tools/check.js";
+import { register as registerTrace } from "./tools/trace.js";
 
 // ── Pre-action proactive matcher (--full) ────────────────────────────────
 import { register as registerCheckAction } from "./tools/check-action.js";
@@ -172,10 +173,13 @@ installAmbientCapture(server);
 // Automaticity Law: only memory that arrives unasked gets used.
 // Push channels (session_start/end, hooks) drive behavior; pull channels don't.
 // Every extra tool in the default surface burns tool-definition tokens every session.
+// ledger provenance: every mutation this server performs is attributed to via=mcp actor=agent (spec D10)
+setLedgerContext({ via: "mcp", actor: "agent" });
 registerSessionStart(server);
 registerSessionEnd(server);
 registerRemember(server);
 registerRecall(server);
+registerTrace(server);
 registerCheck(server);
 
 // ── Extended tools (--full mode only) ────────────────────────────────────────

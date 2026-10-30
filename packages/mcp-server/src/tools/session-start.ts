@@ -8,7 +8,9 @@ import {
   continuityHeaderText,
   type SessionStartResult,
   type SessionStartLiteResult,
+  flushLedgerQueue,
 } from "agent-recall-core";
+import { lifecycleLine } from "../lib/lifecycle-line.js";
 
 /** Truncate to nearest word boundary */
 function trunc(s: string, n: number): string {
@@ -283,7 +285,7 @@ export function formatVerbose(result: SessionStartResult): string {
  * spawning the MCP server subprocess — mirrors the formatTerse/formatVerbose
  * extraction convention already used in this file.
  */
-export function formatLite(lite: SessionStartLiteResult): string {
+export function formatLite(lite: SessionStartLiteResult, lifecycle?: string): string {
   // P1 fence (TOW2-388): the header line is pure structural metadata (slug,
   // counts, dates — validated project-slug shape, not free-form retrieved
   // text) and stays OUTSIDE the fence at its existing position. `hint` is
@@ -300,7 +302,8 @@ export function formatLite(lite: SessionStartLiteResult): string {
     lite.total_skills > 0 ? `🛠  ${lite.total_skills} skills stored — use ar skill recall <intent> via CLI before non-trivial tasks.` : "",
   ].filter(Boolean).join("\n");
 
-  return [header, fenceMemory(body), "", lite.hint].filter(Boolean).join("\n");
+  // lifecycle is ledger metadata (counts/dates/types), so it sits outside the fence, before the fixed hint
+  return [header, fenceMemory(body), lifecycle, "", lite.hint].filter(Boolean).join("\n");
 }
 
 export function register(server: McpServer): void {
@@ -316,11 +319,13 @@ export function register(server: McpServer): void {
   }, async ({ project, context, verbose, mode }) => {
     if (mode === "lite") {
       const lite = await sessionStartLite({ project });
-      const text = formatLite(lite);
+      await flushLedgerQueue().catch(() => undefined);
+      const text = formatLite(lite, lifecycleLine(lite.project));
       return { content: [{ type: "text" as const, text }] };
     }
     const result = await sessionStart({ project, context });
-    const text = verbose ? formatVerbose(result) : formatTerse(result);
+    await flushLedgerQueue().catch(() => undefined);
+    const text = `${verbose ? formatVerbose(result) : formatTerse(result)}\n${lifecycleLine(result.project)}`;
     return { content: [{ type: "text" as const, text }] };
   });
 }
