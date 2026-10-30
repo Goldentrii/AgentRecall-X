@@ -1,4 +1,4 @@
-# Phase P1 — ledger core, verify/trace/backfill, class-wide wiring, MCP/commands (DRAFT — numbers filled at phase end)
+# Phase P1 — ledger core, verify/trace/backfill, class-wide wiring, MCP/commands (FINAL — P1 VERIFIED 2026-10-30 16:03)
 
 Dispatch/cost table: `python scripts/phase-report.py --session 7818e012-5426-49a3-8d01-96886f3dce68` (Agent Craft hooks recorded every dispatch).
 
@@ -11,9 +11,10 @@ Dispatch/cost table: `python scripts/phase-report.py --session 7818e012-5426-49a
 | W4 MCP + commands | sonnet-5-5 | e8f12e4 | mcp 7, commands 5 | green; found journal_write absent from default MCP surface, no fallback branch existed in arsave; fence-manifest entries added by orchestrator (5163418) |
 | R code-reviewer | sonnet-5-5 | review-R.md | — | 0 CRIT / 0 HIGH / 4 MED / 11 LOW → W5 fix round (M1 M2 M4 L3 L5 L6 L7); M3 L1 L2 L4 L8–L11 deferred |
 | W5 fix round | sonnet-5-5 | d247fbc | mcp +1, verify +1, cli +2 | M1 (trace read-only, RED-tested), M2 (30 exit sites flush first, RED-tested), M4 (bad-line = warn), L3 L5 L6 L7; M3 L1 L2 L4 L8–L11 deferred with reasons |
-| V verifier | sonnet-5-5 | | | → verify.md (SW-10) |
+| V verifier | sonnet-5-5 | verify.md | — | **P1 VERIFIED**: SW-1..9 = 6 PASS + 3 PASS-WITH-NOTE, 0 FAIL; own smoke on a store copy: 491 orphans → backfill 491 → clean → 2nd backfill 0 |
 
-**Suites @ 5163418 (pre-W5):** core 2128/0 · cli 306/0 · sdk 41/0 · mcp-server 86/0 = 2561 tests, 0 fail (baseline 2473).
+**Suites @ 283e9cd (final, verifier's own runs):** core 2128 (1 load-flake, 19/19 alone) · cli 308/0 · mcp-server 89 (86 pass, 3 skipped) · sdk 41/0 · lint 0 — baseline at ce4feea was 2473 tests.
+**Cost (measured, phase-report.py from the session transcript):** 9 Sonnet dispatches, 427 tool calls, 1.66 M output tokens, 333 min agent wall-time vs 386 min elapsed (parallelism ≈ 0.86 — W1/W2 ran long, mostly sequential by dependency); orchestrator 222 tool calls, 0.9 M output tokens. Full table: cost-table.md.
 **Did:** spec with 14 decisions + normative schema; W1–W3 merged on `feat/ledger`; preview on a copy of the real store: 518 files → backfill 20 s → `verify: clean`, 42 projects with born/last dates, `orbitcard-clone` trace shows the 7 template files that this morning's `recall` bug created.
 **Decided:** hashes not content (D6); reads not ledgered (D5); local-only (D7); append never throws (D8); semantic events via per-site wiring + enforcement test because no fs choke point exists (W3).
 **Deviated:** W4 sequenced after W2 (needs `verifyLedger`); W1 dispatched before validator ran (cosmetic loop-shape flag); spec §8 amended after W3 (corrections paths, exclusions, move convention, full-ULID trace line); SW-3 "exactly three events" impossible once the class is closed → chain properties asserted instead.
