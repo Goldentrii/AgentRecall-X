@@ -205,7 +205,7 @@ DIAGNOSTICS:
       Provenance timeline of one project from ledger/events.jsonl (oldest first):
       <ts> <type> <via> <target> <id>. Read-only.
   ar verify [project] [--json]
-      READ-ONLY ledger audit: orphan / drift / missing / chain / unknown-via findings. NEVER repairs.
+      READ-ONLY ledger audit: orphan / drift / missing / chain / unknown-via errors and bad-line warnings. NEVER repairs.
       Exit 0 when clean, 2 when there are findings.
   ar ledger tail [-n 20] [--project <slug>]   Last n ledger events
   ar ledger backfill [--dry-run] [--project <slug>]   Record a ledger.backfill event for files that have none
@@ -254,6 +254,17 @@ GLOBAL FLAGS:
   --project <slug>  Project override
   --help, -h        Show help
   --version, -v     Show version`);
+}
+
+/**
+ * Sync mutators only enqueue their ledger events; a bare process.exit would
+ * drop them (orphan finding in `ar verify`). Bounded so a wedged ledger lock
+ * can never hold the process open. Never rejects; never resolves (exits).
+ */
+function exitAfterFlush(code: number): Promise<never> {
+  const flush = import("agent-recall-core").then((c) => c.flushLedgerQueue()).catch(() => undefined);
+  const cap = new Promise<void>((resolve) => setTimeout(resolve, 1500));
+  return Promise.race([flush, cap]).finally(() => process.exit(code)) as Promise<never>;
 }
 
 async function main(): Promise<void> {
@@ -1610,7 +1621,7 @@ async function main(): Promise<void> {
       try {
         if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
           // Already ran this session — silent exit
-          process.exit(0);
+          await exitAfterFlush(0);
         }
         fs.writeFileSync(lockFile, lockKey, "utf-8");
       } catch { /* non-blocking */ }
@@ -1886,7 +1897,7 @@ async function main(): Promise<void> {
 
       try {
         if (fs.existsSync(endLockFile) && fs.readFileSync(endLockFile, "utf-8").trim() === endLockKey) {
-          process.exit(0);
+          await exitAfterFlush(0);
         }
         fs.writeFileSync(endLockFile, endLockKey, "utf-8");
       } catch { /* non-blocking */ }
@@ -2116,10 +2127,10 @@ async function main(): Promise<void> {
         // Guards now run AFTER the archive block: the lossless dump already
         // happened, so skipping the summary here loses nothing.
         if (!summary && existingToday) {
-          process.exit(0); // /arsave already ran today — no summary needed
+          await exitAfterFlush(0); // /arsave already ran today — no summary needed
         }
         if (!summary) {
-          process.exit(0); // no captures, no journal — verbatim archive is enough
+          await exitAfterFlush(0); // no captures, no journal — verbatim archive is enough
         }
 
         // Defer palace consolidation to the async queue (Decision #3).
@@ -2252,7 +2263,7 @@ async function main(): Promise<void> {
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
         const raw = Buffer.concat(chunks).toString("utf-8").trim();
-        if (!raw) process.exit(0);
+        if (!raw) await exitAfterFlush(0);
 
         let prompt = "";
         let lastGoal = "";
@@ -2273,7 +2284,7 @@ async function main(): Promise<void> {
         // Non-semantic harness artifact early-exit (FIX 1): task-notifications and
         // agent-message wrappers must never be scanned for corrections.
         // Shared HARNESS_PREFIXES regex is defined in hook-ambient above.
-        if (/^(<task-notification>|<agent-message|<local-command-caveat>|<command-name>|<system-reminder>)/i.test(prompt.trimStart())) process.exit(0);
+        if (/^(<task-notification>|<agent-message|<local-command-caveat>|<command-name>|<system-reminder>)/i.test(prompt.trimStart())) await exitAfterFlush(0);
 
         // Two-gate capture: correction signal + durability signal (and the >3
         // char floor) are all enforced inside detectCorrection().
@@ -2282,7 +2293,7 @@ async function main(): Promise<void> {
           // Per-message dedup: skip if exact same prompt was already processed
           const promptHash = quickHash(prompt);
           if (seenEntries.some(e => e.hash === promptHash)) {
-            process.exit(0);
+            await exitAfterFlush(0);
           }
 
           // Semantic dedup: skip if >60% keyword overlap with a recent correction
@@ -2294,7 +2305,7 @@ async function main(): Promise<void> {
               const overlapRatio = overlapCount / Math.max(promptKeywords.length, 1);
               if (overlapRatio > 0.6) {
                 // Same correction, different wording — skip
-                process.exit(0);
+                await exitAfterFlush(0);
               }
             }
           }
@@ -2357,7 +2368,7 @@ async function main(): Promise<void> {
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-correction] ${String(e)}\n`);
       }
-      process.exit(0);
+      await exitAfterFlush(0);
     }
 
     case "hook-ambient": {
@@ -2390,7 +2401,7 @@ async function main(): Promise<void> {
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
         const raw = Buffer.concat(chunks).toString("utf-8").trim();
-        if (!raw) process.exit(0);
+        if (!raw) await exitAfterFlush(0);
 
         let prompt = "";
         let sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "default";
@@ -2441,7 +2452,7 @@ async function main(): Promise<void> {
         // Non-semantic harness artifact early-exit (FIX 1): task-notifications,
         // agent-message wrappers, system-reminders, etc. carry no human intent.
         // Exit before ANY recall/injection work — no output, no store writes.
-        if (isHarnessArtifact(prompt)) process.exit(0);
+        if (isHarnessArtifact(prompt)) await exitAfterFlush(0);
 
         // ---- Working-memory capture (v3.4.42 working-memory wave) ----
         // AFTER stdin parse and the harness-artifact exit above (so a
@@ -2531,9 +2542,9 @@ async function main(): Promise<void> {
         // --- END TOPIC DRIFT DETECTION ---
 
         // Skip: too short, slash commands, short acks
-        if (prompt.length < 25) process.exit(0);
-        if (prompt.startsWith("/")) process.exit(0);
-        if (SHORT_ACKS.test(prompt.trim())) process.exit(0);
+        if (prompt.length < 25) await exitAfterFlush(0);
+        if (prompt.startsWith("/")) await exitAfterFlush(0);
+        if (SHORT_ACKS.test(prompt.trim())) await exitAfterFlush(0);
 
         // --- ROLLING TOPIC PROFILE (background-informed recall) ---
         // Runs for every genuine prompt that reaches this point — deliberately
@@ -2603,7 +2614,7 @@ async function main(): Promise<void> {
 
         const isHighValue = HIGH_VALUE_PATTERNS.test(prompt);
         const shouldFire = counter === 1 || counter % 5 === 0 || isHighValue;
-        if (!shouldFire) process.exit(0);
+        if (!shouldFire) await exitAfterFlush(0);
 
         // --- PRIOR PASS (Wave 4 bridge): push a correction-derived prior EARLY,
         // ABOVE the recalled fact list. This is the highest-value signal — emit it
@@ -2627,7 +2638,7 @@ async function main(): Promise<void> {
         // gate). When the profile is empty (no prior turns / stale / fresh
         // session), queryKeywords === combinedCurrentKeywords and behavior is
         // unchanged from before this feature.
-        if (queryKeywords.length === 0) process.exit(0);
+        if (queryKeywords.length === 0) await exitAfterFlush(0);
 
         // fix4b (2026-09-12): freshnessBias opts THIS surface into the legacy
         // multiplicative hot-window boost. The ambient injection's own
@@ -2711,7 +2722,7 @@ async function main(): Promise<void> {
           if (profHits >= 3 && curHits === 0) return true;
           return false;
         });
-        if (allItems.length === 0) process.exit(0);
+        if (allItems.length === 0) await exitAfterFlush(0);
 
         // Dedup window: filter out items already surfaced in recent fires
         const historySet = new Set(surfacedHistory);
@@ -2721,7 +2732,7 @@ async function main(): Promise<void> {
         const items = allItems
           .filter(item => !historySet.has(item.id))
           .slice(0, MAX_INJECT);
-        if (items.length === 0) process.exit(0);
+        if (items.length === 0) await exitAfterFlush(0);
 
         let out = "[AgentRecall] Relevant past context:\n";
         for (const item of items) {
@@ -2768,7 +2779,7 @@ async function main(): Promise<void> {
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-ambient] ${String(e)}\n`);
       }
-      process.exit(0);
+      await exitAfterFlush(0);
     }
 
     case "hook-pretool": {
@@ -2787,14 +2798,14 @@ async function main(): Promise<void> {
         const ptRaw = Buffer.concat(ptChunks).toString("utf-8").trim();
 
         // Empty stdin → silent exit (e.g. echo '{}' test case)
-        if (!ptRaw) process.exit(0);
+        if (!ptRaw) await exitAfterFlush(0);
 
         // Defensive JSON parse — malformed input exits silently
         let ptInput: unknown;
         try {
           ptInput = JSON.parse(ptRaw);
         } catch {
-          process.exit(0);
+          await exitAfterFlush(0);
         }
 
         // Extract command string defensively — may live in various shapes:
@@ -2825,7 +2836,7 @@ async function main(): Promise<void> {
 
         // If no command string could be extracted, or it doesn't match, exit silently
         if (!commandStr || !PRETOOL_DANGER_RE.test(commandStr)) {
-          process.exit(0);
+          await exitAfterFlush(0);
         }
 
         // Matched — run checkAction() to find relevant rules/corrections
@@ -2886,7 +2897,7 @@ async function main(): Promise<void> {
       } catch {
         // Any outer error → silent exit
       }
-      process.exit(0);
+      await exitAfterFlush(0);
     }
 
     case "hook-save": {
@@ -2901,7 +2912,7 @@ async function main(): Promise<void> {
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
         const raw = Buffer.concat(chunks).toString("utf-8").trim();
-        if (!raw) process.exit(0);
+        if (!raw) await exitAfterFlush(0);
 
         let prompt = "";
         try {
@@ -2911,14 +2922,14 @@ async function main(): Promise<void> {
           prompt = raw;
         }
 
-        if (!prompt || prompt.length < 4) process.exit(0);
+        if (!prompt || prompt.length < 4) await exitAfterFlush(0);
 
         // Non-semantic harness artifact early-exit (FIX 1): task-notifications
         // must never trigger a save-intent detection or inject any output.
-        if (/^(<task-notification>|<agent-message|<local-command-caveat>|<command-name>|<system-reminder>)/i.test(prompt.trimStart())) process.exit(0);
+        if (/^(<task-notification>|<agent-message|<local-command-caveat>|<command-name>|<system-reminder>)/i.test(prompt.trimStart())) await exitAfterFlush(0);
 
         const isSaveIntent = core.saveTriggerKind(prompt) === "explicit-save";
-        if (!isSaveIntent) process.exit(0);
+        if (!isSaveIntent) await exitAfterFlush(0);
 
         // Inject signal — Claude reads this and calls session_end()
         process.stdout.write(
@@ -2927,7 +2938,7 @@ async function main(): Promise<void> {
       } catch (e) {
         process.stderr.write(`[AgentRecall hook-save] ${String(e)}\n`);
       }
-      process.exit(0);
+      await exitAfterFlush(0);
     }
 
     case "correct": {
@@ -3194,7 +3205,7 @@ async function main(): Promise<void> {
         }
       } catch (e) {
         output(`ar claim: ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
+        await exitAfterFlush(1);
       }
       break;
     }
@@ -4529,22 +4540,23 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
       break;
     }
     case "verify": {
-      // READ-ONLY: never repairs. Exit 2 when there are findings so scripts can gate on it.
+      // READ-ONLY: never repairs. Exit 2 when there are error findings so scripts can gate on it (warn findings, e.g. bad-line, do not fail).
       const slug = rest[0] && !rest[0].startsWith("-") ? rest[0] : project;
       const result = core.verifyLedger(slug);
       if (hasFlag("--json", rest)) {
         output(result);
       } else {
-        const lines = result.findings.map((f) => `${f.kind}  ${f.project}  ${f.target ?? "-"}  ${f.detail}`);
+        const lines = result.findings.map((f) => `${f.kind}${f.severity === "warn" ? " (warn)" : ""}  ${f.project}  ${f.target ?? "-"}  ${f.detail}`);
         const { files, events } = result.scanned;
+        const warnSuffix = result.warnings > 0 ? ` · ${result.warnings} warning${result.warnings === 1 ? "" : "s"}` : "";
         lines.push(
-          result.findings.length === 0
-            ? `verify: clean (files ${files}, events ${events})`
-            : `verify: ${result.findings.length} findings (files ${files}, events ${events})`,
+          result.errors === 0
+            ? `verify: clean (files ${files}, events ${events})${warnSuffix}`
+            : `verify: ${result.errors} findings (files ${files}, events ${events})${warnSuffix}`,
         );
         output(lines.join("\n"));
       }
-      if (result.findings.length > 0) process.exitCode = 2;
+      if (result.errors > 0) process.exitCode = 2;
       break;
     }
     case "ledger": {
@@ -4626,5 +4638,5 @@ agent_instruction: run "rebuild" after \`ar outcomes audit\` has produced
 main().catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`Error: ${message}\n`);
-  process.exit(1);
+  void exitAfterFlush(1);
 });

@@ -30,12 +30,13 @@ after(() => {
   for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-async function withClient(parent, fn) {
+async function withClient(parent, fn, opts = {}) {
   const home = path.join(parent.dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const transport = new StdioClientTransport({
     command: "node",
     args: [ENTRY],
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
     env: { AGENT_RECALL_ROOT: parent.root, AGENT_CRAFT_HOME: path.join(parent.dir, "craft"), HOME: home, USERPROFILE: home },
   });
   const client = new Client({ name: "ledger-trace-test-client", version: "1.0.0" }, { capabilities: {} });
@@ -159,5 +160,48 @@ describe("SW-7 trace tool + lifecycle line", () => {
     fs.writeFileSync(path.join(root, "ledger", "heads.json"), "{not json");
     fs.writeFileSync(path.join(root, "ledger", "events.jsonl"), "garbage line\n");
     assert.match(lifecycleLine("some-project", root), /^lifecycle: /);
+  });
+
+  it("M1: trace {} from a non-project cwd creates nothing under the store (no _unclaimed staging)", async () => {
+    const parent = freshParent();
+    const cwdParent = fs.mkdtempSync(path.join(os.tmpdir(), "ar-trace-cwd-"));
+    tmpDirs.push(cwdParent);
+    // "src" is a blocked basename, so auto-detect fails here (the case that used to stage _unclaimed/)
+    const cwd = path.join(cwdParent, "src");
+    fs.mkdirSync(cwd);
+    await withClient(parent, async (client) => {
+      const warm = await client.callTool({ name: "trace", arguments: { project: "zz-probe" } });
+      assert.ok(!warm.isError, textOf(warm));
+      const before = walk(parent.root).sort();
+      const r = await client.callTool({ name: "trace", arguments: {} });
+      assert.match(textOf(r), /could not detect a project from cwd/);
+      assert.ok(!before.includes("_unclaimed"), before.join(","));
+      assert.deepEqual(walk(parent.root).sort(), before, "trace {} must not write under the store");
+    }, { cwd });
+  });
+
+  it("L5: trace rejects a project outside the slug character class at the schema", async () => {
+    await withClient(freshParent(), async (client) => {
+      let rejected = false;
+      try {
+        const r = await client.callTool({ name: "trace", arguments: { project: "../x" } });
+        rejected = r.isError === true;
+      } catch {
+        rejected = true;
+      }
+      assert.ok(rejected, "project ../x must be rejected");
+    });
+  });
+
+  it("M4: a torn events.jsonl line renders the lifecycle line as clean (1 warn)", async () => {
+    const { lifecycleLine } = await import(LIFECYCLE_MODULE);
+    const parent = freshParent();
+    await withClient(parent, async (client) => {
+      const w = await client.callTool({ name: "remember", arguments: { project: "trace-probe", content: "hello ledger" } });
+      assert.ok(!w.isError, textOf(w));
+      await client.callTool({ name: "trace", arguments: { project: "trace-probe" } });
+    });
+    fs.appendFileSync(path.join(parent.root, "ledger", "events.jsonl"), "{torn\n");
+    assert.match(lifecycleLine("trace-probe", parent.root), /verify: clean \(1 warn\)$/);
   });
 });

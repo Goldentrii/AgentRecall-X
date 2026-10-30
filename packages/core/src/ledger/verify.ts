@@ -12,10 +12,14 @@ import { readEventsWithStats } from "./read.js";
 import type { LedgerActor, LedgerEvent, LedgerVia } from "./types.js";
 import { walkLedgeredFiles } from "./walk.js";
 
-export type LedgerFindingKind = "orphan" | "drift" | "missing" | "chain" | "unknown-via";
+export type LedgerFindingKind = "orphan" | "drift" | "missing" | "chain" | "unknown-via" | "bad-line";
+
+/** bad-line (a torn/unparsable events.jsonl line, permanent in an append-only file) is a warn; everything else is an error. */
+export type LedgerFindingSeverity = "error" | "warn";
 
 export interface LedgerFinding {
   kind: LedgerFindingKind;
+  severity: LedgerFindingSeverity;
   project: string;
   target: string | null;
   detail: string;
@@ -24,6 +28,8 @@ export interface LedgerFinding {
 
 export interface LedgerVerifyResult {
   findings: LedgerFinding[];
+  errors: number;
+  warnings: number;
   scanned: { files: number; events: number; projects: number; badLines: number };
 }
 
@@ -45,7 +51,8 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
 
   if (badLines > 0) {
     findings.push({
-      kind: "unknown-via",
+      kind: "bad-line",
+      severity: "warn",
       project: project ?? "_global",
       target: null,
       detail: `${badLines} unparsable line(s) in ledger/events.jsonl`,
@@ -64,7 +71,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
     for (const ev of list) {
       if (ev.parent !== expected) {
         findings.push({
-          kind: "chain",
+          kind: "chain", severity: "error",
           project: p,
           target: ev.target,
           detail: `parent ${ev.parent} != expected ${expected}`,
@@ -84,14 +91,14 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
     const have = stored[p];
     if (want && (have?.head !== want.head || have?.count !== want.count)) {
       findings.push({
-        kind: "chain",
+        kind: "chain", severity: "error",
         project: p,
         target: null,
         detail: `heads.json ${have ? `${have.head} (count ${have.count})` : "has no entry"} != last event ${want.head} (count ${want.count})`,
         eventId: want.head,
       });
     } else if (!want && have) {
-      findings.push({ kind: "chain", project: p, target: null, detail: "heads.json names a project with no events" });
+      findings.push({ kind: "chain", severity: "error", project: p, target: null, detail: "heads.json names a project with no events" });
     }
   }
 
@@ -105,6 +112,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
     if (bad.length > 0) {
       findings.push({
         kind: "unknown-via",
+        severity: "error",
         project: ev.project,
         target: ev.target ?? null,
         detail: `schema violation: ${bad.join(", ")}`,
@@ -128,7 +136,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
     const abs = path.join(root, target);
     if (!fs.existsSync(abs)) {
       findings.push({
-        kind: "missing",
+        kind: "missing", severity: "error",
         project: ev.project,
         target,
         detail: "ledger says file exists, file is gone",
@@ -144,7 +152,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
     }
     if (actual !== ev.sha256) {
       findings.push({
-        kind: "drift",
+        kind: "drift", severity: "error",
         project: ev.project,
         target,
         detail: actual === null ? "file unreadable, cannot match ledger hash" : "file hash != latest ledger hash",
@@ -156,7 +164,7 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
   const files = walkLedgeredFiles(root, project);
   for (const f of files) {
     if (!latest.has(f.target)) {
-      findings.push({ kind: "orphan", project: f.project, target: f.target, detail: "ledgered-class file has no ledger event" });
+      findings.push({ kind: "orphan", severity: "error", project: f.project, target: f.target, detail: "ledgered-class file has no ledger event" });
     }
   }
 
@@ -164,5 +172,6 @@ export function verifyLedger(project?: string, root: string = getRoot()): Ledger
   findings.sort((a, b) => cmp(a.project, b.project) || cmp(a.kind, b.kind) || cmp(a.target, b.target));
 
   const projects = new Set<string>([...byProject.keys(), ...files.map((f) => f.project)]);
-  return { findings, scanned: { files: files.length, events: events.length, projects: projects.size, badLines } };
+  const warnings = findings.filter((f) => f.severity === "warn").length;
+  return { findings, errors: findings.length - warnings, warnings, scanned: { files: files.length, events: events.length, projects: projects.size, badLines } };
 }
