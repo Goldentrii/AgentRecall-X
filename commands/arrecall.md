@@ -4,6 +4,8 @@ description: "AgentRecall on-demand recall — surface past fixes, decisions, an
 
 # /arrecall — Contextual Mid-Session Recall
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 On-demand search against AgentRecall's memory store. Use anytime during a session — not just at start or end.
 
 ## Two Modes

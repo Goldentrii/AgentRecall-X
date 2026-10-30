@@ -4,7 +4,9 @@ description: "Periodic recurrence reflection loop — review error taxonomy, con
 
 # /arreflect — Recurrence Reflection Loop
 
-Run every K sessions (K=10 default, tracked in `~/.agent-recall/reflection-state.json`).
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
+Run every K sessions (K=10 default, tracked in `$AGENT_RECALL_ROOT/reflection-state.json`).
 Purpose: eliminate phantom gradient steps by re-abstracting rules that violations keep slipping through.
 
 ## When to Run
@@ -39,9 +41,9 @@ FOR each class in taxonomy:
       move member to unclassified[]
 ```
 
-Edit `~/.agent-recall/taxonomy.json` directly. Validate after each batch:
+Edit `$AGENT_RECALL_ROOT/taxonomy.json` directly. Validate after each batch:
 ```
-python3 -m json.tool ~/.agent-recall/taxonomy.json > /dev/null
+python3 -m json.tool "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/taxonomy.json > /dev/null
 ```
 
 ### Step 3 — Cluster unclassified
@@ -90,7 +92,7 @@ FOR each class WHERE count(members, phantom=true) >= 1:
 
 ```
 // After all edits:
-python3 -m json.tool ~/.agent-recall/taxonomy.json > /dev/null
+python3 -m json.tool "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/taxonomy.json > /dev/null
 IF exit_code != 0:
   FIX JSON errors before continuing
 

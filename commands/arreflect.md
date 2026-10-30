@@ -4,6 +4,8 @@ description: "AgentRecall consolidation & reflection — periodic triage of recu
 
 # /arreflect — Consolidation & Reflection Loop
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 Run periodically (every 5-10 sessions, or whenever things feel like they're repeating). Purpose: catch corrections that keep recurring despite already being "known," and turn them into durable rules — with the human approving every rule change.
 
 ## When to Run

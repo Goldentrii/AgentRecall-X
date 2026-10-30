@@ -4,6 +4,8 @@ description: "AgentRecall save — current project (journal + palace + awareness
 
 # /arsave — AgentRecall Save
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 One command to save everything. No long prompts needed.
 
 ## Argument Routing
@@ -47,8 +49,8 @@ Use the provided slug directly. Skip all detection. Proceed to Step 1 with `<slu
 **Case B — `?` passed** (e.g. `/arsave ?`)
 Run the mini project list:
 ```bash
-for slug in $(ls ~/.agent-recall/projects/); do
-  latest=$(ls ~/.agent-recall/projects/$slug/journal/*.md 2>/dev/null | grep -v '\-log\.' | grep -v 'index\.md' | sort -r | head -1)
+for slug in $(ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/); do
+  latest=$(ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/$slug/journal/*.md 2>/dev/null | grep -v '\-log\.' | grep -v 'index\.md' | sort -r | head -1)
   [ -n "$latest" ] && echo "$slug"
 done
 ```
@@ -69,7 +71,7 @@ recall({ project: "<slug>", query: ... })
 
 **Start with machine-captured facts, not memory.** At long context windows your memory of early decisions is compressed and unreliable. Ground truth comes first:
 
-1. **Read today's capture log** — `~/.agent-recall/projects/<slug>/journal/YYYY-MM-DD-log.md` (if it exists). This file contains incremental Q&A captures logged during the session. Pull out the key facts from it.
+1. **Read today's capture log** — `$AGENT_RECALL_ROOT/projects/<slug>/journal/YYYY-MM-DD-log.md` (if it exists). This file contains incremental Q&A captures logged during the session. Pull out the key facts from it.
 
 2. **Check git diff** — if in a git repo, run `git diff --stat HEAD` or `git log --oneline -5` to see what files actually changed.
 
@@ -94,7 +96,7 @@ Do NOT compress a 5-phase session into 2 sentences. That produces a journal entr
 Check whether this project already has an intention recorded:
 
 ```bash
-grep -l "Intention:" ~/.agent-recall/projects/<slug>/palace/identity.md 2>/dev/null
+grep -l "Intention:" "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md 2>/dev/null
 ```
 
 **If NOT found** (this is the first save for this project, or intention was never captured):
@@ -104,9 +106,9 @@ Look at the earliest user messages in this conversation — where the user expla
 Write it to the identity file:
 
 ```bash
-mkdir -p ~/.agent-recall/projects/<slug>/palace
+mkdir -p "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace
 # prepend to identity.md (or create it)
-echo "**Intention:** <extracted intention sentence>" | cat - ~/.agent-recall/projects/<slug>/palace/identity.md 2>/dev/null > /tmp/identity-tmp.md && mv /tmp/identity-tmp.md ~/.agent-recall/projects/<slug>/palace/identity.md
+echo "**Intention:** <extracted intention sentence>" | cat - "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md 2>/dev/null > /tmp/identity-tmp.md && mv /tmp/identity-tmp.md "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md
 ```
 
 Rules for extraction:
@@ -201,7 +203,7 @@ remember({
 
 ### Step 5: Output the save card
 
-Render the following card. Replace all `<placeholders>` with real values from the session_end response and the actual project slug. Count the project's journal files to get the session number (`ls ~/.agent-recall/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
+Render the following card. Replace all `<placeholders>` with real values from the session_end response and the actual project slug. Count the project's journal files to get the session number (`ls $AGENT_RECALL_ROOT/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
 
 ```
 ──────────────────────────────────────────────────────────────
@@ -210,18 +212,18 @@ Render the following card. Replace all `<placeholders>` with real values from th
   Intention     palace/identity.md
                 └─ "<captured intention>"           [captured]   ← only if written this save
 
-  Journal       ~/.agent-recall/projects/<slug>/journal/
+  Journal       <store-root>/projects/<slug>/journal/
                 └─ <YYYY-MM-DD>.md                    [written]
 
-  Awareness     ~/.agent-recall/awareness.md
+  Awareness     <store-root>/awareness.md
                 └─ <N> insights added  (<M> total)
 
-  Palace        ~/.agent-recall/projects/<slug>/palace/
+  Palace        <store-root>/projects/<slug>/palace/
                 ├─ rooms/<room1>.md                   [updated]
                 ├─ rooms/<room2>.md                   [updated]
                 └─ palace-index.json                 [reindexed]
 
-  Insights      ~/.agent-recall/insights-index.json
+  Insights      <store-root>/insights-index.json
                 └─ cross-project index updated
 ──────────────────────────────────────────────────────────────
 ```
@@ -232,7 +234,7 @@ If any corrections were recorded this session via `check()`, append a distinct c
 
 ```
 ⚠  Correction saved  [<P0 or P1>]
-   ~/.agent-recall/projects/<slug>/palace/corrections.json
+   <store-root>/projects/<slug>/palace/corrections.json
    Rule: "<the rule that was stored>"
 ```
 
@@ -295,7 +297,7 @@ The palace is a brain palace — **selective by design**. It only holds what's w
 python3 ~/.claude/scripts/ar-sync-status.py <slug> 2>/dev/null
 ```
 
-Replace `<slug>` with the project you just saved. This updates `~/.agent-recall/status.json`
+Replace `<slug>` with the project you just saved. This updates `$AGENT_RECALL_ROOT/status.json`
 and Supabase — the canonical sources that every future `/arstart` board reads from.
 Non-blocking: if it fails, the save itself is still complete.
 
@@ -333,7 +335,7 @@ Render this session's card (Step 5 format above), then the multi-session summary
 ──────────────────────────────────────────────────────────────
   AgentRecall  ✓ Save All                       <YYYY-MM-DD>
 ──────────────────────────────────────────────────────────────
-  ✓  <project-1>    ~/.agent-recall/projects/<project-1>/
+  ✓  <project-1>    <store-root>/projects/<project-1>/
                     journal/<YYYY-MM-DD>.md         [rescued]
 
   ~  <project-2>    already journaled              [skipped]
@@ -342,8 +344,8 @@ Render this session's card (Step 5 format above), then the multi-session summary
 
 ──────────────────────────────────────────────────────────────
   <N> rescued   <M> skipped   <K> failed
-  ~/.agent-recall/insights-index.json               [updated]
-  ~/.agent-recall/awareness.md                      [updated]
+  <store-root>/insights-index.json               [updated]
+  <store-root>/awareness.md                      [updated]
 ──────────────────────────────────────────────────────────────
 ```
 

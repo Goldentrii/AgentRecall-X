@@ -667,7 +667,7 @@ export async function localRecallSearch(
 ): Promise<SmartRecallResultItem[]> {
   let resolvedProject: string;
   try {
-    resolvedProject = await resolveProject(project);
+    resolvedProject = await resolveProject(project, { register: false });
   } catch {
     resolvedProject = project ?? "auto";
   }
@@ -1054,7 +1054,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   // runs inside a try/catch in localRecallSearch below).
   let resolvedProject: string;
   try {
-    resolvedProject = await resolveProject(input.project);
+    resolvedProject = await resolveProject(input.project, { register: false });
   } catch {
     resolvedProject = input.project ?? "auto";
   }

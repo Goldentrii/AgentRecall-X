@@ -266,6 +266,7 @@ export function recallInsights(
   // eval: CJK hit@5 = 0/6). Default minLength=3 preserves the original
   // `length > 2` floor for ASCII.
   const contextWords = tokenizeWords(context);
+  const rawContextWords = new Set(context.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   const severityWeight: Record<string, number> = { critical: 3, important: 2, minor: 1 };
 
   const scored = index.insights.map((insight) => {
@@ -278,7 +279,12 @@ export function recallInsights(
       // runs into real words instead of one giant token.
       const kwWords = tokenizeWords(keyword, { minLength: 0 });
       for (const kw of kwWords) {
-        if (contextWords.some((cw) => cw.includes(kw) || kw.includes(cw))) {
+        // Short ASCII fragments ("a", "or", "mv") must match a whole context
+        // word: as substrings they matched nearly every query (owner repro
+        // 2026-10-30: "or" from "device or resource busy" hit "orbitcard").
+        // contextWords drops <3-char tokens, so compare against raw words.
+        const shortAscii = kw.length < 3 && /^[\x00-\x7f]+$/.test(kw);
+        if (shortAscii ? rawContextWords.has(kw) : contextWords.some((cw) => cw.includes(kw) || kw.includes(cw))) {
           keywordMatches++;
         }
       }

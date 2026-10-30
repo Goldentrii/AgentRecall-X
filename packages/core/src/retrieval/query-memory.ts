@@ -239,6 +239,7 @@ import { loadJournalLexicalSnapshot } from "./lexical-index.js";
 import { applyScope } from "./scope.js";
 import { detectContradictions, type ContradictionItem } from "./contradiction.js";
 import { listRooms, recordAccess, ensurePalaceInitialized } from "../palace/rooms.js";
+import { palaceDir } from "../storage/paths.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { recallInsights } from "../palace/insights-index.js";
@@ -1261,6 +1262,10 @@ async function scorePalaceTier(
   // project whose palace/ has never been initialized, even when `rooms/*/`.md
   // content already exists on disk — `listRooms()` requires a `_room.json`
   // per room dir, which only `ensurePalaceInitialized`/`createRoom` write.
+  // Read path: a project with no palace dir has nothing to search — never
+  // scaffold one here (owner repro 2026-10-30: recall created 7 empty rooms
+  // whose README templates then ranked as recall hits).
+  if (!fs.existsSync(palaceDir(project))) return [];
   ensurePalaceInitialized(project);
   const candidates = filterTrusted(
     readTierCandidates("palace-room", project, { room: opts.room, includeUntrusted: true }),

@@ -325,8 +325,15 @@ async function stageFailedResolution(reason: string, candidate: string | null): 
  * project directory already exists for it, resolution throws — preventing
  * garbage slugs from creating new directories. Existing (already-on-disk)
  * invalid slugs still resolve so reads of legacy data don't break.
+ *
+ * `opts.register: false` = read path: resolve without the cwd-allowlist write
+ * (that write creates `palace/`, which recall then scaffolded — owner repro
+ * 2026-10-30).
  */
-export async function resolveProject(project: string | undefined): Promise<string> {
+export async function resolveProject(
+  project: string | undefined,
+  opts: { register?: boolean } = {},
+): Promise<string> {
   // fix5 (2026-09-11): the staging sentinel round-trips. A caller that
   // already holds a staged resolution (e.g. `ar saveall` for a session with
   // no project guess) must be able to pass it back through the normal
@@ -383,6 +390,7 @@ export async function resolveProject(project: string | undefined): Promise<strin
   // Without it, a single write from a parent/staging directory permanently
   // annexed every distinctly-identified git repo nested underneath it (see
   // `isProjectRoot`'s doc comment for the full repro).
+  if (opts.register === false) return project;
   try {
     const cwd = process.cwd();
     if (isProjectRoot(cwd)) {

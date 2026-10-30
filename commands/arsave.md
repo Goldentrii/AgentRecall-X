@@ -4,6 +4,8 @@ description: "AgentRecall full save — journal + palace + awareness + insights 
 
 # /arsave — AgentRecall Full Save
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 One command to save everything. No long prompts needed.
 
 ## When to Use
@@ -30,7 +32,7 @@ Runs the complete AgentRecall end-of-session flow:
 
 **Start with machine-captured facts, not memory.** At long context windows your memory of early decisions is compressed and unreliable. Ground truth comes first:
 
-1. **Read today's capture log** — `~/.agent-recall/projects/<slug>/journal/YYYY-MM-DD-log.md` (if it exists). This file contains incremental Q&A captures logged during the session. Pull out the key facts from it.
+1. **Read today's capture log** — `$AGENT_RECALL_ROOT/projects/<slug>/journal/YYYY-MM-DD-log.md` (if it exists). This file contains incremental Q&A captures logged during the session. Pull out the key facts from it.
 
 2. **Check git diff** — if in a git repo, run `git diff --stat HEAD` or `git log --oneline -5` to see what files actually changed.
 
@@ -43,7 +45,7 @@ Combine all three into a 2-3 sentence summary. The log anchors you; memory fills
 Check whether this project already has an intention recorded:
 
 ```bash
-grep -l "Intention:" ~/.agent-recall/projects/<slug>/palace/identity.md 2>/dev/null
+grep -l "Intention:" "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md 2>/dev/null
 ```
 
 **If NOT found** (this is the first save for this project, or intention was never captured):
@@ -53,9 +55,9 @@ Look at the earliest user messages in this conversation — where the user expla
 Write it to the identity file:
 
 ```bash
-mkdir -p ~/.agent-recall/projects/<slug>/palace
+mkdir -p "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace
 # prepend to identity.md (or create it)
-echo "**Intention:** <extracted intention sentence>" | cat - ~/.agent-recall/projects/<slug>/palace/identity.md 2>/dev/null > /tmp/identity-tmp.md && mv /tmp/identity-tmp.md ~/.agent-recall/projects/<slug>/palace/identity.md
+echo "**Intention:** <extracted intention sentence>" | cat - "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md 2>/dev/null > /tmp/identity-tmp.md && mv /tmp/identity-tmp.md "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md
 ```
 
 Rules for extraction:
@@ -125,7 +127,7 @@ remember({
 
 ### Step 5: Output the save card
 
-Render the following card. Replace all `<placeholders>` with real values from the session_end response and the actual project slug. Count the project's journal files to get the session number (`ls ~/.agent-recall/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
+Render the following card. Replace all `<placeholders>` with real values from the session_end response and the actual project slug. Count the project's journal files to get the session number (`ls $AGENT_RECALL_ROOT/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
 
 ```
 ──────────────────────────────────────────────────────────────
@@ -134,18 +136,18 @@ Render the following card. Replace all `<placeholders>` with real values from th
   Intention     palace/identity.md
                 └─ "<captured intention>"           [captured]   ← only if written this save
 
-  Journal       ~/.agent-recall/projects/<slug>/journal/
+  Journal       <store-root>/projects/<slug>/journal/
                 └─ <YYYY-MM-DD>.md                    [written]
 
-  Awareness     ~/.agent-recall/awareness.md
+  Awareness     <store-root>/awareness.md
                 └─ <N> insights added  (<M> total)
 
-  Palace        ~/.agent-recall/projects/<slug>/palace/
+  Palace        <store-root>/projects/<slug>/palace/
                 ├─ rooms/<room1>.md                   [updated]
                 ├─ rooms/<room2>.md                   [updated]
                 └─ palace-index.json                 [reindexed]
 
-  Insights      ~/.agent-recall/insights-index.json
+  Insights      <store-root>/insights-index.json
                 └─ cross-project index updated
 ──────────────────────────────────────────────────────────────
 ```
@@ -156,7 +158,7 @@ If any corrections were recorded this session via `check()`, append a distinct c
 
 ```
 ⚠  Correction saved  [<P0 or P1>]
-   ~/.agent-recall/projects/<slug>/palace/corrections.json
+   <store-root>/projects/<slug>/palace/corrections.json
    Rule: "<the rule that was stored>"
 ```
 
@@ -202,7 +204,7 @@ One command to end a multi-session work day cleanly. Reads every VS Code Claude 
 
 #### Step 1: Save this session (same as the single-project flow above)
 
-1. Read today's capture log if it exists: `~/.agent-recall/projects/<slug>/journal/<today>-log.md`
+1. Read today's capture log if it exists: `$AGENT_RECALL_ROOT/projects/<slug>/journal/<today>-log.md`
 2. **Capture intention if first save** — follow the same Step 1b above: check if `palace/identity.md` already has an `**Intention:**` line. If not, extract the WHY from this session's earliest user messages and write it before calling session_end.
 3. Record any corrections from this session via `check()`
 4. Call `session_end` with summary + insights + trajectory
@@ -232,13 +234,13 @@ Render one card for this session (same format as the single-project save above),
 ──────────────────────────────────────────────────────────────
   AgentRecall  ✓ Saved    <project-slug>   <YYYY-MM-DD>   #<N>
 ──────────────────────────────────────────────────────────────
-  Journal       ~/.agent-recall/projects/<slug>/journal/
+  Journal       <store-root>/projects/<slug>/journal/
                 └─ <YYYY-MM-DD>.md                    [written]
 
-  Awareness     ~/.agent-recall/awareness.md
+  Awareness     <store-root>/awareness.md
                 └─ <N> insights added  (<M> total)
 
-  Palace        ~/.agent-recall/projects/<slug>/palace/
+  Palace        <store-root>/projects/<slug>/palace/
                 └─ rooms/ + palace-index.json         [updated]
 ──────────────────────────────────────────────────────────────
 ```
@@ -248,10 +250,10 @@ Render one card for this session (same format as the single-project save above),
 ──────────────────────────────────────────────────────────────
   AgentRecall  ✓ Save All                       <YYYY-MM-DD>
 ──────────────────────────────────────────────────────────────
-  ✓  <project-1>    ~/.agent-recall/projects/<project-1>/
+  ✓  <project-1>    <store-root>/projects/<project-1>/
                     journal/<YYYY-MM-DD>.md         [rescued]
 
-  ✓  <project-2>    ~/.agent-recall/projects/<project-2>/
+  ✓  <project-2>    <store-root>/projects/<project-2>/
                     journal/<YYYY-MM-DD>.md         [rescued]
 
   ~  <project-3>    already journaled              [skipped]
@@ -260,8 +262,8 @@ Render one card for this session (same format as the single-project save above),
 
 ──────────────────────────────────────────────────────────────
   <N> rescued   <M> skipped   <K> failed
-  ~/.agent-recall/insights-index.json               [updated]
-  ~/.agent-recall/awareness.md                      [updated]
+  <store-root>/insights-index.json               [updated]
+  <store-root>/awareness.md                      [updated]
 ──────────────────────────────────────────────────────────────
 ```
 

@@ -4,6 +4,8 @@ description: "AgentRecall session opener — status board (no args), project loa
 
 # /arstart — AgentRecall Session Opener
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 One command, three modes — the single entry point for every AgentRecall session.
 
 | Invocation | Mode | Use when |
@@ -33,20 +35,20 @@ Board mode only tells you what to pick. Once you know the project, switch to Loa
 
 ### What This Does
 
-Scans every project in `~/.agent-recall/projects/`, reads the latest journal's `## Next` section per project, classifies status, and renders a unified status board card.
+Scans every project in `$AGENT_RECALL_ROOT/projects/`, reads the latest journal's `## Next` section per project, classifies status, and renders a unified status board card.
 
 ### Process
 
 #### Step 1: Scan all project directories
 
 ```bash
-ls ~/.agent-recall/projects/
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/
 ```
 
 For each subdirectory (project slug), find the latest journal file:
 
 ```bash
-ls ~/.agent-recall/projects/<slug>/journal/*.md 2>/dev/null \
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/journal/*.md 2>/dev/null \
   | grep -v '\-log\.' \
   | grep -v 'index\.md' \
   | sort -r \
@@ -64,7 +66,7 @@ Read the file and extract the content under `## Next` — stop at the next `##` 
 Also read the project's intention from its identity file:
 
 ```bash
-cat ~/.agent-recall/projects/<slug>/palace/identity.md 2>/dev/null
+cat "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md 2>/dev/null
 ```
 
 Look for a line starting with `**Intention:**` or `Intention:`. Extract the value after the colon. This is the user's original WHY for starting the project — distinct from what's next to do.
@@ -149,7 +151,7 @@ Good for: code reviewers, audits, independent evaluations, second opinions.
 **d<N> — Delete project (e.g. `d5`)**
 Map the number back to the slug.
 Ask for confirmation: "Delete **<slug>**? This removes all journals and palace data. Reply `d<N>` again to confirm."
-On second `d<N>`: run `rm -rf ~/.agent-recall/projects/<slug>/` and say "Deleted <slug>."
+On second `d<N>`: run `rm -rf "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}/projects/<slug>/"` and say "Deleted <slug>."
 On anything else: abort silently.
 
 If they press Enter or say "skip" — proceed without loading any project context.
@@ -184,7 +186,7 @@ For a returning agent that already knows the project slug, you can bootstrap wit
 cat ~/.claude/projects/<your-user-dir>/memory/MEMORY.md
 
 # Layer 2: AgentRecall palace identity (project intention + goals)
-cat ~/.agent-recall/projects/<slug>/palace/identity.md
+cat "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md
 ```
 
 These two files together answer: **who the user is + what this project is trying to achieve**. That's enough context to begin working.
@@ -210,13 +212,13 @@ Examples:
 
 ```bash
 # Find all sessions mentioning "tool" across all projects
-ls ~/.agent-recall/projects/*/journal/ | grep "tool"
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/*/journal/ | grep "tool"
 
 # Find sessions about "auth" in a specific project
-ls ~/.agent-recall/projects/novada-site/journal/ | grep "auth"
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/novada-site/journal/ | grep "auth"
 
 # Get the latest journal for a project
-ls ~/.agent-recall/projects/<slug>/journal/*.md | grep -v log | sort -r | head -1
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/journal/*.md | grep -v log | sort -r | head -1
 ```
 
 This naming system is the lightweight discovery layer — use it before reaching for Board mode.
@@ -269,20 +271,20 @@ This is the step that surfaces: "last time we touched this module, X broke" or "
 
 #### Step 4: Show cold-start card
 
-Render the following card. Replace all `<placeholders>` with real values from `session_start` and `recall`. Count the project's journal files to get the session number (`ls ~/.agent-recall/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
+Render the following card. Replace all `<placeholders>` with real values from `session_start` and `recall`. Count the project's journal files to get the session number (`ls $AGENT_RECALL_ROOT/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
 
 ```
 ──────────────────────────────────────────────────────────────
   AgentRecall  ✓ Loaded    <project-slug>   <YYYY-MM-DD>   #<N>
 ──────────────────────────────────────────────────────────────
-  Identity      ~/.agent-recall/projects/<slug>/palace/
+  Identity      <store-root>/projects/<slug>/palace/
                 └─ identity.md                       [~50 tokens]
 
-  Palace        ~/.agent-recall/projects/<slug>/palace/rooms/
+  Palace        <store-root>/projects/<slug>/palace/rooms/
                 ├─ <room1>.md                           [loaded]
                 └─ <room2>.md                           [loaded]
 
-  Awareness     ~/.agent-recall/awareness.md
+  Awareness     <store-root>/awareness.md
                 └─ <N> insights · <M> cross-project matches
 
   Last session  <YYYY-MM-DD> — <one-line summary>
@@ -433,7 +435,7 @@ If the human is unsure, preview first with `ar bootstrap --dry-run`.
 ### Safety
 
 - Scan is read-only — never writes anywhere
-- Import only writes to `~/.agent-recall/` — never modifies your source files
+- Import only writes to `$AGENT_RECALL_ROOT/` — never modifies your source files
 - Skips `.env`, credentials, `.pem`, `.key` — never reads secrets
 - Projects already in AgentRecall are skipped (no double-import)
 

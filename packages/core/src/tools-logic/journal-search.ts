@@ -1,5 +1,7 @@
 import { resolveProject } from "../storage/project.js";
+import * as fs from "node:fs";
 import { ensurePalaceInitialized } from "../palace/rooms.js";
+import { palaceDir } from "../storage/paths.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { readTierCandidates } from "../retrieval/candidates.js";
 import { queryMemory, stableId } from "../retrieval/query-memory.js";
@@ -130,7 +132,7 @@ function firstMatchIndex(line: string, keywords: string[]): number {
 }
 
 export async function journalSearch(input: JournalSearchInput): Promise<JournalSearchResult> {
-  const slug = await resolveProject(input.project);
+  const slug = await resolveProject(input.project, { register: false });
   const keywords = queryKeywords(input.query); // still needed below for the include_palace branch's own local scan
   const limit = input.limit ?? 25;
 
@@ -219,7 +221,8 @@ export async function journalSearch(input: JournalSearchInput): Promise<JournalS
   results.sort((a, b) => b.date.localeCompare(a.date));
   results = results.slice(0, limit);
 
-  if (input.include_palace) {
+  // Read path: never scaffold a palace that does not exist yet.
+  if (input.include_palace && fs.existsSync(palaceDir(slug))) {
     try {
       ensurePalaceInitialized(slug);
       // Identity-trust (P0 trust-class closure, 2026-08-30, wave/pipe-p0-trustclass,

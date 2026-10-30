@@ -4,6 +4,8 @@ description: "AgentRecall contextual mid-session recall — run targeted memory 
 
 # /arrecall — Contextual Mid-Session Recall
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 Surface relevant past decisions, corrections, and patterns without leaving your flow.
 
 ## Two Modes

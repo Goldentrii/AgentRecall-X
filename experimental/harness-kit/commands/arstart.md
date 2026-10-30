@@ -4,6 +4,8 @@ description: "AgentRecall session opener — 3-zone status board (no args), proj
 
 # /arstart — open AgentRecall: board, project, or bootstrap
 
+> **Store root:** (shell snippets are bash/zsh/Git Bash) `$AGENT_RECALL_ROOT` if set, else `~/.agent-recall`. In shell code always write `${AGENT_RECALL_ROOT:-$HOME/.agent-recall}` — never a hardcoded `~/.agent-recall` (split-brain: the server honors the env var). In rendered cards, `<store-root>` = the resolved absolute path.
+
 **USE THIS FIRST every session.**
 
 ## Argument Routing
@@ -23,7 +25,7 @@ The 3-zone status board: 🔴 NEEDS YOU · 📋 BACKLOG · 💤 STALE — with a
 
 ### Step 1: Render board (freshness-guarded — 1 or 2 bash calls)
 
-The board (`--board`) reads from `~/.agent-recall/status.json`. If that cache
+The board (`--board`) reads from `$AGENT_RECALL_ROOT/status.json`. If that cache
 is missing, older than 5 minutes, OR contains fewer than 5 projects (the
 canary for a poisoned single-slug clobber), do a synchronous full sync first.
 Otherwise run the fast parallel pattern.
@@ -32,7 +34,7 @@ Otherwise run the fast parallel pattern.
 ```bash
 NEEDS_SYNC=$(python3 - <<'PY'
 import json, os, time
-p = os.path.expanduser("~/.agent-recall/status.json")
+p = os.path.join(os.environ.get("AGENT_RECALL_ROOT") or os.path.expanduser("~/.agent-recall"), "status.json")
 try:
     age = time.time() - os.path.getmtime(p)
     with open(p) as f:
@@ -72,7 +74,7 @@ fenced code block in your reply so it appears in-line. Then wait for selection
 "emitting" the board.
 
 **Fallback only if 1b returns empty output or errors:**
-Manually scan `~/.agent-recall/projects/` — for each project dir (skip `<your-username>` — the personal/home slug — plus `build`, `Downloads`, `Projects`, path-leaked UUIDs):
+Manually scan `$AGENT_RECALL_ROOT/projects/` — for each project dir (skip `<your-username>` — the personal/home slug — plus `build`, `Downloads`, `Projects`, path-leaked UUIDs):
 - Find latest journal by mtime (not filename sort — W-format files sort wrong alphabetically)
 - Extract `## Next` section; read `palace/identity.md` for `**Intention:**`
 - Classify: NEEDS YOU if Next has "blocked"/"waiting for"/"waiting on"/"permission"; STALE if >14d or no Next; else BACKLOG
@@ -120,7 +122,7 @@ Do NOT call session_start. Say: "Starting fresh — no prior context."
 
 **d\<N\> — Delete project**
 Map number to slug. Confirm: "Delete **\<slug\>**? Reply `d<N>` to confirm."
-On second confirmation: `rm -rf ~/.agent-recall/projects/<slug>/`
+On second confirmation: `rm -rf "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}/projects/<slug>/"`
 
 **Enter / skip** — Proceed without loading a project.
 
@@ -154,7 +156,7 @@ For a returning agent that already knows the project slug, you can bootstrap wit
 cat ~/.claude/projects/-Users-<username>/memory/MEMORY.md
 
 # Layer 2: AgentRecall palace identity (project intention + goals)
-cat ~/.agent-recall/projects/<slug>/palace/identity.md
+cat "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/palace/identity.md
 ```
 
 These two files together answer: **who the user is + what this project is trying to achieve**. That's enough context to begin working.
@@ -180,13 +182,13 @@ Examples:
 
 ```bash
 # Find all sessions mentioning "tool" across all projects
-ls ~/.agent-recall/projects/*/journal/ | grep "tool"
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/*/journal/ | grep "tool"
 
 # Find sessions about "auth" in a specific project
-ls ~/.agent-recall/projects/novada-site/journal/ | grep "auth"
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/novada-site/journal/ | grep "auth"
 
 # Get the latest journal for a project
-ls ~/.agent-recall/projects/<slug>/journal/*.md | grep -v log | sort -r | head -1
+ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}"/projects/<slug>/journal/*.md | grep -v log | sort -r | head -1
 ```
 
 This naming system is the lightweight discovery layer — use it before reaching for the board.
@@ -225,7 +227,7 @@ Before calling `session_start`, verify the slug exists by checking for ANY prior
 
 ```bash
 SLUG="<resolved-slug>"
-PROJ_DIR="$HOME/.agent-recall/projects/$SLUG"
+PROJ_DIR="${AGENT_RECALL_ROOT:-$HOME/.agent-recall}/projects/$SLUG"
 
 # Has prior content? (journal entries / palace rooms / corrections)
 HAS_CONTENT="no"
@@ -236,14 +238,14 @@ HAS_CONTENT="no"
 if [ "$HAS_CONTENT" = "no" ]; then
   echo "No project named '$SLUG' has prior memory. Similar slugs:"
   # Substring match first — catches "prismma" → "prismma-gateway"
-  ls "$HOME/.agent-recall/projects/" 2>/dev/null \
+  ls "${AGENT_RECALL_ROOT:-$HOME/.agent-recall}/projects/" 2>/dev/null \
     | grep -vE "^_archived_|^\." \
     | grep -i "$SLUG" | head -5
   # Levenshtein fallback for typos that don't substring-match
   python3 - "$SLUG" <<'PY'
 import os, sys
 target = sys.argv[1].lower()
-root = os.path.expanduser("~/.agent-recall/projects")
+root = os.path.join(os.environ.get("AGENT_RECALL_ROOT") or os.path.expanduser("~/.agent-recall"), "projects")
 def dist(a, b):
     if a == b: return 0
     if not a: return len(b)
@@ -271,7 +273,7 @@ PY
 fi
 ```
 
-If `HAS_CONTENT` is "yes", proceed to Step 1. If "no", wait for user input; do NOT call session_start until the user confirms (avoids silently mkdir'ing `~/.agent-recall/projects/<typo>/`).
+If `HAS_CONTENT` is "yes", proceed to Step 1. If "no", wait for user input; do NOT call session_start until the user confirms (avoids silently mkdir'ing `$AGENT_RECALL_ROOT/projects/<typo>/`).
 
 #### Step 0.6 — Pick the mode
 
@@ -319,20 +321,20 @@ This is the step that surfaces: "last time we touched this module, X broke" or "
 
 #### Step 4: Show cold-start card
 
-Render the following card. Replace all `<placeholders>` with real values from `session_start` and `recall`. Count the project's journal files to get the session number (`ls ~/.agent-recall/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
+Render the following card. Replace all `<placeholders>` with real values from `session_start` and `recall`. Count the project's journal files to get the session number (`ls $AGENT_RECALL_ROOT/projects/<slug>/journal/*.md 2>/dev/null | wc -l`).
 
 ```
 ──────────────────────────────────────────────────────────────
   AgentRecall  ✓ Loaded    <project-slug>   <YYYY-MM-DD>   #<N>
 ──────────────────────────────────────────────────────────────
-  Identity      ~/.agent-recall/projects/<slug>/palace/
+  Identity      <store-root>/projects/<slug>/palace/
                 └─ identity.md                       [~50 tokens]
 
-  Palace        ~/.agent-recall/projects/<slug>/palace/rooms/
+  Palace        <store-root>/projects/<slug>/palace/rooms/
                 ├─ <room1>.md                           [loaded]
                 └─ <room2>.md                           [loaded]
 
-  Awareness     ~/.agent-recall/awareness.md
+  Awareness     <store-root>/awareness.md
                 └─ <N> insights · <M> cross-project matches
 
   Last session  <YYYY-MM-DD> — <one-line summary>
@@ -485,7 +487,7 @@ bootstrap_import({
 ### Safety
 
 - Scan is read-only — never writes anywhere
-- Import only writes to `~/.agent-recall/` — never modifies your source files
+- Import only writes to `$AGENT_RECALL_ROOT/` — never modifies your source files
 - Skips `.env`, credentials, `.pem`, `.key` — never reads secrets
 - Projects already in AgentRecall are skipped (no double-import)
 
