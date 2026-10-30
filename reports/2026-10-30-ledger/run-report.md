@@ -53,7 +53,8 @@ Timeline (CET, from git + dispatch records): 09:38 session start, recall probe r
 | `npm run build`, `npm run lint` | local `F:\Projects\arx-ledger` @ 283e9cd (orchestrator) | 0 errors (measured) |
 | core / cli / mcp-server / sdk suites | V's own runs @ 283e9cd, pinned temp env | core 2128: 2126 pass + 1 load-flake (19/19 alone) + 1 skipped · cli 308/0 · mcp 89 (86 pass, 3 skipped) · sdk 41/0 (measured by V) |
 | core / cli / sdk suites | local @ 5163418 (pre-W5, orchestrator) | 2128/0 · 306/0 · 41/0 (measured) |
-| clean snapshot `git archive 7801e4f` → npm ci, build, lint, 4 suites | `E:\Users\tong\tmp\snapshot-7801e4f` | **PENDING** (running at report time; row updated when it lands) |
+| core / cli / mcp-server / sdk suites | local worktree @ 283e9cd, pinned temp env (orchestrator, after W5) | core 2128: 2127 pass / 0 fail / 1 skipped · cli 308/0 · mcp 89 (86 pass, 3 skipped) · sdk 41/0 (measured) |
+| clean snapshot `git archive 7801e4f` → npm ci, build, lint, 4 suites | `E:\Users\tong\tmp\snapshot-7801e4f` | **PARTIAL**: on the clean archive `npm ci` + `npm run build` + `npm run lint` passed (measured, `BUILD_LINT_EXIT=0`) and mcp-server 89 tests: 86 pass / 0 fail / 3 skipped (measured); the cli and core suites did not complete — the host killed the background run for low system memory (first attempt had aborted on the archive symlink `packages/cli/bin/ar`). Not restarted without the owner's go. The same suites are green on the worktree at the same code SHA (row above). |
 | store smoke on `cp -rp` copy: verify → backfill → verify → backfill | V, copy under tmp | 491 orphans/exit 2 → 491 written → clean/exit 0 → 0 written (measured by V) |
 | CI | — | no run for 283e9cd (not pushed) |
 
