@@ -19,7 +19,7 @@ AgentRecall's real MCP surface is **5 tools by default**, **6 with `--full`**, *
 
 | Tool | Purpose |
 |------|---------|
-| `session_start` | Load project context — owner identity card, corrections, project state card, insights, watch_for warnings. Call at ENTRY, always. |
+| `session_start` | Load project context. Default `mode: "cards"` = owner identity card → HARD RULES (P0 corrections) → project state card, nothing else (88 median tokens on the card-less fixture, ~1,070 with both cards at cap); `mode: "full"` adds insights, continuity, rooms, captures and watch_for warnings; `mode: "lite"` is a ≤500-token sketch. The rendered text is capped at 16,384 UTF-8 bytes (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive. Call at ENTRY, always. |
 | `session_end` | Save journal, insights, trajectory and the project state card (`state`: goal, open_decisions, blockers, next, pointers; omitted fields carry forward). Call at EXIT, always, and on any durable-intent trigger. |
 | `remember` | Write a single fact/decision — auto-routes to the right store. Durable-intent trigger. |
 | `recall` | Search all memory — keyword/RRF fusion + optional vector. Safe to call any time. |
@@ -88,7 +88,7 @@ Trigger phrases below are **additional** signals for durable intent — they are
 
 | Action | Approx tokens | When |
 |--------|--------------|------|
-| `session_start` | ~800–1200 | Once per session — ENTRY, always |
+| `session_start` | ~90 (cards default, no cards yet) · ~1,070 (both cards at cap) · ~800–1200 (`mode: "full"`) | Once per session — ENTRY, always |
 | `recall` | ~200–400 | On demand |
 | `remember` | ~100 | On demand |
 | `session_end` | ~400–600 | Once at end — EXIT, always |

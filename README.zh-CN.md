@@ -137,7 +137,7 @@ flowchart LR
 
 | 工具 | 何时调用 | 做什么 |
 |---|---|---|
-| `session_start` | 最先，动手之前 | 加载 owner 身份卡、纠正、项目状态卡、insight 和 `watch_for` 警告 |
+| `session_start` | 最先，动手之前 | 默认 `mode: "cards"` 只加载 owner 身份卡、HARD RULES 和项目状态卡；`mode: "full"` 再加上 insight、continuity、rooms、captures 和 `watch_for` 警告 |
 | `remember` | 事情被决定或被纠正的那一刻 | 保存一条事实；自动路由到 journal / palace 房间 / corrections / awareness |
 | `recall` | 任何过去上下文有帮助的时候 | 跨所有存储的排序检索（RRF），`useful` 反馈会重新加权未来的排序 |
 | `check` | 高风险或不可逆操作之前 | 把计划与已知纠正匹配；当某条纠正覆盖计划时返回 `verdict: "blocked"` |
@@ -162,7 +162,7 @@ flowchart LR
 > 因此在 Claude Code 上，把 hooks 接上——循环从此不再依赖 agent 的自觉：
 >
 > ```text
-> ar hook-start        SessionStart      load context, show watch_for warnings
+> ar hook-start        SessionStart      inject the cards (owner, hard rules, state); AGENT_RECALL_SESSION_START_MODE=full for every section
 > ar hook-correction   UserPromptSubmit  capture corrections silently
 > ar hook-ambient      UserPromptSubmit  inject relevant memories (≥2-word overlap floor)
 > ar hook-save         UserPromptSubmit  "save"/"retain" → prompt session_end
@@ -349,7 +349,7 @@ Agent 记忆的 benchmark 都在测检索。没有一个测试一条纠正是否
 | | 指标 | 数值 | 来源 |
 |---|---|---|---|
 | 🔁 | 检索 hit@5，golden fixture v1（26 条查询，哈希锁定） | **73.1%** 关键词 [53.9, 86.3]<br>**80.8%** + 本地 embeddings [62.1, 91.5] | `npm run bench:golden` |
-| 🔁 | `session_start` 注入上下文，中位数（fixture，无卡片） | **231 tokens** | `npm run bench:injection` |
+| 🔁 | `session_start` 注入上下文，中位数（fixture，无卡片） | **88 tokens**（cards 默认；`--mode full` 为 231） | `npm run bench:injection` |
 | 🔁 | `session_start` p95 热启动 / `recall` p95 | **97 ms** / **209 ms** | `npm run bench:latency` |
 | 🔁 | 纠正迁移 fixture 门禁 | 精确匹配 | `npm run bench` |
 | 🔒 | 真实纠正捕获率（双盲审计，n = 59） | **35.3%** [17.3, 58.7] | `UPDATE-LOG.md` §M2 |
@@ -380,7 +380,7 @@ fixture 的数字比长期真实使用存储的小，因为 golden-v1 是合成�
 | 测量对象 | 检索（LongMemEval、LoCoMo） | 检索**加**跨会话行为变化 |
 | 存储 | 托管服务或数据库 | 你磁盘上的 markdown；Supabase 镜像可选 |
 | 排序 | 通常不透明 | 每条公式和常量都有标签（见[数学](#数学)） |
-| 每会话成本 | ~7k tokens/query（Mem0 公布的数字） | `session_start` 约 231 tokens（fixture，无卡片） |
+| 每会话成本 | ~7k tokens/query（Mem0 公布的数字） | `session_start` 约 88 tokens（cards 默认；fixture，无卡片） |
 
 <sub>竞品数字为其自行公布，并非并排实测。领域全景：[`docs/research/agent-memory-landscape-2026-07.md`](docs/research/agent-memory-landscape-2026-07.md)。</sub>
 
