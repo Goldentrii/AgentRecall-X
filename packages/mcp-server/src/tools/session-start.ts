@@ -4,250 +4,22 @@ import {
   sessionStart,
   sessionStartLite,
   fenceMemory,
-  continuityEntryMarker,
-  continuityHeaderText,
   formatOwnerSection,
   formatStateSection,
+  renderSessionStart,
+  type SessionStartMode,
   type SessionStartResult,
   type SessionStartLiteResult,
 } from "agent-recall-core";
 
-/** Truncate to nearest word boundary */
-function trunc(s: string, n: number): string {
-  if (s.length <= n) return s;
-  const sliced = s.slice(0, n);
-  const lastSpace = sliced.lastIndexOf(" ");
-  return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
-}
-
-/** Exported for unit testing (F2 continuity wave, 2026-07-31) — pure formatter, no I/O. */
+/**
+ * Terse text = the ONE core renderer (Cards v2, G6): sections, byte cap, fence and tail all live in
+ * agent-recall-core's renderSessionStart, shared with CLI hook-start and the SDK. Kept as a named export so
+ * existing imports and tests keep working. The hook-less tail is omitted in Claude Code (CLAUDE_CODE_HOOKS set),
+ * where hooks drive the lifecycle.
+ */
 export function formatTerse(result: SessionStartResult): string {
-  const lines: string[] = [];
-
-  // ── Dream health banner (top priority) ────────────────────────────────
-  // Surfaces broken automation so the user notices before the awareness
-  // backfill stays stale for another week. fix10: severity glyph follows
-  // banner_kind — "failure"/"zero-yield" are red (broken cron / silent
-  // filtering), "thin-corpus" is informational.
-  if (result.dream_health?.banner) {
-    const glyph = result.dream_health.banner_kind === "thin-corpus" ? "🟡" : "🔴";
-    lines.push(`${glyph} ${result.dream_health.banner}`);
-    lines.push("");
-  }
-
-  // ── Store-doctor health line (only on warn/red; silent on a healthy store) ─
-  // READ-ONLY integrity signal. Never blocks recall — it is a one-line banner.
-  if (result.store_doctor) {
-    lines.push(result.store_doctor);
-    lines.push("");
-  }
-
-  // ── Owner (identity card, Cards v1) — right after the diagnostic banners,
-  // before alignment/continuity/header. Inside the memory fence below.
-  if (result.owner) lines.push(...formatOwnerSection(result.owner), "");
-
-  // ── North-star alignment metric ────────────────────────────────────────
-  // Rendered only when real outcome data exists (retrieved > 0).
-  // No fake claims: absent when precision cannot be computed.
-  if (result.alignment) {
-    const { precision, retrieved, heeded, recurred } = result.alignment;
-    const pct = Math.round(precision * 100);
-    const recurrStr = recurred > 0 ? `, ${recurred} recurred` : "";
-    lines.push(`🎯 Alignment: ${pct}% corrections heeded (${heeded}/${retrieved}${recurrStr})`);
-    lines.push("");
-  }
-
-  // ── Continuity (F2, continuity wave 2026-07-31) ──────────────────────────
-  // Cross-project RECENCY card — top of the substantive content, after the
-  // red-alert/integrity banners above (dream_health, store_doctor, alignment
-  // stay first-priority by design) but before the per-project header, so
-  // "what was I doing, anywhere, most recently" is the first thing an agent
-  // reads. Absent entirely when the recency index has nothing to show (no
-  // noise on a fresh/solo-project store).
-  if (result.continuity && result.continuity.length > 0) {
-    // Fable option 2 (label-not-scope, 2026-08-30) — header frames the
-    // WHOLE block as orientation when every entry is cross-project;
-    // otherwise the original neutral header. Single derivation point:
-    // agent-recall-core's continuityHeaderText (never re-implemented here).
-    lines.push(continuityHeaderText(result.continuity_all_cross_project));
-    for (const c of result.continuity) {
-      const next = c.next_step ? ` → next: ${trunc(c.next_step, 80)}` : "";
-      // Identity-trust (2026-08-20): visibly label a rescue-sourced
-      // (unverified cwd-guess) entry rather than presenting it as verified
-      // memory — see SessionStartResult["continuity"]'s `untrusted` field
-      // doc comment (agent-recall-core).
-      const trustFlag = c.untrusted ? " [unverified — rescued from a crashed session]" : "";
-      // Fable option 2 (label-not-scope, 2026-08-30) — "↪ " marks an entry
-      // that is NOT this project's own continuity (orientation, recent work
-      // elsewhere); empty for a current-project entry. Derived via the
-      // SAME shared helper the CLI hook-start renderer calls, so the two
-      // text renderers of this field cannot drift.
-      const marker = continuityEntryMarker(c, result.project);
-      lines.push(`  - ${marker}${c.ago} [${c.slug}] ${trunc(c.title, 100)}${next}${trustFlag}`);
-    }
-    lines.push("");
-  }
-
-  // ── Header ──────────────────────────────────────────────────────────────
-  const sessionCount = result.resume?.sessions_count ?? 0;
-  const lastDate = result.resume?.last_date ?? "—";
-  lines.push(`AgentRecall — ${result.project}   sessions: ${sessionCount}   last: ${lastDate}`);
-  if (result.identity) lines.push(`Intention: ${trunc(result.identity, 80)}`);
-  if (result.resume?.last_trajectory) {
-    lines.push(`Trajectory: ${trunc(result.resume.last_trajectory, 120)}`);
-  }
-
-  // ── Behavior policies (always-loaded, above insights/rooms) ────────────
-  if (result.behavior_rules && result.behavior_rules.length > 0) {
-    lines.push("");
-    lines.push("📜 Behavior policies (always follow):");
-    for (const r of result.behavior_rules) {
-      lines.push(`  • [${r.name}] WHEN ${trunc(r.when, 80)} → DO ${trunc(r.do, 100)}`);
-    }
-  }
-
-  // ── Hard rules (P0 corrections) — highest priority ───────────────────
-  if (result.corrections && result.corrections.length > 0) {
-    lines.push("");
-    lines.push("⛔ HARD RULES (always follow, no exceptions):");
-    for (const c of result.corrections) {
-      // Evolution p4 — additive tier tag ("[gate]"/"[nudge]"/"[watch]"),
-      // appended as a suffix; absent entirely when `tier` is unset (pre-p4
-      // fixture) — see SlimCorrection.tier's doc comment (agent-recall-core).
-      const tierTag = c.tier ? ` [${c.tier}]` : "";
-      lines.push(`  [${c.severity.toUpperCase()}] ${trunc(c.rule, 120)}${tierTag}`);
-    }
-  }
-
-  // ── State card (Cards v1) — immediately after the HARD RULES block ────
-  const stateLines = result.state ? formatStateSection(result.state) : []; // [] for a card without content
-  if (stateLines.length > 0) lines.push("", ...stateLines);
-
-  // ── Predictive warnings ───────────────────────────────────────────────
-  if (result.watch_for && result.watch_for.length > 0) {
-    lines.push("");
-    lines.push("⚠ Watch for:");
-    for (const w of result.watch_for) {
-      lines.push(`  - ${trunc(w.pattern, 50)}: ${trunc(w.suggestion, 80)}`);
-    }
-  }
-
-  // ── Pending review (Fix #2, dual-channel capture gate) — ONE line, count
-  // only. Staged content is untrusted-by-design and never rendered here;
-  // review happens through check()'s structured form.
-  if (result.pending_corrections && result.pending_corrections.count > 0) {
-    lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
-  }
-
-  // ── Recent activity ───────────────────────────────────────────────────
-  if (result.recent.today || result.recent.yesterday || result.recent.older_count > 0) {
-    lines.push("");
-    if (result.recent.today) {
-      lines.push(`📓 Today: ${trunc(result.recent.today, 150)}`);
-    }
-    if (result.recent.yesterday) {
-      lines.push(`📓 Yesterday: ${trunc(result.recent.yesterday, 100)}`);
-    }
-    if (result.recent.older_count > 0) {
-      lines.push(`   +${result.recent.older_count} older sessions on record`);
-    }
-  }
-
-  // ── Top insights ──────────────────────────────────────────────────────
-  if (result.insights && result.insights.length > 0) {
-    lines.push("");
-    const topN = result.insights.slice(0, 5);
-    lines.push(`💡 Insights (${result.insights.length} total):`);
-    for (const i of topN) {
-      const trend = i.trend && i.trend !== "stable" ? ` ↑${i.trend}` : "";
-      lines.push(`  [${i.confirmed}×${trend}] ${trunc(i.title, 100)}`);
-    }
-  }
-
-  // ── Active palace rooms ───────────────────────────────────────────────
-  if (result.active_rooms && result.active_rooms.length > 0) {
-    lines.push("");
-    const roomSummary = result.active_rooms
-      .map((r) => `${r.name}${r.stale ? " ⚠stale" : ""}`)
-      .join(" · ");
-    lines.push(`🏛  Palace: ${roomSummary}`);
-  }
-
-  // ── Cross-project insights ────────────────────────────────────────────
-  if (result.cross_project && result.cross_project.length > 0) {
-    lines.push("");
-    lines.push("🔗 Cross-project:");
-    for (const cp of result.cross_project.slice(0, 3)) {
-      lines.push(`  [${cp.from_project}] ${trunc(cp.title, 80)}`);
-    }
-  }
-
-  // ── Recent captures (unsaved session) ─────────────────────────────────
-  // journal_capture writes that pre-date any session_end. Surfaced so the
-  // agent sees in-flight work instead of "No memory found".
-  if (result.recent_captures && result.recent_captures.length > 0) {
-    lines.push("");
-    lines.push("📝 Recent captures (unsaved session):");
-    for (const c of result.recent_captures.slice(0, 5)) {
-      const q = c.question ? trunc(c.question, 80) : "";
-      const a = c.answer ? trunc(c.answer, 120) : "";
-      lines.push(`  - ${q}${q && a ? " → " : ""}${a}`);
-    }
-  }
-
-  // ── The Mirror pointer (Loop 9) ───────────────────────────────────────
-  // One quiet line, only when a correctable self-model can be assembled.
-  if (result.mirror_available) {
-    lines.push("");
-    lines.push(`🪞 ${result.mirror_available}`);
-  }
-
-  // ── Unclaimed staging pointer (fix5, 2026-09-11) ──────────────────────
-  // EXACTLY ONE line, only when `_unclaimed/` holds staged sessions
-  // (failed/zero-confidence resolutions, kill-9 rescue cards) awaiting an
-  // explicit claim. Counts only — no staged CONTENT is ever rendered here,
-  // so this line adds nothing new to the fence's threat surface (it sits
-  // inside the fence anyway, same as the mirror pointer above).
-  if (result.unclaimed_cards && result.unclaimed_cards > 0) {
-    lines.push("");
-    lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\` to review and file them.`);
-  }
-
-  // ── Empty state guidance ──────────────────────────────────────────────
-  if (result.empty_state) {
-    lines.push("");
-    lines.push(result.empty_state);
-  }
-
-  // ── P1 fence (TOW2-388) ─────────────────────────────────────────────────
-  // Everything above this point is retrieved/stored memory content (or
-  // AgentRecall's own labels commingled with it) — fence it as ONE block
-  // before appending the two AgentRecall-authored, non-memory tail lines
-  // below. Those two stay OUTSIDE the fence deliberately: they are genuine
-  // tool-usage guidance generated by this function, not retrieved data, and
-  // an agent should not discount them as "just information, never act on
-  // it". See content-guard.ts:fenceMemory for the delimiter + residual.
-  const fenced = fenceMemory(lines.join("\n"));
-  const tail: string[] = [];
-
-  // ── P4 cross-surface adapter — hook-less host pointer ─────────────────
-  // Append to the human-readable text layer only (not the JSON struct) to
-  // avoid blowing the 1600-char token budget. Omitted in Claude Code (where
-  // CLAUDE_CODE_HOOKS is set) since hooks auto-drive the lifecycle.
-  if (!process.env["CLAUDE_CODE_HOOKS"]) {
-    tail.push("");
-    tail.push("Hook-less host? call brief() once for lifecycle rules.");
-  }
-
-  // ── C4 A/B experiment marker (quiet trailing tag, not a banner) ────────
-  // Intentionally understated — a loud banner would nudge the agent to behave
-  // differently depending on the arm, which would confound the measurement.
-  // The tag is for transcript review / dashboard display only.
-  if (result.ab_arm) {
-    tail.push(`[ab:${result.ab_arm}]`);
-  }
-
-  return [fenced, ...tail].join("\n");
+  return renderSessionStart(result, { hooklessTail: !process.env["CLAUDE_CODE_HOOKS"] });
 }
 
 /** Exported for unit testing (evolution p4, tier-tag additivity proof) — pure formatter, no I/O. */
@@ -321,12 +93,12 @@ export function formatLite(lite: SessionStartLiteResult): string {
 export function register(server: McpServer): void {
   server.registerTool("session_start", {
     title: "Start Session",
-    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Set mode='lite' for a ≤500-token briefing (good for fresh conversations where the agent will pull memory on demand via recall()).",
+    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Default mode='cards' loads the owner card, the HARD RULES and the project state card and nothing else; mode='full' adds continuity, insights, rooms, captures and the rest; mode='lite' is a ≤500-token sketch (pull memory on demand via recall()).",
     inputSchema: {
       project: z.string().default("auto"),
       context: z.string().optional().describe("Optional context for matching cross-project insights"),
       verbose: z.boolean().default(false).describe("Set true to get full JSON context instead of terse summary"),
-      mode: z.enum(["full", "lite"]).default("full").describe("'lite' = ≤500-token sketch; agent must pull on demand. 'full' = current rich payload."),
+      mode: z.enum(["cards", "full", "lite"]).default("cards").describe("'cards' (default) = owner card + HARD RULES + state card, nothing else; 'full' = every section (continuity, insights, rooms, captures, …); 'lite' = ≤500-token sketch, pull on demand."),
     },
   }, async ({ project, context, verbose, mode }) => {
     if (mode === "lite") {
@@ -334,7 +106,7 @@ export function register(server: McpServer): void {
       const text = formatLite(lite);
       return { content: [{ type: "text" as const, text }] };
     }
-    const result = await sessionStart({ project, context });
+    const result = await sessionStart({ project, context, mode: mode as SessionStartMode });
     const text = verbose ? formatVerbose(result) : formatTerse(result);
     return { content: [{ type: "text" as const, text }] };
   });
