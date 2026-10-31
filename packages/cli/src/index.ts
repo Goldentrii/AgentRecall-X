@@ -1628,6 +1628,9 @@ async function main(): Promise<void> {
 
         lines.push("[AgentRecall] Session context loaded");
 
+        // Cards v1 — Owner (identity card) first, inside the memory fence.
+        if (result.owner) lines.push(...core.formatOwnerSection(result.owner));
+
         // ---- F2 continuity card (continuity wave 2026-07-31) ----
         // Top-3 most-recent sessions ACROSS projects, ranked by pure recency
         // (readRecentSessions already returns newest-first). L1 fix (review,
@@ -1679,6 +1682,9 @@ async function main(): Promise<void> {
             }
           }
         }
+
+        // Cards v1 — State card immediately after the P0 block, inside the fence.
+        if (result.state) lines.push(...core.formatStateSection(result.state));
 
         // Watch-for warnings — patterns derived from past correction history
         if (result.watch_for && result.watch_for.length > 0) {
