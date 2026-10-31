@@ -1582,8 +1582,9 @@ async function main(): Promise<void> {
       // this is a pure superset fix.
       const lockDir = core.getRoot();
       const lockFile = path.join(lockDir, ".hook-start-lock");
-      const sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "";
-      const lockKey = sessionId || new Date().toISOString().slice(0, 13); // hour-granularity fallback
+      // Cards v1 (G1): stdin session_id → CLAUDE_CODE_SESSION_ID → CLAUDE_SESSION_ID → SESSION_ID.
+      const sessionId = core.resolveHookSessionId(await core.readHookStdin());
+      const lockKey = core.hookLockKey(sessionId); // nosid-<UTC hour> only without any id
 
       try {
         if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
@@ -1594,17 +1595,14 @@ async function main(): Promise<void> {
       } catch { /* non-blocking */ }
 
       try {
-        // v3.4.42 working-memory wave: `sessionId` (env-var derived, above)
-        // is the closest available stand-in for "this session's own Claude
-        // Code session id" at this call site — hook-start does not parse
-        // stdin at all today (verified — this case reads no stdin), so there
-        // is no `session_id` field to pull from a payload here. This is the
-        // SAME lookup hook-end/hook-ambient already use as their own sid
-        // fallback, reused here purely so session-start.ts's WM "live" line
-        // can exclude THIS session's own working-memory file from the
-        // cross-window signal (see SessionStartInput.sid's doc comment for
-        // the graceful-degradation contract when it's empty).
-        const result = await core.sessionStart({ project, sid: sessionId || undefined });
+        // v3.4.42 working-memory wave: `sessionId` (resolved above via
+        // core.resolveHookSessionId — stdin `session_id`, then the env vars)
+        // is this session's own Claude Code session id, passed so
+        // session-start.ts's WM "live" line can exclude THIS session's own
+        // working-memory file from the cross-window signal (see
+        // SessionStartInput.sid's doc comment for the graceful-degradation
+        // contract when it's undefined).
+        const result = await core.sessionStart({ project, sid: sessionId });
         // P1 fence (TOW2-388): the F5 health banner below is a COMPUTED
         // diagnostic (a failure count from this machine's own hook-health
         // ledger) — not retrieved/stored natural-language content — and its
@@ -1819,33 +1817,14 @@ async function main(): Promise<void> {
       // same session. Every failure path exits 0 — never crash into the Stop turn.
 
       // ---- read stdin first (mirror hook-correction / hook-ambient / hook-pretool)
-      let stopRaw = "";
-      try {
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-        stopRaw = Buffer.concat(chunks).toString("utf-8").trim();
-      } catch { stopRaw = ""; }
-
-      let stop: Record<string, unknown> = {};
-      if (stopRaw) {
-        try { stop = JSON.parse(stopRaw) as Record<string, unknown>; }
-        catch { stop = {}; }
-      }
-
-      const transcriptPath =
-        typeof stop.transcript_path === "string" ? stop.transcript_path : undefined;
-      const stopSessionId =
-        typeof stop.session_id === "string" ? stop.session_id : undefined;
-
+      const stop = await core.readHookStdin();
+      const transcriptPath = typeof stop.transcript_path === "string" ? stop.transcript_path : undefined;
+      const resolvedSid = core.resolveHookSessionId(stop);
       const endToday = new Date().toISOString().slice(0, 10);
-      // Dedup key = transcript filename UUID (collision-free), else stdin
-      // session_id, else env, else date (last resort — may collide same-day).
-      const sid =
-        (transcriptPath ? path.basename(transcriptPath, ".jsonl") : "") ||
-        stopSessionId ||
-        process.env.CLAUDE_SESSION_ID ||
-        process.env.SESSION_ID ||
-        endToday;
+      // Dedup key = transcript filename UUID (collision-free), else the resolved
+      // session id (stdin session_id → CLAUDE_CODE_SESSION_ID → CLAUDE_SESSION_ID
+      // → SESSION_ID; Cards v1 G1), else date (last resort — may collide same-day).
+      const sid = (transcriptPath ? path.basename(transcriptPath, ".jsonl") : "") || resolvedSid || endToday;
 
       const endLockKey = `${sid}-end`;
       // Root-fix (2026-08-12, followups wave): flagged by review as the same
@@ -1881,8 +1860,7 @@ async function main(): Promise<void> {
         let skippedAmbiguous = false;
         if (!resolvedPath) {
           const today = readTodaySessions();
-          const wantId =
-            stopSessionId || process.env.CLAUDE_SESSION_ID || process.env.SESSION_ID || "";
+          const wantId = resolvedSid ?? "";
           const byId = wantId ? today.find((s) => s.sessionId === wantId) : undefined;
           if (byId) {
             resolvedPath = byId.file;
@@ -2371,9 +2349,13 @@ async function main(): Promise<void> {
         if (!raw) process.exit(0);
 
         let prompt = "";
-        let sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "default";
+        // Cards v1 (G1): resolved after the stdin parse below via
+        // core.resolveHookSessionId (stdin `session_id` → CLAUDE_CODE_SESSION_ID
+        // → CLAUDE_SESSION_ID → SESSION_ID). `"default"` stays the
+        // rate-limit/topic sentinel when none exists.
+        let sessionId = "default";
         // H2 fix (review, post-build): `sessionId` above falls back to the
-        // LITERAL string "default" when no env var is set — that sentinel is
+        // LITERAL string "default" when no id is resolvable — that sentinel is
         // used elsewhere in this case (topic-profile key, rate-limit counter
         // file) and is safe there because those call sites already special-
         // case it. It is NOT safe for working-memory: `wmAppend("default", …)`
@@ -2390,13 +2372,10 @@ async function main(): Promise<void> {
         // GENUINE id was ever seen (stdin `session_id`, or an env var) — WM
         // capture is gated on it below; every OTHER use of `sessionId` in this
         // case is untouched (same "default" fallback, same downstream
-        // behavior) since this fix is scoped to the WM tier only. Guards
-        // against BOTH "the env var is unset" (sessionId === "default", the
-        // `??` chain's own fallback) AND "the env var is explicitly set to an
-        // empty string" (`??` does not substitute for "" — only null/
-        // undefined — so an empty CLAUDE_SESSION_ID would otherwise slip
-        // through as sessionId="" and be treated as "real").
-        let hasRealSessionId = sessionId !== "default" && sessionId.length > 0;
+        // behavior) since this fix is scoped to the WM tier only. Blank ids
+        // (empty / whitespace-only stdin `session_id` or env var) count as
+        // absent — core.resolveHookSessionId returns undefined for them.
+        let hasRealSessionId = false;
         // v3.4.42 working-memory wave: cwd for the WM line below. Claude Code's
         // hook JSON is documented to carry a `cwd` field, but no existing hook
         // in this file reads it (verified — grep found zero prior `.cwd`
@@ -2404,17 +2383,18 @@ async function main(): Promise<void> {
         // process's own cwd, which for a hook spawned by Claude Code is the
         // session's working directory anyway.
         let cwd = process.cwd();
+        let parsedPayload: unknown;
         try {
           const parsed = JSON.parse(raw);
           prompt = parsed.prompt ?? parsed.message ?? parsed.user_message ?? "";
-          if (parsed.session_id) {
-            sessionId = String(parsed.session_id);
-            hasRealSessionId = true;
-          }
+          parsedPayload = parsed;
           if (typeof parsed.cwd === "string" && parsed.cwd) cwd = parsed.cwd;
         } catch {
           prompt = raw;
         }
+        const resolvedSid = core.resolveHookSessionId(parsedPayload as Record<string, unknown> | undefined); // Cards v1 (G1)
+        sessionId = resolvedSid ?? "default"; // "default" stays the rate-limit/topic sentinel
+        hasRealSessionId = resolvedSid !== undefined;
 
         // Non-semantic harness artifact early-exit (FIX 1): task-notifications,
         // agent-message wrappers, system-reminders, etc. carry no human intent.
@@ -2433,7 +2413,7 @@ async function main(): Promise<void> {
         // defensive insurance only, matching this file's existing style.
         //
         // H2 fix: when no session id is resolvable at all (no stdin
-        // `session_id`, no `CLAUDE_SESSION_ID`/`SESSION_ID` env var), SKIP the
+        // `session_id`, no `CLAUDE_CODE_SESSION_ID`/`CLAUDE_SESSION_ID`/`SESSION_ID` env var), SKIP the
         // WM append entirely — graceful degrade to pre-WM behavior — instead
         // of writing into the shared "default" bucket described above. The
         // rest of hook-ambient (recall/injection) is completely unaffected;
@@ -2523,8 +2503,8 @@ async function main(): Promise<void> {
         // should I watch out for?" even though turns 1-3 may not themselves
         // have fired an injection. See packages/cli/src/utils/topic-state.ts.
         const storeRoot = core.getRoot();
-        // Reuse the session id already resolved above (parsed.session_id,
-        // then CLAUDE_SESSION_ID/SESSION_ID env vars). Only when NONE of
+        // Reuse the session id already resolved above (core.resolveHookSessionId:
+        // stdin session_id, then the session-id env vars). Only when NONE of
         // those produced a real id (sessionId === "default") do we fall back
         // to a per-day-per-project key here — a bare "default" would merge
         // every session-less caller's background topic into one file, which

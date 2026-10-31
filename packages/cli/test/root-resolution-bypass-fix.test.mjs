@@ -51,7 +51,7 @@ function runCli(args, { stdin, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn("node", [CLI, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...env },
+      env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", ...env },
     });
     let stdout = "";
     let stderr = "";

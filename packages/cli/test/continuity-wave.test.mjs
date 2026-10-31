@@ -42,7 +42,7 @@ function runCli(args, { stdin, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn("node", [CLI, "--root", TEST_ROOT, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...env },
+      env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", ...env },
     });
     let stdout = "";
     let stderr = "";
@@ -187,7 +187,7 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", cleanRoot, "--project", "health-clean-test", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
       });
       let stdout = "";
       let stderr = "";
@@ -220,7 +220,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l1-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
       });
       let stdout = "";
       let stderr = "";
@@ -259,7 +259,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l2-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
       });
       let stdout = "";
       let stderr = "";
