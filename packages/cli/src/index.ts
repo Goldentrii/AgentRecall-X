@@ -1640,11 +1640,15 @@ async function main(): Promise<void> {
       const lockDir = core.getRoot();
       const lockFile = path.join(lockDir, ".hook-start-lock");
       // Cards v1 (G1): stdin session_id → CLAUDE_CODE_SESSION_ID → CLAUDE_SESSION_ID → SESSION_ID.
-      const sessionId = core.resolveHookSessionId(await core.readHookStdin());
+      const startPayload = await core.readHookStdin();
+      const sessionId = core.resolveHookSessionId(startPayload);
       const lockKey = core.hookLockKey(sessionId); // nosid-<UTC hour> only without any id
+      // Claude Code re-fires SessionStart with the SAME session_id after compaction/clear
+      // (source "compact"/"clear"): the context window was emptied, so re-inject (the lock is still rewritten).
+      const reinject = startPayload["source"] === "compact" || startPayload["source"] === "clear";
 
       try {
-        if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
+        if (!reinject && fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
           // Already ran this session — silent exit
           process.exit(0);
         }

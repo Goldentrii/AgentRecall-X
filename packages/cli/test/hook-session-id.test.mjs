@@ -28,3 +28,13 @@ it("hook-ambient: non-JSON stdin is still the prompt text; the id comes from CLA
   assert.ok(fs.existsSync(wm));
   assert.match(fs.readFileSync(wm, "utf-8"), /checkout bug in the payment service/);
 });
+it("hook-start: SessionStart source compact/clear re-injects despite the same session_id; startup stays deduped", async () => {
+  const root = tmpDir("ar-hsid-");
+  const start = (source) => hook(root, "hook-start", JSON.stringify({ session_id: "long-sid", source }));
+  assert.match((await start("startup")).stdout, /Session context loaded/, "first start injects");
+  assert.match((await start("compact")).stdout, /Session context loaded/, "compact re-injects");
+  assert.equal(lock(root, ".hook-start-lock"), "long-sid", "lock is still written on compact");
+  assert.match((await start("clear")).stdout, /Session context loaded/, "clear re-injects");
+  assert.equal((await start("startup")).stdout, "", "same id + startup is deduped");
+  assert.equal((await start("resume")).stdout, "", "same id + resume is deduped");
+});
