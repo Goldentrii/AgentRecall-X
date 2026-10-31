@@ -6,6 +6,8 @@ import {
   fenceMemory,
   continuityEntryMarker,
   continuityHeaderText,
+  formatOwnerSection,
+  formatStateSection,
   type SessionStartResult,
   type SessionStartLiteResult,
 } from "agent-recall-core";
@@ -39,6 +41,10 @@ export function formatTerse(result: SessionStartResult): string {
     lines.push(result.store_doctor);
     lines.push("");
   }
+
+  // ── Owner (identity card, Cards v1) — right after the diagnostic banners,
+  // before alignment/continuity/header. Inside the memory fence below.
+  if (result.owner) lines.push(...formatOwnerSection(result.owner), "");
 
   // ── North-star alignment metric ────────────────────────────────────────
   // Rendered only when real outcome data exists (retrieved > 0).
@@ -112,6 +118,9 @@ export function formatTerse(result: SessionStartResult): string {
       lines.push(`  [${c.severity.toUpperCase()}] ${trunc(c.rule, 120)}${tierTag}`);
     }
   }
+
+  // ── State card (Cards v1) — immediately after the HARD RULES block ────
+  if (result.state) lines.push("", ...formatStateSection(result.state));
 
   // ── Predictive warnings ───────────────────────────────────────────────
   if (result.watch_for && result.watch_for.length > 0) {
@@ -244,6 +253,8 @@ export function formatTerse(result: SessionStartResult): string {
 export function formatVerbose(result: SessionStartResult): string {
   const lines: string[] = [];
 
+  if (result.owner) { const [head, ...body] = formatOwnerSection(result.owner); lines.push(`## ${head}`, ...body, ""); }
+
   if (result.corrections && result.corrections.length > 0) {
     lines.push("## ⛔ HARD RULES — always follow, no exceptions");
     lines.push("These are behavioral constraints, not suggestions. Treat violations as errors.");
@@ -259,6 +270,8 @@ export function formatVerbose(result: SessionStartResult): string {
     lines.push("");
   }
 
+  if (result.state) { const [head, ...body] = formatStateSection(result.state); lines.push(`## ${head}`, ...body, ""); }
+
   if (result.watch_for && result.watch_for.length > 0) {
     lines.push("## ⚠ Watch For");
     for (const w of result.watch_for) {
@@ -268,7 +281,7 @@ export function formatVerbose(result: SessionStartResult): string {
   }
 
   lines.push("## Context (informational — use to inform, not to constrain)");
-  const { corrections: _omit, ...contextWithoutCorrections } = result;
+  const { corrections: _omit, owner: _owner, state: _state, ...contextWithoutCorrections } = result;
   lines.push(JSON.stringify(contextWithoutCorrections, null, 2));
 
   // P1 fence (TOW2-388) — the entire verbose payload is retrieved memory

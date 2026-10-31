@@ -1068,3 +1068,8 @@ export { buildEmbeddingsIndex, embeddingsStatus } from "./embeddings/indexer.js"
 export type { BuildEmbeddingsOptions, BuildEmbeddingsReport, EmbeddingsStatus } from "./embeddings/indexer.js";
 export { runSemanticLeg } from "./retrieval/semantic-leg.js";
 export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./retrieval/semantic-leg.js";
+export { resolveHookSessionId, readHookStdin, hookLockKey } from "./storage/hook-session.js";
+export { readIdentityCard, writeIdentityCard, parseIdentityCard, identityCardPath, formatOwnerSection, IdentityCardError, IDENTITY_BODY_CAP } from "./storage/identity-card.js";
+export type { IdentityCard } from "./storage/identity-card.js";
+export { readStateCard, writeStateCard, mergeStateCard, parseStateCard, serializeStateCard, capStateCard, stateCardPath, formatStateSection, STATE_CARD_FILE_CAP } from "./storage/state-card.js";
+export type { StateCard, StateCardInput, StateCardBody, MergeStateCardArgs } from "./storage/state-card.js";
