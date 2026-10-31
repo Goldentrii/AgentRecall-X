@@ -60,7 +60,8 @@ export function capStateCard(c: StateCardBody): { card: StateCardBody; truncated
 }
 
 export function mergeStateCard(a: MergeStateCardArgs): { card: StateCardBody; truncated: string[] } | null {
-  const p = a.previous, s: StateCardInput = a.state ?? {}, summary = oneLine(a.summary ?? ""), now = a.now ?? new Date();
+  // Scrub BEFORE the 200-char cut below: a token straddling the cut would otherwise be stored as a prefix fragment no pattern recognises.
+  const p = a.previous, s: StateCardInput = a.state ?? {}, summary = oneLine(scrubForCloud(a.summary ?? "")), now = a.now ?? new Date();
   if (!p && !a.state && !a.trajectory && !summary) return null;
   return capStateCard({
     updated: now.toISOString(), session: a.session,

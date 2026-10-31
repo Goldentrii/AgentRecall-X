@@ -43,6 +43,15 @@ it("values never start with a section marker and never end on half an emoji; re-
   assert.deepEqual({ ...r, age_days: undefined }, { ...e, age_days: undefined });
   assert.deepEqual(t.core.capStateCard(e), { card: e, truncated: [] });
 });
+it("a token straddling the 200-char summary cut is scrubbed before truncation: no prefix fragment survives", () => {
+  const tok = "gh" + "p_" + "A".repeat(36);
+  for (const pad of [150, 170, 185, 195]) {
+    const { card } = merge({ summary: `${"x".repeat(pad)} ${tok} and a tail` });
+    assert.ok(!card.last_session.includes("gh" + "p_"), `pad ${pad}: a ghp_ prefix fragment was stored`);
+    assert.ok(!/A{4}/.test(card.last_session), `pad ${pad}: token body characters were stored`);
+    assert.ok(card.last_session.length <= 13 + 200, `pad ${pad}: still capped`);
+  }
+});
 it("a UTF-8 BOM before the frontmatter is tolerated: the card reads back equal to the BOM-less one", () => {
   const card = merge({ summary: "bom session", state: { goal: "G", blockers: ["B"], pointers: ["F:\\a"] } }).card;
   const text = t.core.serializeStateCard(card), when = new Date(NOW.getTime() + 86_400_000);
