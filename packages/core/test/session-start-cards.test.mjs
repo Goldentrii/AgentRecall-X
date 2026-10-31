@@ -11,7 +11,7 @@ it("owner and state sit right after project, before identity; absent cards add n
   core.writeIdentityCard("# Owner\n- terse");
   core.writeStateCard("ssc-order", core.mergeStateCard({ previous: null, session: "s1", state: { goal: "Ship" } }).card);
   const r = await core.sessionStart({ project: "ssc-order" });
-  assert.deepEqual([Object.keys(r).slice(0, 4), r.owner, r.state.goal, r.state.age_days], [["project", "owner", "state", "identity"], { version: 1, body: "# Owner\n- terse" }, "Ship", 0]);
+  assert.deepEqual([Object.keys(r).slice(0, 5), r.owner, r.state.goal, r.state.age_days], [["project", "mode", "owner", "state", "identity"], { version: 1, body: "# Owner\n- terse" }, "Ship", 0]);
 });
 it("broken identity and binary state card: still returns, one stderr line each", async () => {
   const { core } = t;

@@ -515,8 +515,11 @@ export {
   continuityHeaderText,
   type SessionStartInput,
   type SessionStartResult,
+  type SessionStartMode,
   type SlimCorrection,
 } from "./tools-logic/session-start.js";
+export { renderSessionStart, sessionStartSections, sessionStartMaxBytes, SESSION_START_MAX_BYTES_DEFAULT, SESSION_START_MAX_BYTES_ENV, SESSION_START_MAX_BYTES_MIN } from "./tools-logic/session-start-render.js";
+export type { RenderSessionStartOptions, RenderedSection, SectionId } from "./tools-logic/session-start-render.js";
 export {
   buildRecognition,
   PERSON_LOW_CONFIDENCE_CAVEAT,
