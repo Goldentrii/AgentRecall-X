@@ -18,6 +18,15 @@ it("identity init → set → show; init never overwrites; bad bodies rejected, 
   }
   assert.match((await id("show")).stdout, /retrieved memory[\s\S]*Owner \(identity card v2\)\n# Owner\n- terse/);
 });
+it("identity init never overwrites a card file that exists but cannot be read (empty, UTF-16)", async () => {
+  const root = tmpDir("ar-cards-cli-"), card = path.join(root, "identity-card.md");
+  for (const content of [Buffer.alloc(0), Buffer.from("\uFEFF---\nkind: identity-card\nversion: 4\n---\nhi", "utf16le")]) {
+    fs.writeFileSync(card, content);
+    const r = await runCli(root, ["identity", "init"]);
+    assert.ok(r.code === 1 && /agent_instruction: the card file exists but could not be read; fix or remove .*identity-card\.md before running init/.test(r.stderr), `${r.code} ${r.stderr}`);
+    assert.deepEqual(fs.readFileSync(card), content, "the owner's file is untouched");
+  }
+});
 it("identity error paths exit 1 with agent_instruction and never print the secret", async () => {
   const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md"), id = (...a) => runCli(root, ["identity", ...a]);
   const expectFail = (r, re) => assert.ok(r.code === 1 && re.test(r.stderr) && /agent_instruction: /.test(r.stderr), `${r.code} ${r.stderr}`);

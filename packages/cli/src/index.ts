@@ -387,8 +387,15 @@ async function main(): Promise<void> {
       const fail = (msg: string, fix: string) => { process.stderr.write(`${msg}\nagent_instruction: ${fix}\n`); process.exitCode = 1; };
       const ioFail = (e: unknown) => fail(`identity card write failed: ${String(e)}`, "check that the store root is a writable directory (ar --root <dir>), then retry.");
       if (sub === "init") {
-        const existing = core.readIdentityCard();
-        if (existing) { fail(`identity card already exists at ${core.identityCardPath()} (v${existing.version})`, "edit a copy, then run `ar identity set <copy>`; init never overwrites."); break; }
+        // Existence is a filesystem fact: readIdentityCard() returns null for an empty/binary/UTF-16 file
+        // (PowerShell 5.1 `>` writes UTF-16), and init must never overwrite the owner's file.
+        const cardPath = core.identityCardPath();
+        if (fs.existsSync(cardPath)) {
+          const existing = core.readIdentityCard();
+          if (existing) fail(`identity card already exists at ${cardPath} (v${existing.version})`, "edit a copy, then run `ar identity set <copy>`; init never overwrites.");
+          else fail(`identity card file exists at ${cardPath} but could not be read`, `the card file exists but could not be read; fix or remove ${cardPath} before running init`);
+          break;
+        }
         try {
           const card = core.writeIdentityCard(IDENTITY_TEMPLATE);
           output({ path: card.path, version: card.version, chars: card.body.length });
