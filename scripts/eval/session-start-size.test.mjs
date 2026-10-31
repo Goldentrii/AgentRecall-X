@@ -246,6 +246,21 @@ test("e2e: --json --no-artifact run on corpus-v1 — schema, P0 survival, no hom
   }
 });
 
+test("e2e: --mode full on corpus-v1 renders at least as much as the cards default and names the mode; a bad --mode is FATAL", () => {
+  const env = { ...process.env, ...CANARY_ENV, BENCH_MACHINE: "test-machine" };
+  const run = (...extra) => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--store", CORPUS_V1, "--json", "--no-artifact", ...extra], { encoding: "utf-8", env, timeout: 180_000 }));
+  const cards = run(), full = run("--mode", "full");
+  assert.equal(cards.mode, "cards");
+  assert.equal(full.mode, "full");
+  assert.match(cards.payload, /default: formatTerse\(sessionStart\(\{project, mode:"cards"\}\)\)/);
+  assert.match(full.payload, /--mode full: formatTerse\(sessionStart\(\{project, mode:"full"\}\)\)/);
+  for (const row of [...cards.per_project, ...full.per_project]) assert.equal(row.p0_survival_ok, true, `${row.project}: P0 survival violated`);
+  assert.ok(full.median_chars >= cards.median_chars, `full (${full.median_chars}) must render at least the cards payload (${cards.median_chars})`);
+  const bad = spawnSync(process.execPath, [SCRIPT, "--store", CORPUS_V1, "--json", "--no-artifact", "--mode", "rich"], { encoding: "utf-8", env, timeout: 60_000 });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /FATAL: --mode must be one of cards\|full/);
+});
+
 test("e2e error path: missing store → exit 1 with FATAL on stderr", () => {
   const r = spawnSync(process.execPath, [SCRIPT, "--store", "no-such-store"], {
     encoding: "utf-8",

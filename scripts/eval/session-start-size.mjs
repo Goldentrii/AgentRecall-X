@@ -9,13 +9,15 @@
  *   node scripts/eval/session-start-size.mjs --json              # artifact on stdout
  *   node scripts/eval/session-start-size.mjs --no-artifact       # don't write baselines/
  *   node scripts/eval/session-start-size.mjs --check-determinism # double-run byte-diff
+ *   node scripts/eval/session-start-size.mjs --mode full          # today's full payload instead of the cards default
  *
  * WHAT IS MEASURED (the exact client-visible payload):
  *   For each project in the store, this calls the SAME code path the MCP
  *   `session_start` tool executes at its registration defaults
- *   (packages/mcp-server/src/tools/session-start.ts — mode="full",
- *   verbose=false):
- *       text = formatTerse(await sessionStart({ project }))
+ *   (packages/mcp-server/src/tools/session-start.ts — mode="cards" since
+ *   Cards v2 / G6, verbose=false):
+ *       text = formatTerse(await sessionStart({ project, mode }))
+ *   `--mode full` measures the complete payload instead (every section).
  *   `sessionStart` is packages/core/src/tools-logic/session-start.ts:505;
  *   `formatTerse` is the mcp-server renderer the tool returns as its single
  *   content[0].text block — that text string IS the injection the client
@@ -25,6 +27,8 @@
  *   text that deliberately mirrors formatTerse field-for-field, so the MCP
  *   default measured here is also representative of the hook injection.
  *   mode="lite" and verbose=true are NOT measured — neither is a default.
+ *   formatTerse is agent-recall-core's renderSessionStart (Cards v2): the
+ *   global byte cap, the fence and the hook-less tail are all inside it.
  *
  * TOKEN ESTIMATOR: ceil(chars/4) — the core-wide convention (session-start.ts
  * :174, handoff.ts:275; core exports no estimator, bench-lib replicates it).
@@ -98,7 +102,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASELINES_DIR = path.join(HERE, "baselines");
 
 export const SCHEMA_VERSION = "injection-baseline/v1";
-export const BENCH_VERSION = "session-start-size-v1";
+export const BENCH_VERSION = "session-start-size-v2";
+export const MODES = ["cards", "full"];
 
 /** Keys every injection artifact must carry — verifyBaseline checks these too. */
 export const REQUIRED_KEYS = [
@@ -159,13 +164,13 @@ async function loadShipped() {
  * Measure one project on a FRESH temp copy of the store.
  * Returns the artifact row. Exported for the test file.
  */
-export async function measureProject(shipped, storeRoot, project) {
+export async function measureProject(shipped, storeRoot, project, mode = "cards") {
   const tmp = prepareTempStore(storeRoot);
   process.env.AGENT_RECALL_ROOT = tmp;
   try {
     assertNetworkEnvScrubbed();
     const p0InStore = shipped.readP0Corrections(project).length;
-    const result = await shipped.sessionStart({ project });
+    const result = await shipped.sessionStart({ project, mode });
     const text = shipped.formatTerse(result);
     const p0InPayload = (result.corrections ?? []).filter((c) => c.severity === "p0").length;
     const expected = Math.min(p0InStore, 10);
@@ -185,7 +190,8 @@ export async function measureProject(shipped, storeRoot, project) {
 }
 
 /** Full measurement pass → { artifact, autoRow }. Exported for the test file. */
-export async function runMeasurement(storeArg) {
+export async function runMeasurement(storeArg, mode = "cards") {
+  if (!MODES.includes(mode)) throw new Error(`FATAL: --mode must be one of ${MODES.join("|")}, got "${mode}"`);
   const store = resolveStore(storeArg);
   const projects = listProjects(store.root);
   if (projects.length === 0) {
@@ -197,7 +203,7 @@ export async function runMeasurement(storeArg) {
   const perProject = [];
   for (const project of projects) {
     try {
-      perProject.push(await measureProject(shipped, store.root, project));
+      perProject.push(await measureProject(shipped, store.root, project, mode));
     } catch (e) {
       throw new Error(`FATAL: sessionStart failed for project "${project}": ${e?.message ?? e}`);
     }
@@ -208,7 +214,7 @@ export async function runMeasurement(storeArg) {
   const tmp = prepareTempStore(store.root);
   process.env.AGENT_RECALL_ROOT = tmp;
   try {
-    const result = await shipped.sessionStart({ project: "auto" });
+    const result = await shipped.sessionStart({ project: "auto", mode });
     const text = shipped.formatTerse(result);
     autoRow = { resolved: result.project, chars: text.length, tokens: estimateTokens(text) };
   } catch (e) {
@@ -234,8 +240,8 @@ export async function runMeasurement(storeArg) {
     store_hash: storeHash,
     store_hash_basis: STORE_HASH_BASIS,
     estimator: "chars/4 (ceil) — replicates packages/core handoff.ts:275; no real tokenizer without new deps",
-    payload:
-      "MCP session_start default: formatTerse(sessionStart({project})) — mode=full, verbose=false; content[0].text string",
+    mode,
+    payload: `MCP session_start ${mode === "cards" ? "default" : "--mode full"}: formatTerse(sessionStart({project, mode:"${mode}"})) — verbose=false; content[0].text string (renderSessionStart: fence, byte cap and tail included)`,
     per_project: perProject,
     median_tokens: percentile(tokens, 50),
     p95_tokens: percentile(tokens, 95),
@@ -248,7 +254,7 @@ export async function runMeasurement(storeArg) {
 
 function printTable(artifact, autoRow) {
   const w = (s, n) => String(s).padEnd(n);
-  process.stdout.write(`session-start-size — store: ${artifact.store} (hash ${artifact.store_hash.slice(0, 12)}…)\n`);
+  process.stdout.write(`session-start-size — store: ${artifact.store} (hash ${artifact.store_hash.slice(0, 12)}…) mode: ${artifact.mode}\n`);
   process.stdout.write(`payload: ${artifact.payload}\n`);
   process.stdout.write(`${w("project", 24)}${w("chars", 8)}${w("tokens", 8)}${w("cjk-adj", 9)}${w("P0 store", 10)}${w("P0 payload", 12)}survival\n`);
   for (const r of artifact.per_project) {
@@ -283,10 +289,12 @@ async function main() {
   const asJson = args.includes("--json");
   const noArtifact = args.includes("--no-artifact");
   const checkDeterminism = args.includes("--check-determinism");
+  const modeIdx = args.indexOf("--mode");
+  const mode = modeIdx >= 0 ? args[modeIdx + 1] : "cards";
 
   if (checkDeterminism) {
-    const a = deterministicBytes((await runMeasurement(storeArg)).artifact);
-    const b = deterministicBytes((await runMeasurement(storeArg)).artifact);
+    const a = deterministicBytes((await runMeasurement(storeArg, mode)).artifact);
+    const b = deterministicBytes((await runMeasurement(storeArg, mode)).artifact);
     if (a !== b) {
       const aLines = a.split('","');
       const bLines = b.split('","');
@@ -304,13 +312,13 @@ async function main() {
     return;
   }
 
-  const { artifact, autoRow } = await runMeasurement(storeArg);
+  const { artifact, autoRow } = await runMeasurement(storeArg, mode);
   const json = JSON.stringify(artifact, null, 2) + "\n";
   assertNoHomeLeak(json);
 
   if (!noArtifact) {
     fs.mkdirSync(BASELINES_DIR, { recursive: true });
-    const file = path.join(BASELINES_DIR, `injection-${utcDateStamp()}.json`);
+    const file = path.join(BASELINES_DIR, `injection-${utcDateStamp()}${mode === "cards" ? "" : `-${mode}`}.json`);
     fs.writeFileSync(file, json);
     process.stdout.write(`artifact: ${path.relative(path.join(HERE, "..", ".."), file).split(path.sep).join("/")}\n`);
   }
