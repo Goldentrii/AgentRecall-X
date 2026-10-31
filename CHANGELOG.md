@@ -11,8 +11,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - Identity card `<root>/identity-card.md` (≤1,600 chars, versioned, personal tier, never synced). Created and replaced only via `ar identity init` / `ar identity set <file>` (`ar identity show` prints it); over-cap or secret bodies are rejected. `session_start` returns it as `owner` and renders it first, inside the fence.
-- State card `projects/<slug>/state-card.md` (Goal, Open decisions, Blockers, Next, Pointers, Last session; ≤2,400 chars). Every non-hook `session_end` rewrites it atomically from the optional `state` input, carrying omitted fields forward and listing cut fields in `state_card.truncated`; `hook-end` saves leave it alone. It renders after HARD RULES, is marked `stale: N d` at ≥7 days, and is printed by `ar state show`.
+- State card `projects/<slug>/state-card.md` (Goal, Open decisions, Blockers, Next, Pointers, Last session; ≤2,400 chars). Every non-hook `session_end` rewrites it atomically from the optional `state` input, carrying omitted fields forward and listing cut fields in `state_card.truncated`; `hook-end` saves and `ar saveall` leave it alone. It renders after HARD RULES, is marked `stale: N d` at ≥7 days, and is printed by `ar state show`.
 - New core exports for both cards and the hook session-id resolver. Bench: `reports/2026-10-31-cards-v1-bench.md` (golden-v1 payload unchanged at 231 median tokens; both cards at cap add 3,933 terse / 4,034 JSON chars, limit 4,200). Injection baseline regenerated: `scripts/eval/baselines/injection-2026-10-31.json`.
+- Typical card cost: every non-hook `session_end` writes a state card even when `state` is omitted (the save summary becomes `Last session`), so a lived-in store adds roughly 500–600 chars (~140 tokens) per `session_start`. An estimate: `reports/2026-10-31-cards-v1-bench.md` measures only the extremes (no cards: +0 chars; both cards at cap: +3,933 terse chars).
+- `session_start` with `mode: "lite"` does not load either card in v1, so lite keeps its ≤500-token contract.
 
 ### Fixed
 
