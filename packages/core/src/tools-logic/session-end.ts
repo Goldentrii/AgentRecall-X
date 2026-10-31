@@ -32,6 +32,7 @@ import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js"
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
 import { writeHandoff } from "../helpers/handoff.js";
+import { mergeStateCard, readStateCard, writeStateCard, type StateCardInput } from "../storage/state-card.js";
 import { recordHookFailure } from "../storage/hook-health.js";
 import { stagePendingCorrection, validateInsightCompleteness } from "../storage/pending.js";
 
@@ -78,6 +79,13 @@ export interface SessionEndInput {
    * consolidate inline). Decision #3: consolidation is async dreaming.
    */
   deferConsolidation?: boolean;
+  /**
+   * Cards v1 — project state card, REWRITTEN at every non-hook session_end and
+   * loaded by the next session_start. Provided fields replace the previous value
+   * (even `[]`, which clears a list); omitted fields carry forward; `next`
+   * defaults to `trajectory` when absent. Ignored on `hook-end` saves.
+   */
+  state?: StateCardInput;
 }
 
 export interface MergeSuggestion {
@@ -130,6 +138,11 @@ export interface SessionEndResult {
   pipeline_opened?: PipelinePhaseAction;
   /** Path to the handoff artifact written at session_end. Present on success. */
   handoff_path?: string;
+  /**
+   * Cards v1 — outcome of the state-card rewrite. `truncated` lists the fields
+   * the core caps shortened (from the merge). Absent on hook-end saves.
+   */
+  state_card?: { written: boolean; truncated: string[] };
 }
 
 /**
@@ -287,6 +300,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         close_phase: input.close_phase ?? null,
         open_phase: input.open_phase ?? null,
         deferConsolidation: input.deferConsolidation ?? false,
+        state: input.state ?? null,
       }),
     )
     .digest("hex");
@@ -1024,6 +1038,20 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     }
   }
 
+  // Cards v1 — REWRITE the state card at every non-hook session_end, independent of
+  // journalWritten. hook-end leaves it (G5 non-goal; read-time staleness stays honest).
+  let stateCardResult: SessionEndResult["state_card"];
+  if (input.saveType !== "hook-end") {
+    try {
+      const merged = mergeStateCard({ previous: readStateCard(slug), state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId });
+      if (merged) writeStateCard(slug, merged.card);
+      stateCardResult = { written: merged !== null, truncated: merged?.truncated ?? [] };
+    } catch (err) {
+      recordHookFailure("session-end-state-card", err);
+      stateCardResult = { written: false, truncated: [] };
+    }
+  }
+
   const result: SessionEndResult = {
     success: journalWritten || awarenessUpdated,
     journal_written: journalWritten,
@@ -1042,6 +1070,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     ...(pipelineClosed ? { pipeline_closed: pipelineClosed } : {}),
     ...(pipelineOpened ? { pipeline_opened: pipelineOpened } : {}),
     ...(handoffPath ? { handoff_path: handoffPath } : {}),
+    ...(stateCardResult ? { state_card: stateCardResult } : {}),
   };
 
   // C2: cache this result under (session, project, fingerprint) so an

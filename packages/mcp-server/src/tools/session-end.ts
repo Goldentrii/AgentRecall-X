@@ -30,6 +30,14 @@ const openPhaseSchema = z
       "session pivots into the next strategic direction).",
   );
 
+/** Cards v1 — hard limits = 4× the soft caps: a zod rejection drops the whole save, so core truncates and reports instead. */
+export const STATE_HARD_LIMITS = { text: 1200, item: 640, pointer: 800, items: 20 } as const;
+const stateList = (max: number) => z.array(z.string().max(max)).max(STATE_HARD_LIMITS.items).optional();
+export const stateInputSchema = z
+  .object({ goal: z.string().max(STATE_HARD_LIMITS.text).optional(), open_decisions: stateList(STATE_HARD_LIMITS.item), blockers: stateList(STATE_HARD_LIMITS.item), next: z.string().max(STATE_HARD_LIMITS.text).optional(), pointers: stateList(STATE_HARD_LIMITS.pointer) })
+  .optional()
+  .describe("Project state card, REWRITTEN every save and loaded by the next session_start. Omitted fields carry forward; [] clears a list. Soft caps (overflow truncated with … and listed in state_card.truncated): goal ≤300 chars, open_decisions ≤5×160, blockers ≤5×160, next ≤300 (defaults to trajectory), pointers ≤8×200 (paths/URLs).");
+
 export function register(server: McpServer): void {
   server.registerTool(
     "session_end",
@@ -58,16 +66,18 @@ export function register(server: McpServer): void {
         trajectory: z.string().optional().describe("Where is the work heading next."),
         close_phase: closePhaseSchema,
         open_phase: openPhaseSchema,
+        state: stateInputSchema,
         project: z.string().default("auto"),
       },
     },
-    async ({ summary, insights, trajectory, close_phase, open_phase, project }) => {
+    async ({ summary, insights, trajectory, close_phase, open_phase, state, project }) => {
       const result = await sessionEnd({
         summary,
         insights,
         trajectory,
         close_phase,
         open_phase,
+        state,
         project,
         saveType: "arsave",
       });
@@ -84,6 +94,7 @@ export function register(server: McpServer): void {
         palace_consolidated: result.palace_consolidated,
         pipeline_closed: result.pipeline_closed,
         pipeline_opened: result.pipeline_opened,
+        state_card: result.state_card,
       });
 
       // Prepend advisory quality warnings if any insights failed quality checks
