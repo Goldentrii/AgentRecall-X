@@ -47,7 +47,8 @@ export interface SessionEndInput {
   }>;
   trajectory?: string;
   project?: string;
-  saveType?: SaveType;
+  /** `"saveall"` marks `ar saveall`: the journal is named as an `arsave` (unchanged) and the project state card is left alone. */
+  saveType?: SaveType | "saveall";
   sig?: SignificanceTag;   // NEW — auto-classified if not provided
   theme?: ThemeTag;        // NEW — auto-classified if not provided
   /**
@@ -353,7 +354,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     const sig = input.sig ?? autoClassifySig(input.summary);
     const theme = input.theme ?? autoClassifyTheme(input.summary);
 
-    await journalWrite({ content: journalContent, project: slug, saveType: input.saveType ?? "arsave", sig, theme });
+    await journalWrite({ content: journalContent, project: slug, saveType: input.saveType === "saveall" ? "arsave" : input.saveType ?? "arsave", sig, theme });
     journalWritten = true;
   } catch (err) {
     journalWriteError = err instanceof Error ? err.message : String(err);
@@ -1038,10 +1039,12 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     }
   }
 
-  // Cards v1 — REWRITE the state card at every non-hook session_end, independent of
-  // journalWritten. hook-end leaves it (G5 non-goal; read-time staleness stays honest).
+  // Cards v1 — REWRITE the state card at every agent-driven session_end, independent of
+  // journalWritten. hook-end leaves it (G5 non-goal; read-time staleness stays honest), and so does
+  // `ar saveall` (saveall/arsaveall): its auto-synthesized "Task: <first user message>" summary is not
+  // the agent's own account of the session and would reset `updated` and replace `last_session`.
   let stateCardResult: SessionEndResult["state_card"];
-  if (input.saveType !== "hook-end") {
+  if (input.saveType !== "hook-end" && input.saveType !== "saveall" && input.saveType !== "arsaveall") {
     try {
       const previous = readStateCard(slug);
       const merged = mergeStateCard({ previous, state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId });

@@ -3156,7 +3156,7 @@ async function main(): Promise<void> {
           // staging class: route it to `_unclaimed/` via the sentinel — the
           // save still happens, claimable later.
           const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
-          await core.sessionEnd({ summary, project: saveProject, insights: [] });
+          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // marker: journal naming unchanged, project state card not rewritten
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });

@@ -1,6 +1,7 @@
 import { it, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { runCli, tmpDir, cleanupTmp } from "./helpers/run-cli.mjs";
 
@@ -58,6 +59,18 @@ it("identity error paths exit 1 with agent_instruction and never print the secre
   const fileRoot = path.join(root, "not-a-dir");
   fs.writeFileSync(fileRoot, "x");
   expectFail(await runCli(fileRoot, ["identity", "init"]), /identity card write failed/);
+});
+it("ar saveall saves the journal but never writes a project state card", async () => {
+  const root = tmpDir("ar-cards-cli-"), home = tmpDir("ar-cards-home-");
+  const projects = path.join(home, ".claude", "projects", `-Users-${os.userInfo().username}`);
+  fs.mkdirSync(projects, { recursive: true });
+  const msg = { type: "user", message: { role: "user", content: "Please wire the saveall journal path into the new cards flow" } };
+  fs.writeFileSync(path.join(projects, "11111111-2222-3333-4444-555555555555.jsonl"), JSON.stringify(msg) + "\n");
+  const r = await runCli(root, ["saveall"], { env: { HOME: home, USERPROFILE: home } });
+  assert.equal(r.code, 0, r.stderr);
+  const files = fs.readdirSync(root, { recursive: true }).map(String); // an unguessable project is staged under <root>/_unclaimed/<id>/
+  assert.ok(files.some((f) => /journal[\\/]\d{4}-\d{2}-\d{2}--arsave--.*\.md$/.test(f)), `the journal save still happens, named as an arsave: ${r.stdout} ${files.join(",")}`);
+  assert.deepEqual(files.filter((f) => f.endsWith("state-card.md")), [], "saveall must not write a state card");
 });
 it("state show with an invalid --project exits 1 with the slug rules and an agent_instruction", async () => {
   const r = await runCli(tmpDir("ar-cards-cli-"), ["--project", "123", "state", "show"]);

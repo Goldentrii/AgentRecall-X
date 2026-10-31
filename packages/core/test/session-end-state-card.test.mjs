@@ -24,6 +24,17 @@ it("fingerprint includes state; identical repeat is a no-op; hook-end leaves the
   const h = await core.sessionEnd({ summary: "hook path summary text", project: "se-hook", saveType: "hook-end", deferConsolidation: true, state: { goal: "x" } });
   assert.deepEqual([h.state_card, core.readStateCard("se-hook")], [undefined, null]);
 });
+it("saveall (like hook-end) never rewrites the state card: no state_card result, no card file, an existing card untouched", async () => {
+  const { core } = t, slug = "se-saveall";
+  const first = await core.sessionEnd({ summary: "Task: auto-synthesized saveall summary, first run.", project: slug, saveType: "saveall" });
+  assert.deepEqual([first.state_card, fs.existsSync(core.stateCardPath(slug))], [undefined, false]);
+  assert.equal(first.journal_written, true, "the journal save itself still happens");
+  assert.ok(!fs.readdirSync(core.journalDir(slug)).some((f) => f.includes("--saveall--")), "journal naming is unchanged (arsave), saveall is only a marker");
+  await core.sessionEnd({ summary: "A real end-of-session summary, written by the agent.", project: slug, state: { goal: "real goal" } });
+  const before = fs.readFileSync(core.stateCardPath(slug), "utf-8");
+  const again = await core.sessionEnd({ summary: "Task: auto-synthesized saveall summary, second run.", project: slug, saveType: "saveall" });
+  assert.deepEqual([again.state_card, fs.readFileSync(core.stateCardPath(slug), "utf-8")], [undefined, before]);
+});
 it("a failing card write never fails the save: reported as not written and recorded in hook-health", async () => {
   const { core } = t;
   fs.mkdirSync(core.stateCardPath("se-err"), { recursive: true }); // a directory where the card file should be → the atomic rename throws
