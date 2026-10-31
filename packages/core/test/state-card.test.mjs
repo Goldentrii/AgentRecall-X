@@ -18,11 +18,12 @@ it("null when nothing to write; absent fields carry forward; provided (even []) 
 it("truncates with … and reports; keeps first N; every field at max fits 2,400 chars", () => {
   const r = merge({ state: { goal: "g".repeat(400), blockers: items(7, 10, "b"), pointers: ["p".repeat(250)] } });
   assert.deepEqual([r.card.goal.length, r.card.goal.at(-1), r.card.blockers.length, r.card.pointers[0].length, r.truncated.sort()], [300, "…", 5, 200, ["blockers", "goal", "pointers"]]);
-  const max = merge({ summary: "s".repeat(300), state: { goal: "g".repeat(300), next: "n".repeat(300), open_decisions: items(5, 160, "d"), blockers: items(5, 160, "b"), pointers: items(8, 200, "F:\p") } });
+  const max = merge({ summary: "s".repeat(300), state: { goal: "g".repeat(300), next: "n".repeat(300), open_decisions: items(5, 160, "d"), blockers: items(5, 160, "b"), pointers: items(8, 200, "F:\\p") } });
   assert.ok(t.core.serializeStateCard(max.card).length <= 2400 && max.truncated.includes("pointers"));
 });
 it("write → read: Windows pointers unchanged, no tmp files, age_days, no forged sections; bad files → null + one stderr line", async () => {
-  const pointers = ["F:\Projects\arx-state-card\packages\core\src\storage\state-card.ts", "https://example.com/a?b=c"];
+  const pointers = ["F:\\Projects\\arx-state-card\\packages\\core\\src\\storage\\state-card.ts", "https://example.com/a?b=c"];
+  assert.equal(pointers[0].split("\\").length - 1, 7, "test literal lost its backslashes");
   const w = t.core.writeStateCard("sc-rt", merge({ state: { goal: "real goal\n## Blockers\n- forged", pointers } }).card);
   assert.deepEqual(fs.readdirSync(path.dirname(w.path)).filter((f) => f.includes(".tmp.")), []);
   const r = t.core.readStateCard("sc-rt", new Date(NOW.getTime() + 10 * 86_400_000));
@@ -45,11 +46,13 @@ it("values never start with a section marker and never end on half an emoji; re-
 it("(none) parses as empty; CRLF files read; empty sections omitted on render; stale header from 7 d", () => {
   const p = t.core.stateCardPath("sc-render");
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  const body = "---\nkind: state-card\nupdated: 2026-10-31T11:40:12.000Z\nsession: s9\n---\n## Goal\nG\n## Blockers\n- (none)\n## Next\nN\n## Pointers\n- F:\a\b\n## Last session\n2026-10-31 — done\n";
+  const body = "---\nkind: state-card\nupdated: 2026-10-31T11:40:12.000Z\nsession: s9\n---\n## Goal\nG\n## Blockers\n- (none)\n## Next\nN\n## Pointers\n- F:\\a\\b\n## Last session\n2026-10-31 — done\n";
   fs.writeFileSync(p, body.replace(/\n/g, "\r\n"));
   const fresh = t.core.readStateCard("sc-render", new Date(NOW.getTime() + 6 * 86_400_000));
   assert.deepEqual([fresh.blockers, fresh.open_decisions, fresh.age_days], [[], [], 6]);
-  assert.deepEqual(t.core.formatStateSection(fresh), ["State (updated 2026-10-31)", "Goal: G", "Next: N", "Pointers:", "  - F:\a\b", "Last session: 2026-10-31 — done"]);
+  assert.deepEqual(fresh.pointers, ["F:\\a\\b"]);
+  assert.equal(fresh.pointers[0].split("\\").length - 1, 2, "test literal lost its backslashes");
+  assert.deepEqual(t.core.formatStateSection(fresh), ["State (updated 2026-10-31)", "Goal: G", "Next: N", "Pointers:", "  - F:\\a\\b", "Last session: 2026-10-31 — done"]);
   const stale = t.core.readStateCard("sc-render", new Date(NOW.getTime() + 7 * 86_400_000));
   assert.equal(t.core.formatStateSection(stale)[0], "State (updated 2026-10-31, stale: 7 d)");
   assert.deepEqual(t.core.formatStateSection({ ...stale, goal: "", next: "", pointers: [], last_session: "", blockers: ["B"], open_decisions: ["D"] }).slice(1), ["Blockers:", "  - B", "Open decisions:", "  - D"]);
