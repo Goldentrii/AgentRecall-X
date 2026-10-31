@@ -8,6 +8,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Identity card `<root>/identity-card.md` (≤1,600 chars, versioned, personal tier, never synced). Created and replaced only via `ar identity init` / `ar identity set <file>` (`ar identity show` prints it); over-cap or secret bodies are rejected. `session_start` returns it as `owner` and renders it first, inside the fence.
+- State card `projects/<slug>/state-card.md` (Goal, Open decisions, Blockers, Next, Pointers, Last session; ≤2,400 chars). Every non-hook `session_end` rewrites it atomically from the optional `state` input, carrying omitted fields forward and listing cut fields in `state_card.truncated`; `hook-end` saves leave it alone. It renders after HARD RULES, is marked `stale: N d` at ≥7 days, and is printed by `ar state show`.
+- New core exports for both cards and the hook session-id resolver. Bench: `reports/2026-10-31-cards-v1-bench.md` (golden-v1 payload unchanged at 231 median tokens; both cards at cap add 3,933 terse / 4,034 JSON chars, limit 4,200). Injection baseline regenerated: `scripts/eval/baselines/injection-2026-10-31.json`.
+
+### Fixed
+
+- Hooks resolve the session id as stdin `session_id` → `CLAUDE_CODE_SESSION_ID` → `CLAUDE_SESSION_ID` → `SESSION_ID`, and `hook-start` reads stdin. Before this, `hook-start` read only `CLAUDE_SESSION_ID` / `SESSION_ID`; with neither set (the usual case) its lock key was the UTC hour, so a second session started in the same hour loaded no context.
+
+### Deprecated
+
+- `handoff.md` is still written, but no AgentRecall code reads it and it is no longer the intended resume surface; the state card is.
+
 ## [3.5.2] — 2026-10-16
 
 Security + retrieval hardening from the 2026-10-15 rigorous eval (`reports/2026-10-15-rigorous-eval.md`) and two independent reviews (`reports/2026-10-16-review-security.md`, `reports/2026-10-16-review-correctness.md`). All four packages 3.5.2 in lockstep. 3.5.0 and 3.5.1 were tagged on GitHub but not published to npm; 3.5.2 is the first npm release since 3.4.51 and includes them.
