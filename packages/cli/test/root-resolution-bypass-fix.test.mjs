@@ -91,7 +91,7 @@ describe("root-resolution bypass fix — hook-start", () => {
     );
 
     const { code, stdout, stderr } = await runCli(["--root", root, "--project", project, "hook-start"], {
-      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "rootfix-hs-prefetch-test" },
+      env: { HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "rootfix-hs-prefetch-test", AGENT_RECALL_SESSION_START_MODE: "full" }, // the prefetch block is a full-mode extra (Cards v2)
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.match(stdout, /root-fix prefetch marker TOW2-000/, `expected the prefetch line to render; stdout=${stdout}`);
