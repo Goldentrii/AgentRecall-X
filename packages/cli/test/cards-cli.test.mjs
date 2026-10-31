@@ -17,7 +17,7 @@ it("identity init → set → show; init never overwrites; bad bodies rejected, 
     const r = await id("set", src);
     assert.ok(r.code === 1 && /nothing written[\s\S]*agent_instruction/.test(r.stderr), r.stderr);
   }
-  assert.match((await id("show")).stdout, /retrieved memory[\s\S]*Owner \(identity card v2\)\n# Owner\n- terse/);
+  assert.match((await id("show")).stdout, /retrieved memory[\s\S]*version: 2\nupdated: [^\n]+\n---\n# Owner\n- terse\n/);
 });
 it("identity init never overwrites a card file that exists but cannot be read (empty, UTF-16)", async () => {
   const root = tmpDir("ar-cards-cli-"), card = path.join(root, "identity-card.md");
@@ -36,13 +36,13 @@ it("identity set strips a UTF-8 BOM from the input file (frontmatter and plain-b
   assert.equal(JSON.parse((await id("set", src)).stdout).version, 2);
   const stored = fs.readFileSync(path.join(root, "identity-card.md"), "utf-8");
   assert.ok(!stored.includes(BOM) && /\n---\n# Owner\n- plain body\n$/.test(stored), JSON.stringify(stored));
-  assert.match((await id("show")).stdout, /Owner \(identity card v2\)\n# Owner\n- plain body/);
+  assert.match((await id("show")).stdout, /version: 2\nupdated: [^\n]+\n---\n# Owner\n- plain body\n/);
 });
 it("identity error paths exit 1 with agent_instruction and never print the secret", async () => {
   const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md"), id = (...a) => runCli(root, ["identity", ...a]);
   const expectFail = (r, re) => assert.ok(r.code === 1 && re.test(r.stderr) && /agent_instruction: /.test(r.stderr), `${r.code} ${r.stderr}`);
   expectFail(await id("show"), /No identity card at [\s\S]*agent_instruction: create one with `ar identity init`/);
-  expectFail(await id("set"), /cannot read \(no file given\)/);
+  expectFail(await id("set"), /usage: ar identity set <file>/);
   expectFail(await id("set", path.join(root, "missing.md")), /cannot read .*missing\.md/);
   expectFail(await id("frobnicate"), /usage: ar identity init \| show \| set <file>/);
   fs.writeFileSync(src, "x".repeat(1601));
@@ -84,4 +84,33 @@ it("state show: hint when absent, fenced card for --project; help lists the card
   assert.match((await show()).stdout, /retrieved memory[\s\S]*State \(updated [\d-]{10}\)\nGoal: Ship/);
   const help = (await runCli(root, ["--help"])).stdout;
   assert.ok(/ar identity init[\s\S]*ar state show \[--project <slug>\]/.test(help) && help.match(/ar state read\|write/g).length === 1);
+});
+it("identity set with no file prints a usage line, never an ENOENT", async () => {
+  const r = await runCli(tmpDir("ar-cards-cli-"), ["identity", "set"]);
+  assert.ok(r.code === 1 && /^usage: ar identity set <file>/m.test(r.stderr) && !/ENOENT/.test(r.stderr) && /agent_instruction: /.test(r.stderr), `${r.code} ${r.stderr}`);
+});
+it("identity show output round-trips through set: same body, no fence or header lines stored", async () => {
+  const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md"), id = (...a) => runCli(root, ["identity", ...a]);
+  fs.writeFileSync(src, "# Owner\n- terse\n- two");
+  assert.equal(JSON.parse((await id("set", src)).stdout).version, 1);
+  const shown = (await id("show")).stdout;
+  assert.match(shown, /retrieved memory[\s\S]*kind: identity-card\nversion: 1\nupdated: [^\n]+\n---\n# Owner\n- terse\n- two\n⟦\//);
+  fs.writeFileSync(src, shown); // `ar identity show > card.md`, edited or not, fed back in
+  assert.equal(JSON.parse((await id("set", src)).stdout).version, 2);
+  const stored = fs.readFileSync(path.join(root, "identity-card.md"), "utf-8");
+  assert.ok(/^---\nkind: identity-card\nversion: 2\nupdated: [^\n]+\n---\n# Owner\n- terse\n- two\n$/.test(stored), JSON.stringify(stored));
+});
+it("identity set rejects a UTF-16 / NUL-laden file with an agent_instruction; no card is written", async () => {
+  const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md");
+  fs.writeFileSync(src, Buffer.from("# Owner\n- utf16", "utf16le"));
+  const r = await runCli(root, ["identity", "set", src]);
+  assert.ok(r.code === 1 && /NUL/.test(r.stderr) && /agent_instruction: .*UTF-8/.test(r.stderr), `${r.code} ${r.stderr}`);
+  assert.equal(fs.existsSync(path.join(root, "identity-card.md")), false);
+});
+it("state show on a frontmatter-only card prints a hint, not a bare State header", async () => {
+  const root = tmpDir("ar-cards-cli-");
+  fs.mkdirSync(path.join(root, "projects", "cli-fm"), { recursive: true });
+  fs.writeFileSync(path.join(root, "projects", "cli-fm", "state-card.md"), `---\nkind: state-card\nupdated: ${new Date().toISOString()}\nsession: s\n---\n`);
+  const r = await runCli(root, ["--project", "cli-fm", "state", "show"]);
+  assert.ok(r.code === 0 && !r.stdout.includes("State (updated") && /no fields yet/.test(r.stdout), `${r.code} ${r.stdout} ${r.stderr}`);
 });

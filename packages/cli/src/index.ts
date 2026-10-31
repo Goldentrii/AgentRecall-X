@@ -82,7 +82,7 @@ JOURNAL:
 
 CARDS (loaded first by session_start):
   ar identity init          Create <root>/identity-card.md from a template (never overwrites)
-  ar identity show          Print the owner identity card
+  ar identity show          Print the owner identity card (file form: edit a copy, feed it back with set)
   ar identity set <file>    Replace the body from a file (≤1600 chars, secrets rejected, version +1)
   ar state show [--project <slug>]  Print the project state card (rewritten by every session_end)
 
@@ -356,8 +356,9 @@ async function main(): Promise<void> {
           break;
         }
         const card = core.readStateCard(slug);
-        if (card) outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
-        else output(`No state card for ${slug} yet — the next session_end writes it.`);
+        if (!card) output(`No state card for ${slug} yet — the next session_end writes it.`);
+        else if (!core.stateCardHasContent(card)) output(`State card for ${slug} has no fields yet (updated ${card.updated.slice(0, 10)}) — the next session_end fills it.`);
+        else outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
         break;
       }
       const action = (sub as "read" | "write") || "read";
@@ -402,11 +403,12 @@ async function main(): Promise<void> {
         } catch (e) { ioFail(e); }
       } else if (sub === "show") {
         const card = core.readIdentityCard();
-        if (card) outputFenced(`${core.formatOwnerSection(card).join("\n")}\n(updated ${card.updated || "unknown"})`);
+        if (card) outputFenced(core.serializeIdentityCard(card).trimEnd()); // the file form: `ar identity show > card.md` feeds straight back into set
         else fail(`No identity card at ${core.identityCardPath()}`, "create one with `ar identity init`.");
       } else if (sub === "set") {
+        if (!rest[1]) { fail("usage: ar identity set <file>", "pass the path of a UTF-8 markdown file holding the card body; `ar identity show > card.md` gives an editable copy."); break; }
         let text = "";
-        try { text = fs.readFileSync(rest[1] ?? "", "utf-8").replace(/^\uFEFF/, ""); } catch (e) { fail(`cannot read ${rest[1] ?? "(no file given)"}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
+        try { text = core.unfenceMemory(core.normalizeCardText(fs.readFileSync(rest[1], "utf-8"))); } catch (e) { fail(`cannot read ${rest[1]}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
         const parsed = core.parseIdentityCard(text);
         try {
           const card = core.writeIdentityCard(parsed.malformed ? text : parsed.card.body);
@@ -414,7 +416,7 @@ async function main(): Promise<void> {
         } catch (e) {
           if (!(e instanceof core.IdentityCardError)) ioFail(e);
           else {
-            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context" }[e.code];
+            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context", binary: "save the file as UTF-8 (it holds NUL bytes, typically a UTF-16 save from PowerShell 5.1)" }[e.code];
             fail(e.message, `${fix}, then re-run ar identity set.`);
           }
         }
@@ -3110,11 +3112,13 @@ async function main(): Promise<void> {
       for (const [proj, projSessions] of byProject) {
         // NOTE (Phase 6 fix): we used to skip the project if ANY journal file
         // existed for today, which silently dropped 4 of 5 parallel sessions.
-        // Now each session writes its own session-scoped filename
-        // (`{date}--arsaveall--...--{uniq}.md`) via journalFileName, so
-        // re-runs are safe and parallel sessions all survive. We still need
-        // to dedupe within a single saveall invocation though — same upstream
-        // session shouldn't be saved twice in one call.
+        // Now core.sessionEnd maps saveType "saveall" to the `arsave` journal
+        // name (`{date}--arsave--…`, same-day rule: one file per project per
+        // day, appended to), so re-runs are safe and every session's text
+        // lands. "saveall" itself is only a marker: it keeps the project
+        // state card untouched (core session-end.ts). We still dedupe within
+        // a single saveall invocation — the same upstream session shouldn't
+        // be saved twice in one call.
 
         // Synthesize summary from all sessions for this project
         const largest = projSessions.sort((a, b) => b.sizeMb - a.sizeMb)[0];
@@ -3156,7 +3160,7 @@ async function main(): Promise<void> {
           // staging class: route it to `_unclaimed/` via the sentinel — the
           // save still happens, claimable later.
           const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
-          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // marker: journal naming unchanged, project state card not rewritten
+          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // "saveall" is a marker only: the journal is named arsave (NOTE above) and the project state card is left untouched
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });
