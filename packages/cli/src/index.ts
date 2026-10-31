@@ -388,7 +388,7 @@ async function main(): Promise<void> {
       const ioFail = (e: unknown) => fail(`identity card write failed: ${String(e)}`, "check that the store root is a writable directory (ar --root <dir>), then retry.");
       if (sub === "init") {
         const existing = core.readIdentityCard();
-        if (existing) { fail(`identity card already exists at ${core.identityCardPath()} (v${existing.version})`, "edit that file, then run `ar identity set <file>`; init never overwrites."); break; }
+        if (existing) { fail(`identity card already exists at ${core.identityCardPath()} (v${existing.version})`, "edit a copy, then run `ar identity set <copy>`; init never overwrites."); break; }
         try {
           const card = core.writeIdentityCard(IDENTITY_TEMPLATE);
           output({ path: card.path, version: card.version, chars: card.body.length });

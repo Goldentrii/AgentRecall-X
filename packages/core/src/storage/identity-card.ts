@@ -35,6 +35,12 @@ export function readIdentityCard(): IdentityCard | null {
   const { card, malformed } = parseIdentityCard(raw);
   if (malformed) warn("malformed frontmatter — whole file used as body");
   else if (card.body.length > IDENTITY_BODY_CAP) warn(`body over ${IDENTITY_BODY_CAP} chars — truncated for this load`);
+  // `set` rejects secrets, but a hand-edited live file bypasses it and is injected into every session.
+  const scan = scrubSecretContent(card.body);
+  if (scan.redactedCount > 0) {
+    card.body = scan.content;
+    warn(`contains a secret (${scan.labels[0] ?? "secret pattern"}) — redacted for this load; remove it from the file`);
+  }
   if (card.body.length > IDENTITY_BODY_CAP) card.body = card.body.slice(0, IDENTITY_BODY_CAP - 1) + "…";
   return card;
 }

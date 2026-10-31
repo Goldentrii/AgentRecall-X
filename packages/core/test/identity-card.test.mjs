@@ -22,6 +22,17 @@ it("malformed → v0 + whole file; empty/binary → null; one stderr line each",
   assert.deepEqual(await read(), [{ version: 0, updated: "", body: "---\nkind: nope\n---\nhello" }, 1]);
   for (const c of ["", Buffer.from([0, 255])]) { fs.writeFileSync(file(), c); assert.deepEqual(await read(), [null, 1]); }
 });
+it("hand-edited card holding a token: read serves the redacted body and warns once, never echoing the value", async () => {
+  const tok = "gh" + "p_" + "A".repeat(36);
+  fs.writeFileSync(file(), `---\nkind: identity-card\nversion: 3\nupdated: 2026-10-01T00:00:00.000Z\n---\n# Owner\n- token ${tok} here\n`);
+  const [card, allLines, labelLines, leakLines] = await stderrOf(() => t.core.readIdentityCard(), "", "GitHub PAT", tok);
+  assert.ok(!card.body.includes(tok), "the token must not be served");
+  assert.match(card.body, /\[REDACTED/, "a redaction marker replaces it");
+  assert.equal(card.version, 3);
+  assert.equal(allLines, 1, "exactly one stderr line");
+  assert.equal(labelLines, 1, "the line names the rule label");
+  assert.equal(leakLines, 0, "the line never contains the token");
+});
 it("personal tier; the sync walker never enumerates it", async () => {
   const { core } = t;
   core.writeIdentityCard("# Owner\n- private");
