@@ -30,13 +30,13 @@ const openPhaseSchema = z
       "session pivots into the next strategic direction).",
   );
 
-/** Cards v1 — hard limits = 4× the soft caps: a zod rejection drops the whole save, so core truncates and reports instead. */
+/** Cards v1 — hard limits = 4× the text/item soft caps (text 300→1200, item 160→640, pointer 200→800); `items` 20 is 4× the decisions/blockers count cap (5) and 2.5× the pointers cap (8). A zod rejection drops the whole save, so core truncates and reports within these instead. */
 export const STATE_HARD_LIMITS = { text: 1200, item: 640, pointer: 800, items: 20 } as const;
 const stateList = (max: number) => z.array(z.string().max(max)).max(STATE_HARD_LIMITS.items).optional();
 export const stateInputSchema = z
   .object({ goal: z.string().max(STATE_HARD_LIMITS.text).optional(), open_decisions: stateList(STATE_HARD_LIMITS.item), blockers: stateList(STATE_HARD_LIMITS.item), next: z.string().max(STATE_HARD_LIMITS.text).optional(), pointers: stateList(STATE_HARD_LIMITS.pointer) })
   .optional()
-  .describe("Project state card, REWRITTEN every save and loaded by the next session_start. Omitted fields carry forward; [] clears a list. Soft caps (overflow truncated with … and listed in state_card.truncated): goal ≤300 chars, open_decisions ≤5×160, blockers ≤5×160, next ≤300 (defaults to trajectory), pointers ≤8×200 (paths/URLs).");
+  .describe("Project state card, REWRITTEN every save and loaded by the next session_start. Omitted fields carry forward; [] clears a list. Soft caps (overflow truncated with … and listed in state_card.truncated): goal ≤300 chars, open_decisions ≤5×160, blockers ≤5×160, next ≤300 (defaults to trajectory), pointers ≤8×200 (paths/URLs). Hard limits (beyond these the whole save is rejected): goal and next ≤1200 chars; open_decisions and blockers ≤20 items × 640 chars; pointers ≤20 items × 800 chars.");
 
 export function register(server: McpServer): void {
   server.registerTool(
