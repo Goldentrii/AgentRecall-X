@@ -12,7 +12,7 @@ import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } fro
 import { DEFAULT_PALACE_ROOMS, getRoot } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
 import { readIdentityCard } from "../storage/identity-card.js";
-import { readStateCard, type StateCard } from "../storage/state-card.js";
+import { readStateCard, stateCardHasContent, type StateCard } from "../storage/state-card.js";
 import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awareness.js";
 import { recallInsights, readInsightsIndex } from "../palace/insights-index.js";
 import { journalDirs, projectSubPath } from "../storage/paths.js";
@@ -1175,7 +1175,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     !todayBrief && !yesterdayBrief &&
     olderCount === 0 &&
     !hasCaptures &&
-    !hasPalaceContent;
+    !hasPalaceContent &&
+    // Cards v1: a state card with any field filled is project memory; a frontmatter-only file is not.
+    !(stateCard && stateCardHasContent(stateCard));
 
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();

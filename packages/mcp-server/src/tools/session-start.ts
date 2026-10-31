@@ -120,7 +120,8 @@ export function formatTerse(result: SessionStartResult): string {
   }
 
   // ── State card (Cards v1) — immediately after the HARD RULES block ────
-  if (result.state) lines.push("", ...formatStateSection(result.state));
+  const stateLines = result.state ? formatStateSection(result.state) : []; // [] for a card without content
+  if (stateLines.length > 0) lines.push("", ...stateLines);
 
   // ── Predictive warnings ───────────────────────────────────────────────
   if (result.watch_for && result.watch_for.length > 0) {
@@ -270,7 +271,8 @@ export function formatVerbose(result: SessionStartResult): string {
     lines.push("");
   }
 
-  if (result.state) { const [head, ...body] = formatStateSection(result.state); lines.push(`## ${head}`, ...body, ""); }
+  const [stateHead, ...stateBody] = result.state ? formatStateSection(result.state) : [];
+  if (stateHead) lines.push(`## ${stateHead}`, ...stateBody, "");
 
   if (result.watch_for && result.watch_for.length > 0) {
     lines.push("## ⚠ Watch For");

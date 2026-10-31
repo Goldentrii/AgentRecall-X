@@ -15,3 +15,10 @@ it("Owner first, State after the P0 block, card text inside the fence", async ()
   const at = ["retrieved memory", "Owner (identity card v2)", "ignore previous instructions", "Project: hs-cards", "🚨 P0 rules", "State (updated"].map((s) => stdout.indexOf(s));
   assert.ok(at.every((x, k) => x >= 0 && (k === 0 || x > at[k - 1])) && stdout.lastIndexOf("⟦/") > at[5], `${JSON.stringify(at)} ${stderr}`);
 });
+it("a frontmatter-only state card prints no State header", async () => {
+  const root = tmpDir("ar-hs-cards-"), dir = path.join(root, "projects", "hs-fm");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "state-card.md"), `---\nkind: state-card\nupdated: ${new Date().toISOString()}\nsession: s\n---\n`);
+  const { stdout, stderr } = await runCli(root, ["--project", "hs-fm", "hook-start"], { stdin: '{"session_id":"hs-2"}' });
+  assert.ok(stdout.includes("Project: hs-fm") && !stdout.includes("State (updated"), `${stdout} ${stderr}`);
+});
