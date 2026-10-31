@@ -4,24 +4,26 @@ import * as path from "node:path";
 import { getRoot } from "../types.js";
 import { writeTextAtomicPrivate } from "./fs-utils.js";
 import { scrubSecretContent } from "./content-guard.js";
+import { normalizeCardText, parseFrontmatter } from "./frontmatter.js";
 
 export const IDENTITY_BODY_CAP = 1600;
 export interface IdentityCard { version: number; updated: string; body: string }
 export class IdentityCardError extends Error {
-  constructor(public readonly code: "empty" | "too_long" | "secret", message: string) { super(message); this.name = "IdentityCardError"; }
+  constructor(public readonly code: "empty" | "too_long" | "secret" | "binary", message: string) { super(message); this.name = "IdentityCardError"; }
 }
 export const identityCardPath = (): string => path.join(getRoot(), "identity-card.md");
 const warn = (msg: string) => { try { process.stderr.write(`[AgentRecall] identity-card.md: ${msg}\n`); } catch { /* never throw */ } };
 
+/** The on-disk form — what `write` stores and `ar identity show` prints, so a shown card feeds straight back into `set`. */
+export const serializeIdentityCard = (c: IdentityCard): string => `---\nkind: identity-card\nversion: ${c.version}\nupdated: ${c.updated}\n---\n${c.body}\n`;
+
 export function parseIdentityCard(text: string): { card: IdentityCard; malformed: boolean } {
-  const t = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n"); // a leading BOM (Notepad, PowerShell) would defeat the ^--- anchor
-  const m = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(t);
-  const fm = new Map((m?.[1] ?? "").split("\n").map((l) => [l.split(":")[0].trim(), l.slice(l.indexOf(":") + 1).replace(/\s+#.*$/, "").trim()] as [string, string]));
-  const version = Number(fm.get("version"));
-  if (m && fm.get("kind") === "identity-card" && Number.isInteger(version) && version >= 0) {
-    return { card: { version, updated: fm.get("updated") ?? "", body: m[2].replace(/^\n+/, "").trimEnd() }, malformed: false };
+  const fm = parseFrontmatter(text), version = fm?.fields.get("version") ?? "";
+  // `version` must be a plain integer: "3.0", "1e1", "0x3" or "007" are hand edits the bump in writeIdentityCard would mangle.
+  if (fm && fm.fields.get("kind") === "identity-card" && /^(0|[1-9]\d*)$/.test(version) && Number.isSafeInteger(Number(version))) {
+    return { card: { version: Number(version), updated: fm.fields.get("updated") ?? "", body: fm.body.replace(/^\n+/, "").trimEnd() }, malformed: false };
   }
-  return { card: { version: 0, updated: "", body: t.trimEnd() }, malformed: true };
+  return { card: { version: 0, updated: "", body: normalizeCardText(text).trimEnd() }, malformed: true };
 }
 
 export function readIdentityCard(): IdentityCard | null {
@@ -48,11 +50,15 @@ export function readIdentityCard(): IdentityCard | null {
 export function writeIdentityCard(body: string, now: Date = new Date()): IdentityCard & { path: string } {
   const clean = body.replace(/\r\n/g, "\n").trim();
   if (!clean) throw new IdentityCardError("empty", "identity card body is empty — nothing written");
+  // A UTF-16 file read as UTF-8 (PowerShell 5.1 redirection) arrives NUL-laden; stored, it would be skipped as binary on every read.
+  if (clean.includes("\u0000")) throw new IdentityCardError("binary", "identity card body contains NUL bytes (a UTF-16 file read as UTF-8?) — nothing written");
   if (clean.length > IDENTITY_BODY_CAP) throw new IdentityCardError("too_long", `identity card body is ${clean.length} chars; cap is ${IDENTITY_BODY_CAP} — nothing written`);
   const scan = scrubSecretContent(clean);
   if (scan.redactedCount > 0) throw new IdentityCardError("secret", `identity card body contains a secret (${scan.labels[0] ?? "secret pattern"}) — nothing written`);
+  // Unlocked read-then-write: two concurrent `ar identity set` runs can both read version N and both store N+1. The last atomic
+  // rename wins and `version` is informational (one owner, CLI-only writer), so no lock is taken for it.
   const card = { version: (readIdentityCard()?.version ?? 0) + 1, updated: now.toISOString(), body: clean };
-  writeTextAtomicPrivate(identityCardPath(), `---\nkind: identity-card\nversion: ${card.version}\nupdated: ${card.updated}\n---\n${clean}\n`);
+  writeTextAtomicPrivate(identityCardPath(), serializeIdentityCard(card));
   return { ...card, path: identityCardPath() };
 }
 

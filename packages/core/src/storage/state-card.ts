@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { projectSubPath } from "./paths.js";
 import { writeTextAtomicPrivate } from "./fs-utils.js";
 import { scrubForCloud } from "./content-guard.js";
+import { parseFrontmatter } from "./frontmatter.js";
 
 export const STATE_CARD_FILE_CAP = 2400;
 const CAP = { goal: 300, next: 300, open_decisions: 5, blockers: 5, pointers: 8, item: 160, pointer: 200, summary: 200 } as const;
@@ -72,19 +73,18 @@ export function mergeStateCard(a: MergeStateCardArgs): { card: StateCardBody; tr
 }
 
 export function parseStateCard(text: string, now: Date = new Date()): StateCard | null {
-  const m = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n")); // BOM-tolerant (Notepad, PowerShell)
-  const fm = new Map((m?.[1] ?? "").split("\n").map((l) => [l.split(":")[0].trim(), l.slice(l.indexOf(":") + 1).trim()] as [string, string]));
-  const ms = Date.parse(fm.get("updated") ?? "");
-  if (!m || fm.get("kind") !== "state-card" || Number.isNaN(ms)) return null;
+  const fm = parseFrontmatter(text);
+  const ms = Date.parse(fm?.fields.get("updated") ?? "");
+  if (!fm || fm.fields.get("kind") !== "state-card" || Number.isNaN(ms)) return null;
   const v = new Map<string, string[]>();
   let cur: string | undefined;
-  for (const line of m[2].split("\n")) {
+  for (const line of fm.body.split("\n")) {
     const h = /^## (.+?)\s*$/.exec(line);
     if (h) cur = SECTIONS.find(([name]) => name === h[1])?.[1];
     else if (cur && line.trim() && (!LISTS.includes(cur) || line.startsWith("- "))) v.set(cur, [...(v.get(cur) ?? []), LISTS.includes(cur) ? line.slice(2) : line.trim()]);
   }
   const join = (k: string) => (v.get(k) ?? []).join(" ");
-  const { card } = capStateCard({ updated: fm.get("updated") ?? "", session: fm.get("session") ?? "", goal: join("goal"), next: join("next"), last_session: join("last_session"), open_decisions: v.get("open_decisions") ?? [], blockers: v.get("blockers") ?? [], pointers: v.get("pointers") ?? [] });
+  const { card } = capStateCard({ updated: fm.fields.get("updated") ?? "", session: fm.fields.get("session") ?? "", goal: join("goal"), next: join("next"), last_session: join("last_session"), open_decisions: v.get("open_decisions") ?? [], blockers: v.get("blockers") ?? [], pointers: v.get("pointers") ?? [] });
   return { ...card, age_days: Math.max(0, Math.floor((now.getTime() - ms) / 86_400_000)) };
 }
 
@@ -99,14 +99,26 @@ export function readStateCard(slug: string, now: Date = new Date()): StateCard |
   } catch (err) { warn(slug, `unreadable (${String(err)}) — skipped`); return null; }
 }
 
-/** An existing regular file that readStateCard could not parse is renamed aside, never silently overwritten (one stderr line). Returns the backup path, or null when there was nothing to move. */
+/**
+ * An existing regular file that readStateCard could not parse is renamed aside, never silently overwritten (one stderr line).
+ * Returns the backup path, or null when nothing was moved. Re-parses right before the rename: a concurrent first session_end may
+ * have written a valid card since the caller's read returned null, and that card must stay. Never throws — a failed rename is
+ * one stderr line and the file is left in place.
+ */
 export function backupUnreadableStateCard(slug: string, now: Date = new Date()): string | null {
   const p = stateCardPath(slug);
-  if (!fs.existsSync(p) || !fs.statSync(p).isFile()) return null;
-  const bak = `${p}.bak-${now.toISOString().replace(/[:.]/g, "-")}`;
-  fs.renameSync(p, bak);
-  warn(slug, `unreadable card moved to ${path.basename(bak)} before rewrite`);
-  return bak;
+  try {
+    if (!fs.existsSync(p) || !fs.statSync(p).isFile()) return null;
+    const raw = fs.readFileSync(p, "utf-8");
+    if (!raw.includes("\u0000") && parseStateCard(raw, now)) return null;
+    const bak = `${p}.bak-${now.toISOString().replace(/[:.]/g, "-")}`;
+    fs.renameSync(p, bak);
+    warn(slug, `unreadable card moved to ${path.basename(bak)} before rewrite`);
+    return bak;
+  } catch (err) {
+    warn(slug, `unreadable card could not be moved aside (${String(err)}) — left in place`);
+    return null;
+  }
 }
 
 export function writeStateCard(slug: string, card: StateCardBody): { path: string; chars: number; truncated: string[] } {
@@ -116,8 +128,13 @@ export function writeStateCard(slug: string, card: StateCardBody): { path: strin
   return { path: stateCardPath(slug), chars: text.length, truncated };
 }
 
-/** Shared renderer: non-empty fields in the order Goal, Blockers, Next, Open decisions, Pointers, Last session. */
+/** False when every field is empty (a frontmatter-only file): such a card is not project memory and renders nothing. */
+export const stateCardHasContent = (c: StateCardBody): boolean =>
+  Boolean(c.goal || c.next || c.last_session || c.open_decisions.length || c.blockers.length || c.pointers.length);
+
+/** Shared renderer: non-empty fields in the order Goal, Blockers, Next, Open decisions, Pointers, Last session; [] for a card without content. */
 export function formatStateSection(c: StateCard): string[] {
+  if (!stateCardHasContent(c)) return [];
   const d = c.updated.slice(0, 10);
   const out = [c.age_days >= 7 ? `State (updated ${d}, stale: ${c.age_days} d)` : `State (updated ${d})`];
   const list = (label: string, v: string[]) => { if (v.length) out.push(`${label}:`, ...v.map((x) => `  - ${x}`)); };

@@ -77,3 +77,31 @@ it("(none) parses as empty; CRLF files read; empty sections omitted on render; s
   assert.equal(t.core.formatStateSection(stale)[0], "State (updated 2026-10-31, stale: 7 d)");
   assert.deepEqual(t.core.formatStateSection({ ...stale, goal: "", next: "", pointers: [], last_session: "", blockers: ["B"], open_decisions: ["D"] }).slice(1), ["Blockers:", "  - B", "Open decisions:", "  - D"]);
 });
+it("backupUnreadableStateCard: a valid card is left alone; garbage and binary are moved; a failed rename is reported, never thrown", async () => {
+  const slug = "sc-bak", p = t.core.stateCardPath(slug);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const valid = t.core.serializeStateCard(merge({ state: { goal: "keep me" } }).card);
+  fs.writeFileSync(p, valid); // a concurrent first session_end wrote a real card after the caller's read returned null
+  assert.deepEqual(await stderrOf(() => t.core.backupUnreadableStateCard(slug, NOW), "state-card.md"), [null, 0]);
+  assert.equal(fs.readFileSync(p, "utf-8"), valid);
+  fs.writeFileSync(p, "garbage");
+  const [bak, moved] = await stderrOf(() => t.core.backupUnreadableStateCard(slug, NOW), "before rewrite");
+  assert.ok(bak && !fs.existsSync(p) && fs.readFileSync(bak, "utf-8") === "garbage" && moved === 1, String(bak));
+  fs.writeFileSync(p, Buffer.from([0, 1]));
+  const second = t.core.backupUnreadableStateCard(slug, new Date(NOW.getTime() + 1000));
+  assert.ok(second && second !== bak && !fs.existsSync(p));
+  const when = new Date(NOW.getTime() + 2000);
+  fs.writeFileSync(p, "garbage again");
+  fs.mkdirSync(`${p}.bak-${when.toISOString().replace(/[:.]/g, "-")}`); // a directory already sits at the backup path: the rename throws
+  assert.deepEqual(await stderrOf(() => t.core.backupUnreadableStateCard(slug, when), "state-card.md"), [null, 1]);
+  assert.equal(fs.readFileSync(p, "utf-8"), "garbage again");
+});
+it("a frontmatter-only card has no content: stateCardHasContent is false and formatStateSection renders nothing", () => {
+  const p = t.core.stateCardPath("sc-empty");
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, "---\nkind: state-card\nupdated: 2026-10-31T11:40:12.000Z\nsession: s\n---\n");
+  const c = t.core.readStateCard("sc-empty", NOW);
+  assert.ok(c && c.age_days === 0, "the card itself still reads (age is known)");
+  assert.deepEqual([t.core.stateCardHasContent(c), t.core.formatStateSection(c)], [false, []]);
+  assert.deepEqual([t.core.stateCardHasContent({ ...c, pointers: ["F:\\x"] }), t.core.stateCardHasContent({ ...c, last_session: "2026-10-31 — s" })], [true, true]);
+});
