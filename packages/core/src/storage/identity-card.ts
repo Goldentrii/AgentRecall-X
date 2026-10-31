@@ -14,7 +14,7 @@ export const identityCardPath = (): string => path.join(getRoot(), "identity-car
 const warn = (msg: string) => { try { process.stderr.write(`[AgentRecall] identity-card.md: ${msg}\n`); } catch { /* never throw */ } };
 
 export function parseIdentityCard(text: string): { card: IdentityCard; malformed: boolean } {
-  const t = text.replace(/\r\n/g, "\n");
+  const t = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n"); // a leading BOM (Notepad, PowerShell) would defeat the ^--- anchor
   const m = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(t);
   const fm = new Map((m?.[1] ?? "").split("\n").map((l) => [l.split(":")[0].trim(), l.slice(l.indexOf(":") + 1).replace(/\s+#.*$/, "").trim()] as [string, string]));
   const version = Number(fm.get("version"));

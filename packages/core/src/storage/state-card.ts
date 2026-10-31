@@ -1,5 +1,6 @@
 /** Cards v1 (G4) — projects/<slug>/state-card.md, REWRITTEN at session_end with carry-forward. Values single-line (no forged "## "), scrubbed, capped per field and per file; age_days computed at read time. */
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { projectSubPath } from "./paths.js";
 import { writeTextAtomicPrivate } from "./fs-utils.js";
 import { scrubForCloud } from "./content-guard.js";
@@ -70,7 +71,7 @@ export function mergeStateCard(a: MergeStateCardArgs): { card: StateCardBody; tr
 }
 
 export function parseStateCard(text: string, now: Date = new Date()): StateCard | null {
-  const m = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(text.replace(/\r\n/g, "\n"));
+  const m = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n")); // BOM-tolerant (Notepad, PowerShell)
   const fm = new Map((m?.[1] ?? "").split("\n").map((l) => [l.split(":")[0].trim(), l.slice(l.indexOf(":") + 1).trim()] as [string, string]));
   const ms = Date.parse(fm.get("updated") ?? "");
   if (!m || fm.get("kind") !== "state-card" || Number.isNaN(ms)) return null;
@@ -95,6 +96,16 @@ export function readStateCard(slug: string, now: Date = new Date()): StateCard |
     if (!card) warn(slug, raw.trim() ? "malformed frontmatter — skipped" : "empty file — skipped");
     return card;
   } catch (err) { warn(slug, `unreadable (${String(err)}) — skipped`); return null; }
+}
+
+/** An existing regular file that readStateCard could not parse is renamed aside, never silently overwritten (one stderr line). Returns the backup path, or null when there was nothing to move. */
+export function backupUnreadableStateCard(slug: string, now: Date = new Date()): string | null {
+  const p = stateCardPath(slug);
+  if (!fs.existsSync(p) || !fs.statSync(p).isFile()) return null;
+  const bak = `${p}.bak-${now.toISOString().replace(/[:.]/g, "-")}`;
+  fs.renameSync(p, bak);
+  warn(slug, `unreadable card moved to ${path.basename(bak)} before rewrite`);
+  return bak;
 }
 
 export function writeStateCard(slug: string, card: StateCardBody): { path: string; chars: number; truncated: string[] } {

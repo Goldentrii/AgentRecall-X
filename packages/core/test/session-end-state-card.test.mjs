@@ -31,6 +31,19 @@ it("a failing card write never fails the save: reported as not written and recor
   assert.deepEqual([r.success, r.journal_written, r.state_card, core.readHookHealth().last_failure?.hook, unreadableWarnings], [true, true, { written: false, truncated: [] }, "session-end-state-card", 1]);
   assert.deepEqual(fs.readdirSync(path.dirname(core.stateCardPath("se-err"))).filter((f) => f.includes(".tmp.")), []);
 });
+it("an existing but unparsable state card is moved to .bak-<timestamp> (one stderr line) before the new card is written", async () => {
+  const { core } = t, slug = "se-bak", p = core.stateCardPath(slug);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const corrupt = "this hand-edited file has no frontmatter\n## Goal\nprecious goal the owner typed\n";
+  fs.writeFileSync(p, corrupt);
+  const [r, moved] = await stderrOf(() => core.sessionEnd({ summary: "Session after a corrupt card was left behind.", project: slug, state: { goal: "fresh goal" } }), "before rewrite");
+  assert.deepEqual([r.state_card, moved], [{ written: true, truncated: [] }, 1]);
+  assert.equal(core.readStateCard(slug).goal, "fresh goal");
+  const baks = fs.readdirSync(path.dirname(p)).filter((f) => f.startsWith("state-card.md.bak-"));
+  assert.equal(baks.length, 1, baks.join(","));
+  assert.match(baks[0], /^state-card\.md\.bak-[0-9A-Za-z-]+$/, "timestamp is filename-safe");
+  assert.equal(fs.readFileSync(path.join(path.dirname(p), baks[0]), "utf-8"), corrupt);
+});
 it("two concurrent session_end processes: last writer wins, never torn, no exception", async () => {
   const run = (sid) => new Promise((resolve) => {
     const code = `const c = await import(${JSON.stringify(DIST)}); const r = await c.sessionEnd({ summary: "concurrent writer ${sid}", project: "se-race", state: { goal: "goal ${sid}" } }); if (!r.state_card?.written) process.exit(3);`;

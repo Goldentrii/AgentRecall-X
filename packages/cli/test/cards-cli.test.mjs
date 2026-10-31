@@ -27,6 +27,16 @@ it("identity init never overwrites a card file that exists but cannot be read (e
     assert.deepEqual(fs.readFileSync(card), content, "the owner's file is untouched");
   }
 });
+it("identity set strips a UTF-8 BOM from the input file (frontmatter and plain-body forms)", async () => {
+  const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md"), id = (...a) => runCli(root, ["identity", ...a]), BOM = "\uFEFF";
+  fs.writeFileSync(src, BOM + "---\nkind: identity-card\nversion: 9\nupdated: x\n---\n# Owner\n- terse");
+  assert.equal(JSON.parse((await id("set", src)).stdout).version, 1);
+  fs.writeFileSync(src, BOM + "# Owner\n- plain body");
+  assert.equal(JSON.parse((await id("set", src)).stdout).version, 2);
+  const stored = fs.readFileSync(path.join(root, "identity-card.md"), "utf-8");
+  assert.ok(!stored.includes(BOM) && /\n---\n# Owner\n- plain body\n$/.test(stored), JSON.stringify(stored));
+  assert.match((await id("show")).stdout, /Owner \(identity card v2\)\n# Owner\n- plain body/);
+});
 it("identity error paths exit 1 with agent_instruction and never print the secret", async () => {
   const root = tmpDir("ar-cards-cli-"), src = path.join(root, "card.md"), id = (...a) => runCli(root, ["identity", ...a]);
   const expectFail = (r, re) => assert.ok(r.code === 1 && re.test(r.stderr) && /agent_instruction: /.test(r.stderr), `${r.code} ${r.stderr}`);

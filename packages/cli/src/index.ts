@@ -406,7 +406,7 @@ async function main(): Promise<void> {
         else fail(`No identity card at ${core.identityCardPath()}`, "create one with `ar identity init`.");
       } else if (sub === "set") {
         let text = "";
-        try { text = fs.readFileSync(rest[1] ?? "", "utf-8"); } catch (e) { fail(`cannot read ${rest[1] ?? "(no file given)"}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
+        try { text = fs.readFileSync(rest[1] ?? "", "utf-8").replace(/^\uFEFF/, ""); } catch (e) { fail(`cannot read ${rest[1] ?? "(no file given)"}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
         const parsed = core.parseIdentityCard(text);
         try {
           const card = core.writeIdentityCard(parsed.malformed ? text : parsed.card.body);

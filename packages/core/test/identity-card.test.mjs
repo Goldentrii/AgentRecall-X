@@ -22,6 +22,13 @@ it("malformed → v0 + whole file; empty/binary → null; one stderr line each",
   assert.deepEqual(await read(), [{ version: 0, updated: "", body: "---\nkind: nope\n---\nhello" }, 1]);
   for (const c of ["", Buffer.from([0, 255])]) { fs.writeFileSync(file(), c); assert.deepEqual(await read(), [null, 1]); }
 });
+it("a UTF-8 BOM before the frontmatter is tolerated: parsed as a versioned card, not as a malformed body", () => {
+  const text = "---\nkind: identity-card\nversion: 7\nupdated: 2026-10-01T00:00:00.000Z\n---\n# Owner\n- terse\n";
+  assert.deepEqual(t.core.parseIdentityCard("\uFEFF" + text), t.core.parseIdentityCard(text));
+  assert.deepEqual(t.core.parseIdentityCard("\uFEFF" + text), { card: { version: 7, updated: "2026-10-01T00:00:00.000Z", body: "# Owner\n- terse" }, malformed: false });
+  fs.writeFileSync(file(), "\uFEFF" + text.replace(/\n/g, "\r\n"));
+  assert.deepEqual(t.core.readIdentityCard(), { version: 7, updated: "2026-10-01T00:00:00.000Z", body: "# Owner\n- terse" });
+});
 it("hand-edited card holding a token: read serves the redacted body and warns once, never echoing the value", async () => {
   const tok = "gh" + "p_" + "A".repeat(36);
   fs.writeFileSync(file(), `---\nkind: identity-card\nversion: 3\nupdated: 2026-10-01T00:00:00.000Z\n---\n# Owner\n- token ${tok} here\n`);

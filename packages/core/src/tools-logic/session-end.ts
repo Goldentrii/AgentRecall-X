@@ -32,7 +32,7 @@ import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js"
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
 import { writeHandoff } from "../helpers/handoff.js";
-import { mergeStateCard, readStateCard, writeStateCard, type StateCardInput } from "../storage/state-card.js";
+import { backupUnreadableStateCard, mergeStateCard, readStateCard, writeStateCard, type StateCardInput } from "../storage/state-card.js";
 import { recordHookFailure } from "../storage/hook-health.js";
 import { stagePendingCorrection, validateInsightCompleteness } from "../storage/pending.js";
 
@@ -1043,8 +1043,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   let stateCardResult: SessionEndResult["state_card"];
   if (input.saveType !== "hook-end") {
     try {
-      const merged = mergeStateCard({ previous: readStateCard(slug), state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId });
-      if (merged) writeStateCard(slug, merged.card);
+      const previous = readStateCard(slug);
+      const merged = mergeStateCard({ previous, state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId });
+      if (merged) {
+        // A card file that exists but did not parse (null here) would be silently replaced by a card that drops its goal/blockers/pointers: keep it as .bak-<ts> first.
+        if (!previous) backupUnreadableStateCard(slug);
+        writeStateCard(slug, merged.card);
+      }
       stateCardResult = { written: merged !== null, truncated: merged?.truncated ?? [] };
     } catch (err) {
       recordHookFailure("session-end-state-card", err);

@@ -43,6 +43,17 @@ it("values never start with a section marker and never end on half an emoji; re-
   assert.deepEqual({ ...r, age_days: undefined }, { ...e, age_days: undefined });
   assert.deepEqual(t.core.capStateCard(e), { card: e, truncated: [] });
 });
+it("a UTF-8 BOM before the frontmatter is tolerated: the card reads back equal to the BOM-less one", () => {
+  const card = merge({ summary: "bom session", state: { goal: "G", blockers: ["B"], pointers: ["F:\\a"] } }).card;
+  const text = t.core.serializeStateCard(card), when = new Date(NOW.getTime() + 86_400_000);
+  const plain = t.core.parseStateCard(text, when);
+  assert.ok(plain && plain.goal === "G", "control: the BOM-less card parses");
+  assert.deepEqual(t.core.parseStateCard("\uFEFF" + text, when), plain);
+  const p = t.core.stateCardPath("sc-bom");
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, "\uFEFF" + text.replace(/\n/g, "\r\n"));
+  assert.deepEqual(t.core.readStateCard("sc-bom", when), plain);
+});
 it("(none) parses as empty; CRLF files read; empty sections omitted on render; stale header from 7 d", () => {
   const p = t.core.stateCardPath("sc-render");
   fs.mkdirSync(path.dirname(p), { recursive: true });
