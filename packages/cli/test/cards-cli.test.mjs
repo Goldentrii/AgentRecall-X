@@ -40,6 +40,10 @@ it("identity error paths exit 1 with agent_instruction and never print the secre
   fs.writeFileSync(fileRoot, "x");
   expectFail(await runCli(fileRoot, ["identity", "init"]), /identity card write failed/);
 });
+it("state show with an invalid --project exits 1 with the slug rules and an agent_instruction", async () => {
+  const r = await runCli(tmpDir("ar-cards-cli-"), ["--project", "123", "state", "show"]);
+  assert.ok(r.code === 1 && /Invalid project slug "123"[\s\S]*agent_instruction: pass a valid --project <slug>/.test(r.stderr) && r.stdout === "", `${r.code} ${r.stderr}`);
+});
 it("state show: hint when absent, fenced card for --project; help lists the cards commands", async () => {
   const root = tmpDir("ar-cards-cli-"), show = () => runCli(root, ["--project", "cli-state", "state", "show"]);
   assert.match((await show()).stdout, /No state card for cli-state/);

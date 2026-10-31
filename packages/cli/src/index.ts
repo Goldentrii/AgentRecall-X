@@ -349,7 +349,12 @@ async function main(): Promise<void> {
     case "state": {
       const sub = rest[0];
       if (sub === "show") {
-        const slug = await core.resolveProject(project);
+        let slug: string;
+        try { slug = await core.resolveProject(project); } catch (e) {
+          process.stderr.write(`${e instanceof Error ? e.message : String(e)}\nagent_instruction: pass a valid --project <slug> (a name that contains a letter and follows the rules above), or omit --project to use the current directory's project.\n`);
+          process.exitCode = 1;
+          break;
+        }
         const card = core.readStateCard(slug);
         if (card) outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
         else output(`No state card for ${slug} yet — the next session_end writes it.`);
