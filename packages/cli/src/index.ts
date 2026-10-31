@@ -58,6 +58,9 @@ function truncWordBoundary(s: string, n: number): string {
   return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
 }
 
+/** Cards v1 (G2): body written by `ar identity init` — fixed literal, placeholders only. */
+const IDENTITY_TEMPLATE = "# Owner\n- Languages: <reply language; code and docs language>\n- Hard rules: <actions that always need an explicit yes>\n- Machine: <OS; where code and large data live>\n- Style: <tone, verbosity, how to disagree>";
+
 function output(data: unknown): void {
   if (typeof data === "string") process.stdout.write(data + "\n");
   else process.stdout.write(JSON.stringify(data, null, 2) + "\n");
@@ -76,6 +79,12 @@ JOURNAL:
   ar cold-start
   ar archive [--older-than-days N]
   ar rollup [--min-age-days N] [--dry-run]
+
+CARDS (loaded first by session_start):
+  ar identity init          Create <root>/identity-card.md from a template (never overwrites)
+  ar identity show          Print the owner identity card
+  ar identity set <file>    Replace the body from a file (≤1600 chars, secrets rejected, version +1)
+  ar state show [--project <slug>]  Print the project state card (rewritten by every session_end)
 
 PALACE:
   ar palace read [<room>] [--topic <name>]
@@ -338,7 +347,15 @@ async function main(): Promise<void> {
       break;
     }
     case "state": {
-      const action = (rest[0] as "read" | "write") || "read";
+      const sub = rest[0];
+      if (sub === "show") {
+        const slug = await core.resolveProject(project);
+        const card = core.readStateCard(slug);
+        if (card) outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
+        else output(`No state card for ${slug} yet — the next session_end writes it.`);
+        break;
+      }
+      const action = (sub as "read" | "write") || "read";
       const data =
         rest[1] && !rest[1].startsWith("--") ? rest[1] : undefined;
       const result = await core.journalState({
@@ -356,6 +373,41 @@ async function main(): Promise<void> {
         outputFenced(result);
       } else {
         output(result);
+      }
+      break;
+    }
+    case "identity": {
+      // Cards v1 (G2) — the only identity-card write path in v1.
+      const sub = rest[0];
+      const fail = (msg: string, fix: string) => { process.stderr.write(`${msg}\nagent_instruction: ${fix}\n`); process.exitCode = 1; };
+      const ioFail = (e: unknown) => fail(`identity card write failed: ${String(e)}`, "check that the store root is a writable directory (ar --root <dir>), then retry.");
+      if (sub === "init") {
+        const existing = core.readIdentityCard();
+        if (existing) { fail(`identity card already exists at ${core.identityCardPath()} (v${existing.version})`, "edit that file, then run `ar identity set <file>`; init never overwrites."); break; }
+        try {
+          const card = core.writeIdentityCard(IDENTITY_TEMPLATE);
+          output({ path: card.path, version: card.version, chars: card.body.length });
+        } catch (e) { ioFail(e); }
+      } else if (sub === "show") {
+        const card = core.readIdentityCard();
+        if (card) outputFenced(`${core.formatOwnerSection(card).join("\n")}\n(updated ${card.updated || "unknown"})`);
+        else fail(`No identity card at ${core.identityCardPath()}`, "create one with `ar identity init`.");
+      } else if (sub === "set") {
+        let text = "";
+        try { text = fs.readFileSync(rest[1] ?? "", "utf-8"); } catch (e) { fail(`cannot read ${rest[1] ?? "(no file given)"}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
+        const parsed = core.parseIdentityCard(text);
+        try {
+          const card = core.writeIdentityCard(parsed.malformed ? text : parsed.card.body);
+          output({ path: card.path, version: card.version, chars: card.body.length });
+        } catch (e) {
+          if (!(e instanceof core.IdentityCardError)) ioFail(e);
+          else {
+            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context" }[e.code];
+            fail(e.message, `${fix}, then re-run ar identity set.`);
+          }
+        }
+      } else {
+        fail("usage: ar identity init | show | set <file>", "pick one of the three sub-commands.");
       }
       break;
     }
