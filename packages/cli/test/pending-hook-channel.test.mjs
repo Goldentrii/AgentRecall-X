@@ -172,7 +172,7 @@ describe("session_start pending surface (hook-start render)", () => {
       stdin: JSON.stringify({ session_id: "pending-hookstart-sid-2" }),
       // Hermeticity: an inherited AR_AB_ENABLED=1 can assign the "off" arm,
       // which suppresses every correction-derived surface incl. this line.
-      env: { AR_AB_ENABLED: "", AR_AB_FORCE: "" },
+      env: { AR_AB_ENABLED: "", AR_AB_FORCE: "", AGENT_RECALL_SESSION_START_MODE: "full" }, // the pending line is a full-mode section (Cards v2)
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     assert.ok(/pending correction/i.test(stdout), `hook-start must surface the pending count line, got: ${stdout}`);

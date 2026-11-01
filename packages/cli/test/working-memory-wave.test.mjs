@@ -33,7 +33,7 @@ function runCli(args, { stdin, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn("node", [CLI, "--root", TEST_ROOT, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...env },
+      env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", ...env },
     });
     let stdout = "";
     let stderr = "";
@@ -419,7 +419,7 @@ describe("working-memory wave — hook-start orphan rescue", () => {
     // Second, LATER hook-start (yet another session) — should now see the
     // rescued session in its continuity block via the F2 recency index.
     const nextStart = await runCli(["--project", "another-unrelated-project", "hook-start"], {
-      env: { HOME: isolatedHome(), CLAUDE_SESSION_ID: "e2e-rescuer-2" },
+      env: { HOME: isolatedHome(), CLAUDE_SESSION_ID: "e2e-rescuer-2", AGENT_RECALL_SESSION_START_MODE: "full" }, // continuity is a full-mode section (Cards v2)
     });
     assert.equal(nextStart.code, 0, `follow-up hook-start should exit 0; stderr=${nextStart.stderr}`);
     assert.match(nextStart.stdout, /⏪ Continuity/, `expected a continuity block; stdout=${nextStart.stdout}`);

@@ -67,6 +67,7 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "list", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "search", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "state", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subcommand", id: "identity", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "cold-start", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "archive", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subcommand", id: "rollup", status: "fenced", file: "packages/cli/src/index.ts" },
@@ -93,7 +94,9 @@ export const MANIFEST = [
   { channel: "cli_subcommand", id: "health", status: "allowlisted", reason: "hook failure `.message` is a caught exception string (system/library error), not stored human-authored content." },
   { channel: "cli_subcommand", id: "resurrect", status: "fenced", delegateFile: "packages/core/src/tools-logic/resurrect.ts", reason: "fenced via delegate: the non-JSON branch calls core.renderResurrectMarkdown(), whose own implementation calls fenceMemory() directly (verified independently by packages/core/test/p1-fence-boundary.test.mjs)." },
   { channel: "cli_subcommand", id: "knowledge", status: "fenced", file: "packages/cli/src/index.ts" },
-  { channel: "cli_subcommand", id: "hook-start", status: "fenced", file: "packages/cli/src/index.ts" },
+  // Cards v2 (G6): hook-start prints agent-recall-core's renderSessionStart, which fences every section with fenceMemory (the
+  // hook-health banner is the renderer's unfenced preamble by design); pinned by packages/core/test/session-start-render.test.mjs.
+  { channel: "cli_subcommand", id: "hook-start", status: "fenced", file: "packages/cli/src/index.ts", wrapper: "renderSessionStart" },
   { channel: "cli_subcommand", id: "hook-end", status: "allowlisted", reason: "silent on the content path — every output call in this case body is process.stderr.write() (diagnostic logging), never process.stdout — no agent-context-injection channel exists here to fence." },
   { channel: "cli_subcommand", id: "consolidate-async", status: "allowlisted", reason: "output is `${processed} processed, ${failed} failed` — pure counts, no prose." },
   { channel: "cli_subcommand", id: "hook-correction", status: "allowlisted", reason: "silent on the content path (no stdout output tied to retrieved content)." },
@@ -128,6 +131,10 @@ export const MANIFEST = [
   { channel: "cli_subaction", id: "embeddings.setup", status: "allowlisted", reason: "fix7: runtime-install + model-download progress, paths, dims, and template next-step strings only — the verification probe embeds a hardcoded literal, never store content." },
   { channel: "cli_subaction", id: "embeddings.rebuild", status: "allowlisted", reason: "fix7: build report only (model id, chunk/vector counts, prune/reuse counts, durations, index path) — chunk TEXT never leaves core and is not printed." },
   { channel: "cli_subaction", id: "embeddings.status", status: "allowlisted", reason: "fix7: flag state, model id/dim, runtime/model presence booleans, index path/count/bytes/built-at — structural metadata, no prose fields." },
+  { channel: "cli_subaction", id: "state.show", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subaction", id: "identity.init", status: "allowlisted", reason: "write confirmation only (path, version, char count); the template is a fixed literal, nothing stored is read back." },
+  { channel: "cli_subaction", id: "identity.show", status: "fenced", file: "packages/cli/src/index.ts" },
+  { channel: "cli_subaction", id: "identity.set", status: "allowlisted", reason: "write confirmation of THIS call's own file (path, version, chars); errors name the cap or secret rule, never echo the body." },
   { channel: "cli_subaction", id: "palace.read", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "palace.write", status: "allowlisted", reason: "write confirmation only. Parity: SDK palaceWrite / MCP (unregistered) palace_write." },
   { channel: "cli_subaction", id: "palace.walk", status: "fenced", file: "packages/cli/src/index.ts" },
@@ -226,7 +233,9 @@ export const MANIFEST = [
   { channel: "sdk_export", id: "AgentRecall.synthesize", status: "fenced", wrapper: "withFenced" },
   { channel: "sdk_export", id: "AgentRecall.knowledgeWrite", status: "allowlisted", reason: "write confirmation only. Parity: CLI `ar knowledge write`." },
   { channel: "sdk_export", id: "AgentRecall.knowledgeRead", status: "fenced", wrapper: "fenceString" },
-  { channel: "sdk_export", id: "AgentRecall.sessionStart", status: "fenced", wrapper: "withFenced" },
+  // Cards v2 (G6): fencedText is agent-recall-core's renderSessionStart (the shared session_start renderer), which fences its
+  // whole body with fenceMemory — pinned by packages/core/test/session-start-render.test.mjs (fence first and last, exactly one).
+  { channel: "sdk_export", id: "AgentRecall.sessionStart", status: "fenced", wrapper: "renderSessionStart" },
   { channel: "sdk_export", id: "AgentRecall.remember", status: "allowlisted", reason: "write confirmation only (dest path, retrieval hint). Parity: MCP `remember`." },
   { channel: "sdk_export", id: "AgentRecall.recall", status: "fenced", wrapper: "withFenced" },
   { channel: "sdk_export", id: "AgentRecall.sessionEnd", status: "allowlisted", reason: "same-turn trust (card/quality-warnings echo THIS session's own submission); writeHandoff() it may trigger is independently fenced in core/helpers/handoff.ts. Parity: MCP `session_end`." },

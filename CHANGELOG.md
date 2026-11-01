@@ -8,6 +8,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Identity card `<root>/identity-card.md` (≤1,600 chars, versioned, personal tier, never synced). Created and replaced only via `ar identity init` / `ar identity set <file>`; `ar identity show` prints the stored file (frontmatter + body, fenced) and that output feeds straight back into `set`, which drops the fence lines. Over-cap, secret or NUL-laden (UTF-16) bodies are rejected, and `version:` must be a plain integer (anything else reads as a malformed card). `session_start` returns it as `owner` and renders it first, inside the fence.
+- State card `projects/<slug>/state-card.md` (Goal, Open decisions, Blockers, Next, Pointers, Last session; ≤2,400 chars). Every non-hook `session_end` except `ar saveall` rewrites it atomically from the optional `state` input, carrying omitted fields forward and listing cut fields in `state_card.truncated`; `hook-end` saves and `ar saveall` leave it alone. An unreadable card is moved to `.bak-<timestamp>` before the rewrite (a valid card written concurrently is never moved). It renders after HARD RULES (a card without fields renders nothing), is marked `stale: N d` at ≥7 days, counts as project memory for the empty-store banner, and is printed by `ar state show`.
+- New core exports for both cards (`serializeIdentityCard`, `stateCardHasContent`, `backupUnreadableStateCard`), the shared `parseFrontmatter` / `normalizeCardText` card reader, `unfenceMemory`, and the hook session-id resolver. Root `npm test` also runs `scripts/eval/cards-at-cap-fixture.test.mjs`. Bench: `reports/2026-10-31-cards-v1-bench.md` (golden-v1 payload unchanged at 231 median tokens; both cards at cap add 3,933 terse / 4,034 JSON chars, limit 4,200). Injection baseline regenerated: `scripts/eval/baselines/injection-2026-10-31.json`.
+- Typical card cost: every non-hook `session_end` except `ar saveall` writes a state card even when `state` is omitted (the save summary becomes `Last session`), so a lived-in store adds roughly 500–600 chars (~140 tokens) per `session_start`. An estimate: `reports/2026-10-31-cards-v1-bench.md` measures only the extremes (no cards: +0 chars; both cards at cap: +3,933 terse chars).
+- `session_start` with `mode: "lite"` does not load either card in v1, so lite keeps its ≤500-token contract.
+- **Cards v2 (G6) — slim default `session_start`.** New `mode: "cards"` loads Owner → HARD RULES (P0 corrections and behaviour policies) → State, plus the one-line pending-review count, and nothing else; it is the default of the MCP tool, of `ar hook-start` (`AGENT_RECALL_SESSION_START_MODE=cards|full`) and of the SDK's `sessionStart()`. `mode: "full"` is the previous payload (continuity, insights, rooms, captures, watch_for, …) and stays the default of core's `sessionStart()` for library callers. Side effects are identical in both modes (orphan working-memory rescue, `_unclaimed` TTL, pending sweep, P0 "retrieved" outcomes, policy-load count, Supabase backfill, telemetry). The MCP tool treats `verbose: true` without a `mode` as `full` (it promises the full JSON context). Spec: `docs/superpowers/specs/2026-10-31-cards-v2-slim-session-start-design.md`.
+- One shared renderer, `renderSessionStart` (core), now produces the MCP terse text (`formatTerse` is an alias), the `hook-start` output and the SDK `fencedText`. Full-mode text is byte-identical to the previous MCP terse output (fixture-pinned) except that the header's `Trajectory:` line is omitted when the state card carries `Next` (they were the same text twice). The rendered text is capped at 16,384 UTF-8 bytes (`AGENT_RECALL_SESSION_START_MAX_BYTES`, ≥ 1,024): whole sections drop lowest priority first, then state and owner lines; diagnostics and HARD RULES are never touched; a cut marker closes the fence.
+- Bench (`reports/2026-10-31-cards-v2-bench.md`): golden-v1 median 231 → **88 tokens** (cards default; 924 → 351 chars), cards-at-cap 1,215 → **1,071 tokens**; `--mode full` reproduces the v1 numbers. `scripts/eval/session-start-size.mjs` takes `--mode cards|full` (bench v2), checks P0 survival in the rendered text, and names artifacts `injection-<date>-<mode>.json`; the cards-default baseline `scripts/eval/baselines/injection-2026-11-01-cards.json` sits next to the v1 full-mode one.
+
+### Changed
+
+- `ar hook-start` prints the shared session_start format: `AgentRecall — <slug>` header, `⛔ HARD RULES (always follow, no exceptions):`, `State (updated …)`; the hand-rolled block (`Project:`, `🚨 P0 rules`, `💡 Awareness insights:`, `🏛️ Palace rooms:`, …) is gone. The hook-health banner is still the literal first line, outside the fence; the semantic-prefetch block renders inside the fence in full mode only.
+- **BREAKING for library callers** — SDK `sessionStart()` defaults to `mode: "cards"`: `insights`, `active_rooms`, `cross_project`, `recent_captures`, `watch_for` are `[]` and `resume`, `pipeline`, `alignment` are `null` unless `{ mode: "full" }` is passed; `fencedText` is the rendered session_start text, no longer a fenced JSON dump; `mode` is set on the result.
+
+### Fixed
+
+- Hooks resolve the session id as stdin `session_id` → `CLAUDE_CODE_SESSION_ID` → `CLAUDE_SESSION_ID` → `SESSION_ID`, and `hook-start` reads stdin. Before this, `hook-start` read only `CLAUDE_SESSION_ID` / `SESSION_ID`; with neither set (the usual case) its lock key was the UTC hour, so a second session started in the same hour loaded no context.
+
+### Deprecated
+
+- `handoff.md` is still written, but no AgentRecall code reads it and it is no longer the intended resume surface; the state card is.
+
 ## [3.5.2] — 2026-10-16
 
 Security + retrieval hardening from the 2026-10-15 rigorous eval (`reports/2026-10-15-rigorous-eval.md`) and two independent reviews (`reports/2026-10-16-review-security.md`, `reports/2026-10-16-review-correctness.md`). All four packages 3.5.2 in lockstep. 3.5.0 and 3.5.1 were tagged on GitHub but not published to npm; 3.5.2 is the first npm release since 3.4.51 and includes them.

@@ -379,7 +379,7 @@ export { routeCapture } from "./storage/capture-router.js";
 export type { CaptureRouteInput, CaptureRouteResult, CaptureRouteKind } from "./storage/capture-router.js";
 
 // Storage — content guard (cloud egress scrub)
-export { scrubForCloud, scrubPromptInjection, scrubSecretContent, scrubPii, scrubForExport, SecretScanError, fenceMemory } from "./storage/content-guard.js";
+export { scrubForCloud, scrubPromptInjection, scrubSecretContent, scrubPii, scrubForExport, SecretScanError, fenceMemory, unfenceMemory } from "./storage/content-guard.js";
 export type { SecretScanResult } from "./storage/content-guard.js";
 
 // Tools-logic — corrections export (vendor-neutral, fail-closed-scrubbed egress contract)
@@ -515,8 +515,11 @@ export {
   continuityHeaderText,
   type SessionStartInput,
   type SessionStartResult,
+  type SessionStartMode,
   type SlimCorrection,
 } from "./tools-logic/session-start.js";
+export { renderSessionStart, sessionStartSections, sessionStartMaxBytes, SESSION_START_MAX_BYTES_DEFAULT, SESSION_START_MAX_BYTES_ENV, SESSION_START_MAX_BYTES_MIN } from "./tools-logic/session-start-render.js";
+export type { RenderSessionStartOptions, RenderedSection, SectionId } from "./tools-logic/session-start-render.js";
 export {
   buildRecognition,
   PERSON_LOW_CONFIDENCE_CAVEAT,
@@ -1068,3 +1071,10 @@ export { buildEmbeddingsIndex, embeddingsStatus } from "./embeddings/indexer.js"
 export type { BuildEmbeddingsOptions, BuildEmbeddingsReport, EmbeddingsStatus } from "./embeddings/indexer.js";
 export { runSemanticLeg } from "./retrieval/semantic-leg.js";
 export type { SemanticLegNote, SemanticLegResult, SemanticLegInput } from "./retrieval/semantic-leg.js";
+export { resolveHookSessionId, readHookStdin, hookLockKey } from "./storage/hook-session.js";
+export { readIdentityCard, writeIdentityCard, parseIdentityCard, serializeIdentityCard, identityCardPath, formatOwnerSection, IdentityCardError, IDENTITY_BODY_CAP } from "./storage/identity-card.js";
+export type { IdentityCard } from "./storage/identity-card.js";
+export { readStateCard, writeStateCard, mergeStateCard, parseStateCard, serializeStateCard, capStateCard, backupUnreadableStateCard, stateCardPath, formatStateSection, stateCardHasContent, STATE_CARD_FILE_CAP } from "./storage/state-card.js";
+export type { StateCard, StateCardInput, StateCardBody, MergeStateCardArgs } from "./storage/state-card.js";
+export { parseFrontmatter, normalizeCardText } from "./storage/frontmatter.js";
+export type { Frontmatter } from "./storage/frontmatter.js";

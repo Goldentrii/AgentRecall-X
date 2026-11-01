@@ -64,7 +64,7 @@ function runCli(root, args, { stdin, env } = {}) {
     // hash(project+date+ordinal)-based arms, and an "off"-arm session forces
     // corrections:[] BY DESIGN, which would make these fence-content
     // assertions fail date-/machine-dependently. Must be off here.
-    const childEnv = { ...process.env, ...env };
+    const childEnv = { ...process.env, CLAUDE_CODE_SESSION_ID: "", ...env };
     delete childEnv.AR_AB_ENABLED;
     delete childEnv.AR_AB_FORCE;
     const child = spawn("node", [CLI, "--root", root, ...args], {

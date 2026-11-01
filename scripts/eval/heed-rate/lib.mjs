@@ -16,8 +16,10 @@
 // ---------------------------------------------------------------------------
 
 /**
- * The product renders each P0 correction into the agent's context as
- * (packages/cli/src/index.ts ~L1302):
+ * Before Cards v2 the CLI hook-start rendered each P0 correction into the
+ * agent's context as (the probe keeps this exact block so heed-rate numbers
+ * stay comparable across versions; the shipped renderer now prints
+ * "⛔ HARD RULES" lines — packages/core/src/tools-logic/session-start-render.ts):
  *
  *   🚨 P0 rules — follow strictly:
  *      - <rule.slice(0, 80)> → P0 correction — follow this rule strictly
@@ -137,8 +139,8 @@ export function evaluatePredicate(pred, text) {
 // ---------------------------------------------------------------------------
 
 /**
- * Render the memory block exactly as the CLI hook-start renderer does for a
- * single injected P0 correction (packages/cli/src/index.ts ~L1302-1312).
+ * Render the memory block exactly as the pre-Cards-v2 CLI hook-start renderer
+ * did for a single injected P0 correction (kept for comparability; see above).
  */
 export function renderMemoryBlock(rule) {
   const sliced = String(rule).slice(0, P0_RULE_RENDER_SLICE);

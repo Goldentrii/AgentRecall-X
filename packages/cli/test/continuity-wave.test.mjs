@@ -42,7 +42,7 @@ function runCli(args, { stdin, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn("node", [CLI, "--root", TEST_ROOT, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...env },
+      env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", ...env },
     });
     let stdout = "";
     let stderr = "";
@@ -187,7 +187,7 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", cleanRoot, "--project", "health-clean-test", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-2" },
       });
       let stdout = "";
       let stderr = "";
@@ -203,7 +203,7 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
 });
 
 describe("continuity wave — L1/L2 hook-start continuity rendering (review fixes, 2026-07-31)", () => {
-  it("L1: renders the ⏪ Continuity block BEFORE the 'Project:' header line, matching the MCP terse formatter's placement", async () => {
+  it("L1 (full mode): renders the ⏪ Continuity block BEFORE the AgentRecall header line, matching the MCP terse formatter's placement", async () => {
     const root = path.join(os.tmpdir(), "ar-l1-root-" + Date.now());
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(
@@ -220,7 +220,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l1-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l1-hook-start-test" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l1-hook-start-test", AGENT_RECALL_SESSION_START_MODE: "full" },
       });
       let stdout = "";
       let stderr = "";
@@ -231,12 +231,12 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     });
     assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
     const continuityIdx = stdout.indexOf("⏪ Continuity");
-    const projectIdx = stdout.indexOf("Project:");
+    const projectIdx = stdout.indexOf("AgentRecall — l1-current-project");
     assert.ok(continuityIdx >= 0, `expected a continuity block; stdout=${stdout}`);
-    assert.ok(projectIdx >= 0, `expected a Project: header line; stdout=${stdout}`);
+    assert.ok(projectIdx >= 0, `expected the AgentRecall header line; stdout=${stdout}`);
     assert.ok(
       continuityIdx < projectIdx,
-      `continuity block must render BEFORE the Project: header; stdout=${JSON.stringify(stdout)}`,
+      `continuity block must render BEFORE the AgentRecall header; stdout=${JSON.stringify(stdout)}`,
     );
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -259,7 +259,7 @@ describe("continuity wave — L1/L2 hook-start continuity rendering (review fixe
     const { code, stdout, stderr } = await new Promise((resolve) => {
       const child = spawn("node", [CLI, "--root", root, "--project", "l2-current-project", "hook-start"], {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l2-hook-start-test" },
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "l2-hook-start-test", AGENT_RECALL_SESSION_START_MODE: "full" },
       });
       let stdout = "";
       let stderr = "";

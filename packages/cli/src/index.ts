@@ -44,19 +44,8 @@ function hasFlag(flag: string, flagArgs: string[]): boolean {
   return flagArgs.includes(flag);
 }
 
-/**
- * L2 fix (review, 2026-07-31): word-boundary truncation with an ellipsis,
- * matching the MCP-server's `trunc()` (packages/mcp-server/src/tools/
- * session-start.ts). The continuity block previously used a bare
- * `.slice(0, n)` — no word boundary, no ellipsis marker — unlike its MCP
- * sibling rendering the SAME field.
- */
-function truncWordBoundary(s: string, n: number): string {
-  if (s.length <= n) return s;
-  const sliced = s.slice(0, n);
-  const lastSpace = sliced.lastIndexOf(" ");
-  return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
-}
+/** Cards v1 (G2): body written by `ar identity init` — fixed literal, placeholders only. */
+const IDENTITY_TEMPLATE = "# Owner\n- Languages: <reply language; code and docs language>\n- Hard rules: <actions that always need an explicit yes>\n- Machine: <OS; where code and large data live>\n- Style: <tone, verbosity, how to disagree>";
 
 function output(data: unknown): void {
   if (typeof data === "string") process.stdout.write(data + "\n");
@@ -76,6 +65,12 @@ JOURNAL:
   ar cold-start
   ar archive [--older-than-days N]
   ar rollup [--min-age-days N] [--dry-run]
+
+CARDS (loaded first by session_start):
+  ar identity init          Create <root>/identity-card.md from a template (never overwrites)
+  ar identity show          Print the owner identity card (file form: edit a copy, feed it back with set)
+  ar identity set <file>    Replace the body from a file (≤1600 chars, secrets rejected, version +1)
+  ar state show [--project <slug>]  Print the project state card (rewritten by every session_end)
 
 PALACE:
   ar palace read [<room>] [--topic <name>]
@@ -338,7 +333,21 @@ async function main(): Promise<void> {
       break;
     }
     case "state": {
-      const action = (rest[0] as "read" | "write") || "read";
+      const sub = rest[0];
+      if (sub === "show") {
+        let slug: string;
+        try { slug = await core.resolveProject(project); } catch (e) {
+          process.stderr.write(`${e instanceof Error ? e.message : String(e)}\nagent_instruction: pass a valid --project <slug> (a name that contains a letter and follows the rules above), or omit --project to use the current directory's project.\n`);
+          process.exitCode = 1;
+          break;
+        }
+        const card = core.readStateCard(slug);
+        if (!card) output(`No state card for ${slug} yet — the next session_end writes it.`);
+        else if (!core.stateCardHasContent(card)) output(`State card for ${slug} has no fields yet (updated ${card.updated.slice(0, 10)}) — the next session_end fills it.`);
+        else outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
+        break;
+      }
+      const action = (sub as "read" | "write") || "read";
       const data =
         rest[1] && !rest[1].startsWith("--") ? rest[1] : undefined;
       const result = await core.journalState({
@@ -356,6 +365,49 @@ async function main(): Promise<void> {
         outputFenced(result);
       } else {
         output(result);
+      }
+      break;
+    }
+    case "identity": {
+      // Cards v1 (G2) — the only identity-card write path in v1.
+      const sub = rest[0];
+      const fail = (msg: string, fix: string) => { process.stderr.write(`${msg}\nagent_instruction: ${fix}\n`); process.exitCode = 1; };
+      const ioFail = (e: unknown) => fail(`identity card write failed: ${String(e)}`, "check that the store root is a writable directory (ar --root <dir>), then retry.");
+      if (sub === "init") {
+        // Existence is a filesystem fact: readIdentityCard() returns null for an empty/binary/UTF-16 file
+        // (PowerShell 5.1 `>` writes UTF-16), and init must never overwrite the owner's file.
+        const cardPath = core.identityCardPath();
+        if (fs.existsSync(cardPath)) {
+          const existing = core.readIdentityCard();
+          if (existing) fail(`identity card already exists at ${cardPath} (v${existing.version})`, "edit a copy, then run `ar identity set <copy>`; init never overwrites.");
+          else fail(`identity card file exists at ${cardPath} but could not be read`, `the card file exists but could not be read; fix or remove ${cardPath} before running init`);
+          break;
+        }
+        try {
+          const card = core.writeIdentityCard(IDENTITY_TEMPLATE);
+          output({ path: card.path, version: card.version, chars: card.body.length });
+        } catch (e) { ioFail(e); }
+      } else if (sub === "show") {
+        const card = core.readIdentityCard();
+        if (card) outputFenced(core.serializeIdentityCard(card).trimEnd()); // the file form: `ar identity show > card.md` feeds straight back into set
+        else fail(`No identity card at ${core.identityCardPath()}`, "create one with `ar identity init`.");
+      } else if (sub === "set") {
+        if (!rest[1]) { fail("usage: ar identity set <file>", "pass the path of a UTF-8 markdown file holding the card body; `ar identity show > card.md` gives an editable copy."); break; }
+        let text = "";
+        try { text = core.unfenceMemory(core.normalizeCardText(fs.readFileSync(rest[1], "utf-8"))); } catch (e) { fail(`cannot read ${rest[1]}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
+        const parsed = core.parseIdentityCard(text);
+        try {
+          const card = core.writeIdentityCard(parsed.malformed ? text : parsed.card.body);
+          output({ path: card.path, version: card.version, chars: card.body.length });
+        } catch (e) {
+          if (!(e instanceof core.IdentityCardError)) ioFail(e);
+          else {
+            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context", binary: "save the file as UTF-8 (it holds NUL bytes, typically a UTF-16 save from PowerShell 5.1)" }[e.code];
+            fail(e.message, `${fix}, then re-run ar identity set.`);
+          }
+        }
+      } else {
+        fail("usage: ar identity init | show | set <file>", "pick one of the three sub-commands.");
       }
       break;
     }
@@ -1582,11 +1634,16 @@ async function main(): Promise<void> {
       // this is a pure superset fix.
       const lockDir = core.getRoot();
       const lockFile = path.join(lockDir, ".hook-start-lock");
-      const sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "";
-      const lockKey = sessionId || new Date().toISOString().slice(0, 13); // hour-granularity fallback
+      // Cards v1 (G1): stdin session_id → CLAUDE_CODE_SESSION_ID → CLAUDE_SESSION_ID → SESSION_ID.
+      const startPayload = await core.readHookStdin();
+      const sessionId = core.resolveHookSessionId(startPayload);
+      const lockKey = core.hookLockKey(sessionId); // nosid-<UTC hour> only without any id
+      // Claude Code re-fires SessionStart with the SAME session_id after compaction/clear
+      // (source "compact"/"clear"): the context window was emptied, so re-inject (the lock is still rewritten).
+      const reinject = startPayload["source"] === "compact" || startPayload["source"] === "clear";
 
       try {
-        if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
+        if (!reinject && fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf-8").trim() === lockKey) {
           // Already ran this session — silent exit
           process.exit(0);
         }
@@ -1594,33 +1651,25 @@ async function main(): Promise<void> {
       } catch { /* non-blocking */ }
 
       try {
-        // v3.4.42 working-memory wave: `sessionId` (env-var derived, above)
-        // is the closest available stand-in for "this session's own Claude
-        // Code session id" at this call site — hook-start does not parse
-        // stdin at all today (verified — this case reads no stdin), so there
-        // is no `session_id` field to pull from a payload here. This is the
-        // SAME lookup hook-end/hook-ambient already use as their own sid
-        // fallback, reused here purely so session-start.ts's WM "live" line
-        // can exclude THIS session's own working-memory file from the
-        // cross-window signal (see SessionStartInput.sid's doc comment for
-        // the graceful-degradation contract when it's empty).
-        const result = await core.sessionStart({ project, sid: sessionId || undefined });
-        // P1 fence (TOW2-388): the F5 health banner below is a COMPUTED
-        // diagnostic (a failure count from this machine's own hook-health
-        // ledger) — not retrieved/stored natural-language content — and its
-        // own pre-existing contract requires it be the literal FIRST line
-        // of stdout (continuity-wave.test.mjs). It is built into a separate
-        // `preamble` array kept OUTSIDE the memory fence below, in front of
-        // it, so both invariants hold: health-first, AND everything that
-        // IS retrieved memory (`lines`, from here down) is fenced.
+        // v3.4.42 working-memory wave: `sessionId` (resolved above via
+        // core.resolveHookSessionId — stdin `session_id`, then the env vars)
+        // is this session's own Claude Code session id, passed so
+        // session-start.ts's WM "live" line can exclude THIS session's own
+        // working-memory file from the cross-window signal (see
+        // SessionStartInput.sid's doc comment for the graceful-degradation
+        // contract when it's undefined).
+        // Cards v2 (G6): hook-start injects the cards payload (owner card, HARD RULES, state card) by default;
+        // AGENT_RECALL_SESSION_START_MODE=full restores every section. Anything else falls back to cards, loudly.
+        const modeEnv = (process.env["AGENT_RECALL_SESSION_START_MODE"] ?? "").trim().toLowerCase() || "cards"; // blank = default, no warning
+        const mode: "cards" | "full" = modeEnv === "full" ? "full" : "cards";
+        if (modeEnv !== "cards" && modeEnv !== "full") process.stderr.write(`[AgentRecall hook-start] AGENT_RECALL_SESSION_START_MODE=${modeEnv} is not cards|full — using cards\n`);
+        const result = await core.sessionStart({ project, sid: sessionId, mode });
+        // Cards v2 (G6): the text is the shared core renderer — the same sections, cap, fence and order as the
+        // MCP terse payload and the SDK's fencedText, so the three surfaces cannot drift again. The F5 hook-health
+        // banner is a COMPUTED diagnostic, not memory: it is the renderer's `preamble`, printed before the fence
+        // (its pre-existing contract: literal FIRST line of stdout, continuity-wave.test.mjs). The semantic-prefetch
+        // block is this host's own extra and rides inside the fence as `extraLines` (full mode only).
         const preamble: string[] = [];
-        const lines: string[] = [];
-
-        // ---- F5 fail-loud hook health (continuity wave 2026-07-31) ----
-        // FIRST line, above everything else: a hook that has been silently
-        // failing leaves zero trace otherwise (design doc fact 7) — surface
-        // it before the agent reads anything else so memory-not-persisted
-        // isn't discovered days later. Silent (no line at all) when healthy.
         try {
           const health = core.readHookHealth();
           if (health.failures_24h > 0) {
@@ -1628,127 +1677,10 @@ async function main(): Promise<void> {
           }
         } catch { /* non-blocking — health line is best-effort */ }
 
-        lines.push("[AgentRecall] Session context loaded");
-
-        // ---- F2 continuity card (continuity wave 2026-07-31) ----
-        // Top-3 most-recent sessions ACROSS projects, ranked by pure recency
-        // (readRecentSessions already returns newest-first). L1 fix (review,
-        // 2026-07-31): rendered BEFORE the per-project header line, aligning
-        // with the MCP terse formatter (packages/mcp-server/src/tools/
-        // session-start.ts's formatTerse) — that renderer deliberately places
-        // continuity ahead of the header so "what was I doing, anywhere, most
-        // recently" is the first substantive thing read; the CLI previously
-        // rendered it AFTER the header, an unintentional divergence between
-        // the two renderers of the SAME field. Absent entirely when the
-        // recency index has nothing yet (no noise on a fresh/solo-project store).
-        if (result.continuity && result.continuity.length > 0) {
-          // Fable option 2 (label-not-scope, 2026-08-30) — header frames the
-          // WHOLE block as orientation when every entry is cross-project;
-          // otherwise the original neutral header. Single derivation point:
-          // agent-recall-core's continuityHeaderText (matches the MCP
-          // formatTerse renderer of this SAME field byte-for-byte).
-          lines.push(core.continuityHeaderText(result.continuity_all_cross_project));
-          for (const c of result.continuity.slice(0, 3)) {
-            const next = c.next_step ? ` → next: ${truncWordBoundary(c.next_step, 80)}` : "";
-            // Identity-trust (2026-08-20): visibly label a rescue-sourced
-            // (unverified cwd-guess) entry rather than presenting it as
-            // verified memory — see SessionStartResult["continuity"]'s
-            // `untrusted` field doc comment.
-            const trustFlag = c.untrusted ? " [unverified — rescued from a crashed session]" : "";
-            // Fable option 2 (label-not-scope, 2026-08-30) — "↪ " marks an
-            // entry that is NOT this project's own continuity (orientation,
-            // recent work elsewhere); empty for a current-project entry.
-            // Same shared helper the MCP formatTerse renderer calls.
-            const marker = core.continuityEntryMarker(c, result.project);
-            lines.push(`   - ${marker}${c.ago} [${c.slug}] ${truncWordBoundary(c.title, 100)}${next}${trustFlag}`);
-          }
-        }
-
-        // Project + identity — always show so agent knows the project
-        lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
-
-        // P0 corrections — always show, high priority (loaded before watch_for)
-        if (result.corrections && result.corrections.length > 0) {
-          const p0s = result.corrections.filter((c: any) => c.severity === "p0");
-          if (p0s.length > 0) {
-            lines.push("🚨 P0 rules — follow strictly:");
-            for (const c of p0s.slice(0, 5)) {
-              const rule = c.rule || JSON.stringify(c);
-              // Evolution p4 — additive tier tag, same convention as the MCP
-              // formatTerse/formatVerbose renderers of this same field.
-              const tierTag = c.tier ? ` [${c.tier}]` : "";
-              lines.push(`   - ${rule.slice(0, 80)} → P0 correction — follow this rule strictly${tierTag}`);
-            }
-          }
-        }
-
-        // Watch-for warnings — patterns derived from past correction history
-        if (result.watch_for && result.watch_for.length > 0) {
-          lines.push("⚠️  Past corrections — adjust approach:");
-          for (const w of result.watch_for) {
-            lines.push(`   - ${w.pattern} (×${w.frequency})${w.suggestion ? ` → ${w.suggestion}` : ""}`);
-          }
-        }
-
-        // Pending review (Fix #2, dual-channel capture gate) — ONE line,
-        // count only; staged content is untrusted and never rendered here.
-        if (result.pending_corrections && result.pending_corrections.count > 0) {
-          lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
-        }
-
-        // Top 3 insights (sorted by confirmations — most proven patterns first)
-        if (result.insights.length > 0) {
-          lines.push("💡 Awareness insights:");
-          for (const ins of result.insights.slice(0, 3)) {
-            lines.push(`   [${ins.confirmed}×] ${ins.title.slice(0, 100)}`);
-          }
-        }
-
-        // Recent context
-        const recent = result.recent;
-        if (recent.today) {
-          lines.push(`📓 Today: ${recent.today.replace(/\n/g, " ").slice(0, 150)}`);
-        } else if (recent.yesterday) {
-          lines.push(`📓 Yesterday: ${recent.yesterday.replace(/\n/g, " ").slice(0, 150)}`);
-        }
-        if (recent.older_count > 0) {
-          lines.push(`   (${recent.older_count} older entries in journal)`);
-        }
-
-        // Active rooms with topics — help agent navigate the palace
-        if (result.active_rooms && result.active_rooms.length > 0) {
-          lines.push("🏛️  Palace rooms:");
-          for (const room of result.active_rooms) {
-            const topicStr = room.topics && room.topics.length > 0 ? ` — ${room.topics.join(", ")}` : "";
-            lines.push(`   - ${room.name} (salience ${room.salience.toFixed(2)})${topicStr}`);
-          }
-        }
-
-        // Cross-project insights — show top 3 inline so agent reads them now
-        if (result.cross_project && result.cross_project.length > 0) {
-          const shown = result.cross_project.slice(0, 3);
-          const total = result.cross_project.length;
-          lines.push(`🔗 Cross-project (${shown.length} of ${total}):`);
-          for (const cp of shown) {
-            lines.push(`   [${cp.from_project}] ${cp.title.slice(0, 80)}`);
-          }
-        }
-
-        // fix5 (2026-09-11): unclaimed staging pointer — EXACTLY ONE line,
-        // count only (never staged content), absent when zero. Mirrors the
-        // MCP formatTerse renderer of the same field.
-        if (result.unclaimed_cards && result.unclaimed_cards > 0) {
-          lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\``);
-        }
-
-        // Semantic prefetch from last session
-        try {
-          // Root-fix (2026-08-12, followups wave): same bypass class as
-          // logSyncError — this is AR's own project data, must honor getRoot().
-          // fix5 (2026-09-11): routed through projectSubPath so the READ
-          // resolves the same case-fold-reused path the WRITE (hook-end
-          // prefetch) now uses — the raw literal join was one of the cli
-          // bypass sites of the sanctioned project-path builder.
+        const extraLines: string[] = [];
+        if (mode === "full") try { // the renderer shows extras in full mode only — skip the read in cards mode
+          // Semantic prefetch from last session — routed through projectSubPath so the READ resolves the same
+          // case-fold-reused path the WRITE (hook-end prefetch) uses (fix5, 2026-09-11); honors getRoot().
           const prefetchFile = core.projectSubPath(project ?? "auto", "semantic-prefetch.json");
           if (fs.existsSync(prefetchFile)) {
             const prefetchData = JSON.parse(fs.readFileSync(prefetchFile, "utf-8")) as {
@@ -1758,23 +1690,18 @@ async function main(): Promise<void> {
             const age = Date.now() - new Date(prefetchData.generated).getTime();
             // Only show if < 24 hours old
             if (age < 86400000 && prefetchData.results && prefetchData.results.length > 0) {
-              lines.push("🔍 Pre-loaded semantic context:");
+              extraLines.push("🔍 Pre-loaded semantic context:");
               for (const r of prefetchData.results.slice(0, 3)) {
-                lines.push(`   [${r.source}] ${r.title.slice(0, 70)}`);
+                extraLines.push(`   [${r.source}] ${r.title.slice(0, 70)}`);
               }
             }
           }
         } catch { /* non-blocking */ }
 
-        // P1 fence (TOW2-388): everything in `lines` is retrieved/stored
-        // memory (corrections, insights, journal excerpts, room topics,
-        // cross-project titles) rendered directly into the next agent's
-        // context at session start — the exact surface the 2026-08-18
-        // red-team report exploited (CRITICAL-1: "prints ... directly into
-        // the next agent's context, unprompted"). Fence it as one block;
-        // `preamble` (the F5 health banner) stays outside and first.
-        const rendered = [...preamble, core.fenceMemory(lines.join("\n"))].join("\n");
-        process.stdout.write(rendered + "\n\n");
+        // P1 fence (TOW2-388): everything retrieved/stored (cards, corrections, insights, journal excerpts, room
+        // topics, cross-project titles, prefetch titles) is fenced as ONE block by the renderer; `preamble`
+        // stays outside and first.
+        process.stdout.write(core.renderSessionStart(result, { preamble, extraLines, abTag: false }) + "\n\n"); // abTag: hook-start never printed the A/B arm
       } catch (e) {
         // Never block the session — fail silently
         core.recordHookFailure("hook-start", e);
@@ -1819,33 +1746,14 @@ async function main(): Promise<void> {
       // same session. Every failure path exits 0 — never crash into the Stop turn.
 
       // ---- read stdin first (mirror hook-correction / hook-ambient / hook-pretool)
-      let stopRaw = "";
-      try {
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-        stopRaw = Buffer.concat(chunks).toString("utf-8").trim();
-      } catch { stopRaw = ""; }
-
-      let stop: Record<string, unknown> = {};
-      if (stopRaw) {
-        try { stop = JSON.parse(stopRaw) as Record<string, unknown>; }
-        catch { stop = {}; }
-      }
-
-      const transcriptPath =
-        typeof stop.transcript_path === "string" ? stop.transcript_path : undefined;
-      const stopSessionId =
-        typeof stop.session_id === "string" ? stop.session_id : undefined;
-
+      const stop = await core.readHookStdin();
+      const transcriptPath = typeof stop.transcript_path === "string" ? stop.transcript_path : undefined;
+      const resolvedSid = core.resolveHookSessionId(stop);
       const endToday = new Date().toISOString().slice(0, 10);
-      // Dedup key = transcript filename UUID (collision-free), else stdin
-      // session_id, else env, else date (last resort — may collide same-day).
-      const sid =
-        (transcriptPath ? path.basename(transcriptPath, ".jsonl") : "") ||
-        stopSessionId ||
-        process.env.CLAUDE_SESSION_ID ||
-        process.env.SESSION_ID ||
-        endToday;
+      // Dedup key = transcript filename UUID (collision-free), else the resolved
+      // session id (stdin session_id → CLAUDE_CODE_SESSION_ID → CLAUDE_SESSION_ID
+      // → SESSION_ID; Cards v1 G1), else date (last resort — may collide same-day).
+      const sid = (transcriptPath ? path.basename(transcriptPath, ".jsonl") : "") || resolvedSid || endToday;
 
       const endLockKey = `${sid}-end`;
       // Root-fix (2026-08-12, followups wave): flagged by review as the same
@@ -1881,8 +1789,7 @@ async function main(): Promise<void> {
         let skippedAmbiguous = false;
         if (!resolvedPath) {
           const today = readTodaySessions();
-          const wantId =
-            stopSessionId || process.env.CLAUDE_SESSION_ID || process.env.SESSION_ID || "";
+          const wantId = resolvedSid ?? "";
           const byId = wantId ? today.find((s) => s.sessionId === wantId) : undefined;
           if (byId) {
             resolvedPath = byId.file;
@@ -2371,9 +2278,13 @@ async function main(): Promise<void> {
         if (!raw) process.exit(0);
 
         let prompt = "";
-        let sessionId = process.env.CLAUDE_SESSION_ID ?? process.env.SESSION_ID ?? "default";
+        // Cards v1 (G1): resolved after the stdin parse below via
+        // core.resolveHookSessionId (stdin `session_id` → CLAUDE_CODE_SESSION_ID
+        // → CLAUDE_SESSION_ID → SESSION_ID). `"default"` stays the
+        // rate-limit/topic sentinel when none exists.
+        let sessionId = "default";
         // H2 fix (review, post-build): `sessionId` above falls back to the
-        // LITERAL string "default" when no env var is set — that sentinel is
+        // LITERAL string "default" when no id is resolvable — that sentinel is
         // used elsewhere in this case (topic-profile key, rate-limit counter
         // file) and is safe there because those call sites already special-
         // case it. It is NOT safe for working-memory: `wmAppend("default", …)`
@@ -2390,13 +2301,10 @@ async function main(): Promise<void> {
         // GENUINE id was ever seen (stdin `session_id`, or an env var) — WM
         // capture is gated on it below; every OTHER use of `sessionId` in this
         // case is untouched (same "default" fallback, same downstream
-        // behavior) since this fix is scoped to the WM tier only. Guards
-        // against BOTH "the env var is unset" (sessionId === "default", the
-        // `??` chain's own fallback) AND "the env var is explicitly set to an
-        // empty string" (`??` does not substitute for "" — only null/
-        // undefined — so an empty CLAUDE_SESSION_ID would otherwise slip
-        // through as sessionId="" and be treated as "real").
-        let hasRealSessionId = sessionId !== "default" && sessionId.length > 0;
+        // behavior) since this fix is scoped to the WM tier only. Blank ids
+        // (empty / whitespace-only stdin `session_id` or env var) count as
+        // absent — core.resolveHookSessionId returns undefined for them.
+        let hasRealSessionId = false;
         // v3.4.42 working-memory wave: cwd for the WM line below. Claude Code's
         // hook JSON is documented to carry a `cwd` field, but no existing hook
         // in this file reads it (verified — grep found zero prior `.cwd`
@@ -2404,17 +2312,18 @@ async function main(): Promise<void> {
         // process's own cwd, which for a hook spawned by Claude Code is the
         // session's working directory anyway.
         let cwd = process.cwd();
+        let parsedPayload: unknown;
         try {
           const parsed = JSON.parse(raw);
           prompt = parsed.prompt ?? parsed.message ?? parsed.user_message ?? "";
-          if (parsed.session_id) {
-            sessionId = String(parsed.session_id);
-            hasRealSessionId = true;
-          }
+          parsedPayload = parsed;
           if (typeof parsed.cwd === "string" && parsed.cwd) cwd = parsed.cwd;
         } catch {
           prompt = raw;
         }
+        const resolvedSid = core.resolveHookSessionId(parsedPayload as Record<string, unknown> | undefined); // Cards v1 (G1)
+        sessionId = resolvedSid ?? "default"; // "default" stays the rate-limit/topic sentinel
+        hasRealSessionId = resolvedSid !== undefined;
 
         // Non-semantic harness artifact early-exit (FIX 1): task-notifications,
         // agent-message wrappers, system-reminders, etc. carry no human intent.
@@ -2433,7 +2342,7 @@ async function main(): Promise<void> {
         // defensive insurance only, matching this file's existing style.
         //
         // H2 fix: when no session id is resolvable at all (no stdin
-        // `session_id`, no `CLAUDE_SESSION_ID`/`SESSION_ID` env var), SKIP the
+        // `session_id`, no `CLAUDE_CODE_SESSION_ID`/`CLAUDE_SESSION_ID`/`SESSION_ID` env var), SKIP the
         // WM append entirely — graceful degrade to pre-WM behavior — instead
         // of writing into the shared "default" bucket described above. The
         // rest of hook-ambient (recall/injection) is completely unaffected;
@@ -2523,8 +2432,8 @@ async function main(): Promise<void> {
         // should I watch out for?" even though turns 1-3 may not themselves
         // have fired an injection. See packages/cli/src/utils/topic-state.ts.
         const storeRoot = core.getRoot();
-        // Reuse the session id already resolved above (parsed.session_id,
-        // then CLAUDE_SESSION_ID/SESSION_ID env vars). Only when NONE of
+        // Reuse the session id already resolved above (core.resolveHookSessionId:
+        // stdin session_id, then the session-id env vars). Only when NONE of
         // those produced a real id (sessionId === "default") do we fall back
         // to a per-day-per-project key here — a bare "default" would merge
         // every session-less caller's background topic into one file, which
@@ -3056,11 +2965,13 @@ async function main(): Promise<void> {
       for (const [proj, projSessions] of byProject) {
         // NOTE (Phase 6 fix): we used to skip the project if ANY journal file
         // existed for today, which silently dropped 4 of 5 parallel sessions.
-        // Now each session writes its own session-scoped filename
-        // (`{date}--arsaveall--...--{uniq}.md`) via journalFileName, so
-        // re-runs are safe and parallel sessions all survive. We still need
-        // to dedupe within a single saveall invocation though — same upstream
-        // session shouldn't be saved twice in one call.
+        // Now core.sessionEnd maps saveType "saveall" to the `arsave` journal
+        // name (`{date}--arsave--…`, same-day rule: one file per project per
+        // day, appended to), so re-runs are safe and every session's text
+        // lands. "saveall" itself is only a marker: it keeps the project
+        // state card untouched (core session-end.ts). We still dedupe within
+        // a single saveall invocation — the same upstream session shouldn't
+        // be saved twice in one call.
 
         // Synthesize summary from all sessions for this project
         const largest = projSessions.sort((a, b) => b.sizeMb - a.sizeMb)[0];
@@ -3102,7 +3013,7 @@ async function main(): Promise<void> {
           // staging class: route it to `_unclaimed/` via the sentinel — the
           // save still happens, claimable later.
           const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
-          await core.sessionEnd({ summary, project: saveProject, insights: [] });
+          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // "saveall" is a marker only: the journal is named arsave (NOTE above) and the project state card is left untouched
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });

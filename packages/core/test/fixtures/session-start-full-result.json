@@ -1,0 +1,49 @@
+{
+  "project": "alpha-platform",
+  "owner": { "version": 3, "body": "# Owner\n- Languages: reply in the owner's language; code and docs in English.\n- Hard rules: no push, deploy, version bump or delete without an explicit yes." },
+  "state": {
+    "updated": "2026-10-31T11:40:12.000Z",
+    "session": "f4b5e082",
+    "goal": "Ship cards v2 with green CI.",
+    "open_decisions": ["Whether handoff.md is retired in v3."],
+    "blockers": ["CI red on the Windows lane"],
+    "next": "",
+    "pointers": ["packages/core/src/tools-logic/session-start-render.ts", "F:\\Projects\\arx-cards-v2\\docs\\superpowers\\specs\\2026-10-31-cards-v2-slim-session-start-design.md"],
+    "last_session": "2026-10-31 — Wrote the spec and plan; baseline green.",
+    "age_days": 9
+  },
+  "identity": "Alpha platform — the shared services tier",
+  "insights": [
+    { "title": "Vitest + PGlite suites flake on many-core loaded Windows boxes; cap workers", "confirmed": 4, "severity": "important", "trend": "rising" },
+    { "title": "Hosted MCP needs Authorization: Bearer; ?token= in the URL is ignored", "confirmed": 2, "severity": "important" }
+  ],
+  "active_rooms": [
+    { "name": "Architecture", "salience": 0.82, "one_liner": "Service boundaries and the queue contract", "topics": ["queue", "contract"], "last_updated": "2026-10-20", "stale": false },
+    { "name": "Blockers", "salience": 0.31, "one_liner": "Open blockers", "last_updated": "2026-09-01", "stale": true }
+  ],
+  "cross_project": [{ "title": "Poker milestone handoff must preserve unsaved annotation", "from_project": "poker-ai", "relevance": 0.41 }],
+  "continuity": [
+    { "ago": "2h ago", "slug": "alpha-platform", "title": "Landed the queue contract", "next_step": "Wire the consumer retry budget", "is_current_project": true },
+    { "ago": "5h ago", "slug": "beta-api", "title": "Rescued from a crashed window", "untrusted": true, "is_current_project": false }
+  ],
+  "continuity_all_cross_project": false,
+  "recent": { "today": "Queue contract landed; retry budget next.", "yesterday": "Spike on consumer backpressure.", "older_count": 7 },
+  "recent_captures": [{ "date": "2026-10-31", "question": "Which retry budget?", "answer": "Three attempts, exponential from 200 ms." }],
+  "watch_for": [{ "pattern": "pushing to main", "frequency": 3, "suggestion": "ask before any push" }],
+  "corrections": [
+    { "id": "2026-10-01-p0", "severity": "p0", "rule": "Never push, publish or version-bump without an explicit yes.", "tier": "gate", "context": "The owner reviews every release by hand; an unapproved push once shipped a broken 3.4.x to npm." },
+    { "id": "2026-10-02-p1", "severity": "p1", "rule": "Prefer modifying an existing module over a new one.", "tier": "nudge" }
+  ],
+  "pending_corrections": { "count": 2, "ids": ["p-1", "p-2"] },
+  "resume": { "last_date": "2026-10-31", "last_trajectory": "Wire the consumer retry budget and measure p95.", "sessions_count": 9 },
+  "behavior_rules": [{ "id": "r1", "name": "release-gate", "when": "a release is requested", "do": "stop and ask for an explicit yes", "created": "2026-09-01", "hits": 12 }],
+  "dream_health": { "banner": "dream cron: 3 consecutive failure nights", "banner_kind": "failure" },
+  "store_doctor": "🩺 store-doctor: WARN — 2 outcome ledgers diverge from corrections (run ar doctor)",
+  "pipeline": null,
+  "alignment": { "precision": 0.75, "retrieved": 8, "heeded": 6, "recurred": 1 },
+  "blind_spots": [],
+  "recognition": { "who": { "name": "unknown", "role": null, "owner": null, "unknown": true }, "can_do": { "skills": [], "permissions": [] }, "project": { "slug": "alpha-platform", "last_journal_date": "2026-10-31", "status": "active", "trajectory": null, "rooms": [] }, "person": { "tendencies": [], "caveat": "" } },
+  "mirror_available": "The Mirror is available — run `ar mirror --project alpha-platform` to see, and correct, what I've noticed about how you think (2 corrections grounding it).",
+  "unclaimed_cards": 3,
+  "ab_arm": "on"
+}

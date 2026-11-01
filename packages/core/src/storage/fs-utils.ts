@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 
 export function ensureDir(dir: string): void {
   if (!fs.existsSync(dir)) {
@@ -178,6 +179,14 @@ export function writeTextAtomic(filePath: string, text: string): void {
   const tmp = filePath + ".tmp." + process.pid;
   fs.writeFileSync(tmp, text, "utf-8");
   renameAtomic(tmp, filePath); // atomic on POSIX; win32 transient-EPERM retry
+}
+
+/** Cards v1 — unique tmp (pid+random) so concurrent writers never share one; tmp removed if the rename fails. */
+export function writeTextAtomicPrivate(filePath: string, text: string): void {
+  ensureDir(path.dirname(filePath));
+  const tmp = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
+  fs.writeFileSync(tmp, text, { encoding: "utf-8", mode: 0o600 });
+  try { renameAtomic(tmp, filePath); } catch (err) { try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ } throw err; }
 }
 
 // ---------------------------------------------------------------------------

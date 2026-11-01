@@ -1,0 +1,63 @@
+🔴 dream cron: 3 consecutive failure nights
+
+🩺 store-doctor: WARN — 2 outcome ledgers diverge from corrections (run ar doctor)
+
+Owner (identity card v3)
+# Owner
+- Languages: reply in the owner's language; code and docs in English.
+- Hard rules: no push, deploy, version bump or delete without an explicit yes.
+
+🎯 Alignment: 75% corrections heeded (6/8, 1 recurred)
+
+⏪ Continuity (recent work, other projects included):
+  - 2h ago [alpha-platform] Landed the queue contract → next: Wire the consumer retry budget
+  - ↪ 5h ago [beta-api] Rescued from a crashed window [unverified — rescued from a crashed session]
+
+AgentRecall — alpha-platform   sessions: 9   last: 2026-10-31
+Intention: Alpha platform — the shared services tier
+Trajectory: Wire the consumer retry budget and measure p95.
+
+📜 Behavior policies (always follow):
+  • [release-gate] WHEN a release is requested → DO stop and ask for an explicit yes
+
+⛔ HARD RULES (always follow, no exceptions):
+  [P0] Never push, publish or version-bump without an explicit yes. [gate]
+  [P1] Prefer modifying an existing module over a new one. [nudge]
+
+State (updated 2026-10-31, stale: 9 d)
+Goal: Ship cards v2 with green CI.
+Blockers:
+  - CI red on the Windows lane
+Open decisions:
+  - Whether handoff.md is retired in v3.
+Pointers:
+  - packages/core/src/tools-logic/session-start-render.ts
+  - F:\Projects\arx-cards-v2\docs\superpowers\specs\2026-10-31-cards-v2-slim-session-start-design.md
+Last session: 2026-10-31 — Wrote the spec and plan; baseline green.
+
+⚠ Watch for:
+  - pushing to main: ask before any push
+⏳ 2 pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.
+
+📓 Today: Queue contract landed; retry budget next.
+📓 Yesterday: Spike on consumer backpressure.
+   +7 older sessions on record
+
+💡 Insights (2 total):
+  [4× ↑rising] Vitest + PGlite suites flake on many-core loaded Windows boxes; cap workers
+  [2×] Hosted MCP needs Authorization: Bearer; ?token= in the URL is ignored
+
+🏛  Palace: Architecture · Blockers ⚠stale
+
+🔗 Cross-project:
+  [poker-ai] Poker milestone handoff must preserve unsaved annotation
+
+📝 Recent captures (unsaved session):
+  - Which retry budget? → Three attempts, exponential from 200 ms.
+
+🪞 The Mirror is available — run `ar mirror --project alpha-platform` to see, and correct, what I've noticed about how you think (2 corrections grounding it).
+
+📥 3 unclaimed session cards await claim — run `ar claim --list` to review and file them.
+
+Hook-less host? call brief() once for lifecycle rules.
+[ab:on]

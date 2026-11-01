@@ -665,6 +665,21 @@ export function fenceMemory(block: string): string {
 }
 
 /**
+ * Inverse of fenceMemory for text captured from a fenced render (e.g. `ar identity show > card.md` fed back into
+ * `ar identity set`): drops the opening delimiter line (instruction included) and the matching closing delimiter line
+ * plus any blank lines after it. Text that does not start with an open delimiter is returned unchanged. Never throws.
+ */
+export function unfenceMemory(text: string): string {
+  const lines = text.split("\n");
+  const open = /^⟦agentrecall:memory:([0-9a-f]+)⟧/.exec(lines[0] ?? "");
+  if (!open) return text;
+  let end = lines.length;
+  while (end > 1 && lines[end - 1].trim() === "") end--;
+  if (end > 1 && lines[end - 1].trimEnd() === `⟦/agentrecall:memory:${open[1]}⟧`) end--; // an editor may leave trailing whitespace on the close line
+  return lines.slice(1, end).join("\n");
+}
+
+/**
  * scrubForExport(content) — the fail-CLOSED sibling of scrubForCloud.
  *
  * scrubForCloud is fail-OPEN: on any internal error it returns the ORIGINAL

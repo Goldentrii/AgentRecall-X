@@ -3,6 +3,11 @@
  *
  * Replaces: journal_cold_start + palace_walk + recall_insight
  * Target: <400 tokens output. No awareness duplication.
+ *
+ * Cards v2 (G6): `mode: "cards"` (the agent-facing default at the MCP tool, hook-start and the SDK) loads
+ * Owner → HARD RULES (P0 corrections and behaviour policies) → State, plus the one-line pending-review
+ * count, and nothing else; `mode: "full"` (this function's own default) is the complete
+ * payload. Side effects run in both modes — see the `full` guards below.
  */
 
 import { resolveProject, isValidProjectSlug } from "../storage/project.js";
@@ -11,6 +16,8 @@ import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
 import { DEFAULT_PALACE_ROOMS, getRoot } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
+import { readIdentityCard } from "../storage/identity-card.js";
+import { readStateCard, stateCardHasContent, type StateCard } from "../storage/state-card.js";
 import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awareness.js";
 import { recallInsights, readInsightsIndex } from "../palace/insights-index.js";
 import { journalDirs, projectSubPath } from "../storage/paths.js";
@@ -264,6 +271,9 @@ function stripMarkdownHeaders(text: string): string {
     .trim();
 }
 
+/** Cards v2 (G6). */
+export type SessionStartMode = "cards" | "full";
+
 export interface SessionStartInput {
   project?: string;
   context?: string;
@@ -279,6 +289,11 @@ export interface SessionStartInput {
    * graceful degradation from the design doc).
    */
   sid?: string;
+  /**
+   * Cards v2 (G6): "cards" loads Owner → HARD RULES (P0s and behaviour policies) → State plus the pending-review count and nothing else (side effects unchanged);
+   * "full" is the complete payload. Core defaults to "full"; the MCP tool, hook-start and the SDK pass "cards".
+   */
+  mode?: SessionStartMode;
 }
 
 /**
@@ -308,6 +323,11 @@ export interface SlimCorrection {
 
 export interface SessionStartResult {
   project: string;
+  /** Cards v2 (G6) — the branch that produced this result; absent only on hand-built fixtures, which renderers read as "full". */
+  mode?: SessionStartMode;
+  /** Cards v1 — absent when no card. */
+  owner?: { version: number; body: string };
+  state?: StateCard;
   identity: string;
   insights: Array<{ title: string; confirmed: number; severity: string; trend?: string }>;
   active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }>;
@@ -507,6 +527,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   resetOwnedFiles();
 
   const slug = await resolveProject(input.project);
+  // Cards v2 (G6): "cards" skips every read below that is not Owner / HARD RULES / State; side effects run in both modes.
+  const mode: SessionStartMode = input.mode ?? "full";
+  const full = mode === "full";
   // fix5 (2026-09-11): ensurePalaceInitialized no-ops for the `_unclaimed`
   // staging sentinel internally (palace/rooms.ts) — a failed resolution must
   // not scaffold a palace anywhere, and everything below degrades to empty
@@ -545,22 +568,35 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   }
   const abArm: Arm | null = abAssignment?.arm ?? null;
 
-  // 1. Identity — first meaningful lines, skipping YAML frontmatter keys and empty template stubs
-  const rawIdentity = readIdentity(slug);
-  const identityLines = rawIdentity.split("\n").filter((l) => {
-    const t = l.trim();
-    if (!t) return false;
-    if (t.startsWith("---")) return false;
-    if (t.startsWith(">")) return false;
-    // Skip raw YAML frontmatter key-value lines like "project: foo" or "created: ..."
-    if (/^[a-z_]+:\s/.test(t)) return false;
-    // Skip unfilled template stubs
-    if (t.startsWith("_(fill in")) return false;
-    return true;
-  });
-  const identity = identityLines.slice(0, 2).map((l) => l.trim().replace(/^#+\s*/, "")).join(" ").trim() || slug;
+  // 1. Identity — first meaningful lines, skipping YAML frontmatter keys and empty template stubs.
+  // Cards v2: cards mode renders no Intention line, so identity.md is not read and `identity` is the slug.
+  let identity = slug;
+  if (full) {
+    const rawIdentity = readIdentity(slug);
+    const identityLines = rawIdentity.split("\n").filter((l) => {
+      const t = l.trim();
+      if (!t) return false;
+      if (t.startsWith("---")) return false;
+      if (t.startsWith(">")) return false;
+      // Skip raw YAML frontmatter key-value lines like "project: foo" or "created: ..."
+      if (/^[a-z_]+:\s/.test(t)) return false;
+      // Skip unfilled template stubs
+      if (t.startsWith("_(fill in")) return false;
+      return true;
+    });
+    identity = identityLines.slice(0, 2).map((l) => l.trim().replace(/^#+\s*/, "")).join(" ").trim() || slug;
+  }
 
-  // 2. Top insights from awareness state — sort by confirmations DESC, recency DESC
+  // Cards v1 — readers never throw (stderr line + null); try is belt-and-braces.
+  let ownerCard: SessionStartResult["owner"];
+  let stateCard: StateCard | undefined;
+  try { const ic = readIdentityCard(); if (ic?.body.trim()) ownerCard = { version: ic.version, body: ic.body }; } catch { /* omit */ }
+  try { stateCard = readStateCard(slug) ?? undefined; } catch { /* omit */ }
+
+  // 2. Top insights from awareness state — sort by confirmations DESC, recency DESC.
+  // Cards v2: the whole insights block (awareness state, dashboard archive, insights index) is full-mode only.
+  const insights: SessionStartResult["insights"] = [];
+  if (full) {
   const state = readAwarenessState();
   let sortedInsights = (state?.topInsights ?? []).slice().sort((a, b) => {
     if (b.confirmations !== a.confirmations) return b.confirmations - a.confirmations;
@@ -579,12 +615,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Cap startup noise: top 3 awareness insights (was 8). Anything below the
   // top 3 by salience pollutes more than it informs at session-start. Agents
   // can pull deeper via recall() on demand.
-  const insights = sortedInsights.slice(0, 3).map((i) => ({
+  insights.push(...sortedInsights.slice(0, 3).map((i) => ({
     title: sliceAtWord(i.title, 200),
     confirmed: i.confirmations ?? 1,
     severity: i.severity ?? "important",
     trend: i.trend as string | undefined,
-  }));
+  })));
 
   // 2b. P0-3 — guarantee a session-1 insight is visible at session-2.
   // Confirmation count must control ORDER/verbosity, never EXISTENCE. The
@@ -622,12 +658,13 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Keep highest-confirmed first (order, not existence, is the threshold's job).
   // Total visible = up to 3 awareness + up to 2 project-scoped = max 5.
   insights.sort((a, b) => b.confirmed - a.confirmed);
+  } // end full-mode insights block
 
   // 3. Active rooms — top 3 by salience (was 5). Same noise-cap rationale.
   // Call listRooms ONCE — it internally scans every room via countRoomEntries
   // to enforce the empty-last sort. Reuse the result for both active_rooms and
   // the hasPalaceContent check below (avoids a 2nd full sort + 3rd scan pass).
-  const allRooms = listRooms(slug);
+  const allRooms = full ? listRooms(slug) : []; // Cards v2: no palace scan in cards mode
   const rooms = allRooms.slice(0, 3);
   const active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }> = rooms.map((r) => ({
     name: r.name,
@@ -693,7 +730,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // uses, so a future caller-supplied scope option is a one-line change
   // here instead of a fresh migration.
   const context = input.context ?? slug;
-  const matched = applyScope(recallInsights(context, 1, slug), slug, "all");
+  const matched = full ? applyScope(recallInsights(context, 1, slug), slug, "all") : []; // Cards v2: full mode only
   const cross_project = matched.map((i) => ({
     title: sliceAtWord(i.title, 100),
     from_project: (i.projects?.[0] ?? (i.source ?? "unknown").replace(/\s+\d{4}-\d{2}-\d{2}.*$/, "")).slice(0, 30),
@@ -743,8 +780,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // the guard mirrors the rescue call's.
   let unclaimedCount = 0;
   try {
-    archiveExpiredUnclaimed();
-    unclaimedCount = countUnclaimedSessions();
+    archiveExpiredUnclaimed(); // both modes: the TTL sweep is maintenance, not payload
+    unclaimedCount = full ? countUnclaimedSessions() : 0;
   } catch {
     unclaimedCount = 0;
   }
@@ -755,7 +792,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // stays visible even when THIS project has no journal entries of its own
   // yet. Best-effort: a missing/corrupt index must never break orientation.
   let continuity: SessionStartResult["continuity"];
-  try {
+  if (full) try { // Cards v2: cards mode reads no recency index
     // Identity-trust (CRITICAL-1 followup, 2026-08-20): a working-memory-
     // rescue ledger entry (recency-index.ts's `source` tag, set by
     // storage/working-memory.ts's `distillOneSession`) is filed under an
@@ -829,7 +866,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // keep in sync. Max one entry, newest non-self WM file only; omitted
   // entirely when none qualify. Best-effort: any WM read failure must never
   // break orientation.
-  try {
+  if (full) try { // Cards v2: cards mode shows no live line
     const now = Date.now();
     const candidates = wmList().filter(
       (f) => now - f.mtimeMs < WM_LIVE_WINDOW_MS && (!input.sid || f.sid !== input.sid),
@@ -914,9 +951,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // capture/log files (`*-log.md`, `*--capture--*`) that isJournalFile
   // excludes — filtering here reconstructs the identical candidate set the
   // old `fs.readdirSync(dir).filter(isJournalFile)` scan produced.
-  const allJournalCandidates: MemoryCandidate[] = readTierCandidates("journal", slug).filter((c) =>
-    isJournalFile(c.file),
-  );
+  const allJournalCandidates: MemoryCandidate[] = full
+    ? readTierCandidates("journal", slug).filter((c) => isJournalFile(c.file))
+    : []; // Cards v2: no journal scan in cards mode (recent briefs and resume stay empty)
 
   // Reconstruct the EXACT pre-migration traversal order for THIS block: dirs
   // in journalDirs() order (primary, then legacy), WITHIN each dir sorted by
@@ -961,7 +998,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // 6. Watch for — predictive warnings from past corrections.
   // A/B OFF arm: suppressed entirely (correction-derived; ruling 2026-07-03).
   const watch_for: WatchForPattern[] = [];
-  if (abArm !== "off") {
+  if (full && abArm !== "off") {
     const alignLog = readAlignmentLog(slug);
     watch_for.push(...extractWatchPatterns(alignLog, 2));
 
@@ -1072,7 +1109,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   if (abArm !== "off") {
     try {
       const staged = await listPendingCorrections(slug);
-      if (staged.length > 0) {
+      if (staged.length > 0) { // Cards v2: surfaced in both modes — session_start is the only place an agent learns that staged items await check() before the TTL expires them
         pendingCorrections = { count: staged.length, ids: staged.slice(0, 3).map((p) => p.id) };
       }
     } catch {
@@ -1138,7 +1175,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // 8c. Recent captures — journal_capture writes that pre-date any session_end.
   // These live in `*-log.md` / `--capture--` files the orientation path skips,
   // so without this an agent that captured 4 things sees "No memory found".
-  const recentCaptures: CaptureLogEntry[] = readRecentCaptures(slug, 5);
+  const recentCaptures: CaptureLogEntry[] = full ? readRecentCaptures(slug, 5) : []; // Cards v2: full mode only
 
   // 9. Empty state detection — guide first-time agents on THIS project.
   // The filesystem is the single source of truth: ANY committed store
@@ -1154,17 +1191,16 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // public helper) tells a real room from scaffold without touching palace
   // internals, so "non-empty" is precise rather than `active_rooms.length > 0`.
   const hasPalaceContent = allRooms.some((r) => countRoomEntries(slug, r.slug) > 0);
-  const hasCaptures = recentCaptures.length > 0 || hasCaptureLogs(slug);
+  const hasCaptures = full && (recentCaptures.length > 0 || hasCaptureLogs(slug));
 
   // A/B: use correctionsSlim (pre-suppression), NOT the arm-gated `corrections`,
   // so empty-state detection is arm-independent — an OFF-arm session on a
   // corrections-only project must not flash the "No memory found" banner.
-  const isEmpty = !resume &&
-    correctionsSlim.length === 0 &&
-    !todayBrief && !yesterdayBrief &&
-    olderCount === 0 &&
-    !hasCaptures &&
-    !hasPalaceContent;
+  // Cards v1: a state card with any field filled is project memory; a frontmatter-only file is not.
+  const hasStateContent = Boolean(stateCard && stateCardHasContent(stateCard));
+  const isEmpty = full
+    ? !resume && correctionsSlim.length === 0 && !todayBrief && !yesterdayBrief && olderCount === 0 && !hasCaptures && !hasPalaceContent && !hasStateContent
+    : !ownerCard && correctionsSlim.length === 0 && !hasStateContent && readBehaviorPolicies(slug).rules.length === 0; // Cards v2: empty when it would render no card and no rule (P0 or behaviour policy)
 
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();
@@ -1180,6 +1216,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // C2: gated on isFirstCallThisSession — the hits counter has no per-day
   // guard of its own, so without this a repeat session_start call in the
   // same session would double (or triple, ...) count every rule's hits.
+  // Cards v2: behaviour policies are always-follow rules the owner registered, so they render in BOTH modes (right
+  // before the HARD RULES, as before) and the load is counted in both — nothing registered as a rule goes silent by default.
   if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
   const behaviorRules = readBehaviorPolicies(slug).rules;
 
@@ -1189,7 +1227,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // (retrieved === 0) — no fake claims.
   // A/B OFF arm: suppressed (correction-derived KPI; ruling 2026-07-03).
   let alignment: SessionStartResult["alignment"] = null;
-  if (abArm !== "off") {
+  if (full && abArm !== "off") {
     try {
       // Deliberately NOT fed the `allCorrectionsOnce` snapshot: the P0-B loop
       // above WROTE retrieved_count/last_retrieved to disk after that snapshot
@@ -1231,7 +1269,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   }
 
   // Pipeline narrative spine summary — null if no pipeline files exist for project
-  const pipelineMilestones = listMilestones(slug);
+  const pipelineMilestones = full ? listMilestones(slug) : []; // Cards v2: full mode only
   let pipeline: SessionStartResult["pipeline"] = null;
   if (pipelineMilestones.length > 0) {
     const active = pipelineMilestones.find((m) => m.meta.status === "active") ?? null;
@@ -1262,7 +1300,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   let blindSpots: SessionStartResult["blind_spots"] = [];
   // predicted_risks is optional — undefined when empty (absent from JSON, saves ~20 bytes/project).
   let predictedRisks: NonNullable<SessionStartResult["predicted_risks"]> | undefined;
-  if (abArm !== "off") {
+  if (full && abArm !== "off") {
     try {
       const profile = readBlindSpots(slug);
       if (profile) {
@@ -1303,7 +1341,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // derived). With corrections=[] and blindSpots=[] it would self-suppress
   // anyway, but the explicit gate keeps the contract robust to future edits.
   let mirrorAvailable: string | undefined;
-  if (abArm !== "off") {
+  if (full && abArm !== "off") {
     try {
       const hasProfile = blindSpots.length > 0;
       // corrections is now SlimCorrection[] (no `active` field) — count length directly.
@@ -1322,18 +1360,22 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Loop 4 — real-time recognition snapshot. Pure-local assembler over the
   // already-resolved slug (no re-detection ⇒ no git shell-out on the hot path).
   // Best-effort: a degraded recognition must never break orientation.
-  let recognition: RecognitionPayload;
-  try {
-    // PERF: reuse the corrections array read once above instead of letting
-    // buildRecognition -> readCapabilities re-scan corrections/*.json.
-    recognition = buildRecognition(slug, { preloadedCorrections: activeCorrectionsOnce });
-  } catch {
-    recognition = {
-      who: { name: "unknown", role: null, owner: null, unknown: true },
-      can_do: { skills: [], permissions: [] },
-      project: { slug, last_journal_date: null, status: "empty", trajectory: null, rooms: [] },
-      person: { tendencies: [], caveat: "" },
-    };
+  const degradedRecognition = (): RecognitionPayload => ({
+    who: { name: "unknown", role: null, owner: null, unknown: true },
+    can_do: { skills: [], permissions: [] },
+    project: { slug, last_journal_date: null, status: "empty", trajectory: null, rooms: [] },
+    person: { tendencies: [], caveat: "" },
+  });
+  // Cards v2: cards mode skips the assembler (skills/capabilities scans) and returns the degraded shape.
+  let recognition: RecognitionPayload = degradedRecognition();
+  if (full) {
+    try {
+      // PERF: reuse the corrections array read once above instead of letting
+      // buildRecognition -> readCapabilities re-scan corrections/*.json.
+      recognition = buildRecognition(slug, { preloadedCorrections: activeCorrectionsOnce });
+    } catch {
+      recognition = degradedRecognition();
+    }
   }
 
   // A/B OFF arm: recognition.person tendencies derive from the blind-spots
@@ -1429,6 +1471,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
 
   const result: SessionStartResult = {
     project: slug,
+    mode,
+    ...(ownerCard ? { owner: ownerCard } : {}),
+    ...(stateCard ? { state: stateCard } : {}),
     identity,
     insights: insightsBudgeted,
     active_rooms: roomsBudgeted,
@@ -1458,7 +1503,9 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     mirror_available: mirrorAvailable,
     // fix5: absent-when-zero — see the field's doc comment above.
     unclaimed_cards: unclaimedCount > 0 ? unclaimedCount : undefined,
-    empty_state: isEmpty ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions." : undefined,
+    empty_state: !isEmpty ? undefined : full
+      ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions."
+      : `No cards yet for ${slug} — session_end writes the state card; ar identity init creates the owner card.`,
     // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
     ab_arm: abArm ?? undefined,
   };

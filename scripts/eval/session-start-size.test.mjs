@@ -30,7 +30,7 @@ import {
   resolveStore,
   listProjects,
 } from "./bench-lib.mjs";
-import { REQUIRED_KEYS, SCHEMA_VERSION, assertArtifactShape } from "./session-start-size.mjs";
+import { REQUIRED_KEYS, SCHEMA_VERSION, assertArtifactShape, artifactFileName } from "./session-start-size.mjs";
 import { verifyBaseline } from "./bench-artifact.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -244,6 +244,31 @@ test("e2e: --json --no-artifact run on corpus-v1 — schema, P0 survival, no hom
   } finally {
     fs.rmSync(sentinel, { recursive: true, force: true });
   }
+});
+
+test("e2e: --mode full on corpus-v1 renders at least as much as the cards default and names the mode; a bad --mode is FATAL", () => {
+  const env = { ...process.env, ...CANARY_ENV, BENCH_MACHINE: "test-machine" };
+  const run = (...extra) => JSON.parse(execFileSync(process.execPath, [SCRIPT, "--store", CORPUS_V1, "--json", "--no-artifact", ...extra], { encoding: "utf-8", env, timeout: 180_000 }));
+  const cards = run(), full = run("--mode", "full");
+  assert.equal(cards.mode, "cards");
+  assert.equal(full.mode, "full");
+  assert.match(cards.payload, /default: formatTerse\(sessionStart\(\{project, mode:"cards"\}\)\)/);
+  assert.match(full.payload, /--mode full: formatTerse\(sessionStart\(\{project, mode:"full"\}\)\)/);
+  for (const row of [...cards.per_project, ...full.per_project]) {
+    assert.equal(row.p0_survival_ok, true, `${row.project}: P0 survival violated`);
+    assert.equal(row.p0_in_text, row.p0_in_payload, `${row.project}: every surfaced P0 must be in the rendered text`);
+  }
+  const noValue = spawnSync(process.execPath, [SCRIPT, "--store", CORPUS_V1, "--json", "--no-artifact", "--mode"], { encoding: "utf-8", env, timeout: 60_000 });
+  assert.equal(noValue.status, 1, "--mode without a value is FATAL, not silently cards");
+  assert.match(noValue.stderr, /FATAL: --mode must be one of cards\|full/);
+  assert.ok(full.median_chars >= cards.median_chars, `full (${full.median_chars}) must render at least the cards payload (${cards.median_chars})`);
+  const bad = spawnSync(process.execPath, [SCRIPT, "--store", CORPUS_V1, "--json", "--no-artifact", "--mode", "rich"], { encoding: "utf-8", env, timeout: 60_000 });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /FATAL: --mode must be one of cards\|full/);
+});
+
+test("artifactFileName carries the mode so a cards run never overwrites a full-mode baseline of the same day", () => {
+  assert.deepEqual([artifactFileName("cards", "2026-11-01"), artifactFileName("full", "2026-11-01")], ["injection-2026-11-01-cards.json", "injection-2026-11-01-full.json"]);
 });
 
 test("e2e error path: missing store → exit 1 with FATAL on stderr", () => {
