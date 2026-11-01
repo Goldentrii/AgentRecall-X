@@ -39,6 +39,8 @@
  * assembled from rankCorrections(readP0Corrections(slug), 10) — i.e. capped
  * at 10 ITEMS pre-budget. The check therefore asserts, per project:
  *   p0_in_payload === min(p0_active_in_store, 10)
+ *   and every surfaced P0 is in the RENDERED text (p0_in_text === p0_in_payload),
+ *   so a renderer or byte-cap path that lost a HARD RULE line would fail too.
  * A violation FAILS the run (exit 1) — that would be a real budget-logic bug.
  *
  * ISOLATION: the fixture is copied into a FRESH mkdtemp AGENT_RECALL_ROOT per
@@ -104,6 +106,10 @@ const BASELINES_DIR = path.join(HERE, "baselines");
 export const SCHEMA_VERSION = "injection-baseline/v1";
 export const BENCH_VERSION = "session-start-size-v2";
 export const MODES = ["cards", "full"];
+/** Baseline file name: the mode is part of it so a cards run never overwrites a full-mode (or v1) baseline of the same day. */
+export function artifactFileName(mode, dateStamp = utcDateStamp()) {
+  return `injection-${dateStamp}-${mode}.json`;
+}
 
 /** Keys every injection artifact must carry — verifyBaseline checks these too. */
 export const REQUIRED_KEYS = [
@@ -136,7 +142,7 @@ export function assertArtifactShape(artifact) {
     throw new Error("injection artifact: per_project must be a non-empty array");
   }
   for (const row of artifact.per_project) {
-    for (const k of ["project", "chars", "tokens", "tokens_cjk_adjusted", "p0_in_store", "p0_in_payload", "p0_survival_ok"]) {
+    for (const k of ["project", "chars", "tokens", "tokens_cjk_adjusted", "p0_in_store", "p0_in_payload", "p0_in_text", "p0_survival_ok"]) {
       if (!(k in row)) throw new Error(`injection artifact: per_project row missing ${k}`);
     }
   }
@@ -173,6 +179,8 @@ export async function measureProject(shipped, storeRoot, project, mode = "cards"
     const result = await shipped.sessionStart({ project, mode });
     const text = shipped.formatTerse(result);
     const p0InPayload = (result.corrections ?? []).filter((c) => c.severity === "p0").length;
+    // HARD RULES lines render as "  [P0] <rule>"; a rule or card line never starts with "[P0] " on its own.
+    const p0InText = (text.match(/^\s*\[P0\] /gm) ?? []).length;
     const expected = Math.min(p0InStore, 10);
     return {
       project,
@@ -181,7 +189,8 @@ export async function measureProject(shipped, storeRoot, project, mode = "cards"
       tokens_cjk_adjusted: cjkAdjustedTokens(text),
       p0_in_store: p0InStore,
       p0_in_payload: p0InPayload,
-      p0_survival_ok: p0InPayload === expected,
+      p0_in_text: p0InText,
+      p0_survival_ok: p0InPayload === expected && p0InText === p0InPayload,
     };
   } finally {
     delete process.env.AGENT_RECALL_ROOT;
@@ -290,7 +299,7 @@ async function main() {
   const noArtifact = args.includes("--no-artifact");
   const checkDeterminism = args.includes("--check-determinism");
   const modeIdx = args.indexOf("--mode");
-  const mode = modeIdx >= 0 ? args[modeIdx + 1] : "cards";
+  const mode = modeIdx >= 0 ? (args[modeIdx + 1] ?? "") : "cards"; // a bare --mode is an error, not the default
 
   if (checkDeterminism) {
     const a = deterministicBytes((await runMeasurement(storeArg, mode)).artifact);
@@ -318,7 +327,7 @@ async function main() {
 
   if (!noArtifact) {
     fs.mkdirSync(BASELINES_DIR, { recursive: true });
-    const file = path.join(BASELINES_DIR, `injection-${utcDateStamp()}${mode === "cards" ? "" : `-${mode}`}.json`);
+    const file = path.join(BASELINES_DIR, artifactFileName(mode));
     fs.writeFileSync(file, json);
     process.stdout.write(`artifact: ${path.relative(path.join(HERE, "..", ".."), file).split(path.sep).join("/")}\n`);
   }
