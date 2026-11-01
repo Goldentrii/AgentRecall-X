@@ -17,3 +17,9 @@ it("null when the text does not open with a frontmatter block; an empty block pa
 it("normalizeCardText strips one leading BOM and turns CRLF into LF, nothing else", () => {
   assert.equal(normalizeCardText("\uFEFFa\r\nb \n"), "a\nb \n");
 });
+it("a value padded with 200k spaces before a comment parses in linear time (no catastrophic backtracking)", () => {
+  const t0 = Date.now();
+  const fm = parseFrontmatter("---\nkind: x\nupdated: 2026-10-31T00:00:00.000Z" + " ".repeat(200_000) + "# c\n---\nb");
+  assert.deepEqual([fm.fields.get("updated"), fm.body], ["2026-10-31T00:00:00.000Z", "b"]);
+  assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`);
+});

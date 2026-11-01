@@ -10,4 +10,5 @@ it("unfenceMemory drops the open and close delimiter lines of a fenced render an
   assert.equal(unfenceMemory("x\n"), "x\n");
   assert.equal(unfenceMemory(""), "");
   assert.equal(unfenceMemory("⟦agentrecall:memory:0123456789abcdef⟧ instr\nbody"), "body"); // a truncated capture still loses the open line
+  assert.equal(unfenceMemory(fenceMemory(body).replace(/⟧$/, "⟧  ") + "\n"), body); // trailing whitespace on the close line (editor save)
 });

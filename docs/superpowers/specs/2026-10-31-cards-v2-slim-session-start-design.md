@@ -9,8 +9,8 @@ Cards v1 put the owner card first and the state card after HARD RULES, but every
 ## 2. Goals
 
 1. **G6.1 — one renderer.** `renderSessionStart(result, opts)` in core renders the text that MCP terse, CLI `hook-start` and the SDK `fencedText` all emit. The MCP `formatTerse` export stays as a one-line alias so existing imports and tests keep working; the CLI's hand-rolled block and the SDK's JSON blob go away.
-2. **G6.2 — `mode: "cards"`.** `sessionStart({ mode: "cards" })` loads Owner → HARD RULES → State and nothing else: no journal, palace, awareness, insights-index, recency-index, working-memory, capture, alignment-log, pipeline, blind-spot or recognition reads. It is the default of every agent-facing entry point (MCP tool, `hook-start`, SDK). `mode: "full"` is today's payload, unchanged in content.
-3. **G6.3 — side effects stay.** Both modes perform, in the same order as today: orphan working-memory rescue, `_unclaimed` TTL archive, pending-corrections TTL sweep, P0 "retrieved" outcomes (first call per session, arm ON), Supabase auto-backfill, lifecycle telemetry, A/B arm assignment, and the `claimSessionStartOnce` idempotency guard. Exactly one side effect is mode-gated: `recordPolicyLoad` (the behaviour-policy `hits` counter) runs only when the rules are rendered, i.e. in full mode — counting a "load" the agent never saw would falsify the counter.
+2. **G6.2 — `mode: "cards"`.** `sessionStart({ mode: "cards" })` loads Owner → HARD RULES (P0 corrections and the owner's behaviour policies) → State, plus the one-line pending-review count, and nothing else: no journal, palace, awareness, insights-index, recency-index, working-memory, capture, alignment-log, pipeline, blind-spot or recognition reads. It is the default of every agent-facing entry point (MCP tool, `hook-start`, SDK). `mode: "full"` is today's payload, unchanged in content.
+3. **G6.3 — side effects stay.** Both modes perform, in the same order as today: orphan working-memory rescue, `_unclaimed` TTL archive, pending-corrections TTL sweep, P0 "retrieved" outcomes (first call per session, arm ON), Supabase auto-backfill, lifecycle telemetry, A/B arm assignment, and the `claimSessionStartOnce` idempotency guard. No side effect is mode-gated. Behaviour policies are always-follow rules the owner registered via `register_rule`, so they render in both modes and `recordPolicyLoad` counts in both; the pending-review count renders in both modes because `session_start` is the only place an agent learns that staged corrections await `check()` before the 14-day TTL expires them (review finding, 2026-11-01).
 4. **G6.4 — no Trajectory/Next duplication.** When the state card carries `next`, the header's `Trajectory:` line is omitted (full mode; cards mode has no header trajectory at all). `state.next` already defaults to the `trajectory` argument at `session_end`, so the two lines were the same text twice.
 5. **G6.5 — global byte cap.** The rendered, fenced text is capped in UTF-8 bytes (default 16,384; `AGENT_RECALL_SESSION_START_MAX_BYTES` or the core `maxBytes` option override). Whole sections are dropped lowest-priority first; HARD RULES are never dropped or cut; a one-line cut marker stays inside the fence.
 6. **G6.6 — measured.** `scripts/eval/session-start-size.mjs` measures the MCP default (now cards) and, with `--mode full`, the full payload, on the golden fixture, the cards-at-cap fixture and a copy of a lived-in store; numbers go in `reports/2026-10-31-cards-v2-bench.md`; the committed injection baseline is regenerated deliberately with the delta stated.
@@ -42,10 +42,10 @@ Cards mode, in `session-start.ts`:
 | journal candidates → recent briefs, `resume` | yes | skipped (`recent` zeros, `resume` null) |
 | watch_for (alignment log, calibration) | yes | skipped (empty) |
 | corrections read/rank/budget, P0 "retrieved" outcomes | yes | yes — identical code, identical output |
-| `listPendingCorrections` (runs the TTL/cap sweep) | yes, count rendered | sweep runs, count not surfaced |
+| `listPendingCorrections` (runs the TTL/cap sweep) | yes, count rendered | yes, count rendered (one line, count only) |
 | captures, empty-state detection | yes | captures skipped; empty = no owner, no P0, no state content |
 | Supabase `autoBackfill` (setImmediate) | yes | yes |
-| behaviour policies: `recordPolicyLoad` + `behavior_rules` | yes | **skipped** (not rendered, so not counted) |
+| behaviour policies: `recordPolicyLoad` + `behavior_rules` | yes | yes — rendered before the HARD RULES and counted, as in full mode |
 | alignment KPIs, dream health, store doctor | yes | dream health + store doctor yes (diagnostics, one line each, only on warn); alignment skipped (null) |
 | pipeline, blind spots, predicted risks, mirror pointer, recognition | yes | skipped (`pipeline` null, arrays empty, `recognition` = the existing degraded fallback with `who.unknown: true`) |
 | `logABResult`, `recordLifecycleEvent` | yes | yes |
@@ -80,7 +80,7 @@ Section order and drop rank (0 = never dropped; higher = dropped first). The ord
 | 3 | `owner` | `formatOwnerSection` | 0 (cut last, see cap) |
 | 4 | `alignment` | `🎯 Alignment: …` | 4 |
 | 5 | `continuity` | header + entries (existing `continuityHeaderText` / `continuityEntryMarker`) | 5 |
-| 6 | `header` | `AgentRecall — <slug>` + `   sessions: N   last: D` in full mode; `Intention:` when identity ≠ slug; `Trajectory:` only when `resume.last_trajectory` and no `state.next` | 0 |
+| 6 | `header` | `AgentRecall — <slug>` + `   sessions: N   last: D` in full mode; `Intention:` whenever `identity` is set (full mode always sets it — matches the old formatTerse); `Trajectory:` only when `resume.last_trajectory` and no `state.next` | 0 |
 | 7 | `behavior_rules` | `📜 Behavior policies …` | 6 |
 | 8 | `hard_rules` | `⛔ HARD RULES (always follow, no exceptions):` + `[P0] rule [tier]` | 0, never cut |
 | 9 | `state` | `formatStateSection` (empty for a card without content) | 0 (cut before owner) |
@@ -102,7 +102,7 @@ Lines are joined with one blank line between non-empty sections, fenced as one b
 
 ### 4.3 Byte cap
 
-`cap(sections, maxBytes)`: render; while `Buffer.byteLength(text) > maxBytes`: drop the non-empty section with the highest rank; when only rank-0 sections remain, cut lines from the end of `state`, then from the end of `owner` (its header line stays), and finally from the end of `extra`/`header`; `hard_rules`, `dream_health`, `store_doctor` are never touched. Whenever anything was dropped or cut, the last fenced line is `… session_start payload cut to <maxBytes> bytes (set AGENT_RECALL_SESSION_START_MAX_BYTES to change)`. If even the untouchable sections exceed the cap, the text is returned over cap (P0 completeness beats the budget, the same policy as `applyCorrectionBudget`). Default 16,384 bytes: an all-CJK store with both cards at cap plus ten P0s measures ≈15.6 KB, so the default never binds on a sane store; it is a safety net against unbounded sections (behaviour rules have no count cap today), not a tuning knob.
+`cap(sections, maxBytes)`: render; while `Buffer.byteLength(text) > maxBytes`: drop the non-empty section with the highest rank; when only rank-0 sections remain, cut lines from the end of `state`, then from the end of `owner` (its header line stays), and finally from the end of `extra`/`header`; `hard_rules`, `dream_health`, `store_doctor` are never touched. Whenever anything was dropped or cut, the last fenced line is `… session_start payload cut to <maxBytes> bytes (set AGENT_RECALL_SESSION_START_MAX_BYTES to change)`, or `… session_start payload cut; diagnostics and HARD RULES alone exceed <maxBytes> bytes (…)` when the untouchable sections still exceed the cap — then the text is returned over cap (P0 completeness beats the budget, the same policy as `applyCorrectionBudget`). Default 16,384 bytes: an all-CJK store with both cards at cap plus ten P0s measures ≈15.6 KB, so the default never binds on a sane store; it is a safety net against unbounded sections (behaviour rules have no count cap today), not a tuning knob.
 
 ### 4.4 Trajectory/Next
 
@@ -110,11 +110,11 @@ Lines are joined with one blank line between non-empty sections, fenced as one b
 
 ### 4.5 Empty cards payload
 
-Cards mode with no owner card, no P0 corrections and no state content renders the header line plus the cards empty line (§4.2 #19). No nag beyond that one line; a project with only an owner card renders Owner + header and nothing else.
+Cards mode with no owner card, no P0 corrections, no behaviour policies and no state content renders the header line plus the cards empty line (§4.2 #19). No nag beyond that one line; a project with only an owner card renders Owner + header and nothing else.
 
 ### 4.6 Entry points
 
-- **MCP** `session_start`: `mode: z.enum(["cards", "full", "lite"]).default("cards")`; description names the three modes; `verbose` unchanged (`formatVerbose` on whichever mode ran). `formatTerse(result)` = `renderSessionStart(result, { hooklessTail: !process.env.CLAUDE_CODE_HOOKS })`.
+- **MCP** `session_start`: `mode: z.enum(["cards", "full", "lite"]).optional()`; the handler resolves a missing mode to `cards`, or to `full` when `verbose=true` (verbose promises the full JSON context); the description states the three modes and that rule; `formatVerbose` renders whichever mode ran. `formatTerse(result)` = `renderSessionStart(result, { hooklessTail: !process.env.CLAUDE_CODE_HOOKS })`.
 - **CLI** `hook-start`: `AGENT_RECALL_SESSION_START_MODE=cards|full` (default `cards`; anything else is treated as `cards` with one stderr line); output = `renderSessionStart(result, { preamble: [health banner?], extraLines: [prefetch block?] })`. Lock, re-inject on compact/clear, orphan rescue and hook-health recording are unchanged.
 - **SDK** `sessionStart(opts?: { context?: string; mode?: "cards" | "full" })`, default `cards`; `fencedText` = `renderSessionStart(result)` (no tail, no preamble). The typed fields keep their shape.
 - **Bench** `session-start-size.mjs`: measures `renderSessionStart(await sessionStart({ project, mode }))` with `mode` from `--mode cards|full` (default cards = the MCP default); the artifact's `payload` string names the mode; `--check-determinism` unchanged.
@@ -148,5 +148,5 @@ Cards mode with no owner card, no P0 corrections and no state content renders th
 ## 8. Owner calls (decide before merge; each is a one-line revert)
 
 - **Default flip.** MCP `session_start` default `cards` (`packages/mcp-server/src/tools/session-start.ts`, the zod `.default`), `hook-start` default `cards` (`packages/cli/src/index.ts`, `AGENT_RECALL_SESSION_START_MODE` fallback), SDK default `cards`. The eval's G6 row asked for exactly this; the visible cost is that cross-project continuity and the WM "live" line are no longer in the default payload — `mode:"full"` keeps them.
-- **`recordPolicyLoad` gated to full mode** (§2.3) — the alternative is to render behaviour policies in cards mode too; both are one line.
+- ~~`recordPolicyLoad` gated to full mode~~ — resolved in review (2026-11-01): behaviour policies and the pending-review count render in both modes (§2.3), so nothing the owner registered as always-follow goes silent by default and the `hits` counter keeps its meaning.
 - **16,384-byte default cap** — never binds on measured stores; lower it only with a measurement.

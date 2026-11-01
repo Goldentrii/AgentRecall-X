@@ -675,7 +675,7 @@ export function unfenceMemory(text: string): string {
   if (!open) return text;
   let end = lines.length;
   while (end > 1 && lines[end - 1].trim() === "") end--;
-  if (end > 1 && lines[end - 1] === `⟦/agentrecall:memory:${open[1]}⟧`) end--;
+  if (end > 1 && lines[end - 1].trimEnd() === `⟦/agentrecall:memory:${open[1]}⟧`) end--; // an editor may leave trailing whitespace on the close line
   return lines.slice(1, end).join("\n");
 }
 

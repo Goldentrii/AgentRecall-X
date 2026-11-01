@@ -19,7 +19,7 @@ AgentRecall's real MCP surface is **5 tools by default**, **6 with `--full`**, *
 
 | Tool | Purpose |
 |------|---------|
-| `session_start` | Load project context. Default `mode: "cards"` = owner identity card → HARD RULES (P0 corrections) → project state card, nothing else (88 median tokens on the card-less fixture, ~1,070 with both cards at cap); `mode: "full"` adds insights, continuity, rooms, captures and watch_for warnings; `mode: "lite"` is a ≤500-token sketch. The rendered text is capped at 16,384 UTF-8 bytes (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive. Call at ENTRY, always. |
+| `session_start` | Load project context. Default `mode: "cards"` = owner identity card → HARD RULES (P0 corrections and behaviour policies) → project state card, plus a one-line pending-review count, nothing else (88 median tokens on the card-less fixture, ~1,070 with both cards at cap); `mode: "full"` adds insights, continuity, rooms, captures and watch_for warnings; `mode: "lite"` is a ≤500-token sketch. The rendered text is capped at 16,384 UTF-8 bytes (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive. Call at ENTRY, always. |
 | `session_end` | Save journal, insights, trajectory and the project state card (`state`: goal, open_decisions, blockers, next, pointers; omitted fields carry forward). Call at EXIT, always, and on any durable-intent trigger. |
 | `remember` | Write a single fact/decision — auto-routes to the right store. Durable-intent trigger. |
 | `recall` | Search all memory — keyword/RRF fusion + optional vector. Safe to call any time. |

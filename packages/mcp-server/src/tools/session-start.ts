@@ -93,12 +93,12 @@ export function formatLite(lite: SessionStartLiteResult): string {
 export function register(server: McpServer): void {
   server.registerTool("session_start", {
     title: "Start Session",
-    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Default mode='cards' loads the owner card, the HARD RULES and the project state card and nothing else; mode='full' adds continuity, insights, rooms, captures and the rest; mode='lite' is a ≤500-token sketch (pull memory on demand via recall()).",
+    description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Default mode='cards' loads the owner card, the HARD RULES and the project state card and nothing else; mode='full' adds continuity, insights, rooms, captures and the rest (and is the default when verbose=true, which promises the full JSON context); mode='lite' is a ≤500-token sketch (pull memory on demand via recall()).",
     inputSchema: {
       project: z.string().default("auto"),
       context: z.string().optional().describe("Optional context for matching cross-project insights"),
       verbose: z.boolean().default(false).describe("Set true to get full JSON context instead of terse summary"),
-      mode: z.enum(["cards", "full", "lite"]).default("cards").describe("'cards' (default) = owner card + HARD RULES + state card, nothing else; 'full' = every section (continuity, insights, rooms, captures, …); 'lite' = ≤500-token sketch, pull on demand."),
+      mode: z.enum(["cards", "full", "lite"]).optional().describe("Default 'cards' = owner card + HARD RULES (P0s and behaviour policies) + state card + pending-review count, nothing else; 'full' = every section (continuity, insights, rooms, captures, …) and the default when verbose=true; 'lite' = ≤500-token sketch, pull on demand."),
     },
   }, async ({ project, context, verbose, mode }) => {
     if (mode === "lite") {
@@ -106,7 +106,9 @@ export function register(server: McpServer): void {
       const text = formatLite(lite);
       return { content: [{ type: "text" as const, text }] };
     }
-    const result = await sessionStart({ project, context, mode: mode as SessionStartMode });
+    // Cards v2: a missing mode is cards; verbose=true promises the full JSON context, so it resolves to full unless a mode was given.
+    const resolved: SessionStartMode = mode ?? (verbose ? "full" : "cards");
+    const result = await sessionStart({ project, context, mode: resolved });
     const text = verbose ? formatVerbose(result) : formatTerse(result);
     return { content: [{ type: "text" as const, text }] };
   });

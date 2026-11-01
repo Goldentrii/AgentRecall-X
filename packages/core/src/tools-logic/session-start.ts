@@ -5,7 +5,8 @@
  * Target: <400 tokens output. No awareness duplication.
  *
  * Cards v2 (G6): `mode: "cards"` (the agent-facing default at the MCP tool, hook-start and the SDK) loads
- * Owner → HARD RULES → State and nothing else; `mode: "full"` (this function's own default) is the complete
+ * Owner → HARD RULES (P0 corrections and behaviour policies) → State, plus the one-line pending-review
+ * count, and nothing else; `mode: "full"` (this function's own default) is the complete
  * payload. Side effects run in both modes — see the `full` guards below.
  */
 
@@ -289,7 +290,7 @@ export interface SessionStartInput {
    */
   sid?: string;
   /**
-   * Cards v2 (G6): "cards" loads Owner → HARD RULES → State and nothing else (side effects unchanged);
+   * Cards v2 (G6): "cards" loads Owner → HARD RULES (P0s and behaviour policies) → State plus the pending-review count and nothing else (side effects unchanged);
    * "full" is the complete payload. Core defaults to "full"; the MCP tool, hook-start and the SDK pass "cards".
    */
   mode?: SessionStartMode;
@@ -1108,7 +1109,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   if (abArm !== "off") {
     try {
       const staged = await listPendingCorrections(slug);
-      if (full && staged.length > 0) { // Cards v2: the TTL/cap sweep above ran in both modes; only full mode surfaces the count
+      if (staged.length > 0) { // Cards v2: surfaced in both modes — session_start is the only place an agent learns that staged items await check() before the TTL expires them
         pendingCorrections = { count: staged.length, ids: staged.slice(0, 3).map((p) => p.id) };
       }
     } catch {
@@ -1199,7 +1200,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   const hasStateContent = Boolean(stateCard && stateCardHasContent(stateCard));
   const isEmpty = full
     ? !resume && correctionsSlim.length === 0 && !todayBrief && !yesterdayBrief && olderCount === 0 && !hasCaptures && !hasPalaceContent && !hasStateContent
-    : !ownerCard && correctionsSlim.length === 0 && !hasStateContent; // Cards v2: cards mode is empty when it would render no card and no rule
+    : !ownerCard && correctionsSlim.length === 0 && !hasStateContent && readBehaviorPolicies(slug).rules.length === 0; // Cards v2: empty when it would render no card and no rule (P0 or behaviour policy)
 
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();
@@ -1215,9 +1216,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // C2: gated on isFirstCallThisSession — the hits counter has no per-day
   // guard of its own, so without this a repeat session_start call in the
   // same session would double (or triple, ...) count every rule's hits.
-  // Cards v2: rules are not rendered in cards mode, so no "load" is recorded there either (`hits` must mean "shown").
-  if (full && isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
-  const behaviorRules = full ? readBehaviorPolicies(slug).rules : [];
+  // Cards v2: behaviour policies are always-follow rules the owner registered, so they render in BOTH modes (right
+  // before the HARD RULES, as before) and the load is counted in both — nothing registered as a rule goes silent by default.
+  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
+  const behaviorRules = readBehaviorPolicies(slug).rules;
 
   // North-star alignment metric — correction precision (heeded/retrieved).
   // Wrapped in try/catch so a corrupt or unreadable corrections dir never

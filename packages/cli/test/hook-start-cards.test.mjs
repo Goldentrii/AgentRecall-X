@@ -32,6 +32,8 @@ it("default hook-start is the cards payload: no continuity even when the ledger 
   assert.ok(cards.stdout.includes("AgentRecall — hs-mode") && cards.stdout.includes("Goal: Ship") && !cards.stdout.includes("⏪") && !cards.stdout.includes("HS_MODE_CONTINUITY_TERM"), cards.stdout + cards.stderr);
   const full = await run("m-2", { AGENT_RECALL_SESSION_START_MODE: "full" });
   assert.ok(full.stdout.includes("⏪ Continuity") && full.stdout.includes("HS_MODE_CONTINUITY_TERM") && full.stdout.includes("Goal: Ship"), full.stdout + full.stderr);
+  const blank = await run("m-0", { AGENT_RECALL_SESSION_START_MODE: "" });
+  assert.ok(blank.stdout.includes("Goal: Ship") && !/is not cards\|full/.test(blank.stderr), "a blank env value is the default, not a warning: " + blank.stderr);
   const junk = await run("m-3", { AGENT_RECALL_SESSION_START_MODE: "rich" });
   assert.ok(!junk.stdout.includes("⏪") && junk.stdout.includes("Goal: Ship") && /AGENT_RECALL_SESSION_START_MODE=rich is not cards\|full/.test(junk.stderr), junk.stdout + junk.stderr);
 });

@@ -1660,18 +1660,10 @@ async function main(): Promise<void> {
         // contract when it's undefined).
         // Cards v2 (G6): hook-start injects the cards payload (owner card, HARD RULES, state card) by default;
         // AGENT_RECALL_SESSION_START_MODE=full restores every section. Anything else falls back to cards, loudly.
-        const modeEnv = (process.env["AGENT_RECALL_SESSION_START_MODE"] ?? "cards").trim().toLowerCase();
+        const modeEnv = (process.env["AGENT_RECALL_SESSION_START_MODE"] ?? "").trim().toLowerCase() || "cards"; // blank = default, no warning
         const mode: "cards" | "full" = modeEnv === "full" ? "full" : "cards";
         if (modeEnv !== "cards" && modeEnv !== "full") process.stderr.write(`[AgentRecall hook-start] AGENT_RECALL_SESSION_START_MODE=${modeEnv} is not cards|full — using cards\n`);
         const result = await core.sessionStart({ project, sid: sessionId, mode });
-        // P1 fence (TOW2-388): the F5 health banner below is a COMPUTED
-        // diagnostic (a failure count from this machine's own hook-health
-        // ledger) — not retrieved/stored natural-language content — and its
-        // own pre-existing contract requires it be the literal FIRST line
-        // of stdout (continuity-wave.test.mjs). It is built into a separate
-        // `preamble` array kept OUTSIDE the memory fence below, in front of
-        // it, so both invariants hold: health-first, AND everything that
-        // IS retrieved memory (`lines`, from here down) is fenced.
         // Cards v2 (G6): the text is the shared core renderer — the same sections, cap, fence and order as the
         // MCP terse payload and the SDK's fencedText, so the three surfaces cannot drift again. The F5 hook-health
         // banner is a COMPUTED diagnostic, not memory: it is the renderer's `preamble`, printed before the fence
@@ -1686,7 +1678,7 @@ async function main(): Promise<void> {
         } catch { /* non-blocking — health line is best-effort */ }
 
         const extraLines: string[] = [];
-        try {
+        if (mode === "full") try { // the renderer shows extras in full mode only — skip the read in cards mode
           // Semantic prefetch from last session — routed through projectSubPath so the READ resolves the same
           // case-fold-reused path the WRITE (hook-end prefetch) uses (fix5, 2026-09-11); honors getRoot().
           const prefetchFile = core.projectSubPath(project ?? "auto", "semantic-prefetch.json");
@@ -1709,7 +1701,7 @@ async function main(): Promise<void> {
         // P1 fence (TOW2-388): everything retrieved/stored (cards, corrections, insights, journal excerpts, room
         // topics, cross-project titles, prefetch titles) is fenced as ONE block by the renderer; `preamble`
         // stays outside and first.
-        process.stdout.write(core.renderSessionStart(result, { preamble, extraLines }) + "\n\n");
+        process.stdout.write(core.renderSessionStart(result, { preamble, extraLines, abTag: false }) + "\n\n"); // abTag: hook-start never printed the A/B arm
       } catch (e) {
         // Never block the session — fail silently
         core.recordHookFailure("hook-start", e);

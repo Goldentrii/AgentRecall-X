@@ -35,6 +35,8 @@ export interface RenderSessionStartOptions {
   hooklessTail?: boolean;
   /** UTF-8 byte cap for the whole returned text; default `sessionStartMaxBytes()`. */
   maxBytes?: number;
+  /** Append the `[ab:<arm>]` experiment tag outside the fence (default true, as the MCP terse text always did). hook-start passes false: it never printed the arm. */
+  abTag?: boolean;
 }
 
 /** Truncate to nearest word boundary (lifted verbatim from the MCP renderer). */
@@ -45,11 +47,18 @@ function trunc(s: string, n: number): string {
   return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
 }
 
-/** `AGENT_RECALL_SESSION_START_MAX_BYTES` when it is an integer ≥ 1024, else 16384. */
+/** `AGENT_RECALL_SESSION_START_MAX_BYTES` when it is an integer ≥ 1024, else 16384 (one stderr line per distinct bad value: a smaller cap than asked would be silent otherwise). */
+const warnedCapValues = new Set<string>();
 export function sessionStartMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
   const raw = (env[SESSION_START_MAX_BYTES_ENV] ?? "").trim();
+  if (!raw) return SESSION_START_MAX_BYTES_DEFAULT;
   const n = /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
-  return Number.isSafeInteger(n) && n >= SESSION_START_MAX_BYTES_MIN ? n : SESSION_START_MAX_BYTES_DEFAULT;
+  if (Number.isSafeInteger(n) && n >= SESSION_START_MAX_BYTES_MIN) return n;
+  if (!warnedCapValues.has(raw)) {
+    warnedCapValues.add(raw);
+    try { process.stderr.write(`[AgentRecall] ${SESSION_START_MAX_BYTES_ENV}=${raw} is not an integer ≥ ${SESSION_START_MAX_BYTES_MIN} — using ${SESSION_START_MAX_BYTES_DEFAULT}\n`); } catch { /* never throw */ }
+  }
+  return SESSION_START_MAX_BYTES_DEFAULT;
 }
 
 /** Every section in render order, before capping and fencing. A missing `mode` reads as "full" (hand-built fixtures). */
@@ -103,7 +112,7 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
   }
   add("header", 0, header);
 
-  // ── Behaviour policies ──────────────────────────────────────────────────
+  // ── Behaviour policies (both modes: always-follow rules the owner registered) ─
   const rules: string[] = [];
   if (result.behavior_rules && result.behavior_rules.length > 0) {
     rules.push("", "📜 Behavior policies (always follow):");
@@ -134,6 +143,7 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
   }
   add("watch_for", 7, watch);
 
+  // pending-review count: both modes (one line, count only — the agent must learn staged items exist to check() them)
   add("pending", 3, result.pending_corrections && result.pending_corrections.count > 0
     ? [`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`]
     : []);
@@ -189,10 +199,13 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
   return out;
 }
 
-const cutMarker = (maxBytes: number) => `… session_start payload cut to ${maxBytes} bytes (set ${SESSION_START_MAX_BYTES_ENV} to change)`;
-/** Rank-0 sections that may lose lines from the end once every droppable section is gone; the first line of owner and header always stays. */
+/** `over` = even the untouchable sections exceed the cap (the text is returned over cap, P0 completeness first). */
+const cutMarker = (maxBytes: number, over: boolean) => over
+  ? `… session_start payload cut; diagnostics and HARD RULES alone exceed ${maxBytes} bytes (set ${SESSION_START_MAX_BYTES_ENV} to change)`
+  : `… session_start payload cut to ${maxBytes} bytes (set ${SESSION_START_MAX_BYTES_ENV} to change)`;
+/** Rank-0 sections that may lose lines from the end once every droppable section is gone (state first, then the owner body, then the empty line, then the header's detail lines); the first line of owner and header always stays. */
 const CUT_ORDER: ReadonlyArray<{ id: SectionId; keep: number }> = [
-  { id: "state", keep: 0 }, { id: "owner", keep: 1 }, { id: "extra", keep: 0 }, { id: "empty_state", keep: 0 }, { id: "header", keep: 1 },
+  { id: "state", keep: 0 }, { id: "owner", keep: 1 }, { id: "empty_state", keep: 0 }, { id: "header", keep: 1 },
 ];
 
 /**
@@ -209,11 +222,11 @@ export function renderSessionStart(result: SessionStartResult, opts: RenderSessi
   // P4 cross-surface adapter — hook-less host pointer; text layer only, omitted where hooks drive the lifecycle.
   if (opts.hooklessTail) tail.push("", "Hook-less host? call brief() once for lifecycle rules.");
   // C4 A/B experiment marker (quiet trailing tag, not a banner).
-  if (result.ab_arm) tail.push(`[ab:${result.ab_arm}]`);
+  if (result.ab_arm && opts.abTag !== false) tail.push(`[ab:${result.ab_arm}]`);
 
-  const assemble = (secs: RenderedSection[], cut: boolean): string => {
+  const assemble = (secs: RenderedSection[], cut: boolean, over = false): string => {
     const body = secs.flatMap((s) => s.lines);
-    if (cut) body.push(cutMarker(maxBytes));
+    if (cut) body.push(cutMarker(maxBytes, over));
     // P1 fence (TOW2-388): everything above is retrieved/stored memory or AgentRecall's own labels commingled with it —
     // fenced as ONE block; preamble and tail are generated diagnostics/guidance and stay outside.
     return [...preamble, fenceMemory(body.join("\n")), ...tail].join("\n");
@@ -239,5 +252,5 @@ export function renderSessionStart(result: SessionStartResult, opts: RenderSessi
       if (fits(text)) return text;
     }
   }
-  return text;
+  return assemble(work, true, true); // only the untouchable sections are left and they alone exceed the cap
 }

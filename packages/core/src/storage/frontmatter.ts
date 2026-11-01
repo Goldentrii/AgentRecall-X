@@ -16,7 +16,8 @@ export function parseFrontmatter(text: string): Frontmatter | null {
   const fields = new Map<string, string>();
   for (const line of m[1].split("\n")) {
     const i = line.indexOf(":");
-    if (i > 0) fields.set(line.slice(0, i).trim(), line.slice(i + 1).replace(/\s+#.*$/, "").trim());
+    // `\s#` (one whitespace char, then #) is linear; `\s+#` backtracks quadratically on a long run of spaces — a poisoned card could stall session_start.
+    if (i > 0) fields.set(line.slice(0, i).trim(), line.slice(i + 1).replace(/\s#.*$/, "").trim());
   }
   return { fields, body: m[2] };
 }

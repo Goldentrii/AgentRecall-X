@@ -32,7 +32,7 @@ import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js"
 import { pipelineOpen } from "./pipeline-open.js";
 import { pipelineClose } from "./pipeline-close.js";
 import { writeHandoff } from "../helpers/handoff.js";
-import { backupUnreadableStateCard, mergeStateCard, readStateCard, writeStateCard, type StateCardInput } from "../storage/state-card.js";
+import { backupUnreadableStateCard, mergeStateCard, readStateCard, stateCardPath, writeStateCard, type StateCardInput } from "../storage/state-card.js";
 import { recordHookFailure } from "../storage/hook-health.js";
 import { stagePendingCorrection, validateInsightCompleteness } from "../storage/pending.js";
 
@@ -1047,10 +1047,17 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   if (input.saveType !== "hook-end" && input.saveType !== "saveall" && input.saveType !== "arsaveall") {
     try {
       const previous = readStateCard(slug);
-      const merged = mergeStateCard({ previous, state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId });
+      const mergeArgs = { state: input.state, trajectory: input.trajectory, summary: input.summary, session: sessionId };
+      let merged = mergeStateCard({ previous, ...mergeArgs });
       if (merged) {
-        // A card file that exists but did not parse (null here) would be silently replaced by a card that drops its goal/blockers/pointers: keep it as .bak-<ts> first.
-        if (!previous) backupUnreadableStateCard(slug);
+        if (!previous) {
+          // A card file that exists but did not parse (null here) would be silently replaced by a card that drops its goal/blockers/pointers: keep it as .bak-<ts> first.
+          const moved = backupUnreadableStateCard(slug);
+          // Two first session_ends can race: a valid card that landed between our read and now is left in place by the backup — merge onto it instead of overwriting it with a card built from nothing. Only a regular file that was not moved can be that card (a directory or a rename failure already warned once).
+          const cardFile = stateCardPath(slug);
+          const landed = !moved && fs.existsSync(cardFile) && fs.statSync(cardFile).isFile() ? readStateCard(slug) : null;
+          if (landed) merged = mergeStateCard({ previous: landed, ...mergeArgs }) ?? merged;
+        }
         writeStateCard(slug, merged.card);
       }
       stateCardResult = { written: merged !== null, truncated: merged?.truncated ?? [] };
