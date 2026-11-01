@@ -1,0 +1,52 @@
+{
+  "schema_version": "injection-baseline/v1",
+  "bench_version": "session-start-size-v2",
+  "generated_utc": "2026-11-01T00:14:44.421Z",
+  "git_commit": "8513e40",
+  "core_version": "3.5.2",
+  "node": "v24.11.1",
+  "platform": "win32-x64",
+  "machine": "TONGS",
+  "store": "scripts/eval/fixtures/golden-v1",
+  "store_hash": "6816ea41d9f9a04238ccb6c1d72fa77cc0ad78265780e02d7088df0a948d5f45",
+  "store_hash_basis": "sha256 over sorted '<relpath>\\n<sha256(LF-normalized bytes)>' lines for every file under the store root (forward-slash relpaths; CRLF->LF so git autocrlf checkouts hash identically)",
+  "estimator": "chars/4 (ceil) — replicates packages/core handoff.ts:275; no real tokenizer without new deps",
+  "mode": "cards",
+  "payload": "MCP session_start default: formatTerse(sessionStart({project, mode:\"cards\"})) — verbose=false; content[0].text string (renderSessionStart: fence, byte cap and tail included)",
+  "per_project": [
+    {
+      "project": "alpha-platform",
+      "chars": 351,
+      "tokens": 88,
+      "tokens_cjk_adjusted": 88,
+      "p0_in_store": 1,
+      "p0_in_payload": 1,
+      "p0_in_text": 1,
+      "p0_survival_ok": true
+    },
+    {
+      "project": "beta-api",
+      "chars": 362,
+      "tokens": 91,
+      "tokens_cjk_adjusted": 91,
+      "p0_in_store": 1,
+      "p0_in_payload": 1,
+      "p0_in_text": 1,
+      "p0_survival_ok": true
+    },
+    {
+      "project": "gamma-cli",
+      "chars": 343,
+      "tokens": 86,
+      "tokens_cjk_adjusted": 86,
+      "p0_in_store": 0,
+      "p0_in_payload": 0,
+      "p0_in_text": 0,
+      "p0_survival_ok": true
+    }
+  ],
+  "median_tokens": 88,
+  "p95_tokens": 91,
+  "max_tokens": 91,
+  "median_chars": 351
+}
