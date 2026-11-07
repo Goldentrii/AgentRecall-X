@@ -25,7 +25,7 @@ import * as path from "node:path";
 import { journalDir, sanitizeSlug } from "./paths.js";
 import { isValidProjectSlug } from "./project.js";
 import { stageUnclaimedCard } from "./unclaimed.js";
-import { ensureDir, todayISO, safeIsoDateOrToday, truncateUtf8Bytes } from "./fs-utils.js";
+import { ensureDir, todayISO, safeIsoDateOrToday, truncateUtf8Bytes, writeTextCreateOnce } from "./fs-utils.js";
 import { generateFrontmatter } from "../palace/obsidian.js";
 import { recordHookFailure } from "./hook-health.js";
 import { scrubForCloud } from "./content-guard.js";
@@ -371,11 +371,10 @@ export function writeSessionCard(card: SessionCardResult): WriteSessionCardResul
       return { path: dest, bytes: 0, slug: resolvedSlug };
     }
 
-    const tmp = dest + ".tmp." + process.pid;
-    fs.writeFileSync(tmp, card.markdown, "utf-8");
-    fs.renameSync(tmp, dest);
-
-    return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8"), slug: resolvedSlug };
+    // Create-if-absent: a concurrent writer that won the race is a no-op,
+    // not an EPERM + leaked tmp (2026-11-07 live-store regression).
+    const created = writeTextCreateOnce(dest, card.markdown);
+    return { path: dest, bytes: created ? Buffer.byteLength(card.markdown, "utf-8") : 0, slug: resolvedSlug };
   } catch (err) {
     // F5 depth (2026-08-12, followups wave): silent disk-write failure —
     // same visibility fix as archiveSession/buildSessionCard above.
