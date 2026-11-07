@@ -37,7 +37,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ensureDir, safeIsoDateOrToday } from "./fs-utils.js";
+import { ensureDir, safeIsoDateOrToday, writeTextCreateOnce } from "./fs-utils.js";
 import { getRoot } from "../types.js";
 import {
   journalDir,
@@ -277,10 +277,9 @@ export function stageUnclaimedCard(card: SessionCardResult): WriteSessionCardRes
   if (fs.existsSync(dest)) {
     return { path: dest, bytes: 0, slug: UNCLAIMED_PROJECT };
   }
-  const tmp = dest + ".tmp." + process.pid;
-  fs.writeFileSync(tmp, card.markdown, "utf-8");
-  fs.renameSync(tmp, dest);
-  return { path: dest, bytes: Buffer.byteLength(card.markdown, "utf-8"), slug: UNCLAIMED_PROJECT };
+  // Create-if-absent — the exact site of the 2026-11-07 EPERM + orphaned tmp.
+  const created = writeTextCreateOnce(dest, card.markdown);
+  return { path: dest, bytes: created ? Buffer.byteLength(card.markdown, "utf-8") : 0, slug: UNCLAIMED_PROJECT };
 }
 
 export interface ClaimResult {

@@ -189,6 +189,57 @@ export function writeTextAtomicPrivate(filePath: string, text: string): void {
   try { renameAtomic(tmp, filePath); } catch (err) { try { fs.rmSync(tmp, { force: true }); } catch { /* best effort */ } throw err; }
 }
 
+/**
+ * Atomic CREATE-IF-ABSENT text write for write-once files (session cards).
+ * Returns true if this call created the file, false if it already existed
+ * (another writer won — idempotent no-op, never an error, never a replace).
+ *
+ * Live-store regression (2026-11-07): the card writers did existsSync(dest)
+ * then tmp + renameSync. Two writers for one session (hook-end + MCP
+ * session_end) both passed the check; the loser renamed OVER the winner's
+ * fresh card while a lock-free reader held it without FILE_SHARE_DELETE →
+ * NTFS EPERM, a recorded hook failure, and an orphaned `.tmp.<pid>`.
+ *
+ * linkSync(tmp, dest) is the atomic primitive: it fails EEXIST instead of
+ * replacing, and never renames over an open file. Volumes without hard-link
+ * support fall back to existsSync + renameAtomic (bounded win32 retry). The
+ * unique tmp is removed on EVERY path.
+ */
+/** linkSync errnos meaning "no hard-link support on this volume": FAT/exFAT
+ * (libuv maps ERROR_INVALID_FUNCTION → EISDIR), SMB/NFS shares (EPERM,
+ * EINVAL, ENOTSUP), cross-device (EXDEV), unimplemented (ENOSYS). */
+const LINK_UNSUPPORTED_CODES = new Set(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EPERM", "EINVAL", "EISDIR"]);
+
+export function writeTextCreateOnce(filePath: string, text: string): boolean {
+  ensureDir(path.dirname(filePath));
+  const tmp = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString("hex")}`;
+  try {
+    fs.writeFileSync(tmp, text, "utf-8");
+    try {
+      fs.linkSync(tmp, filePath);
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return false;
+      // Only "this volume can't hard-link" falls back; real errors (ENOENT,
+      // EACCES, ENOSPC, EIO…) surface as themselves, not as a rename error.
+      if (!code || !LINK_UNSUPPORTED_CODES.has(code)) throw err;
+    }
+    // Fallback (no hard links): check-then-rename — the race window is back,
+    // so a rename that fails while dest now exists is "lost the race", not an error.
+    if (fs.existsSync(filePath)) return false;
+    try {
+      renameAtomic(tmp, filePath);
+    } catch (err) {
+      if (fs.existsSync(filePath)) return false;
+      throw err;
+    }
+    return true;
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* best effort — never mask the real outcome */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // M8 (review fix, 2026-07-31) — shared UTF-8-safe byte-boundary helpers.
 //
