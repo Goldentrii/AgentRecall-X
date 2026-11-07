@@ -1,0 +1,68 @@
+# Hosted AgentRecall: agent-recall-server behind Caddy (automatic HTTPS).
+#
+#   echo "AR_DOMAIN=recall.example.com" > .env
+#   docker compose up -d --build
+#
+# Only Caddy is published (80/443). The server listens on the internal network
+# only, so the bearer token never travels in plain HTTP outside the box.
+#
+# NEVER run `docker compose down -v`: -v deletes every user's memory (ar-data)
+# and the TLS certificates (caddy-data).
+name: agent-recall
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.server
+    image: agent-recall-server:local
+    restart: unless-stopped
+    environment:
+      AR_SERVER_QUOTA_MB: ${AR_SERVER_QUOTA_MB:-100}
+      AR_SERVER_RATE_PER_MIN: ${AR_SERVER_RATE_PER_MIN:-120}
+    volumes:
+      - ar-data:/data
+    expose:
+      - "8787"
+    # Least privilege: no Linux capabilities, no privilege escalation, read-only
+    # image filesystem; the only writable places are the data volume and /tmp.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    logging: *logging
+
+  caddy:
+    # Pinned by digest (Caddy 2.11.9); bump deliberately.
+    image: caddy:2.11.9@sha256:ce773ec7a742ce15ee6bf2bb5f65882b9e2a4487b10733e6f1484f86e6b5d8bc
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      AR_DOMAIN: ${AR_DOMAIN:?set AR_DOMAIN in deploy/hosted/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+volumes:
+  ar-data:
+  caddy-data:
+  caddy-config:

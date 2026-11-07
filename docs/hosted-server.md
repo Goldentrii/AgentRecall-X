@@ -26,7 +26,28 @@ agent ──HTTPS──▶ TLS proxy ──▶ agent-recall-server :8787   POST 
 
 ## Run it
 
-### Docker (recommended)
+### One-command deploy on a fresh Ubuntu 24.04 box (recommended)
+
+`deploy/hosted/` contains a Compose stack: the server, plus Caddy for automatic HTTPS. `setup.sh` installs Docker from Ubuntu's own repositories, adds swap, clones this repo, and starts the stack.
+
+1. Create the box (for example AWS Lightsail: Ubuntu 24.04, dual-stack, 1 GB RAM), attach a static IP, and open TCP 80 and 443.
+2. Point your domain's DNS `A` record at the static IP.
+3. On the box (for example in Lightsail's browser SSH), pin the full commit SHA you reviewed, and read the script before running it:
+   ```bash
+   SHA=<full commit sha>
+   curl -fsSL "https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/$SHA/deploy/hosted/setup.sh" -o setup.sh
+   less setup.sh
+   AR_DOMAIN=recall.example.com AR_REF=$SHA bash setup.sh
+   ```
+   The script refuses to start if the domain's DNS doesn't point at this box yet. That way it never burns Let's Encrypt's rate limit; `AR_FORCE=1` overrides the check. On a brand-new box it first waits for the boot-time package updater to finish.
+4. Create a token per user:
+   ```bash
+   cd /opt/agent-recall/deploy/hosted && sudo docker compose exec server agent-recall-server token create --uid alice --label "alice laptop"
+   ```
+
+To update, re-run `setup.sh` with a newer `AR_REF`. **Never run `docker compose down -v`**: `-v` deletes every user's memory and the TLS certificates. Optional settings go in `deploy/hosted/.env`: `AR_SERVER_QUOTA_MB` and `AR_SERVER_RATE_PER_MIN`. Data lives in the `agent-recall_ar-data` Docker volume; back it up, or turn on the host's automatic snapshots.
+
+### Docker (single container, bring your own proxy)
 
 ```bash
 docker build -f Dockerfile.server -t agent-recall-server .
