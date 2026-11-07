@@ -54,6 +54,7 @@ any MCP client ──HTTPS──▶ reverse proxy (TLS) ──▶ agent-recall-s
 - [x] A6 End-to-end test with the real MCP SDK client over HTTP against the built binary (benchmark steps 1–4).
 - [x] A7 Dockerfile for the server (persistent volume at `/data`), plus a deploy guide and client config snippets for Claude Code, Cursor, Codex and Claude Desktop. Image verified 2026-11-07 (Docker 29.9.2): builds (515 MB), runs as `node`, healthz, token create, MCP remember/recall round trip, 401 without token, `docker stop` drains and exits 0.
 - [x] A8 Independent code + security review; fix CRITICAL/HIGH.
+- [x] A9 Per-user limits: storage quota (default 100 MB; over quota, writes return a readable tool error, reads still work) + rate limit (default 120 req/min, 429), `usage` admin command. Defaults are placeholders until O5.
 
 ### Owner (you): decisions, accounts, money, legal, approvals
 
@@ -61,7 +62,7 @@ any MCP client ──HTTPS──▶ reverse proxy (TLS) ──▶ agent-recall-s
 - [ ] O2 **Approve the deploy** (REDLINE), and set the server secrets on the host. I never enter credentials.
 - [ ] O3 **Legal, because you now hold users' data:** a privacy policy + terms, GDPR basics (EU: data location, deletion on request, a DPA with the host), and a decision on backups and retention.
 - [ ] O4 **Decide onboarding for v1:** you issue tokens by hand with the admin CLI (fine for the first users), or a signup website (later; OAuth v2).
-- [ ] O5 **Decide pricing/limits,** even if v1 is free: per-tenant storage cap, rate limits.
+- [ ] O5 **Decide pricing/limits,** even if v1 is free. Mechanism exists (A9) with defaults 100 MB and 120 req/min per user; confirm or change them, and decide whether paid plans need per-user values.
 - [ ] O6 Review and merge the PRs.
 
 ## 4. Later (not v1)

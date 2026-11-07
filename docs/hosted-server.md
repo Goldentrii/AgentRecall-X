@@ -58,6 +58,7 @@ mcp.example.com {
 agent-recall-server token create --uid alice --label "alice laptop"   # prints the token ONCE
 agent-recall-server token list
 agent-recall-server token revoke <id>                                 # takes effect on the next request
+agent-recall-server usage                                             # storage per user vs quota
 ```
 
 In Docker, prefix each command with `docker exec agent-recall`.
@@ -94,10 +95,22 @@ claude.ai custom connectors need OAuth, which is planned for v2. Until then, use
 - **Logs:** one line per request (method, path, uid, status, ms) on stderr. Tokens and bodies are never logged.
 - **Backups:** back up the whole data volume. A user's memory is plain files under `tenants/<uid>/`.
 - **Deleting a user:** revoke their tokens, then delete `tenants/<uid>/`.
-- **Limits:**
+- **Per-user limits (on by default):**
+
+  | Limit | Default | Set with | When exceeded |
+  |---|---|---|---|
+  | Storage | 100 MB per user | `--quota-mb` / `AR_SERVER_QUOTA_MB` (decimals allowed, `0` = off) | Write tools (`remember`, `session_end`, `check`) return an MCP tool error telling the agent the memory was not saved. Reads (`recall`, `session_start`) keep working, so users are never locked out of their memory. |
+  | Requests | 120 per minute per user (bursts up to 120) | `--rate-per-min` / `AR_SERVER_RATE_PER_MIN` (`0` = off) | HTTP `429` with `retry-after` and an `agent_instruction`. |
+
+  - The storage figure is re-measured at most every 15 s per user, and accepted writes count immediately, so a burst can overshoot only slightly. Reads may write small bookkeeping files, so treat the quota as a soft cap.
+  - Storage counts allocated disk blocks where the OS reports them, so many tiny files can't dodge the quota.
+  - The rate counts every POST, including the `initialize` handshake a client sends when it connects.
+  - An empty variable (`AR_SERVER_QUOTA_MB=` in a `.env` file) means "use the default", never "off". An invalid value stops the server from starting rather than disabling the limit.
+  - `agent-recall-server usage [--quota-mb N]` lists each user's storage and share of the quota.
+  - Limits are the same for every user in v1; per-user plans come with pricing.
+- **Server-wide limits:**
   - Request bodies are capped at 4 MiB, with a delivered `413`.
   - At most 64 concurrent in-flight MCP requests across all users; beyond that the server returns `503` with `retry-after`.
-  - **There is no per-user storage quota or rate limit yet.** Any valid token can fill the shared disk. Before opening to untrusted users, rate-limit in the proxy and watch disk usage.
 - **Shutdown:** SIGTERM/SIGINT drains in-flight requests (up to 8 s) before exiting.
 - **Token store:** if `tokens.json` is unreadable, requests get `503 auth_unavailable` rather than being let through; the server recovers as soon as the file is valid again.
 
@@ -105,5 +118,5 @@ claude.ai custom connectors need OAuth, which is planned for v2. Until then, use
 
 - OAuth 2.1 / browser login, and a website for self-serve tokens
 - Per-tenant Supabase or encryption at rest
-- Quotas and rate limits
+- Per-user plans (different quotas or rates per user)
 - Stateful MCP sessions (each `session_end` currently records its own session card)

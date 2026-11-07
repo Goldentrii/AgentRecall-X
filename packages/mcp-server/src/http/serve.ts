@@ -17,6 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { VERSION, withTenant, enableStrictTenantMode } from "agent-recall-core";
 import { buildServer } from "../build-server.js";
 import { resolveToken, TokenStoreUnavailableError, UID_RE } from "./tokens.js";
+import { RateLimiter, UsageTracker, isWriteCall, quotaExceededResponse } from "./limits.js";
 
 export interface ServeOptions {
   /** Absolute data directory: tenants/ and _server/ live here. */
@@ -29,6 +30,10 @@ export interface ServeOptions {
   maxBodyBytes?: number;
   /** Max concurrent in-flight MCP requests across all tenants; beyond it → 503. Default 64. */
   maxInFlight?: number;
+  /** Storage quota per user in bytes; undefined → DEFAULT_QUOTA_BYTES, 0 → off. */
+  quotaBytes?: number;
+  /** Requests per minute per user; undefined → DEFAULT_RATE_PER_MIN, 0 → off. */
+  ratePerMinute?: number;
   /** Request log sink; default stderr. Never receives tokens or bodies. */
   log?: (line: string) => void;
 }
@@ -37,6 +42,12 @@ export interface ServeOptions {
 export const HOSTED_DEFAULT_PROJECT = "main";
 const DEFAULT_MAX_BODY = 4 * 1024 * 1024;
 const DEFAULT_MAX_IN_FLIGHT = 64;
+export const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
+export const DEFAULT_RATE_PER_MIN = 120;
+
+export function formatMb(bytes: number): string {
+  return `${Math.round((bytes / (1024 * 1024)) * 100) / 100} MB`;
+}
 const TOO_LARGE_INSTRUCTION = "Send a smaller request; split large memories into several remember calls.";
 /** Oversized bodies up to limit × this are drained (so the 413 is delivered); beyond it the socket is dropped. */
 const DRAIN_FACTOR = 4;
@@ -114,6 +125,13 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
   const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
   const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
   let inFlight = 0;
+  const quotaBytes = opts.quotaBytes ?? DEFAULT_QUOTA_BYTES;
+  const ratePerMinute = opts.ratePerMinute ?? DEFAULT_RATE_PER_MIN;
+  const limiter = ratePerMinute > 0 ? new RateLimiter(ratePerMinute) : null;
+  const usage = quotaBytes > 0 ? new UsageTracker({ quotaBytes }) : null;
+  const quotaMessage =
+    `AgentRecall storage quota reached (${formatMb(quotaBytes)} per user): this memory was NOT saved. ` +
+    "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
 
   return async (req, res) => {
@@ -146,9 +164,16 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       }
 
       uid = authenticate(req, dataDir);
+      // Capacity before rate: a request refused as "busy" must not cost the user a token.
       if (inFlight >= maxInFlight) {
         res.setHeader("retry-after", "1");
         throw new HttpError(503, "busy", "server at capacity", "The AgentRecall server is busy; retry in a second.");
+      }
+      const rate = limiter?.take(uid);
+      if (rate && !rate.ok) {
+        res.setHeader("retry-after", String(rate.retryAfterSec));
+        throw new HttpError(429, "rate_limited", `more than ${ratePerMinute} requests per minute`,
+          `Too many AgentRecall requests. Retry after ${rate.retryAfterSec} s; batch memory into fewer calls.`);
       }
       inFlight++;
       res.once("close", () => { inFlight--; });
@@ -163,6 +188,15 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
 
       const root = tenantRoot(dataDir, uid);
       fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+
+      const writes = usage !== null && isWriteCall(body);
+      if (usage && writes && (await usage.isOver(uid, root))) {
+        const answer = quotaExceededResponse(body, quotaMessage);
+        if (answer === null) { res.writeHead(202).end(); return; }
+        sendJson(res, 200, answer);
+        return;
+      }
+      if (usage && writes) usage.add(uid, raw.length);
 
       await withTenant({ root, sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT }, async () => {
         const server = buildServer({ tier: "B", full: opts.full, extras: false, ambientCapture: false, redactPaths: true });
