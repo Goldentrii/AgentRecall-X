@@ -1,0 +1,200 @@
+/**
+ * serve.ts — hosted AgentRecall: one process, many tenants, any MCP client.
+ *
+ *   POST /mcp      MCP Streamable HTTP (stateless, JSON responses), bearer auth
+ *   GET  /healthz  liveness
+ *
+ * Per request: bearer token → uid → withTenant({root: DATA/tenants/<uid>, …}) →
+ * a FRESH McpServer + transport. Nothing MCP-level is shared between requests,
+ * and strict tenant mode makes any code path that loses the tenant context
+ * throw instead of touching another store.
+ */
+import * as fs from "node:fs";
+import * as http from "node:http";
+import * as path from "node:path";
+import { randomUUID } from "node:crypto";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { VERSION, withTenant, enableStrictTenantMode } from "agent-recall-core";
+import { buildServer } from "../build-server.js";
+import { resolveToken, TokenStoreUnavailableError, UID_RE } from "./tokens.js";
+
+export interface ServeOptions {
+  /** Absolute data directory: tenants/ and _server/ live here. */
+  dataDir: string;
+  port: number;
+  host: string;
+  /** Register --full tools (check_action). */
+  full: boolean;
+  /** Request body cap; default 4 MiB. */
+  maxBodyBytes?: number;
+  /** Max concurrent in-flight MCP requests across all tenants; beyond it → 503. Default 64. */
+  maxInFlight?: number;
+  /** Request log sink; default stderr. Never receives tokens or bodies. */
+  log?: (line: string) => void;
+}
+
+/** The project slug a hosted tool call uses when the agent passes "auto". */
+export const HOSTED_DEFAULT_PROJECT = "main";
+const DEFAULT_MAX_BODY = 4 * 1024 * 1024;
+const DEFAULT_MAX_IN_FLIGHT = 64;
+const TOO_LARGE_INSTRUCTION = "Send a smaller request; split large memories into several remember calls.";
+/** Oversized bodies up to limit × this are drained (so the 413 is delivered); beyond it the socket is dropped. */
+const DRAIN_FACTOR = 4;
+
+function drain(req: http.IncomingMessage): Promise<void> {
+  return new Promise((resolve) => {
+    if (req.readableEnded) return resolve();
+    req.on("end", resolve);
+    req.on("close", resolve);
+    req.on("error", () => resolve());
+    req.resume();
+  });
+}
+
+class HttpError extends Error {
+  constructor(public status: number, public code: string, message: string, public agentInstruction: string) {
+    super(message);
+  }
+}
+
+function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  if (res.headersSent) return;
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    let over = false;
+    const chunks: Buffer[] = [];
+    const tooLarge = () => new HttpError(413, "payload_too_large", `body exceeds ${limit} bytes`, TOO_LARGE_INSTRUCTION);
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > limit * DRAIN_FACTOR) {
+        // Abusive upload: stop reading. The client may see a reset; that's acceptable here.
+        req.destroy();
+        reject(tooLarge());
+        return;
+      }
+      if (size > limit) {
+        over = true;
+        chunks.length = 0;
+        return; // keep draining: replying mid-upload makes clients see ECONNRESET instead of the 413
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => (over ? reject(tooLarge()) : resolve(Buffer.concat(chunks).toString("utf-8"))));
+    req.on("error", reject);
+  });
+}
+
+export function tenantRoot(dataDir: string, uid: string): string {
+  if (!UID_RE.test(uid)) throw new Error("invalid uid");
+  const tenantsDir = path.resolve(dataDir, "tenants");
+  const root = path.resolve(tenantsDir, uid);
+  // Defence in depth: UID_RE already forbids separators and dots.
+  if (path.dirname(root) !== tenantsDir) throw new Error("tenant root escapes data dir");
+  return root;
+}
+
+function authenticate(req: http.IncomingMessage, dataDir: string): string {
+  const header = req.headers["authorization"];
+  const m = typeof header === "string" ? /^Bearer\s+(\S+)\s*$/i.exec(header) : null;
+  const uid = m ? resolveToken(dataDir, m[1]) : null;
+  if (!uid) {
+    throw new HttpError(401, "unauthorized", "missing, malformed, unknown or revoked token",
+      "Send header 'Authorization: Bearer <your AgentRecall token>'. Tokens start with 'ar_'. Ask the server operator for a token if you do not have one.");
+  }
+  return uid;
+}
+
+export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
+  const dataDir = path.resolve(opts.dataDir);
+  const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
+  const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
+  let inFlight = 0;
+  const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
+
+  return async (req, res) => {
+    const started = Date.now();
+    const url = new URL(req.url ?? "/", "http://localhost");
+    let uid = "-";
+    res.once("finish", () => log(`${new Date().toISOString()} ${req.method} ${url.pathname} uid=${uid} ${res.statusCode} ${Date.now() - started}ms`));
+    try {
+      if (url.pathname === "/healthz" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, version: VERSION });
+        return;
+      }
+      if (url.pathname !== "/mcp") {
+        throw new HttpError(404, "not_found", `no route ${url.pathname}`, "The MCP endpoint is POST /mcp.");
+      }
+      if (req.method !== "POST") {
+        // Stateless server: no server-initiated SSE stream (GET) and no session to delete (DELETE).
+        res.setHeader("allow", "POST");
+        throw new HttpError(405, "method_not_allowed", `${req.method} not supported`, "This server is stateless: send every MCP message as POST /mcp.");
+      }
+
+      // Declared-oversized bodies are rejected before authenticating; the body is
+      // drained (bounded) first so the client actually receives the 413.
+      const declared = Number(req.headers["content-length"] ?? 0);
+      if (declared > maxBody) {
+        res.setHeader("connection", "close");
+        if (declared <= maxBody * DRAIN_FACTOR) await drain(req);
+        else req.destroy();
+        throw new HttpError(413, "payload_too_large", `body exceeds ${maxBody} bytes`, TOO_LARGE_INSTRUCTION);
+      }
+
+      uid = authenticate(req, dataDir);
+      if (inFlight >= maxInFlight) {
+        res.setHeader("retry-after", "1");
+        throw new HttpError(503, "busy", "server at capacity", "The AgentRecall server is busy; retry in a second.");
+      }
+      inFlight++;
+      res.once("close", () => { inFlight--; });
+      const raw = await readBody(req, maxBody);
+      let body: unknown;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        sendJson(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
+        return;
+      }
+
+      const root = tenantRoot(dataDir, uid);
+      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+
+      await withTenant({ root, sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT }, async () => {
+        const server = buildServer({ tier: "B", full: opts.full, extras: false, ambientCapture: false, redactPaths: true });
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+        res.on("close", () => {
+          transport.close().catch(() => {});
+          server.close().catch(() => {});
+        });
+        await server.connect(transport);
+        await transport.handleRequest(req, res, body);
+      });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        const headers: Record<string, string> = err.status === 401 ? { "www-authenticate": 'Bearer realm="agent-recall"' } : {};
+        sendJson(res, err.status, { error: err.code, message: err.message, agent_instruction: err.agentInstruction }, headers);
+      } else if (err instanceof TokenStoreUnavailableError) {
+        log(`[agent-recall-server] token store unavailable: ${err.message}`);
+        sendJson(res, 503, { error: "auth_unavailable", message: "authentication temporarily unavailable", agent_instruction: "Retry shortly; the server operator must fix the token store." }, { "retry-after": "5" });
+      } else {
+        log(`[agent-recall-server] internal error uid=${uid}: ${(err as Error)?.stack ?? String(err)}`);
+        sendJson(res, 500, { error: "internal_error", message: "internal server error", agent_instruction: "Retry once; if it persists, continue without memory and tell the user the AgentRecall server failed." });
+      }
+    }
+  };
+}
+
+export function startHttpServer(opts: ServeOptions): Promise<http.Server> {
+  enableStrictTenantMode();
+  const handler = createRequestHandler(opts);
+  const server = http.createServer((req, res) => void handler(req, res));
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, opts.host, () => resolve(server));
+  });
+}

@@ -38,7 +38,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ensureDir, safeIsoDateOrToday } from "./fs-utils.js";
-import { getRoot } from "../types.js";
+import { getRoot, isTenantScoped } from "../types.js";
 import {
   journalDir,
   sanitizeSlug,
@@ -264,7 +264,7 @@ export function stageUnclaimedCard(card: SessionCardResult): WriteSessionCardRes
     candidates.push({ slug: card.slug, count: 1 });
   }
   recordUnclaimedProvenance(card.sid, {
-    cwd: process.cwd(),
+    cwd: isTenantScoped() ? "(hosted)" : process.cwd(),
     reason: isValidProjectSlug(card.slug) ? "zero-confidence-card" : `invalid-slug-card:${card.slug}`,
     slug_candidates: candidates,
     slug_confidence: card.slug_confidence ?? 0,
