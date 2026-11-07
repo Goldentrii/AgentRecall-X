@@ -1,4 +1,11 @@
 -- AgentRecall Dashboard Tables
+--
+-- SECURITY: every table below has Row Level Security ENABLED with NO policies
+-- and no anon/authenticated privileges, so only the server-side secret key
+-- (service_role) can read or write. Never query these tables from a browser
+-- with the anon/publishable key — that key is public by design. Existing
+-- installs: run migrations/2026-11-07-enable-rls.sql (covers all ar_* tables
+-- and _backups). See docs/supabase.md.
 CREATE TABLE IF NOT EXISTS ar_awareness (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   title TEXT NOT NULL UNIQUE,
@@ -13,6 +20,7 @@ CREATE TABLE IF NOT EXISTS ar_awareness (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE ar_awareness ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS ar_corrections (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -29,6 +37,7 @@ CREATE TABLE IF NOT EXISTS ar_corrections (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE ar_corrections ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS ar_palace_rooms (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -45,6 +54,7 @@ CREATE TABLE IF NOT EXISTS ar_palace_rooms (
   updated_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(project, room_slug)
 );
+ALTER TABLE ar_palace_rooms ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS ar_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -58,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ar_sessions (
   corrections_count INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE ar_sessions ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS _backups (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -67,3 +78,20 @@ CREATE TABLE IF NOT EXISTS _backups (
   deleted_at TIMESTAMPTZ DEFAULT now(),
   restored BOOLEAN DEFAULT false
 );
+ALTER TABLE _backups ENABLE ROW LEVEL SECURITY;
+
+-- Lock down privileges (role checks keep this runnable on plain Postgres).
+DO $$
+DECLARE
+  r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON TABLE ar_awareness, ar_corrections, ar_palace_rooms, ar_sessions, _backups FROM %I', r);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ar_awareness, ar_corrections, ar_palace_rooms, ar_sessions, _backups TO service_role;
+  END IF;
+END
+$$;

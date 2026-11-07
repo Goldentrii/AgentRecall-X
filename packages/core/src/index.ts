@@ -582,8 +582,8 @@ export { digestRead } from "./tools-logic/digest-read.js";
 // (bootstrap exports moved up to cross-surface-adapter block above)
 
 // Supabase — config
-export { readSupabaseConfig, writeSupabaseConfig } from "./supabase/config.js";
-export type { SupabaseConfig } from "./supabase/config.js";
+export { readSupabaseConfig, writeSupabaseConfig, classifySupabaseKey, isJwtSupabaseKey, isAllowedSupabaseUrl, resetSupabaseConfigWarnings } from "./supabase/config.js";
+export type { SupabaseConfig, SupabaseKeyKind } from "./supabase/config.js";
 
 // Supabase — client
 export { getSupabaseClient, resetSupabaseClient } from "./supabase/client.js";

@@ -24,7 +24,7 @@ import { tokenizeWords } from "../helpers/tokenize.js";
 import { withLock } from "../storage/filelock.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
-import { readSupabaseConfig } from "../supabase/config.js";
+import { readSupabaseConfig, isJwtSupabaseKey } from "../supabase/config.js";
 
 const MAX_LINES = 200;
 
@@ -38,11 +38,15 @@ export async function fetchDashboardArchivedTitles(): Promise<string[]> {
   if (!config) return [];
 
   const url = config.supabase_url.replace(/\/+$/, "");
-  const key = config.supabase_anon_key;
+  const key = config.supabase_secret_key;
+  // `sb_secret_…` keys are not JWTs and belong on the `apikey` header only;
+  // legacy JWT keys also go on Authorization (Supabase API-keys guide).
+  const headers: Record<string, string> = { apikey: key };
+  if (isJwtSupabaseKey(key)) headers.Authorization = `Bearer ${key}`;
   try {
     const resp = await fetch(
       `${url}/rest/v1/ar_awareness?select=title&is_active=eq.false`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(3000) }
+      { headers, signal: AbortSignal.timeout(3000) }
     );
     if (!resp.ok) return [];
     const rows = await resp.json() as Array<{ title: string }>;

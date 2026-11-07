@@ -225,7 +225,7 @@ describe("Awareness system — module integration", () => {
     delete process.env.SUPABASE_ANON_KEY;
     fs.writeFileSync(path.join(TEST_ROOT, "config.json"), JSON.stringify({
       supabase_url: "https://configured.supabase.co",
-      supabase_anon_key: "configured-key",
+      supabase_secret_key: "sb_secret_configured",
       sync_enabled: true,
     }));
 
@@ -241,8 +241,21 @@ describe("Awareness system — module integration", () => {
       const archived = await awareness.fetchDashboardArchivedTitles();
       assert.deepEqual(archived, ["archived from config"]);
       assert.equal(requestedUrl, "https://configured.supabase.co/rest/v1/ar_awareness?select=title&is_active=eq.false");
-      assert.equal(requestedHeaders.apikey, "configured-key");
-      assert.equal(requestedHeaders.Authorization, "Bearer configured-key");
+      // sb_secret_ keys are not JWTs: apikey header only (Supabase API-keys guide).
+      assert.equal(requestedHeaders.apikey, "sb_secret_configured");
+      assert.equal(requestedHeaders.Authorization, undefined);
+
+      // Legacy service_role JWT: also sent as Authorization: Bearer.
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+      const jwt = `${b64({ alg: "HS256" })}.${b64({ role: "service_role" })}.c2ln`;
+      fs.writeFileSync(path.join(TEST_ROOT, "config.json"), JSON.stringify({
+        supabase_url: "https://configured.supabase.co",
+        supabase_secret_key: jwt,
+        sync_enabled: true,
+      }));
+      await awareness.fetchDashboardArchivedTitles();
+      assert.equal(requestedHeaders.apikey, jwt);
+      assert.equal(requestedHeaders.Authorization, `Bearer ${jwt}`);
     } finally {
       globalThis.fetch = previousFetch;
       fs.rmSync(path.join(TEST_ROOT, "config.json"), { force: true });

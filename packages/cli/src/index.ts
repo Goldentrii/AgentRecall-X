@@ -3703,16 +3703,27 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         output("AgentRecall Supabase Setup\n");
 
         const url = await ask("Supabase URL (https://xxx.supabase.co): ");
-        const key = await ask("Supabase anon key: ");
+        // SECURITY: the secret key, never the anon/publishable key. The ar_*
+        // tables have RLS on with no policies, so a public key can do nothing —
+        // and it is public by design. See packages/core/src/supabase/config.ts.
+        const key = await ask("Supabase SECRET key (sb_secret_..., Settings -> API Keys; NOT the anon/publishable key): ");
+        const { writeSupabaseConfig, classifySupabaseKey } = await import("agent-recall-core");
+        if (classifySupabaseKey(key) === "public") {
+          rl.close();
+          process.stderr.write(
+            "That is a PUBLIC anon/publishable key — nothing was saved. AgentRecall needs your project's SECRET key " +
+            "(sb_secret_..., or the legacy service_role key). See docs/supabase.md.\n"
+          );
+          process.exit(1);
+        }
         const embeddingProvider = (await ask("Embedding provider (openai/voyage) [openai]: ")).trim() || "openai";
         const embeddingKey = await ask(`${embeddingProvider === "voyage" ? "Voyage" : "OpenAI"} API key: `);
 
         rl.close();
 
-        const { writeSupabaseConfig } = await import("agent-recall-core");
         writeSupabaseConfig({
           supabase_url: url.trim(),
-          supabase_anon_key: key.trim(),
+          supabase_secret_key: key.trim(),
           embedding_provider: embeddingProvider as "openai" | "voyage",
           embedding_api_key: embeddingKey.trim(),
           sync_enabled: true,
@@ -3724,7 +3735,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
         });
 
         output("\nConfig saved to ~/.agent-recall/config.json");
-        output("Run migration.sql in your Supabase SQL editor to create tables.");
+        output("Run migration.sql in your Supabase SQL editor to create tables (existing install: migrations/2026-11-07-enable-rls.sql).");
         output("Backfill will start automatically on next session_start.\n");
       } else {
         process.stderr.write(`Unknown setup subcommand: ${rest[0] ?? "(none)"}\nUsage: ar setup supabase [--backfill]\n`);

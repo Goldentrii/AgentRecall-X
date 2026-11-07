@@ -14,7 +14,11 @@ export function getSupabaseClient(): SupabaseClient | null {
   const config = readSupabaseConfig();
   if (!config) return null;
 
-  _client = createClient(config.supabase_url, config.supabase_anon_key);
+  // Server-side secret key (see config.ts). This client never signs a user in,
+  // so no auth session is persisted or refreshed.
+  _client = createClient(config.supabase_url, config.supabase_secret_key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
   return _client;
 }
 
