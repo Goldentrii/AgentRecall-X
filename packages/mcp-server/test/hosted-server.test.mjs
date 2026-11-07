@@ -265,6 +265,48 @@ describe("hosted server — success benchmark", () => {
     await assert.rejects(connect(token, "carol-agent"), /401|nauthorized/);
   });
 
+  it("tool responses never expose the server's filesystem layout or a local ~/.agent-recall path", async () => {
+    const strings = [];
+    const collect = (v) => {
+      if (typeof v === "string") strings.push(v);
+      else if (Array.isArray(v)) v.forEach(collect);
+      else if (v && typeof v === "object") Object.values(v).forEach(collect);
+    };
+    const c = await connect(tokenAlice, "layout-probe");
+    try {
+      const calls = [
+        ["remember", { content: "Decision: hosted display paths must not leak the server data dir" }],
+        ["remember", { content: "Q: where is memory stored? A: on the hosted server" }],
+        ["session_end", {
+          summary: "Probed hosted response paths.",
+          insights: [{ title: "Hosted responses hide server paths", evidence: "layout probe test", applies_when: ["hosted", "paths"], severity: "minor" }],
+          trajectory: "keep paths opaque",
+        }],
+        ["session_end", { summary: "Opened a probe phase.", open_phase: { phase_name: "layout probe", goal: "check phase paths" } }],
+        ["session_end", {
+          summary: "Closed the probe phase.",
+          close_phase: { what_was_hard: "finding every path", how_solved: "a boundary backstop", synthesis: "redact at the edge" },
+        }],
+        ["session_start", {}],
+        ["recall", { query: "hosted display paths" }],
+        ["check", { goal: "verify hosted path display", action_description: "publish the hosted server" }],
+      ];
+      for (const [name, args] of calls) {
+        const r = await c.callTool({ name, arguments: args });
+        assert.notEqual(r.isError, true, `${name}: ${textOf(r)}`);
+        collect(r);
+      }
+      for (const res of (await c.listResources()).resources) collect(await c.readResource({ uri: res.uri }));
+    } finally {
+      await c.close();
+    }
+    // Native, forward-slash and JSON-escaped (Windows backslashes doubled) forms.
+    const forbidden = [base, dataDir, base.replace(/\\/g, "/"), JSON.stringify(base).slice(1, -1), "~/.agent-recall", fakeHome];
+    for (const s of strings) {
+      for (const f of forbidden) assert.ok(!s.includes(f), `response leaks ${JSON.stringify(f)}:\n${s.slice(0, 400)}`);
+    }
+  });
+
   it("no request ran outside a tenant scope (strict mode never tripped)", () => {
     assert.doesNotMatch(serverLog.join(""), /outside a tenant scope|internal error/);
   });

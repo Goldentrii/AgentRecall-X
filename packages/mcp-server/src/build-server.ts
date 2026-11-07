@@ -13,6 +13,7 @@
 import type { HostTier } from "agent-recall-core";
 import { createMcpServer, type ServerType } from "./server.js";
 import { installAmbientCapture } from "./lib/ambient-capture.js";
+import { installHostedRedaction } from "./lib/hosted-redact.js";
 
 import { register as registerSessionStart } from "./tools/session-start.js";
 import { register as registerRemember } from "./tools/remember.js";
@@ -40,6 +41,8 @@ export interface BuildServerOptions {
   extras: boolean;
   /** Passive per-call working-memory capture (C-1). Off for hosted. */
   ambientCapture: boolean;
+  /** Hosted only: scrub the tenant root from every tool/resource/prompt result and error. */
+  redactPaths?: boolean;
 }
 
 export function buildServer(opts: BuildServerOptions): ServerType {
@@ -47,6 +50,8 @@ export function buildServer(opts: BuildServerOptions): ServerType {
 
   // C-1 — must wrap registerTool BEFORE any registration (see ambient-capture.ts).
   if (opts.ambientCapture) installAmbientCapture(server);
+  // Hosted backstop — also before any registration (see lib/hosted-redact.ts).
+  if (opts.redactPaths) installHostedRedaction(server);
 
   // Default surface: 5 tools (Automaticity Law — every extra tool costs tokens every session).
   registerSessionStart(server);

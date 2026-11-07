@@ -160,3 +160,40 @@ describe("strict tenant mode", () => {
     assert.equal(out.inside, path.resolve(rootA));
   });
 });
+
+describe("toDisplayPath", () => {
+  it("locally keeps the ~/.agent-recall display; in a tenant shows hosted: and never the server path", () => {
+    const local = path.join(core.getRoot(), "projects", "x", "journal");
+    assert.equal(core.toDisplayPath(local), local.replace(core.getRoot(), "~/.agent-recall"));
+
+    core.withTenant(ctx(rootA, "a1a1a1"), () => {
+      const p = path.join(rootA, "projects", "main", "journal", "2026-11-07.md");
+      const shown = core.toDisplayPath(p);
+      assert.equal(shown, `${core.HOSTED_DISPLAY_ROOT}/projects/main/journal/2026-11-07.md`);
+      assert.ok(!shown.includes(base) && !shown.includes("~/.agent-recall"));
+      // Absolute paths outside the tenant fail closed (redacted, never shown).
+      const foreign = path.join(rootB, "projects", "main");
+      assert.equal(core.toDisplayPath(foreign), `${core.HOSTED_DISPLAY_ROOT}<outside-tenant>`);
+      // Sibling-prefix root (alice → alice2) is outside the tenant too.
+      assert.equal(core.toDisplayPath(rootA + "2" + path.sep + "x"), `${core.HOSTED_DISPLAY_ROOT}<outside-tenant>`);
+      assert.equal(core.toDisplayPath("relative/x.md"), "relative/x.md");
+    });
+  });
+});
+
+describe("redactTenantPaths", () => {
+  it("scrubs native, forward-slash and JSON-escaped tenant roots; identity outside a tenant", () => {
+    const msg = `ENOENT: no such file, open '${path.join(rootA, "projects", "main", "x.md")}'`;
+    assert.equal(core.redactTenantPaths(msg), msg, "no tenant → unchanged");
+    core.withTenant(ctx(rootA, "a1a1a1"), () => {
+      const fwd = (p) => p.split(path.sep).join("/");
+      for (const s of [msg, fwd(rootA) + "/p", JSON.stringify({ file_path: path.join(rootA, "p") })]) {
+        const out = core.redactTenantPaths(s);
+        assert.ok(!out.includes(base) && !out.includes(fwd(base)) && !out.includes(JSON.stringify(base).slice(1, -1)), out);
+        assert.ok(out.includes(core.HOSTED_DISPLAY_ROOT), out);
+      }
+      assert.equal(core.redactTenantPaths("plain text"), "plain text");
+      assert.equal(core.redactTenantPaths(""), "");
+    });
+  });
+});

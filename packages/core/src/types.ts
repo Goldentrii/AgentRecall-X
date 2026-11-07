@@ -126,6 +126,40 @@ export function getRoot(): string {
   return _rootScope.getStore() ?? _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }
 
+/** Prefix shown to agents in place of the hosted tenant root. */
+export const HOSTED_DISPLAY_ROOT = "hosted:";
+
+/**
+ * A store path as shown to the agent. Locally: the root becomes
+ * "~/.agent-recall" (unchanged behaviour). Inside a tenant: the root becomes
+ * "hosted:" with forward slashes, so responses never reveal the server's
+ * filesystem layout and never point the agent at a local ~/.agent-recall.
+ */
+export function toDisplayPath(p: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant) return p.replace(getRoot(), "~/.agent-recall");
+  if (p !== tenant.root && !p.startsWith(tenant.root + path.sep)) {
+    // Fail closed: an absolute path outside the tenant is server layout, not the agent's business.
+    return path.isAbsolute(p) ? `${HOSTED_DISPLAY_ROOT}<outside-tenant>` : p;
+  }
+  return HOSTED_DISPLAY_ROOT + p.slice(tenant.root.length).replace(/\\/g, "/");
+}
+
+/**
+ * Hosted backstop: replace every occurrence of the tenant root in free text
+ * (tool results, error messages) with "hosted:". Covers the native form, the
+ * forward-slash form and the JSON-escaped form (Windows backslashes doubled).
+ * Identity outside a tenant scope.
+ */
+export function redactTenantPaths(s: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant || !s) return s;
+  const forms = new Set([tenant.root, tenant.root.replace(/\\/g, "/"), tenant.root.replace(/\\/g, "\\\\")]);
+  let out = s;
+  for (const form of [...forms].sort((a, b) => b.length - a.length)) out = out.split(form).join(HOSTED_DISPLAY_ROOT);
+  return out;
+}
+
 export function getLegacyRoot(): string {
   // Inside a tenant, never scan the server OS user's ~/.claude/projects:
   // return a tenant-local path that does not exist, so every caller's

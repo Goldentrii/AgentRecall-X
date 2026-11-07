@@ -165,7 +165,7 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 
       await withTenant({ root, sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT }, async () => {
-        const server = buildServer({ tier: "B", full: opts.full, extras: false, ambientCapture: false });
+        const server = buildServer({ tier: "B", full: opts.full, extras: false, ambientCapture: false, redactPaths: true });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         res.on("close", () => {
           transport.close().catch(() => {});

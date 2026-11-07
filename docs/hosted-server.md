@@ -19,6 +19,7 @@ agent ──HTTPS──▶ TLS proxy ──▶ agent-recall-server :8787   POST 
     - Supabase and cloud embeddings (process-wide singletons and env overrides)
     - cwd-based project detection
     - the process session id
+  - Responses never show the server's filesystem. Store paths appear as `hosted:/projects/<slug>/…`, and every tool, resource and prompt result, including error messages, has the tenant root scrubbed before it leaves the server.
 - **Lifecycle:** remote clients have no AgentRecall hooks. The server always sends the agent-driven (Tier B) instructions, so the agent calls `session_start` first and `session_end` before stopping.
 - **Projects:** a tool called with `project: "auto"` (the default) uses the user's `main` project. Agents can pass an explicit project slug to keep separate projects.
 - **Stateless:** each MCP message is an independent `POST /mcp` with a JSON response. `GET` / `DELETE /mcp` return 405.

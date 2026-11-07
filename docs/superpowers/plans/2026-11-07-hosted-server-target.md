@@ -52,7 +52,7 @@ any MCP client ──HTTPS──▶ reverse proxy (TLS) ──▶ agent-recall-s
   - **two-tenant isolation**: A writes, B's recall/session_start never sees it; hostile project names and paths stay inside the tenant root
   - concurrency: interleaved A/B requests
 - [x] A6 End-to-end test with the real MCP SDK client over HTTP against the built binary (benchmark steps 1–4).
-- [~] A7 Dockerfile for the server (persistent volume at `/data`), plus a deploy guide and client config snippets for Claude Code, Cursor, Codex and Claude Desktop. (written; image build NOT yet verified: Docker engine was not running)
+- [x] A7 Dockerfile for the server (persistent volume at `/data`), plus a deploy guide and client config snippets for Claude Code, Cursor, Codex and Claude Desktop. Image verified 2026-11-07 (Docker 29.9.2): builds (515 MB), runs as `node`, healthz, token create, MCP remember/recall round trip, 401 without token, `docker stop` drains and exits 0.
 - [x] A8 Independent code + security review; fix CRITICAL/HIGH.
 
 ### Owner (you): decisions, accounts, money, legal, approvals

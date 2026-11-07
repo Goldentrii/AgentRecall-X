@@ -13,7 +13,7 @@ import { journalCapture } from "./journal-capture.js";
 import { palaceWrite } from "./palace-write.js";
 import { knowledgeWrite } from "./knowledge-write.js";
 import { awarenessUpdate } from "./awareness-update.js";
-import { getRoot } from "../types.js";
+import { toDisplayPath } from "../types.js";
 import { resolveProject } from "../storage/project.js";
 import { getSessionId } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
@@ -274,8 +274,7 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
   }
 
   // Replace agent-recall root dir for readability
-  const displayRoot = getRoot();
-  const displayPath = file_path?.replace(displayRoot, "~/.agent-recall") ?? undefined;
+  const displayPath = file_path !== undefined ? toDisplayPath(file_path) : undefined;
 
   // Generate retrieval hint from keywords + classification
   const hintWords = slugResult.keywords.slice(0, 3);
