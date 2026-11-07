@@ -15,7 +15,12 @@ export {
   resetRoot,
   getRoot,
   getLegacyRoot,
+  withTenant,
+  getTenantContext,
+  isTenantScoped,
+  enableStrictTenantMode,
 } from "./types.js";
+export type { TenantContext } from "./types.js";
 export type {
   JournalEntry,
   ProjectInfo,
