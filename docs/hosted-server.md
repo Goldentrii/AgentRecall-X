@@ -2,7 +2,7 @@
 
 One server, many users, any MCP agent. Each user gets a **token**. Any MCP client configured with the server URL + that token sees the same memory: the same owner card, HARD RULES, state card, corrections and recall. Users don't need a local install or hooks.
 
-> Status: v1. The token is the only credential (no OAuth yet). Storage is the normal AgentRecall file store, one folder per user, on the server's disk.
+> Status: v1 plus optional OAuth 2.1. By default a static token is the only credential. If you configure OAuth (see [Connect with OAuth](#connect-with-oauth)), users can also sign in with GitHub or Google. Storage is the normal AgentRecall file store, one folder per user, on the server's disk.
 
 ## How it works
 
@@ -108,7 +108,69 @@ claude mcp add --transport http agent-recall https://mcp.example.com/mcp --heade
 
 **Codex and other clients:** use their Streamable-HTTP MCP setting with the URL above and an `Authorization: Bearer` header. Check the client's docs for the exact key names.
 
-claude.ai custom connectors need OAuth, which is planned for v2. Until then, use one of the options above.
+claude.ai custom connectors need OAuth: see the next section. Without OAuth configured, use one of the options above.
+
+## Connect with OAuth
+
+Optional. AgentRecall has its **own accounts**, created the first time someone signs in with **GitHub** or **Google**. An OAuth-capable MCP client (Claude Code, claude.ai custom connectors, Cursor, Codex) connects with just the URL: it opens a browser, the user picks "Continue with GitHub" or "Continue with Google", and the client receives tokens bound to that user's tenant. The server is its own OAuth authorization server. AgentRecall never sees or stores a password; GitHub and Google only tell it a stable numeric account id. Static `ar_` tokens keep working unchanged.
+
+### Turn it on
+
+OAuth is **off** unless a public URL and at least one provider are configured; otherwise the server behaves exactly as without OAuth. A half-configuration (a lone client id or secret, a public URL without a provider, a provider without a public URL) stops the server from starting.
+
+| Setting | Meaning |
+|---|---|
+| `AR_PUBLIC_URL` / `--public-url` | Public origin of this server, e.g. `https://recall.example.com`. This is the OAuth issuer. Must be https (http only for localhost), origin only. |
+| `AR_OAUTH_GITHUB_CLIENT_ID`, `AR_OAUTH_GITHUB_CLIENT_SECRET` | A GitHub OAuth app. Authorization callback URL: `<AR_PUBLIC_URL>/authorize/callback/github`. No scopes are needed. |
+| `AR_OAUTH_GOOGLE_CLIENT_ID`, `AR_OAUTH_GOOGLE_CLIENT_SECRET` | A Google OAuth client (type "Web application"). Authorized redirect URI: `<AR_PUBLIC_URL>/authorize/callback/google`. Only the `openid` scope is used. |
+| `AR_OAUTH_REDIRECT_ALLOW` | Optional. Extra allowed client redirect URI prefixes, comma-separated (for example `https://vscode.dev/redirect`). Matched at a URL boundary. |
+| `AR_TRUST_PROXY=1` | Trust one proxy hop for the client IP. Set it behind Caddy (the deploy kit does); otherwise all users share one IP for rate limits (the server logs one warning when it sees `X-Forwarded-For` without it). Only set it behind a proxy that **overwrites** `X-Forwarded-For` (Caddy does) and never with the server port reachable directly: a client could then forge the header and dodge every per-IP limit. |
+
+Client secrets are read from the environment only (never from command-line flags) and are never logged or sent to the browser. With the deploy kit, put these variables in `deploy/hosted/.env` and restart the stack.
+
+### Connect
+
+```bash
+claude mcp add --transport http agent-recall https://recall.example.com/mcp
+# then run /mcp inside Claude Code and choose "Authenticate"
+```
+
+claude.ai: add a custom connector with the URL `https://recall.example.com/mcp`. Other clients: use their Streamable-HTTP MCP setting with the URL and no header; they discover OAuth from the `WWW-Authenticate: ... resource_metadata=` header on the 401.
+
+### How it works
+
+- Client endpoints: `/.well-known/oauth-protected-resource[/mcp]`, `/.well-known/oauth-authorization-server`, `POST /register` (dynamic client registration), `/authorize`, `POST /token`, `POST /revoke`. Browser endpoints: `POST /authorize/start`, `GET /authorize/callback/{github,google}`.
+- Sign-in: `/authorize` shows the app name, where it returns to, and one button per configured provider, and sets a short-lived `HttpOnly` cookie (`ar_oauth`, `SameSite=Lax`, scoped to `/authorize`) that ties the whole sign-in to that browser. The button posts to `/authorize/start`, which redirects to the provider with a one-time `state` and PKCE (plus a nonce for Google). The callback only proceeds if the `state` is ours and unused, belongs to that provider, and the cookie matches. If the user declines, the client gets `error=access_denied` with its own `state`.
+- PKCE (S256) is required toward clients. Access tokens (`aro_…`) last 1 hour; refresh tokens (`arr_…`) last 30 days and rotate on every use. A grant also ends 90 days after sign-in however often it is refreshed; the user then signs in again.
+- Reusing a rotated refresh token revokes the whole grant. This also happens when a client simply retries after losing the response to a refresh: that user is signed out and must sign in again.
+- Provider accounts are only checked at sign-in. To cut off a user immediately, run `agent-recall-server oauth revoke --uid <uid>`; otherwise their grants live until the 90-day limit.
+- Only SHA-256 hashes of tokens are stored (`DATA/_server/oauth-grants.json`, mode 0600). Provider tokens are used once to read the account id and then discarded.
+- Redirects are limited to loopback (`http://127.0.0.1|localhost|[::1]:*`), `https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, Cursor's `cursor://anysphere.cursor-retrieval/…`, and `AR_OAUTH_REDIRECT_ALLOW` prefixes. Anything else is refused at registration and again at `/authorize`. Prefixes are matched against the normalized URL, and URIs containing `%2e`, `%2f`, `%5c` or `.`/`..` path segments are refused.
+- A client may register at most 3 redirect URIs (each up to 1024 chars); its name is capped at 100 chars and stripped of control and bidi characters. `/register` allows 20 per hour per IP.
+- `/authorize/start` and the callback are each limited to 10 hits per 10 minutes per client IP (IPv6 counted per /64) and 300 overall; only requests carrying a live request id or state spend the overall budget.
+- Provider calls have a 10 s timeout and never follow redirects. If a provider is down or answers something unexpected, the user sees a generic message and can try again; static tokens are unaffected.
+
+### Accounts and tenants
+
+A first sign-in creates the tenant `gh-<github id>` or `gg-<google sub>`; those uid prefixes are reserved, so `token create --uid gh-…` is refused. To attach a provider account to an existing tenant (for example one that already has a static token):
+
+```bash
+agent-recall-server identity link --github-id 42 --uid alice      # takes effect on the next sign-in
+agent-recall-server identity link --google-sub 1100000000000000000 --uid alice
+agent-recall-server identity list
+```
+
+### Operate
+
+```bash
+agent-recall-server oauth list                    # grants: id, uid, client, state, expiry
+agent-recall-server oauth revoke <grant-id>       # one grant
+agent-recall-server oauth revoke --uid alice      # every grant of that uid created so far; new sign-ins still work
+```
+
+Revocation takes effect on the next request. The server logs `oauth login github=<id> uid=<uid>` the first time an account signs in (no tokens, no email).
+
+- A restart aborts sign-ins in progress (they live in memory); clients just retry. Issued tokens survive restarts.
 
 ## Operations
 
@@ -137,7 +199,7 @@ claude.ai custom connectors need OAuth, which is planned for v2. Until then, use
 
 ## Not in v1
 
-- OAuth 2.1 / browser login, and a website for self-serve tokens
+- A website for self-serve tokens, Client ID Metadata Documents, and a web page to list or revoke OAuth grants (CLI only)
 - Per-tenant Supabase or encryption at rest
 - Per-user plans (different quotas or rates per user)
 - Stateful MCP sessions (each `session_end` currently records its own session card)

@@ -106,6 +106,7 @@ function writeFile(dataDir: string, file: TokenFile): void {
 /** Create a token for `uid`. The plaintext token is returned ONCE and never stored. */
 export function createToken(dataDir: string, uid: string, label = ""): { token: string; record: TokenRecord } {
   validateUid(uid);
+  if (/^g[hg]-/.test(uid)) throw new Error(`uid "${uid}" is reserved: the "gh-" and "gg-" prefixes belong to GitHub/Google sign-ins (use identity link to attach an account to a tenant)`);
   const token = "ar_" + randomBytes(32).toString("base64url");
   const hash = sha256Hex(token);
   const record: TokenRecord = {

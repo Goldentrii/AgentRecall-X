@@ -3,6 +3,7 @@
  *
  *   POST /mcp      MCP Streamable HTTP (stateless, JSON responses), bearer auth
  *   GET  /healthz  liveness
+ *   OAuth routes   only when OAuth is configured (see oauth-app.ts)
  *
  * Per request: bearer token → uid → withTenant({root: DATA/tenants/<uid>, …}) →
  * a FRESH McpServer + transport. Nothing MCP-level is shared between requests,
@@ -18,6 +19,9 @@ import { VERSION, withTenant, enableStrictTenantMode } from "agent-recall-core";
 import { buildServer } from "../build-server.js";
 import { resolveToken, TokenStoreUnavailableError, UID_RE } from "./tokens.js";
 import { RateLimiter, UsageTracker, isWriteCall, quotaExceededResponse } from "./limits.js";
+import { createOAuth, type LoginLimits, type OAuthRuntime } from "./oauth-app.js";
+import type { OAuthConfig } from "./oauth-config.js";
+import type { ProviderUrls } from "./federation.js";
 
 export interface ServeOptions {
   /** Absolute data directory: tenants/ and _server/ live here. */
@@ -36,6 +40,10 @@ export interface ServeOptions {
   ratePerMinute?: number;
   /** Request log sink; default stderr. Never receives tokens or bodies. */
   log?: (line: string) => void;
+  /** OAuth 2.1 sign-in with GitHub / Google. null/undefined → OAuth off, behaviour identical to v1. */
+  oauth?: OAuthConfig | null;
+  /** Test seams for OAuth only: clock, login rate limits, provider endpoints, fetch and its timeout. */
+  oauthTesting?: { now?: () => number; loginLimits?: LoginLimits; providerUrls?: ProviderUrls; fetchImpl?: typeof fetch; providerTimeoutMs?: number; maxPending?: number };
 }
 
 /** The project slug a hosted tool call uses when the agent passes "auto". */
@@ -109,13 +117,21 @@ export function tenantRoot(dataDir: string, uid: string): string {
   return root;
 }
 
-function authenticate(req: http.IncomingMessage, dataDir: string): string {
+const V1_401_INSTRUCTION =
+  "Send header 'Authorization: Bearer <your AgentRecall token>'. Tokens start with 'ar_'. Ask the server operator for a token if you do not have one.";
+const OAUTH_401_INSTRUCTION =
+  "Send header 'Authorization: Bearer <token>'. Use a static token starting with 'ar_' from the server operator, or sign in with OAuth: " +
+  "an OAuth-capable MCP client finds the sign-in page via the WWW-Authenticate resource_metadata URL and opens it in the user's browser.";
+
+function authenticate(req: http.IncomingMessage, dataDir: string, oauth: OAuthRuntime | null): string {
   const header = req.headers["authorization"];
   const m = typeof header === "string" ? /^Bearer\s+(\S+)\s*$/i.exec(header) : null;
-  const uid = m ? resolveToken(dataDir, m[1]) : null;
+  // Static ar_ tokens first (unchanged), then OAuth-issued aro_ tokens when OAuth is on.
+  let uid = m ? resolveToken(dataDir, m[1]) : null;
+  if (!uid && m && oauth && m[1].startsWith("aro_")) uid = oauth.resolveAccess(m[1]);
   if (!uid) {
     throw new HttpError(401, "unauthorized", "missing, malformed, unknown or revoked token",
-      "Send header 'Authorization: Bearer <your AgentRecall token>'. Tokens start with 'ar_'. Ask the server operator for a token if you do not have one.");
+      oauth ? OAUTH_401_INSTRUCTION : V1_401_INSTRUCTION);
   }
   return uid;
 }
@@ -133,6 +149,10 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
     `AgentRecall storage quota reached (${formatMb(quotaBytes)} per user): this memory was NOT saved. ` +
     "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
+  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, ...opts.oauthTesting }) : null;
+  const unauthorizedHeader = oauth
+    ? `Bearer realm="agent-recall", resource_metadata="${oauth.resourceMetadataUrl}"`
+    : 'Bearer realm="agent-recall"';
 
   return async (req, res) => {
     const started = Date.now();
@@ -142,6 +162,10 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
     try {
       if (url.pathname === "/healthz" && req.method === "GET") {
         sendJson(res, 200, { ok: true, version: VERSION });
+        return;
+      }
+      if (oauth && oauth.owns(url.pathname)) {
+        oauth.handle(req, res);
         return;
       }
       if (url.pathname !== "/mcp") {
@@ -163,7 +187,7 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
         throw new HttpError(413, "payload_too_large", `body exceeds ${maxBody} bytes`, TOO_LARGE_INSTRUCTION);
       }
 
-      uid = authenticate(req, dataDir);
+      uid = authenticate(req, dataDir, oauth);
       // Capacity before rate: a request refused as "busy" must not cost the user a token.
       if (inFlight >= maxInFlight) {
         res.setHeader("retry-after", "1");
@@ -210,7 +234,7 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       });
     } catch (err) {
       if (err instanceof HttpError) {
-        const headers: Record<string, string> = err.status === 401 ? { "www-authenticate": 'Bearer realm="agent-recall"' } : {};
+        const headers: Record<string, string> = err.status === 401 ? { "www-authenticate": unauthorizedHeader } : {};
         sendJson(res, err.status, { error: err.code, message: err.message, agent_instruction: err.agentInstruction }, headers);
       } else if (err instanceof TokenStoreUnavailableError) {
         log(`[agent-recall-server] token store unavailable: ${err.message}`);

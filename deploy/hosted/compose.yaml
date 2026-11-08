@@ -26,6 +26,14 @@ services:
     environment:
       AR_SERVER_QUOTA_MB: ${AR_SERVER_QUOTA_MB:-100}
       AR_SERVER_RATE_PER_MIN: ${AR_SERVER_RATE_PER_MIN:-120}
+      # OAuth sign-in with GitHub / Google: on only when AR_PUBLIC_URL and at least one provider pair are set in .env (empty = off).
+      AR_PUBLIC_URL: ${AR_PUBLIC_URL:-}
+      AR_OAUTH_GITHUB_CLIENT_ID: ${AR_OAUTH_GITHUB_CLIENT_ID:-}
+      AR_OAUTH_GITHUB_CLIENT_SECRET: ${AR_OAUTH_GITHUB_CLIENT_SECRET:-}
+      AR_OAUTH_GOOGLE_CLIENT_ID: ${AR_OAUTH_GOOGLE_CLIENT_ID:-}
+      AR_OAUTH_GOOGLE_CLIENT_SECRET: ${AR_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      AR_OAUTH_REDIRECT_ALLOW: ${AR_OAUTH_REDIRECT_ALLOW:-}
+      AR_TRUST_PROXY: "1"  # Caddy is the one proxy hop in front
     volumes:
       - ar-data:/data
     expose:

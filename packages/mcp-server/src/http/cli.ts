@@ -8,6 +8,13 @@
  *   agent-recall-server token list   [--data DIR]
  *   agent-recall-server token revoke <id> [--data DIR]
  *   agent-recall-server usage        [--quota-mb 100] [--data DIR]
+ *   agent-recall-server identity link --github-id <n> | --google-sub <s> --uid <uid> [--data DIR]
+ *   agent-recall-server identity list [--data DIR]
+ *   agent-recall-server oauth list   [--data DIR]
+ *   agent-recall-server oauth revoke <grant-id> | --uid <uid> [--data DIR]
+ *
+ * OAuth (optional): serve [--public-url URL], plus GitHub and/or Google client env vars
+ * AR_PUBLIC_URL + AR_OAUTH_{GITHUB,GOOGLE}_CLIENT_ID/_SECRET; see docs/hosted-server.md.
  *
  * DIR = --data or AR_SERVER_DATA (required; no implicit default, so a server
  * can never silently write tenants into the operator's home).
@@ -16,8 +23,11 @@ import * as path from "node:path";
 import { VERSION } from "agent-recall-core";
 import * as fs from "node:fs";
 import { startHttpServer, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
-import { createToken, listTokens, revokeToken, UID_RE } from "./tokens.js";
+import { createToken, listTokens, revokeToken, UID_RE, TokenStoreUnavailableError } from "./tokens.js";
 import { dirSize } from "./limits.js";
+import { loadOAuthConfig, OAuthConfigError } from "./oauth-config.js";
+import { linkIdentity, listIdentities } from "./identities.js";
+import { operatorRevokeGrant, operatorRevokeUid, readGrantsFresh, readJsonFreshRevoked } from "./oauth-store.js";
 
 const USAGE = `agent-recall-server v${VERSION}
 
@@ -28,6 +38,19 @@ Usage:
   agent-recall-server token list [--data DIR]
   agent-recall-server token revoke <id> [--data DIR]
   agent-recall-server usage [--quota-mb 100] [--data DIR]
+  agent-recall-server identity link --github-id <n> --uid <uid> [--data DIR]
+  agent-recall-server identity link --google-sub <s> --uid <uid> [--data DIR]
+  agent-recall-server identity list [--data DIR]
+  agent-recall-server oauth list [--data DIR]
+  agent-recall-server oauth revoke <grant-id> [--data DIR]
+  agent-recall-server oauth revoke --uid <uid> [--data DIR]
+
+OAuth sign-in with GitHub / Google is on only when a public URL and at least one provider are set:
+  --public-url / $AR_PUBLIC_URL            public https origin of this server (the OAuth issuer)
+  $AR_OAUTH_GITHUB_CLIENT_ID + $AR_OAUTH_GITHUB_CLIENT_SECRET     callback <public>/authorize/callback/github
+  $AR_OAUTH_GOOGLE_CLIENT_ID + $AR_OAUTH_GOOGLE_CLIENT_SECRET     callback <public>/authorize/callback/google
+Optional env: AR_OAUTH_REDIRECT_ALLOW (extra redirect URI prefixes, comma-separated),
+AR_TRUST_PROXY=1 (trust one proxy hop for client IPs; set it behind Caddy).
 
 Per-user limits: --quota-mb ($AR_SERVER_QUOTA_MB, default 100) and
 --rate-per-min ($AR_SERVER_RATE_PER_MIN, default 120); 0 = off.
@@ -40,6 +63,17 @@ function flag(args: string[], name: string): string | undefined {
   const v = args[i + 1];
   if (v === undefined || v.startsWith("--")) fail(`${name} needs a value`);
   return v;
+}
+
+/** Arguments that are neither a --flag nor a flag's value, so `--data DIR <id>` and `<id> --data DIR` both work. */
+function positionals(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      if (args[i + 1] !== undefined && !args[i + 1].startsWith("--")) i++;
+    } else out.push(args[i]);
+  }
+  return out;
 }
 
 function fail(msg: string): never {
@@ -95,10 +129,18 @@ async function main(argv: string[]): Promise<void> {
     const dir = dataDir(args);
     const quota = quotaBytes(args);
     const rate = ratePerMinute(args);
-    const server = await startHttpServer({ dataDir: dir, port, host, full: args.includes("--full"), quotaBytes: quota, ratePerMinute: rate });
+    let oauth;
+    try {
+      oauth = loadOAuthConfig({ publicUrl: flag(args, "--public-url") });
+    } catch (err) {
+      if (err instanceof OAuthConfigError) fail(err.message);
+      throw err;
+    }
+    const server = await startHttpServer({ dataDir: dir, port, host, full: args.includes("--full"), quotaBytes: quota, ratePerMinute: rate, oauth });
     process.stderr.write(
       `agent-recall-server v${VERSION} listening on http://${host}:${port}/mcp (data: ${dir}; ` +
-      `quota ${quota > 0 ? formatMb(quota) + "/user" : "off"}; rate ${rate > 0 ? `${rate} req/min/user` : "off"})\n`,
+      `quota ${quota > 0 ? formatMb(quota) + "/user" : "off"}; rate ${rate > 0 ? `${rate} req/min/user` : "off"}; ` +
+      `oauth ${oauth ? `on, issuer ${oauth.publicUrl.origin}, login: ${Object.keys(oauth.providers).join("+")}` : "off"})\n`,
     );
 
     // Graceful drain: stop accepting, let in-flight memory writes finish, then
@@ -152,6 +194,69 @@ async function main(argv: string[]): Promise<void> {
     fail(`unknown token subcommand: ${sub ?? "(none)"}`);
   }
 
+  if (cmd === "identity") {
+    const args = [sub, ...rest].filter((a): a is string => a !== undefined);
+    const dir = dataDir(args);
+    if (sub === "link") {
+      const gh = flag(args, "--github-id");
+      const gg = flag(args, "--google-sub");
+      const uid = flag(args, "--uid");
+      if (!uid || (gh === undefined) === (gg === undefined)) fail("identity link needs --uid <uid> and exactly one of --github-id <n> or --google-sub <s>");
+      const provider = gh !== undefined ? "github" : "google";
+      const subject = (gh ?? gg) as string;
+      try {
+        linkIdentity(dir, provider, subject, uid as string);
+      } catch (err) {
+        if (err instanceof TokenStoreUnavailableError) throw err;
+        fail((err as Error).message);
+      }
+      process.stdout.write(`linked ${provider} ${subject} -> uid "${uid}"\n`);
+      return;
+    }
+    if (sub === "list") {
+      const rows = listIdentities(dir);
+      if (rows.length === 0) process.stdout.write("no identity links (default uid is gh-<id> / gg-<sub>)\n");
+      for (const r of rows) process.stdout.write(`${r.provider}=${r.subject}  uid=${r.uid}\n`);
+      return;
+    }
+    fail(`unknown identity subcommand: ${sub ?? "(none)"}`);
+  }
+
+  if (cmd === "oauth") {
+    const args = [sub, ...rest].filter((a): a is string => a !== undefined);
+    const dir = dataDir(args);
+    if (sub === "list") {
+      const grants = readGrantsFresh(dir);
+      const revoked = readJsonFreshRevoked(dir);
+      if (grants.length === 0) process.stdout.write("no oauth grants\n");
+      for (const g of grants) {
+        const op = revoked.grants[g.id] ?? (revoked.uids[g.uid] && Date.parse(g.created_at) <= Date.parse(revoked.uids[g.uid]) ? revoked.uids[g.uid] : undefined);
+        const state = g.revoked_at ? `REVOKED ${g.revoked_at}` : op ? `REVOKED(operator) ${op}` : "active";
+        process.stdout.write(`${g.id}  uid=${g.uid}  client=${g.client_id}  ${state}  created=${g.created_at}  refresh-expires=${new Date(g.refresh.exp).toISOString()}\n`);
+      }
+      return;
+    }
+    if (sub === "revoke") {
+      const uid = flag(args, "--uid");
+      if (uid) {
+        try {
+          operatorRevokeUid(dir, uid);
+        } catch (err) {
+          if (err instanceof TokenStoreUnavailableError) throw err;
+          fail((err as Error).message);
+        }
+        process.stdout.write(`revoked every oauth grant of uid "${uid}" created so far; takes effect on the next request\n`);
+        return;
+      }
+      const id = positionals(rest)[0];
+      if (!id) fail("oauth revoke needs <grant-id> (see oauth list) or --uid <uid>");
+      if (!operatorRevokeGrant(dir, id)) fail(`no oauth grant with id ${id}`);
+      process.stdout.write(`revoked grant ${id}; takes effect on the next request\n`);
+      return;
+    }
+    fail(`unknown oauth subcommand: ${sub ?? "(none)"}`);
+  }
+
   if (cmd === "usage") {
     const args = argv.slice(1);
     const dir = dataDir(args);
@@ -177,6 +282,10 @@ async function main(argv: string[]): Promise<void> {
 }
 
 main(process.argv.slice(2)).catch((err) => {
+  if (err instanceof TokenStoreUnavailableError) {
+    process.stderr.write(`error: ${err.message}\nThe file is corrupt or not valid JSON: fix it or remove it (restore from backup if you have one), then retry.\n`);
+    process.exit(1);
+  }
   process.stderr.write(`fatal: ${(err as Error)?.message ?? String(err)}\n`);
   process.exit(1);
 });
