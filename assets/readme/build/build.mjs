@@ -165,7 +165,7 @@ function mark(p, x, y, s = 1) {
 
 // ── hero ──────────────────────────────────────────────────────────────────
 function hero(p, { narrow = false } = {}) {
-  const W = narrow ? 480 : 960, H = narrow ? 700 : 400;
+  const W = narrow ? 492 : 960, H = narrow ? 700 : 400;
   let b = "";
   // wordmark
   b += mark(p, 24, 22, 1);
@@ -213,7 +213,7 @@ function hero(p, { narrow = false } = {}) {
   b += text(F.type, "next: open the README PR", fs, tx, row(4), p.ink);
   b += text(F.typeBold, "OWNER", fs, tx, row(6), p.ink);
   b += text(F.type, "prefers short answers", fs, tx, row(7), p.ink);
-  b = head + (narrow ? `<g transform="translate(-470 338)">${b}</g>` : b);
+  b = head + (narrow ? `<g transform="translate(-468 338)">${b}</g>` : b);
 
   return svg({
     w: W, h: H,
