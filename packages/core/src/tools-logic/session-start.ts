@@ -11,6 +11,8 @@ import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
 import { DEFAULT_PALACE_ROOMS, getRoot } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
+import { readIdentityCard } from "../storage/identity-card.js";
+import { readStateCard, type StateCard } from "../storage/state-card.js";
 import { readAwarenessState, fetchDashboardArchivedTitles } from "../palace/awareness.js";
 import { recallInsights, readInsightsIndex } from "../palace/insights-index.js";
 import { journalDirs, projectSubPath } from "../storage/paths.js";
@@ -308,6 +310,9 @@ export interface SlimCorrection {
 
 export interface SessionStartResult {
   project: string;
+  /** Cards v1 — absent when no card. */
+  owner?: { version: number; body: string };
+  state?: StateCard;
   identity: string;
   insights: Array<{ title: string; confirmed: number; severity: string; trend?: string }>;
   active_rooms: Array<{ name: string; salience: number; one_liner: string; topics?: string[]; last_updated: string; stale: boolean }>;
@@ -559,6 +564,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     return true;
   });
   const identity = identityLines.slice(0, 2).map((l) => l.trim().replace(/^#+\s*/, "")).join(" ").trim() || slug;
+
+  // Cards v1 — readers never throw (stderr line + null); try is belt-and-braces.
+  let ownerCard: SessionStartResult["owner"];
+  let stateCard: StateCard | undefined;
+  try { const ic = readIdentityCard(); if (ic?.body.trim()) ownerCard = { version: ic.version, body: ic.body }; } catch { /* omit */ }
+  try { stateCard = readStateCard(slug) ?? undefined; } catch { /* omit */ }
 
   // 2. Top insights from awareness state — sort by confirmations DESC, recency DESC
   const state = readAwarenessState();
@@ -1429,6 +1440,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
 
   const result: SessionStartResult = {
     project: slug,
+    ...(ownerCard ? { owner: ownerCard } : {}),
+    ...(stateCard ? { state: stateCard } : {}),
     identity,
     insights: insightsBudgeted,
     active_rooms: roomsBudgeted,

@@ -60,6 +60,8 @@ const PERSONAL_PATH_MARKERS: readonly string[] = [
   "/awareness",
   "behavior-policies.json",
   "/projects/_global/",
+  // Cards v1: owner-level identity card at <root>/identity-card.md — personal, never synced.
+  "/identity-card.md",
   // No trailing slash (mirrors "/awareness") so it matches BOTH the bare
   // `projects/<slug>/personal` directory and every file under it. A path that
   // legitimately ends in "personal" inside a project is exactly the personal

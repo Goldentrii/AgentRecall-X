@@ -16,6 +16,7 @@
  *  13. Context-heuristic boundary: +19 omitted, +21 included, shorter omitted.
  *  14. Realistic load: 6 P0s + 8 P1s + 5 insights + 3 rooms + captures — every
  *      section within budget (except the documented P0 exception).
+ *  15. Cards v1 §7.5: identity card at cap + state card at max add ≤ 4,200 chars.
  */
 
 import { describe, it, before, after } from "node:test";
@@ -580,5 +581,18 @@ describe("session_start injection efficacy", () => {
     );
     // Leave the measured number visible in test output for the report.
     console.log(`[realistic-load] payload: ${totalChars} chars ≈ ${totalTokens} tokens; sections: corrections=${sectionLen(result.corrections)} insights=${sectionLen(result.insights)} rooms=${sectionLen(result.active_rooms)} captures=${sectionLen(result.recent_captures)}`);
+  });
+
+  it("Test 15 (Cards v1 §7.5): identity card at cap + state card at max add ≤ 4,200 chars", async () => {
+    const { seedCardsAtCap } = await import("../../../scripts/eval/cards-at-cap-fixture.mjs");
+    const before = await core.sessionStart({ project: "test-cards-at-cap" });
+    seedCardsAtCap(core, ["test-cards-at-cap"]);
+    try {
+      const after = await core.sessionStart({ project: "test-cards-at-cap" });
+      const json = JSON.stringify(after).length - JSON.stringify(before).length;
+      const terse = [...core.formatOwnerSection(after.owner), "", ...core.formatStateSection(after.state)].join("\n").length;
+      console.log(`cards-at-cap: json_delta=${json} terse_added=${terse}`);
+      assert.ok(json <= 4200 && terse <= 4200, `json ${json}, terse ${terse}`);
+    } finally { fs.rmSync(path.join(TEST_ROOT, "identity-card.md"), { force: true }); }
   });
 });

@@ -19,11 +19,13 @@ AgentRecall's real MCP surface is **5 tools by default**, **6 with `--full`**, *
 
 | Tool | Purpose |
 |------|---------|
-| `session_start` | Load project context — corrections, insights, watch_for warnings. Call at ENTRY, always. |
-| `session_end` | Save journal, insights, trajectory. Call at EXIT, always, and on any durable-intent trigger. |
+| `session_start` | Load project context — owner identity card, corrections, project state card, insights, watch_for warnings. Call at ENTRY, always. |
+| `session_end` | Save journal, insights, trajectory and the project state card (`state`: goal, open_decisions, blockers, next, pointers; omitted fields carry forward). Call at EXIT, always, and on any durable-intent trigger. |
 | `remember` | Write a single fact/decision — auto-routes to the right store. Durable-intent trigger. |
 | `recall` | Search all memory — keyword/RRF fusion + optional vector. Safe to call any time. |
 | `check` | Record understanding; anticipates the likely correction before you make it. Pass `action_description` before a risky action (publish/deploy/delete/credential/external-send) for a matching + `blocked`/`advisory` verdict. Safe to call any time. |
+
+**`session_end` `state` (optional) — the project state card.** Every `session_end` rewrites `projects/<slug>/state-card.md`, and the next `session_start` loads it after the HARD RULES. Fields: `goal` (≤300 chars), `open_decisions` (≤5 × 160), `blockers` (≤5 × 160), `next` (≤300; defaults to `trajectory`), `pointers` (≤8 × 200 — paths/URLs). Omit a field to carry it forward from the last card; pass `[]` to clear a list. The caps are soft: overflow is cut with `…` (never rejected) and the cut fields are listed in the result's `state_card.truncated` (`state_card.written` says whether a card was written). Only inputs past the schema's hard limits (`goal`/`next` 1,200 chars, list items 640, pointers 800, 20 entries per list) are rejected, and a rejection drops the whole save — so keep to the caps. The owner identity card (`<root>/identity-card.md`) is loaded first by `session_start` as `owner`; it is not writable through MCP — the owner edits it with `ar identity`. The hook-driven end-of-turn save (`hook-end`) and `ar saveall` leave the state card alone.
 
 ### `--full` adds (1 more, 6 total)
 
@@ -107,6 +109,8 @@ If you don't have MCP available, use the `ar` CLI instead:
 | `recall` | `ar recall "<query>"` | Search palace + journal. Alias: `ar insight "<query>"` |
 | `session_end` | `ar saveall` | Batch-saves all today's sessions; or `ar write "<summary>"` for manual entry |
 | `check` | *(no CLI equivalent)* | MCP only — correction tracking via hook-correction hook |
+| *(identity card)* | `ar identity init\|show\|set <file>` | Owner card loaded first by every session_start; CLI is the only write path |
+| *(state card)* | `ar state show [--project <slug>]` | Current project state card, rewritten by every session_end |
 
 > Note: `ar remember` does not exist. Use `ar write` for freeform notes or `ar capture` for Q&A pairs.
 >
