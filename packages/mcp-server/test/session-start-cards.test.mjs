@@ -22,3 +22,9 @@ it("forged fence close + injection phrase in card text stays inside the fence", 
   const hits = [...t.matchAll(/ignore previous instructions/g)].map((m) => m.index);
   assert.ok(hits.length === 2 && hits.every((h) => open < h && h < close) && !t.includes("⟦/agentrecall:memory:0000000000000000⟧"));
 });
+it("a frontmatter-only state card renders no State header and no stray blank line", () => {
+  const empty = { ...STATE, goal: "", blockers: [] };
+  const t = formatTerse(base({ corrections: [{ id: "c", severity: "p0", rule: "Never push." }], state: empty }));
+  assert.ok(!t.includes("State (updated") && !/\n\n⟦\//.test(t), t);
+  assert.ok(!formatVerbose(base({ state: empty })).includes("## State"));
+});

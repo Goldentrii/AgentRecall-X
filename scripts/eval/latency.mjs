@@ -14,8 +14,9 @@
  *                  src/tools/recall.ts) with the tool's default limit=10.
  *   session_start: await sessionStart({ project })
  *                  — packages/core/src/tools-logic/session-start.ts:505, the
- *                  function both the MCP `session_start` tool (mode=full
- *                  default) and the `ar hook-start` lifecycle hook call.
+ *                  function the MCP `session_start` tool and `ar hook-start`
+ *                  call. Measured in core's default mode=full (the heavier
+ *                  payload); the agent-facing default is mode=cards (Cards v2).
  *   Timing: process.hrtime.bigint() around the awaited call, ns → ms,
  *   rounded to 3 decimals. Formatting/transport is NOT included — this is the
  *   core-logic latency, the dominant term the 363 ms p95 claim describes.
@@ -285,7 +286,7 @@ export async function runMeasurement({ storeArg, n = 200, nSession = 50, allowTh
       queries_count: queries.length,
       measured:
         "recall = smartRecall({query, project, limit:10}) (smart-recall.ts:907, the MCP recall tool's function); " +
-        "session_start = sessionStart({project}) (session-start.ts:505, MCP tool + ar hook-start); " +
+        "session_start = sessionStart({project}) in core's default mode=full (session-start.ts; the MCP tool and ar hook-start default to mode=cards since Cards v2); " +
         "hrtime.bigint around the awaited call, warm (post-warm-up), sequential, single process",
       recall,
       session_start: sessionStartStats,

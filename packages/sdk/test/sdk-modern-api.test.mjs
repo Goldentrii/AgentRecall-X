@@ -41,6 +41,20 @@ describe("AgentRecall SDK — modern composite API", () => {
     assert.equal(result.project, "sdk-modern-api-test");
   });
 
+  it("sessionStart: default mode is cards with fencedText as rendered text; mode 'full' loads the rest", async () => {
+    const core = await import("agent-recall-core");
+    core.setRoot(TEST_ROOT);
+    await core.journalWrite({ content: "## Brief\nsdk mode fixture brief\n", project: "sdk-modern-api-test" });
+    const cards = await ar.sessionStart();
+    assert.equal(cards.mode, "cards");
+    assert.ok(cards.fencedText.startsWith("⟦agentrecall:memory:") && cards.fencedText.includes("AgentRecall — sdk-modern-api-test") && !cards.fencedText.includes('"project"'), cards.fencedText);
+    assert.equal(cards.recent.today, null);
+    const full = await ar.sessionStart({ mode: "full" });
+    assert.equal(full.mode, "full");
+    assert.match(full.recent.today ?? "", /sdk mode fixture brief/);
+    assert.match(full.fencedText, /📓 Today: sdk mode fixture brief/);
+  });
+
   it("remember routes content to a store and reports success", async () => {
     const result = await ar.remember("We decided to use token-bucket rate limiting for the API gateway.");
     assert.equal(result.success, true);

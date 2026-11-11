@@ -137,11 +137,11 @@ Five tools ship by default. Each description is written for the agent and says *
 
 | Tool | Call it | What it does |
 |---|---|---|
-| `session_start` | First, before acting | Loads corrections, insights and `watch_for` warnings for the project |
+| `session_start` | First, before acting | Default `mode: "cards"` loads the owner identity card, the HARD RULES and the project state card — nothing else; `mode: "full"` adds insights, continuity, rooms, captures and `watch_for` warnings |
 | `remember` | The moment something is decided or corrected | Saves one fact; auto-routes to journal / palace room / corrections / awareness |
 | `recall` | Whenever past context would help | Ranked search across every store (RRF), with `useful` feedback that re-weights future ranking |
 | `check` | Before risky or irreversible actions | Matches the plan against known corrections; returns `verdict: "blocked"` when one overrides it |
-| `session_end` | On save / exit | Writes the journal, promotes insights, records trajectory, optionally opens/closes a pipeline phase |
+| `session_end` | On save / exit | Writes the journal, promotes insights, records trajectory, rewrites the project state card (`state`), optionally opens/closes a pipeline phase |
 
 <details>
 <summary>More tools: <code>--full</code> and <code>AR_EXTRAS=1</code></summary>
@@ -162,13 +162,14 @@ List what your install exposes: `npx -y agent-recall-mcp --list-tools`.
 > So on Claude Code, wire the hooks — the loop then runs without agent discipline:
 >
 > ```text
-> ar hook-start        SessionStart      load context, show watch_for warnings
+> ar hook-start        SessionStart      inject the cards (owner, hard rules, state); AGENT_RECALL_SESSION_START_MODE=full for every section
 > ar hook-correction   UserPromptSubmit  capture corrections silently
 > ar hook-ambient      UserPromptSubmit  inject relevant memories (≥2-word overlap floor)
 > ar hook-save         UserPromptSubmit  "save"/"retain" → prompt session_end
 > ar hook-pretool      PreToolUse        warn on npm publish, git push, rm -rf, deploy, DROP TABLE
 > ar hook-end          SessionEnd        auto-save journal if not saved today
 > ar health            —                 recent hook failures (fail-loud)
+> ar identity set <f>  —                 owner identity card, loaded first by every session
 > ```
 
 ## The nature of memory — 5 layers
@@ -348,7 +349,7 @@ Agent-memory benchmarks test retrieval. None tests whether a correction changes 
 | | Metric | Value | Source |
 |---|---|---|---|
 | 🔁 | Retrieval hit@5, golden fixture v1 (26 queries, hash-locked) | **73.1%** keyword [53.9, 86.3]<br>**80.8%** + local embeddings [62.1, 91.5] | `npm run bench:golden` |
-| 🔁 | `session_start` context injected, median | **244 tokens** | `npm run bench:injection` |
+| 🔁 | `session_start` context injected, median (fixture, no cards) | **88 tokens** (cards default; 231 with `--mode full`) | `npm run bench:injection` |
 | 🔁 | `session_start` p95 warm / `recall` p95 | **97 ms** / **209 ms** | `npm run bench:latency` |
 | 🔁 | Correction-transfer fixture gate | exact match | `npm run bench` |
 | 🔒 | Real corrections captured (dual-blind audit, n = 59) | **35.3%** [17.3, 58.7] | `UPDATE-LOG.md` §M2 |
@@ -379,7 +380,7 @@ Reproduce everything: [`docs/eval/REPRODUCE.md`](docs/eval/REPRODUCE.md).
 | Measures | Retrieval (LongMemEval, LoCoMo) | Retrieval **and** behavior change across sessions |
 | Storage | Hosted service or DB | Markdown on your disk; Supabase mirror optional |
 | Ranking | Usually opaque | Every formula and constant labelled (see [The math](#the-math)) |
-| Per-session cost | ~7k tokens/query (Mem0's published figure) | ~244 tokens at `session_start` (fixture) |
+| Per-session cost | ~7k tokens/query (Mem0's published figure) | ~88 tokens at `session_start` (cards default; fixture, no cards) |
 
 <sub>Competitor figures are their own published numbers, not measured side by side. Landscape: [`docs/research/agent-memory-landscape-2026-07.md`](docs/research/agent-memory-landscape-2026-07.md).</sub>
 

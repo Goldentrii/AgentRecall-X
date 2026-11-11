@@ -34,7 +34,7 @@ import {
   readAwareness, readAwarenessState,
   // Modern (v3.4) composite API — same core functions the MCP tools
   // session_start / remember / recall / session_end / check delegate to.
-  sessionStart, type SessionStartResult,
+  sessionStart, renderSessionStart, type SessionStartResult, type SessionStartMode,
   smartRemember, type SmartRememberResult,
   smartRecall, type SmartRecallInput, type SmartRecallResult,
   sessionEnd, type SessionEndInput, type SessionEndResult,
@@ -292,8 +292,16 @@ export class AgentRecall {
   // see packages/mcp-server/src/tools/{session-start,remember,recall,
   // session-end,check}.ts for the 1:1 mapping this mirrors.
 
-  async sessionStart(opts?: { context?: string }): Promise<SessionStartResult & { fencedText: string }> {
-    return this.scoped(async () => withFenced(await sessionStart({ project: this.project, context: opts?.context })));
+  /**
+   * Cards v2 (G6): default mode "cards" = owner card, HARD RULES, state card; "full" = every section (the MCP tool
+   * and hook-start share these defaults). `fencedText` is the same rendered text the MCP tool and hook-start emit
+   * (agent-recall-core's renderSessionStart), no longer a fenced JSON blob; the typed fields are unchanged.
+   */
+  async sessionStart(opts?: { context?: string; mode?: SessionStartMode }): Promise<SessionStartResult & { fencedText: string }> {
+    return this.scoped(async () => {
+      const result = await sessionStart({ project: this.project, context: opts?.context, mode: opts?.mode ?? "cards" });
+      return { ...result, fencedText: renderSessionStart(result) };
+    });
   }
 
   async remember(content: string, opts?: { context?: string }): Promise<SmartRememberResult> {

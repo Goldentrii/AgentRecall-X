@@ -44,20 +44,6 @@ function hasFlag(flag: string, flagArgs: string[]): boolean {
   return flagArgs.includes(flag);
 }
 
-/**
- * L2 fix (review, 2026-07-31): word-boundary truncation with an ellipsis,
- * matching the MCP-server's `trunc()` (packages/mcp-server/src/tools/
- * session-start.ts). The continuity block previously used a bare
- * `.slice(0, n)` — no word boundary, no ellipsis marker — unlike its MCP
- * sibling rendering the SAME field.
- */
-function truncWordBoundary(s: string, n: number): string {
-  if (s.length <= n) return s;
-  const sliced = s.slice(0, n);
-  const lastSpace = sliced.lastIndexOf(" ");
-  return (lastSpace > n * 0.6 ? sliced.slice(0, lastSpace) : sliced) + "…";
-}
-
 /** Cards v1 (G2): body written by `ar identity init` — fixed literal, placeholders only. */
 const IDENTITY_TEMPLATE = "# Owner\n- Languages: <reply language; code and docs language>\n- Hard rules: <actions that always need an explicit yes>\n- Machine: <OS; where code and large data live>\n- Style: <tone, verbosity, how to disagree>";
 
@@ -82,7 +68,7 @@ JOURNAL:
 
 CARDS (loaded first by session_start):
   ar identity init          Create <root>/identity-card.md from a template (never overwrites)
-  ar identity show          Print the owner identity card
+  ar identity show          Print the owner identity card (file form: edit a copy, feed it back with set)
   ar identity set <file>    Replace the body from a file (≤1600 chars, secrets rejected, version +1)
   ar state show [--project <slug>]  Print the project state card (rewritten by every session_end)
 
@@ -356,8 +342,9 @@ async function main(): Promise<void> {
           break;
         }
         const card = core.readStateCard(slug);
-        if (card) outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
-        else output(`No state card for ${slug} yet — the next session_end writes it.`);
+        if (!card) output(`No state card for ${slug} yet — the next session_end writes it.`);
+        else if (!core.stateCardHasContent(card)) output(`State card for ${slug} has no fields yet (updated ${card.updated.slice(0, 10)}) — the next session_end fills it.`);
+        else outputFenced(core.formatStateSection(card).join("\n")); // agent-authored → fenced
         break;
       }
       const action = (sub as "read" | "write") || "read";
@@ -402,11 +389,12 @@ async function main(): Promise<void> {
         } catch (e) { ioFail(e); }
       } else if (sub === "show") {
         const card = core.readIdentityCard();
-        if (card) outputFenced(`${core.formatOwnerSection(card).join("\n")}\n(updated ${card.updated || "unknown"})`);
+        if (card) outputFenced(core.serializeIdentityCard(card).trimEnd()); // the file form: `ar identity show > card.md` feeds straight back into set
         else fail(`No identity card at ${core.identityCardPath()}`, "create one with `ar identity init`.");
       } else if (sub === "set") {
+        if (!rest[1]) { fail("usage: ar identity set <file>", "pass the path of a UTF-8 markdown file holding the card body; `ar identity show > card.md` gives an editable copy."); break; }
         let text = "";
-        try { text = fs.readFileSync(rest[1] ?? "", "utf-8").replace(/^\uFEFF/, ""); } catch (e) { fail(`cannot read ${rest[1] ?? "(no file given)"}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
+        try { text = core.unfenceMemory(core.normalizeCardText(fs.readFileSync(rest[1], "utf-8"))); } catch (e) { fail(`cannot read ${rest[1]}: ${String(e)}`, "pass the path of a markdown file with the card body."); break; }
         const parsed = core.parseIdentityCard(text);
         try {
           const card = core.writeIdentityCard(parsed.malformed ? text : parsed.card.body);
@@ -414,7 +402,7 @@ async function main(): Promise<void> {
         } catch (e) {
           if (!(e instanceof core.IdentityCardError)) ioFail(e);
           else {
-            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context" }[e.code];
+            const fix = { too_long: `shorten the body to ≤${core.IDENTITY_BODY_CAP} characters`, secret: "remove the secret — the card is loaded into every session", empty: "add at least one line of owner context", binary: "save the file as UTF-8 (it holds NUL bytes, typically a UTF-16 save from PowerShell 5.1)" }[e.code];
             fail(e.message, `${fix}, then re-run ar identity set.`);
           }
         }
@@ -1670,23 +1658,18 @@ async function main(): Promise<void> {
         // working-memory file from the cross-window signal (see
         // SessionStartInput.sid's doc comment for the graceful-degradation
         // contract when it's undefined).
-        const result = await core.sessionStart({ project, sid: sessionId });
-        // P1 fence (TOW2-388): the F5 health banner below is a COMPUTED
-        // diagnostic (a failure count from this machine's own hook-health
-        // ledger) — not retrieved/stored natural-language content — and its
-        // own pre-existing contract requires it be the literal FIRST line
-        // of stdout (continuity-wave.test.mjs). It is built into a separate
-        // `preamble` array kept OUTSIDE the memory fence below, in front of
-        // it, so both invariants hold: health-first, AND everything that
-        // IS retrieved memory (`lines`, from here down) is fenced.
+        // Cards v2 (G6): hook-start injects the cards payload (owner card, HARD RULES, state card) by default;
+        // AGENT_RECALL_SESSION_START_MODE=full restores every section. Anything else falls back to cards, loudly.
+        const modeEnv = (process.env["AGENT_RECALL_SESSION_START_MODE"] ?? "").trim().toLowerCase() || "cards"; // blank = default, no warning
+        const mode: "cards" | "full" = modeEnv === "full" ? "full" : "cards";
+        if (modeEnv !== "cards" && modeEnv !== "full") process.stderr.write(`[AgentRecall hook-start] AGENT_RECALL_SESSION_START_MODE=${modeEnv} is not cards|full — using cards\n`);
+        const result = await core.sessionStart({ project, sid: sessionId, mode });
+        // Cards v2 (G6): the text is the shared core renderer — the same sections, cap, fence and order as the
+        // MCP terse payload and the SDK's fencedText, so the three surfaces cannot drift again. The F5 hook-health
+        // banner is a COMPUTED diagnostic, not memory: it is the renderer's `preamble`, printed before the fence
+        // (its pre-existing contract: literal FIRST line of stdout, continuity-wave.test.mjs). The semantic-prefetch
+        // block is this host's own extra and rides inside the fence as `extraLines` (full mode only).
         const preamble: string[] = [];
-        const lines: string[] = [];
-
-        // ---- F5 fail-loud hook health (continuity wave 2026-07-31) ----
-        // FIRST line, above everything else: a hook that has been silently
-        // failing leaves zero trace otherwise (design doc fact 7) — surface
-        // it before the agent reads anything else so memory-not-persisted
-        // isn't discovered days later. Silent (no line at all) when healthy.
         try {
           const health = core.readHookHealth();
           if (health.failures_24h > 0) {
@@ -1694,133 +1677,10 @@ async function main(): Promise<void> {
           }
         } catch { /* non-blocking — health line is best-effort */ }
 
-        lines.push("[AgentRecall] Session context loaded");
-
-        // Cards v1 — Owner (identity card) first, inside the memory fence.
-        if (result.owner) lines.push(...core.formatOwnerSection(result.owner));
-
-        // ---- F2 continuity card (continuity wave 2026-07-31) ----
-        // Top-3 most-recent sessions ACROSS projects, ranked by pure recency
-        // (readRecentSessions already returns newest-first). L1 fix (review,
-        // 2026-07-31): rendered BEFORE the per-project header line, aligning
-        // with the MCP terse formatter (packages/mcp-server/src/tools/
-        // session-start.ts's formatTerse) — that renderer deliberately places
-        // continuity ahead of the header so "what was I doing, anywhere, most
-        // recently" is the first substantive thing read; the CLI previously
-        // rendered it AFTER the header, an unintentional divergence between
-        // the two renderers of the SAME field. Absent entirely when the
-        // recency index has nothing yet (no noise on a fresh/solo-project store).
-        if (result.continuity && result.continuity.length > 0) {
-          // Fable option 2 (label-not-scope, 2026-08-30) — header frames the
-          // WHOLE block as orientation when every entry is cross-project;
-          // otherwise the original neutral header. Single derivation point:
-          // agent-recall-core's continuityHeaderText (matches the MCP
-          // formatTerse renderer of this SAME field byte-for-byte).
-          lines.push(core.continuityHeaderText(result.continuity_all_cross_project));
-          for (const c of result.continuity.slice(0, 3)) {
-            const next = c.next_step ? ` → next: ${truncWordBoundary(c.next_step, 80)}` : "";
-            // Identity-trust (2026-08-20): visibly label a rescue-sourced
-            // (unverified cwd-guess) entry rather than presenting it as
-            // verified memory — see SessionStartResult["continuity"]'s
-            // `untrusted` field doc comment.
-            const trustFlag = c.untrusted ? " [unverified — rescued from a crashed session]" : "";
-            // Fable option 2 (label-not-scope, 2026-08-30) — "↪ " marks an
-            // entry that is NOT this project's own continuity (orientation,
-            // recent work elsewhere); empty for a current-project entry.
-            // Same shared helper the MCP formatTerse renderer calls.
-            const marker = core.continuityEntryMarker(c, result.project);
-            lines.push(`   - ${marker}${c.ago} [${c.slug}] ${truncWordBoundary(c.title, 100)}${next}${trustFlag}`);
-          }
-        }
-
-        // Project + identity — always show so agent knows the project
-        lines.push(`Project: ${result.project}${result.identity && result.identity !== result.project ? ` — ${result.identity.slice(0, 100)}` : ""}`);
-
-        // P0 corrections — always show, high priority (loaded before watch_for)
-        if (result.corrections && result.corrections.length > 0) {
-          const p0s = result.corrections.filter((c: any) => c.severity === "p0");
-          if (p0s.length > 0) {
-            lines.push("🚨 P0 rules — follow strictly:");
-            for (const c of p0s.slice(0, 5)) {
-              const rule = c.rule || JSON.stringify(c);
-              // Evolution p4 — additive tier tag, same convention as the MCP
-              // formatTerse/formatVerbose renderers of this same field.
-              const tierTag = c.tier ? ` [${c.tier}]` : "";
-              lines.push(`   - ${rule.slice(0, 80)} → P0 correction — follow this rule strictly${tierTag}`);
-            }
-          }
-        }
-
-        // Cards v1 — State card immediately after the P0 block, inside the fence.
-        if (result.state) lines.push(...core.formatStateSection(result.state));
-
-        // Watch-for warnings — patterns derived from past correction history
-        if (result.watch_for && result.watch_for.length > 0) {
-          lines.push("⚠️  Past corrections — adjust approach:");
-          for (const w of result.watch_for) {
-            lines.push(`   - ${w.pattern} (×${w.frequency})${w.suggestion ? ` → ${w.suggestion}` : ""}`);
-          }
-        }
-
-        // Pending review (Fix #2, dual-channel capture gate) — ONE line,
-        // count only; staged content is untrusted and never rendered here.
-        if (result.pending_corrections && result.pending_corrections.count > 0) {
-          lines.push(`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`);
-        }
-
-        // Top 3 insights (sorted by confirmations — most proven patterns first)
-        if (result.insights.length > 0) {
-          lines.push("💡 Awareness insights:");
-          for (const ins of result.insights.slice(0, 3)) {
-            lines.push(`   [${ins.confirmed}×] ${ins.title.slice(0, 100)}`);
-          }
-        }
-
-        // Recent context
-        const recent = result.recent;
-        if (recent.today) {
-          lines.push(`📓 Today: ${recent.today.replace(/\n/g, " ").slice(0, 150)}`);
-        } else if (recent.yesterday) {
-          lines.push(`📓 Yesterday: ${recent.yesterday.replace(/\n/g, " ").slice(0, 150)}`);
-        }
-        if (recent.older_count > 0) {
-          lines.push(`   (${recent.older_count} older entries in journal)`);
-        }
-
-        // Active rooms with topics — help agent navigate the palace
-        if (result.active_rooms && result.active_rooms.length > 0) {
-          lines.push("🏛️  Palace rooms:");
-          for (const room of result.active_rooms) {
-            const topicStr = room.topics && room.topics.length > 0 ? ` — ${room.topics.join(", ")}` : "";
-            lines.push(`   - ${room.name} (salience ${room.salience.toFixed(2)})${topicStr}`);
-          }
-        }
-
-        // Cross-project insights — show top 3 inline so agent reads them now
-        if (result.cross_project && result.cross_project.length > 0) {
-          const shown = result.cross_project.slice(0, 3);
-          const total = result.cross_project.length;
-          lines.push(`🔗 Cross-project (${shown.length} of ${total}):`);
-          for (const cp of shown) {
-            lines.push(`   [${cp.from_project}] ${cp.title.slice(0, 80)}`);
-          }
-        }
-
-        // fix5 (2026-09-11): unclaimed staging pointer — EXACTLY ONE line,
-        // count only (never staged content), absent when zero. Mirrors the
-        // MCP formatTerse renderer of the same field.
-        if (result.unclaimed_cards && result.unclaimed_cards > 0) {
-          lines.push(`📥 ${result.unclaimed_cards} unclaimed session card${result.unclaimed_cards === 1 ? "" : "s"} await claim — run \`ar claim --list\``);
-        }
-
-        // Semantic prefetch from last session
-        try {
-          // Root-fix (2026-08-12, followups wave): same bypass class as
-          // logSyncError — this is AR's own project data, must honor getRoot().
-          // fix5 (2026-09-11): routed through projectSubPath so the READ
-          // resolves the same case-fold-reused path the WRITE (hook-end
-          // prefetch) now uses — the raw literal join was one of the cli
-          // bypass sites of the sanctioned project-path builder.
+        const extraLines: string[] = [];
+        if (mode === "full") try { // the renderer shows extras in full mode only — skip the read in cards mode
+          // Semantic prefetch from last session — routed through projectSubPath so the READ resolves the same
+          // case-fold-reused path the WRITE (hook-end prefetch) uses (fix5, 2026-09-11); honors getRoot().
           const prefetchFile = core.projectSubPath(project ?? "auto", "semantic-prefetch.json");
           if (fs.existsSync(prefetchFile)) {
             const prefetchData = JSON.parse(fs.readFileSync(prefetchFile, "utf-8")) as {
@@ -1830,23 +1690,18 @@ async function main(): Promise<void> {
             const age = Date.now() - new Date(prefetchData.generated).getTime();
             // Only show if < 24 hours old
             if (age < 86400000 && prefetchData.results && prefetchData.results.length > 0) {
-              lines.push("🔍 Pre-loaded semantic context:");
+              extraLines.push("🔍 Pre-loaded semantic context:");
               for (const r of prefetchData.results.slice(0, 3)) {
-                lines.push(`   [${r.source}] ${r.title.slice(0, 70)}`);
+                extraLines.push(`   [${r.source}] ${r.title.slice(0, 70)}`);
               }
             }
           }
         } catch { /* non-blocking */ }
 
-        // P1 fence (TOW2-388): everything in `lines` is retrieved/stored
-        // memory (corrections, insights, journal excerpts, room topics,
-        // cross-project titles) rendered directly into the next agent's
-        // context at session start — the exact surface the 2026-08-18
-        // red-team report exploited (CRITICAL-1: "prints ... directly into
-        // the next agent's context, unprompted"). Fence it as one block;
-        // `preamble` (the F5 health banner) stays outside and first.
-        const rendered = [...preamble, core.fenceMemory(lines.join("\n"))].join("\n");
-        process.stdout.write(rendered + "\n\n");
+        // P1 fence (TOW2-388): everything retrieved/stored (cards, corrections, insights, journal excerpts, room
+        // topics, cross-project titles, prefetch titles) is fenced as ONE block by the renderer; `preamble`
+        // stays outside and first.
+        process.stdout.write(core.renderSessionStart(result, { preamble, extraLines, abTag: false }) + "\n\n"); // abTag: hook-start never printed the A/B arm
       } catch (e) {
         // Never block the session — fail silently
         core.recordHookFailure("hook-start", e);
@@ -3110,11 +2965,13 @@ async function main(): Promise<void> {
       for (const [proj, projSessions] of byProject) {
         // NOTE (Phase 6 fix): we used to skip the project if ANY journal file
         // existed for today, which silently dropped 4 of 5 parallel sessions.
-        // Now each session writes its own session-scoped filename
-        // (`{date}--arsaveall--...--{uniq}.md`) via journalFileName, so
-        // re-runs are safe and parallel sessions all survive. We still need
-        // to dedupe within a single saveall invocation though — same upstream
-        // session shouldn't be saved twice in one call.
+        // Now core.sessionEnd maps saveType "saveall" to the `arsave` journal
+        // name (`{date}--arsave--…`, same-day rule: one file per project per
+        // day, appended to), so re-runs are safe and every session's text
+        // lands. "saveall" itself is only a marker: it keeps the project
+        // state card untouched (core session-end.ts). We still dedupe within
+        // a single saveall invocation — the same upstream session shouldn't
+        // be saved twice in one call.
 
         // Synthesize summary from all sessions for this project
         const largest = projSessions.sort((a, b) => b.sizeMb - a.sizeMb)[0];
@@ -3156,7 +3013,7 @@ async function main(): Promise<void> {
           // staging class: route it to `_unclaimed/` via the sentinel — the
           // save still happens, claimable later.
           const saveProject = projSessions[0]?.projectGuess ? proj : core.UNCLAIMED_PROJECT;
-          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // marker: journal naming unchanged, project state card not rewritten
+          await core.sessionEnd({ summary, project: saveProject, insights: [], saveType: "saveall" }); // "saveall" is a marker only: the journal is named arsave (NOTE above) and the project state card is left untouched
           saved.push(proj);
         } catch (e) {
           failed.push({ proj, err: String(e) });

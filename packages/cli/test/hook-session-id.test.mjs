@@ -12,7 +12,7 @@ it("hook-start: stdin session_id beats env; two sessions in one hour both get co
   const root = tmpDir("ar-hsid-");
   await hook(root, "hook-start", '{"session_id":"stdin-sid"}', "env-sid");
   assert.equal(lock(root, ".hook-start-lock"), "stdin-sid");
-  for (const s of ["sess-a", "sess-b"]) assert.match((await hook(root, "hook-start", undefined, s)).stdout, /Session context loaded/, s);
+  for (const s of ["sess-a", "sess-b"]) assert.match((await hook(root, "hook-start", undefined, s)).stdout, /AgentRecall — hsid/, s);
 });
 it("hook-end lock and hook-ambient working memory use CLAUDE_CODE_SESSION_ID", async () => {
   const root = tmpDir("ar-hsid-");
@@ -31,10 +31,10 @@ it("hook-ambient: non-JSON stdin is still the prompt text; the id comes from CLA
 it("hook-start: SessionStart source compact/clear re-injects despite the same session_id; startup stays deduped", async () => {
   const root = tmpDir("ar-hsid-");
   const start = (source) => hook(root, "hook-start", JSON.stringify({ session_id: "long-sid", source }));
-  assert.match((await start("startup")).stdout, /Session context loaded/, "first start injects");
-  assert.match((await start("compact")).stdout, /Session context loaded/, "compact re-injects");
+  assert.match((await start("startup")).stdout, /AgentRecall — hsid/, "first start injects");
+  assert.match((await start("compact")).stdout, /AgentRecall — hsid/, "compact re-injects");
   assert.equal(lock(root, ".hook-start-lock"), "long-sid", "lock is still written on compact");
-  assert.match((await start("clear")).stdout, /Session context loaded/, "clear re-injects");
+  assert.match((await start("clear")).stdout, /AgentRecall — hsid/, "clear re-injects");
   assert.equal((await start("startup")).stdout, "", "same id + startup is deduped");
   assert.equal((await start("resume")).stdout, "", "same id + resume is deduped");
 });
