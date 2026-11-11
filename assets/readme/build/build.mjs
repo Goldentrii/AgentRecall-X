@@ -75,10 +75,36 @@ function layout(font, str, size, tracking = 0) {
 
 const width = (font, str, size, tracking = 0) => layout(font, str, size, tracking).width;
 
+// Compact relative path data. Absolute points are rounded first (one decimal
+// at 100 px, so at most ±0.05 px), then differenced, so rounding never drifts.
+const R = (v) => Math.round(v * 10);           // tenths, as integers
+const num = (t) => {                           // tenths → shortest decimal string
+  const v = t / 10;
+  return (Object.is(v, -0) ? 0 : v).toString().replace(/^(-?)0\./, "$1.");
+};
+function compactPath(commands) {
+  let out = "", x = 0, y = 0, sx = 0, sy = 0;
+  const emit = (cmd, ...vals) => {
+    out += cmd;
+    vals.forEach((v, i) => { const t = num(v); out += i > 0 && !t.startsWith("-") ? " " + t : t; });
+  };
+  for (const c of commands) {
+    const X = c.x === undefined ? 0 : R(c.x), Y = c.y === undefined ? 0 : R(c.y);
+    if (c.type === "M") { emit("m", X - x, Y - y); x = sx = X; y = sy = Y; }
+    else if (c.type === "L") {
+      if (Y === y) emit("h", X - x); else if (X === x) emit("v", Y - y); else emit("l", X - x, Y - y);
+      x = X; y = Y;
+    } else if (c.type === "Q") { emit("q", R(c.x1) - x, R(c.y1) - y, X - x, Y - y); x = X; y = Y; }
+    else if (c.type === "C") { emit("c", R(c.x1) - x, R(c.y1) - y, R(c.x2) - x, R(c.y2) - y, X - x, Y - y); x = X; y = Y; }
+    else if (c.type === "Z") { out += "z"; x = sx; y = sy; }
+  }
+  return out;
+}
+
 function glyphId(font, g) {
   const key = `${fontName.get(font)}:${g.index}`;
   if (!defs.has(key)) {
-    const d = g.getPath(0, 0, 100).toPathData(1);
+    const d = compactPath(g.getPath(0, 0, 100).commands);
     if (d.includes("NaN")) throw new Error(`NaN outline for glyph ${g.name} in ${key}`);
     defs.set(key, { id: `g${defs.size}`, d });
   }
@@ -90,13 +116,14 @@ function text(font, str, size, x, y, fill, { anchor = "start", tracking = 0 } = 
   let x0 = x;
   if (anchor === "middle") x0 = x - w / 2;
   if (anchor === "end") x0 = x - w;
-  const s = +(size / 100).toFixed(4);
-  let out = `<g fill="${fill}">`;
+  const s = size / 100;
+  let out = `<g fill="${fill}" transform="translate(${+x0.toFixed(2)} ${+y.toFixed(2)}) scale(${+s.toFixed(4)})">`;
   for (const { g, x: gx } of glyphs) {
     if (!g.path || !g.path.commands || g.path.commands.length === 0) continue; // space
     const { id, d } = glyphId(font, g);
     if (!d) continue;
-    out += `<use href="#${id}" transform="translate(${(x0 + gx).toFixed(2)} ${y.toFixed(2)}) scale(${s})"/>`;
+    const ux = +(gx / s).toFixed(1);
+    out += ux ? `<use href="#${id}" x="${ux}"/>` : `<use href="#${id}"/>`;
   }
   return out + "</g>";
 }
@@ -137,8 +164,8 @@ function mark(p, x, y, s = 1) {
 }
 
 // ── hero ──────────────────────────────────────────────────────────────────
-function hero(p) {
-  const W = 960, H = 400;
+function hero(p, { narrow = false } = {}) {
+  const W = narrow ? 480 : 960, H = narrow ? 700 : 400;
   let b = "";
   // wordmark
   b += mark(p, 24, 22, 1);
@@ -151,7 +178,9 @@ function hero(p) {
   b += text(F.type, "One memory for Claude Code, Codex,", 18, 24, 336, p.muted);
   b += text(F.type, "Cursor and any MCP client.", 18, 24, 362, p.muted);
 
-  // agents → memory
+  // agents → memory (narrow: the same diagram, moved under the headline)
+  const head = b;
+  b = "";
   const agents = ["Claude Code", "Codex", "Cursor", "claude.ai", "any MCP client"];
   const ax = 474, aw = 146, ah = 38, ay0 = 70, gap = 60;
   const stack = { x: 684, y: 64, w: 262, h: 282 };
@@ -184,6 +213,7 @@ function hero(p) {
   b += text(F.type, "next: open the README PR", fs, tx, row(4), p.ink);
   b += text(F.typeBold, "OWNER", fs, tx, row(6), p.ink);
   b += text(F.type, "prefers short answers", fs, tx, row(7), p.ink);
+  b = head + (narrow ? `<g transform="translate(-470 338)">${b}</g>` : b);
 
   return svg({
     w: W, h: H,
@@ -282,7 +312,7 @@ function architecture(p) {
   });
 }
 
-const assets = { hero, "door-hosted": hosted, "door-local": local, architecture };
+const assets = { hero, "hero-narrow": (p) => hero(p, { narrow: true }), "door-hosted": hosted, "door-local": local, architecture };
 for (const [name, fn] of Object.entries(assets)) {
   for (const mode of ["light", "dark"]) {
     const file = path.join(out, `${name}-${mode}.svg`);

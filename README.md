@@ -2,6 +2,8 @@
 
 <p align="center">
   <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="assets/readme/hero-narrow-dark.svg">
+    <source media="(max-width: 600px)" srcset="assets/readme/hero-narrow-light.svg">
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.svg">
     <img src="assets/readme/hero-light.svg" alt="AgentRecall: teach one agent, every agent remembers. Claude Code, Codex, Cursor, claude.ai and any MCP client connect to one memory, and at session_start each agent receives the same cards: HARD RULES, project state and the owner card.">
   </picture>
@@ -149,8 +151,8 @@ Each instance gets its own isolated root (`AsyncLocalStorage`), so concurrent in
 
 ```bash
 npx agent-recall-cli recall "rate limiting"
-ar bootstrap            # scan git repos, Claude AutoMemory, CLAUDE.md files (read-only, secrets untouched)
-ar bootstrap --import   # import what it found
+ar bootstrap            # find git repos, Claude AutoMemory, CLAUDE.md (read-only)
+ar bootstrap --import   # import what it found (secrets are skipped)
 ```
 
 ---
