@@ -81,6 +81,15 @@ export interface TenantContext {
   sid: string;
   /** Project slug used when a tool is called with project "auto". */
   defaultProject: string;
+  /**
+   * Owner gate. When true, this scope is an AGENT channel: check()'s structured
+   * human_correction is staged for the owner instead of written to the active
+   * ledger, and confirmPendingCorrection() refuses to run. The hosted server
+   * sets it on every MCP request, because whoever holds a tenant's token (or
+   * steers an agent that does) could otherwise plant an always-loaded P0 rule.
+   * The operator CLI runs without it and is the only way to activate.
+   */
+  stageAgentCorrections?: boolean;
 }
 
 const _tenantScope = new AsyncLocalStorage<TenantContext>();
@@ -96,7 +105,9 @@ export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
   if (!path.isAbsolute(ctx.root)) throw new Error("withTenant: root must be absolute");
   if (!TENANT_SID_RE.test(ctx.sid)) throw new Error("withTenant: sid must match " + TENANT_SID_RE);
   if (!TENANT_PROJECT_RE.test(ctx.defaultProject)) throw new Error("withTenant: defaultProject must match " + TENANT_PROJECT_RE);
-  return _tenantScope.run({ ...ctx, root: path.resolve(ctx.root) }, fn);
+  // The owner gate never lifts by nesting: a scope opened inside an agent channel is one too.
+  const stage = ctx.stageAgentCorrections === true || _tenantScope.getStore()?.stageAgentCorrections === true;
+  return _tenantScope.run({ ...ctx, root: path.resolve(ctx.root), ...(stage ? { stageAgentCorrections: true } : {}) }, fn);
 }
 
 export function getTenantContext(): TenantContext | undefined {
@@ -105,6 +116,11 @@ export function getTenantContext(): TenantContext | undefined {
 
 export function isTenantScoped(): boolean {
   return _tenantScope.getStore() !== undefined;
+}
+
+/** True inside an agent channel whose corrections need the owner's confirmation (see TenantContext). */
+export function agentCorrectionsStaged(): boolean {
+  return _tenantScope.getStore()?.stageAgentCorrections === true;
 }
 
 /**

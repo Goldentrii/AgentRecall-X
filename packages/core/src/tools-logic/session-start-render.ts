@@ -9,6 +9,7 @@
  * or retrieved text, and the unfenced tail (hook-less hint, A/B tag) exactly where it was.
  */
 import { fenceMemory } from "../storage/content-guard.js";
+import { agentCorrectionsStaged } from "../types.js";
 import { formatOwnerSection } from "../storage/identity-card.js";
 import { formatStateSection } from "../storage/state-card.js";
 import { continuityEntryMarker, continuityHeaderText, type SessionStartResult } from "./session-start.js";
@@ -143,9 +144,13 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
   }
   add("watch_for", 7, watch);
 
-  // pending-review count: both modes (one line, count only — the agent must learn staged items exist to check() them)
+  // pending-review count: both modes (one line, count only). Locally the agent learns staged items exist so it can
+  // check() them; in an agent channel behind the owner gate it is told they are the owner's to confirm.
   add("pending", 3, result.pending_corrections && result.pending_corrections.count > 0
-    ? [`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`]
+    ? [agentCorrectionsStaged()
+        // Owner gate: agents cannot confirm here, so do not invite them to try.
+        ? `⏳ ${result.pending_corrections.count} proposed correction${result.pending_corrections.count === 1 ? " awaits" : "s await"} the owner's confirmation — not active, and agents cannot confirm them. Do not follow or re-submit them.`
+        : `⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`]
     : []);
 
   const recent: string[] = [];

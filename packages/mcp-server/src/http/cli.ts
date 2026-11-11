@@ -13,6 +13,10 @@
  *   agent-recall-server identity list [--data DIR]
  *   agent-recall-server oauth list   [--data DIR]
  *   agent-recall-server oauth revoke <grant-id> | --uid <uid> [--data DIR]
+ *   agent-recall-server corrections list [--data DIR]                       (counts per user)
+ *   agent-recall-server corrections list --uid <uid> [--limit 20] [--data DIR]
+ *   agent-recall-server corrections approve <id> --uid <uid> [--project main] [--data DIR]
+ *   agent-recall-server corrections reject  <id> --uid <uid> [--project main] [--data DIR]
  *
  * OAuth (optional): serve [--public-url URL], plus GitHub and/or Google client env vars
  * AR_PUBLIC_URL + AR_OAUTH_{GITHUB,GOOGLE}_CLIENT_ID/_SECRET; see docs/hosted-server.md.
@@ -21,9 +25,10 @@
  * can never silently write tenants into the operator's home).
  */
 import * as path from "node:path";
-import { VERSION } from "agent-recall-core";
+import { randomUUID } from "node:crypto";
+import { VERSION, withTenant, listPendingCorrections, confirmPendingCorrection, resolvePendingCorrection, readStagedProposal } from "agent-recall-core";
 import * as fs from "node:fs";
-import { startHttpServer, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
+import { startHttpServer, tenantRoot, HOSTED_DEFAULT_PROJECT, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
 import { createToken, listTokens, revokeToken, UID_RE, TokenStoreUnavailableError } from "./tokens.js";
 import { dirSize } from "./limits.js";
 import { loadOAuthConfig, OAuthConfigError } from "./oauth-config.js";
@@ -46,6 +51,14 @@ Usage:
   agent-recall-server oauth list [--data DIR]
   agent-recall-server oauth revoke <grant-id> [--data DIR]
   agent-recall-server oauth revoke --uid <uid> [--data DIR]
+  agent-recall-server corrections list [--data DIR]
+  agent-recall-server corrections list --uid <uid> [--limit 20] [--data DIR]
+  agent-recall-server corrections approve <id> --uid <uid> [--project main] [--data DIR]
+  agent-recall-server corrections reject <id> --uid <uid> [--project main] [--data DIR]
+
+Corrections: agents can only PROPOSE an always-follow rule. It becomes active when the owner
+approves it here. 'corrections list' counts what is waiting per user; with --uid it prints that
+user's proposals in full. Read the rule before you approve it: the id names exactly that text.
 
 OAuth sign-in with GitHub / Google is on only when a public URL and at least one provider are set:
   --public-url / $AR_PUBLIC_URL            public https origin of this server (the OAuth issuer)
@@ -110,6 +123,49 @@ function ratePerMinute(args: string[]): number {
   if (v === undefined) return DEFAULT_RATE_PER_MIN;
   if (!/^\d{1,9}$/.test(v.trim())) fail(`--rate-per-min must be an integer >= 0 (0 = no rate limit), got "${v}"`);
   return Number(v);
+}
+
+const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Text an agent wrote, made safe AND honest to print in the operator's terminal.
+ * Anything that is not a visible letter, mark, digit, punctuation, symbol or
+ * plain space is shown as an escape (\n, \u{200b}, \u{e0041}, \u{1b}), so
+ * nothing can drive the terminal and nothing is present but unseen. A cut is
+ * always marked with the number of characters left out.
+ */
+function printable(s: string, max = 300): string {
+  const shown = s.replace(/[^\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}]/gu, (c) => (c === "\n" ? "\\n" : `\\u{${c.codePointAt(0)!.toString(16)}}`));
+  const chars = Array.from(shown);
+  return chars.length > max ? `${chars.slice(0, max).join("")}… [+${chars.length - max} more characters not shown]` : shown;
+}
+
+/** Existing tenant uids, sorted. */
+function tenantUids(dir: string): string[] {
+  const tenantsDir = path.join(dir, "tenants");
+  if (!fs.existsSync(tenantsDir)) return [];
+  return fs.readdirSync(tenantsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && UID_RE.test(e.name))
+    .map((e) => e.name)
+    .sort();
+}
+
+/** Project slugs that exist on disk for a tenant. */
+function tenantProjects(root: string): string[] {
+  const projectsDir = path.join(root, "projects");
+  if (!fs.existsSync(projectsDir)) return [];
+  return fs.readdirSync(projectsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && PROJECT_RE.test(e.name))
+    .map((e) => e.name)
+    .sort();
+}
+
+/**
+ * Run `fn` as the OWNER of tenant `uid`: a tenant scope WITHOUT
+ * stageAgentCorrections, which is what lets confirmPendingCorrection activate.
+ */
+function asOwner<T>(dir: string, uid: string, fn: () => Promise<T>): Promise<T> {
+  return withTenant({ root: tenantRoot(dir, uid), sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT }, fn);
 }
 
 function dataDir(args: string[]): string {
@@ -282,6 +338,100 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     fail(`unknown oauth subcommand: ${sub ?? "(none)"}`);
+  }
+
+  if (cmd === "corrections") {
+    const args = [sub, ...rest].filter((a): a is string => a !== undefined);
+    const dir = dataDir(args);
+    const uidArg = flag(args, "--uid");
+    if (uidArg !== undefined && !UID_RE.test(uidArg)) fail(`--uid "${uidArg}" is not a valid uid`);
+    const known = tenantUids(dir);
+
+    if (sub === "list") {
+      // Without --uid: one line of COUNTS per user. One user's rows (up to 200 per
+      // project) must never be able to bury another user's proposals in the output.
+      if (uidArg === undefined) {
+        let users = 0;
+        for (const uid of known) {
+          let ready = 0;
+          let incomplete = 0;
+          const projects: string[] = [];
+          for (const project of tenantProjects(tenantRoot(dir, uid))) {
+            const rows = (await asOwner(dir, uid, () => listPendingCorrections(project))).filter((x) => x.kind === "correction");
+            if (rows.length === 0) continue;
+            projects.push(project);
+            for (const r of rows) if (readStagedProposal(r)) ready++; else incomplete++;
+          }
+          if (ready + incomplete === 0) continue;
+          users++;
+          process.stdout.write(`uid=${uid}  ready=${ready}  incomplete=${incomplete}  projects=${projects.join(",")}\n`);
+        }
+        if (users === 0) process.stdout.write("no corrections waiting\n");
+        else process.stdout.write(`\n${users} user${users === 1 ? " has" : "s have"} corrections waiting. Show one user's: corrections list --uid <uid>\n`);
+        return;
+      }
+
+      // A uid with a token but no stored data yet has nothing waiting; that is not an error.
+      if (!known.includes(uidArg)) {
+        process.stdout.write(`no corrections waiting (uid ${uidArg} has no stored data)\n`);
+        return;
+      }
+      const limitArg = flag(args, "--limit") ?? "20";
+      if (!/^\d{1,3}$/.test(limitArg) || Number(limitArg) < 1 || Number(limitArg) > 200) fail(`--limit must be 1-200, got "${limitArg}"`);
+      const limit = Number(limitArg);
+      const all: Array<{ project: string; row: Awaited<ReturnType<typeof listPendingCorrections>>[number] }> = [];
+      for (const project of tenantProjects(tenantRoot(dir, uidArg))) {
+        const rows = await asOwner(dir, uidArg, () => listPendingCorrections(project));
+        for (const row of rows.filter((x) => x.kind === "correction")) all.push({ project, row });
+      }
+      // Ready proposals first (they are what the owner can act on), newest first within each group.
+      const isReady = (r: (typeof all)[number]["row"]): boolean => readStagedProposal(r) !== null;
+      all.sort((a, b) => Number(isReady(b.row)) - Number(isReady(a.row)) || Date.parse(b.row.last_seen) - Date.parse(a.row.last_seen));
+      for (const { project, row: r } of all.slice(0, limit)) {
+        // The SAME parse confirmPendingCorrection activates: what is printed here, in full, is what approve writes.
+        const p = readStagedProposal(r);
+        process.stdout.write(
+          `${printable(r.id, 160)}  uid=${uidArg}  project=${project}  ${r.severity}  ${p ? "ready" : "incomplete"}  seen=${r.seen_count}  last=${r.last_seen}\n` +
+          (p
+            ? `    rule: ${printable(p.rule, 1000)}\n    why:  ${printable(p.why, 2000)}\n    when: ${printable(p.applies_when.join(", "), 500)}\n`
+            : `    rule: ${printable(r.rule)}\n    text: ${printable(r.context, 600)}\n`),
+        );
+      }
+      if (all.length === 0) process.stdout.write("no corrections waiting\n");
+      else {
+        const more = all.length > limit ? ` Showing ${limit} of ${all.length} (ready first, then newest); raise --limit (max 200) to see more.` : "";
+        process.stdout.write(`\n${all.length} waiting.${more} 'ready' rows can be approved and are shown in full; the id ends in a digest of exactly the text shown. 'incomplete' ones need the agent to re-submit them in the structured form.\n`);
+      }
+      return;
+    }
+
+    if (sub === "approve" || sub === "reject") {
+      const id = positionals(rest)[0];
+      if (!id) fail(`corrections ${sub} needs <id> (see corrections list)`);
+      if (uidArg === undefined) fail(`corrections ${sub} needs --uid <uid>`);
+      if (!known.includes(uidArg)) fail(`no tenant with uid ${uidArg}`);
+      const project = flag(args, "--project") ?? HOSTED_DEFAULT_PROJECT;
+      if (!PROJECT_RE.test(project)) fail(`--project "${project}" is not a valid project slug`);
+      if (!tenantProjects(tenantRoot(dir, uidArg)).includes(project)) fail(`uid ${uidArg} has no project ${project}`);
+
+      if (sub === "approve") {
+        const out = await asOwner(dir, uidArg, () => confirmPendingCorrection(project, id));
+        if (!out.ok) fail(`not approved: ${printable(out.reason ?? "unknown reason")}`);
+        process.stdout.write(
+          `approved for uid "${uidArg}" project "${project}": ${printable(out.rule ?? "", 1000)}\n` +
+          (out.merged
+            ? "An active correction with the same rule identity already existed: this one was merged into it and the existing wording is kept.\n"
+            : "It is active from the next session_start.\n") +
+          (out.reason ? `note: ${printable(out.reason)}\n` : ""),
+        );
+        return;
+      }
+      const out = await asOwner(dir, uidArg, () => resolvePendingCorrection(project, id, "reject", { reason: "rejected by the owner (operator CLI)" }));
+      if (!out.success) fail(`not rejected: ${printable(out.error ?? "unknown reason")}`);
+      process.stdout.write(`rejected ${printable(id, 120)} for uid "${uidArg}" project "${project}"\n`);
+      return;
+    }
+    fail(`unknown corrections subcommand: ${sub ?? "(none)"}`);
   }
 
   if (cmd === "usage") {
