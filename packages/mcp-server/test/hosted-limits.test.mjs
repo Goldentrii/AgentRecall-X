@@ -92,15 +92,19 @@ describe("UsageTracker (storage quota)", () => {
     const root = path.join(base, "tenant-a");
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, "f"), "x".repeat(100));
+    // dirSize counts allocated blocks where the OS reports them (4096 for this file on
+    // ext4, 100 on Windows), so compare against the measured size, not a literal.
+    const real = await dirSize(root);
+    assert.ok(real >= 100, "a 100-byte file occupies at least 100 bytes");
     let t = 0;
-    const u = new UsageTracker({ quotaBytes: 150, ttlMs: 1000, now: () => t });
-    assert.equal(await u.usage("a", root), 100);
+    const u = new UsageTracker({ quotaBytes: real + 50, ttlMs: 1000, now: () => t });
+    assert.equal(await u.usage("a", root), real);
     assert.equal(await u.isOver("a", root), false);
     u.add("a", 60); // estimate from a write's request body
-    assert.equal(await u.usage("a", root), 160);
+    assert.equal(await u.usage("a", root), real + 60);
     assert.equal(await u.isOver("a", root), true);
     t += 1001;
-    assert.equal(await u.usage("a", root), 100, "rescan replaces the estimate with the real size");
+    assert.equal(await u.usage("a", root), real, "rescan replaces the estimate with the real size");
   });
 
   it("concurrent checks for one tenant share a single scan", async () => {
