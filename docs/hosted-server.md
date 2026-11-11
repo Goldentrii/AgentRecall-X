@@ -129,6 +129,8 @@ OAuth is **off** unless a public URL and at least one provider are configured; o
 
 Client secrets are read from the environment only (never from command-line flags) and are never logged or sent to the browser. With the deploy kit, put these variables in `deploy/hosted/.env` and restart the stack.
 
+With the deploy kit, `sudo bash /opt/agent-recall/deploy/hosted/oauth-setup.sh` does this for GitHub: it asks for the Client ID and the client secret (hidden input, terminal paste markers stripped), writes them and `AR_PUBLIC_URL` to `.env` (mode 600, other settings kept), restarts the stack and checks OAuth discovery. Then invite your own account: `sudo docker compose exec server agent-recall-server identity link --github-id <id> --uid <uid>`.
+
 ### Connect
 
 ```bash
