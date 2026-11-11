@@ -193,14 +193,17 @@ Why: a correction is loaded by every agent of that user at `session_start`, and 
 - Only the operator CLI activates one:
 
 ```bash
-agent-recall-server corrections list [--uid alice]              # what is waiting: rule, why, applies_when
+agent-recall-server corrections list                            # counts per user: ready / incomplete
+agent-recall-server corrections list --uid alice [--limit 20]   # that user's proposals in full: rule, why, applies_when
 agent-recall-server corrections approve <id> --uid alice        # active from the next session_start
 agent-recall-server corrections reject  <id> --uid alice
 ```
 
   Add `--project <slug>` for a project other than `main`. In Docker, prefix each command with `docker exec agent-recall` (deploy kit: `sudo docker compose exec server`).
 - `list` marks each row `ready` (complete structured form, can be approved) or `incomplete` (a plain-string capture; ask the agent to re-submit it in the structured form, or reject it). Read the rule before approving: approval is the only check.
-- **An id always means exactly the text `list` shows.** A `ready` row is printed in full (rule, why, applies_when) and never changes: re-submitting the same rule with any difference, even one symbol, creates a separate row with its own id. `approve` activates what that id showed, at the severity it showed.
+- **An id always means exactly the text `list` shows.** A `ready` row is printed in full (rule, why, applies_when) and never changes: re-submitting the same rule with any difference, even one symbol, creates a separate row with its own id. The id ends in a 128-bit digest of that content, a staged row is never overwritten, and `approve` refuses a row whose id or stored digest does not match its content. `approve` activates what that id showed, at the severity it showed.
+- Without `--uid`, `list` prints one line of counts per user and no rule text, so one user's proposals cannot bury another's. With `--uid` it prints up to `--limit` rows (default 20, max 200), ready proposals first, and says how many it left out.
+- Insights an agent saves through `session_end` are memory, not rules: they are shown only in the full-mode "Insights" list and never under HARD RULES, behaviour policies or `watch_for`. They are not gated.
 - Proposal text is reduced to visible characters before it is stored: control characters, newlines, zero-width and bidi characters and Unicode tag characters become a space. A rule over 200 characters or a why over 600 is refused, not truncated. `list` prints anything unexpected as an escape such as `\u{200b}`.
 - `check`'s `delta` is not recorded on the hosted server, so it cannot feed `watch_for` or auto-promoted insights.
 - An agent can discard a partial capture (`resolution: "reject"`), logged in `corrections/_pending/_rejected.jsonl`. It cannot discard or replace a `ready` proposal; only `corrections reject` can.

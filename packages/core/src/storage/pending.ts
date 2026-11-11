@@ -283,20 +283,42 @@ export async function listPendingCorrections(project: string): Promise<PendingRe
 // Stage
 // ---------------------------------------------------------------------------
 
+/** Hex length of proposalDigest: 128 bits, so finding other content for a GIVEN digest is not feasible. */
+export const PROPOSAL_DIGEST_HEX = 32;
+
 /**
  * Owner gate — digest of exactly what approving a staged proposal activates:
- * the stored context (rule + why) and applies_when. Stored on the row and part
- * of its id, so an id can never come to mean different content.
+ * the stored context (rule + why) and applies_when. It is stored on the row
+ * AND is the tail of the row's id (proposalIdMatchesDigest), so the id the
+ * owner approves names that content and nothing else.
  */
 export function proposalDigest(context: string, appliesWhen: string[] | undefined): string {
-  return crypto.createHash("sha256").update(JSON.stringify([context, appliesWhen ?? []])).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(JSON.stringify([context, appliesWhen ?? []])).digest("hex").slice(0, PROPOSAL_DIGEST_HEX);
+}
+
+/** True when `id` is an owner-gate proposal id carrying exactly `digest`. */
+export function proposalIdMatchesDigest(id: string, digest: string): boolean {
+  return digest.length === PROPOSAL_DIGEST_HEX && id.endsWith(`-${digest}`);
+}
+
+function pendingSlug(scrubbedRule: string): string {
+  return byteCap(sanitizeName(stripInterjections(scrubbedRule) || scrubbedRule || "pending", 32), 32)
+    .replace(/-+$/g, "") || "pending";
 }
 
 function pendingId(date: string, scrubbedRule: string, identity: string): string {
-  const slug = byteCap(sanitizeName(stripInterjections(scrubbedRule) || scrubbedRule || "pending", 32), 32)
-    .replace(/-+$/g, "") || "pending";
   const hash = crypto.createHash("sha256").update(identity || scrubbedRule).digest("hex").slice(0, 6);
-  return `${date}--${slug}-${hash}`;
+  return `${date}--${pendingSlug(scrubbedRule)}-${hash}`;
+}
+
+/**
+ * Owner gate — id of a complete proposal: it ends in the FULL content digest.
+ * (pendingId's 6-hex tail is only 24 bits: with the rule text fixed, a why
+ * that collides with a row the owner already saw takes seconds to find, and
+ * the write would have replaced that row under the id the owner approves.)
+ */
+function proposalId(date: string, scrubbedRule: string, digest: string): string {
+  return `${date}--${pendingSlug(scrubbedRule)}-${digest}`;
 }
 
 /**
@@ -363,8 +385,28 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         return { staged: true, merged: true, id: merged.id };
       }
 
+      // NEVER overwrite a staged row. Reaching an occupied id here means the
+      // dedupe loop above did not claim it, i.e. the file holds DIFFERENT
+      // content under the id this capture maps to.
+      //  - complete proposal: the id carries the full digest, so this is a
+      //    digest collision or a file planted/edited on disk. Refuse; the row
+      //    the owner may already have read stays exactly as it is.
+      //  - partial capture: a 24-bit hash clash between unrelated captures.
+      //    Take the next free suffix; both rows are kept.
+      let id = complete ? proposalId(date, rule, digest!) : pendingId(date, rule, identity);
+      if (fs.existsSync(path.join(dir, `${id}.json`))) {
+        if (complete) {
+          const reason = `staging refused: id ${id} is already taken by different content`;
+          logPendingRejection(project, { id, rule, reason, channel: input.channel });
+          return { staged: false, reason };
+        }
+        let n = 2;
+        while (fs.existsSync(path.join(dir, `${id}-${n}.json`))) n++;
+        id = `${id}-${n}`;
+      }
+
       const record: PendingRecord = {
-        id: pendingId(date, rule, complete ? `${identity}:${digest}` : identity),
+        id,
         ts: nowISO,
         last_seen: nowISO,
         seen_count: 1,

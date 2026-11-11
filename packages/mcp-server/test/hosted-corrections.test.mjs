@@ -135,9 +135,15 @@ describe("hosted owner gate", () => {
     await alice.close();
   });
 
-  it("corrections list shows the proposal to the operator, scoped by uid", () => {
-    const all = cli("corrections", "list");
+  it("corrections list: counts per user without --uid, full proposals with it", () => {
+    const summary = cli("corrections", "list");
+    assert.match(summary, /uid=alice\s+ready=1\s+incomplete=0\s+projects=main/);
+    assert.ok(!summary.includes("push to main"), "the cross-user view never prints rule text, so no user can bury another's");
+    assert.ok(!summary.includes("uid=bob"), "users with nothing waiting are not listed");
+
+    const all = cli("corrections", "list", "--uid", "alice");
     assert.match(all, /uid=alice\s+project=main\s+p[01]\s+ready/);
+    assert.match(all, /^\S+-[0-9a-f]{32}  uid=alice/m, "the id ends in the 128-bit content digest");
     assert.ok(all.includes("push to main"));
     assert.match(all, /why:\s+The owner said so in chat/, "the why is shown so the owner can judge it");
     assert.match(all, /when:\s+git, deploy/);
@@ -227,6 +233,26 @@ describe("hosted owner gate", () => {
     const full = textOf(await alice.callTool({ name: "session_start", arguments: { mode: "full" } }));
     assert.ok(!full.includes("push straight to production"), "not in full-mode session_start (watch_for, insights)");
     await alice.close();
+  });
+
+  it("list --uid is capped by --limit and says how many are hidden; ready rows come first", async () => {
+    const alice = await connect(tokenAlice);
+    for (const what of ["rename branches", "resize volumes", "rebuild indexes"]) await propose(alice, `Never ${what} without asking the owner.`);
+    await alice.callTool({ name: "check", arguments: { goal: "g", human_correction: "never reindex the search cluster without asking the owner first" } });
+    await alice.close();
+
+    const one = cli("corrections", "list", "--uid", "alice", "--limit", "1");
+    assert.equal(one.split("\n").filter((l) => l.includes("uid=alice")).length, 1);
+    assert.match(one, /Showing 1 of 4/);
+    assert.match(one, /uid=alice\s+project=main\s+p[01]\s+ready/, "a ready proposal is shown before the partial capture");
+
+    const all = cli("corrections", "list", "--uid", "alice");
+    const rows = all.split("\n").filter((l) => l.includes("uid=alice"));
+    assert.equal(rows.length, 4);
+    assert.match(rows[3], /incomplete/, "the partial capture sorts last");
+    assert.equal(cliRaw("corrections", "list", "--uid", "alice", "--limit", "0").status, 2);
+    assert.equal(cliRaw("corrections", "list", "--uid", "alice", "--limit", "9999").status, 2);
+    for (const l of rows) cli("corrections", "reject", l.split("  ")[0], "--uid", "alice");
   });
 
   it("approve and reject validate their arguments and never cross tenants", async () => {

@@ -13,7 +13,8 @@
  *   agent-recall-server identity list [--data DIR]
  *   agent-recall-server oauth list   [--data DIR]
  *   agent-recall-server oauth revoke <grant-id> | --uid <uid> [--data DIR]
- *   agent-recall-server corrections list [--uid <uid>] [--data DIR]
+ *   agent-recall-server corrections list [--data DIR]                       (counts per user)
+ *   agent-recall-server corrections list --uid <uid> [--limit 20] [--data DIR]
  *   agent-recall-server corrections approve <id> --uid <uid> [--project main] [--data DIR]
  *   agent-recall-server corrections reject  <id> --uid <uid> [--project main] [--data DIR]
  *
@@ -50,12 +51,14 @@ Usage:
   agent-recall-server oauth list [--data DIR]
   agent-recall-server oauth revoke <grant-id> [--data DIR]
   agent-recall-server oauth revoke --uid <uid> [--data DIR]
-  agent-recall-server corrections list [--uid <uid>] [--data DIR]
+  agent-recall-server corrections list [--data DIR]
+  agent-recall-server corrections list --uid <uid> [--limit 20] [--data DIR]
   agent-recall-server corrections approve <id> --uid <uid> [--project main] [--data DIR]
   agent-recall-server corrections reject <id> --uid <uid> [--project main] [--data DIR]
 
 Corrections: agents can only PROPOSE an always-follow rule. It becomes active when the owner
-approves it here. 'corrections list' shows what is waiting; read the rule before you approve it.
+approves it here. 'corrections list' counts what is waiting per user; with --uid it prints that
+user's proposals in full. Read the rule before you approve it: the id names exactly that text.
 
 OAuth sign-in with GitHub / Google is on only when a public URL and at least one provider are set:
   --public-url / $AR_PUBLIC_URL            public https origin of this server (the OAuth issuer)
@@ -345,31 +348,60 @@ async function main(argv: string[]): Promise<void> {
     const known = tenantUids(dir);
 
     if (sub === "list") {
-      // A uid with a token but no stored data yet has nothing waiting; that is not an error.
-      if (uidArg !== undefined && !known.includes(uidArg)) {
-        process.stdout.write(`no corrections waiting (uid ${uidArg} has no stored data)
-`);
+      // Without --uid: one line of COUNTS per user. One user's rows (up to 200 per
+      // project) must never be able to bury another user's proposals in the output.
+      if (uidArg === undefined) {
+        let users = 0;
+        for (const uid of known) {
+          let ready = 0;
+          let incomplete = 0;
+          const projects: string[] = [];
+          for (const project of tenantProjects(tenantRoot(dir, uid))) {
+            const rows = (await asOwner(dir, uid, () => listPendingCorrections(project))).filter((x) => x.kind === "correction");
+            if (rows.length === 0) continue;
+            projects.push(project);
+            for (const r of rows) if (readStagedProposal(r)) ready++; else incomplete++;
+          }
+          if (ready + incomplete === 0) continue;
+          users++;
+          process.stdout.write(`uid=${uid}  ready=${ready}  incomplete=${incomplete}  projects=${projects.join(",")}\n`);
+        }
+        if (users === 0) process.stdout.write("no corrections waiting\n");
+        else process.stdout.write(`\n${users} user${users === 1 ? " has" : "s have"} corrections waiting. Show one user's: corrections list --uid <uid>\n`);
         return;
       }
-      let count = 0;
-      for (const uid of uidArg !== undefined ? [uidArg] : known) {
-        for (const project of tenantProjects(tenantRoot(dir, uid))) {
-          const rows = await asOwner(dir, uid, () => listPendingCorrections(project));
-          for (const r of rows.filter((x) => x.kind === "correction")) {
-            count++;
-            // The SAME parse confirmPendingCorrection activates: what is printed here, in full, is what approve writes.
-            const p = readStagedProposal(r);
-            process.stdout.write(
-              `${printable(r.id, 120)}  uid=${uid}  project=${project}  ${r.severity}  ${p ? "ready" : "incomplete"}  seen=${r.seen_count}  last=${r.last_seen}\n` +
-              (p
-                ? `    rule: ${printable(p.rule, 1000)}\n    why:  ${printable(p.why, 2000)}\n    when: ${printable(p.applies_when.join(", "), 500)}\n`
-                : `    rule: ${printable(r.rule)}\n    text: ${printable(r.context, 600)}\n`),
-            );
-          }
-        }
+
+      // A uid with a token but no stored data yet has nothing waiting; that is not an error.
+      if (!known.includes(uidArg)) {
+        process.stdout.write(`no corrections waiting (uid ${uidArg} has no stored data)\n`);
+        return;
       }
-      if (count === 0) process.stdout.write("no corrections waiting\n");
-      else process.stdout.write(`\n${count} waiting. 'ready' rows can be approved and are shown in full; an id always means exactly the text shown. 'incomplete' ones need the agent to re-submit them in the structured form.\n`);
+      const limitArg = flag(args, "--limit") ?? "20";
+      if (!/^\d{1,3}$/.test(limitArg) || Number(limitArg) < 1 || Number(limitArg) > 200) fail(`--limit must be 1-200, got "${limitArg}"`);
+      const limit = Number(limitArg);
+      const all: Array<{ project: string; row: Awaited<ReturnType<typeof listPendingCorrections>>[number] }> = [];
+      for (const project of tenantProjects(tenantRoot(dir, uidArg))) {
+        const rows = await asOwner(dir, uidArg, () => listPendingCorrections(project));
+        for (const row of rows.filter((x) => x.kind === "correction")) all.push({ project, row });
+      }
+      // Ready proposals first (they are what the owner can act on), newest first within each group.
+      const isReady = (r: (typeof all)[number]["row"]): boolean => readStagedProposal(r) !== null;
+      all.sort((a, b) => Number(isReady(b.row)) - Number(isReady(a.row)) || Date.parse(b.row.last_seen) - Date.parse(a.row.last_seen));
+      for (const { project, row: r } of all.slice(0, limit)) {
+        // The SAME parse confirmPendingCorrection activates: what is printed here, in full, is what approve writes.
+        const p = readStagedProposal(r);
+        process.stdout.write(
+          `${printable(r.id, 160)}  uid=${uidArg}  project=${project}  ${r.severity}  ${p ? "ready" : "incomplete"}  seen=${r.seen_count}  last=${r.last_seen}\n` +
+          (p
+            ? `    rule: ${printable(p.rule, 1000)}\n    why:  ${printable(p.why, 2000)}\n    when: ${printable(p.applies_when.join(", "), 500)}\n`
+            : `    rule: ${printable(r.rule)}\n    text: ${printable(r.context, 600)}\n`),
+        );
+      }
+      if (all.length === 0) process.stdout.write("no corrections waiting\n");
+      else {
+        const more = all.length > limit ? ` Showing ${limit} of ${all.length} (ready first, then newest); raise --limit (max 200) to see more.` : "";
+        process.stdout.write(`\n${all.length} waiting.${more} 'ready' rows can be approved and are shown in full; the id ends in a digest of exactly the text shown. 'incomplete' ones need the agent to re-submit them in the structured form.\n`);
+      }
       return;
     }
 

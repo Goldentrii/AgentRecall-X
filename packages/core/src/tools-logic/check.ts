@@ -18,6 +18,7 @@ import {
   resolvePendingCorrection,
   validateStructuredCorrection,
   proposalDigest,
+  proposalIdMatchesDigest,
   type PendingRecord,
 } from "../storage/pending.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
@@ -235,8 +236,9 @@ export interface StagedProposal {
  * Owner gate — parse a staged row into the proposal it carries, or null when
  * the row is not a complete, intact `check_structured_unconfirmed` proposal.
  * The operator CLI prints this and confirmPendingCorrection activates this, so
- * what the owner reads is what becomes active. A row whose stored digest does
- * not match its content (edited on disk, or written by older code) is refused.
+ * what the owner reads is what becomes active. A row whose stored digest or
+ * id does not match its content (edited on disk, or written by older code) is
+ * refused.
  */
 export function readStagedProposal(row: PendingRecord): StagedProposal | null {
   if (row.kind !== "correction" || row.channel !== "check_structured_unconfirmed") return null;
@@ -246,7 +248,8 @@ export function readStagedProposal(row: PendingRecord): StagedProposal | null {
   const why = row.context.slice(cut + WHY_SEPARATOR.length).trim();
   if (!rule || !why) return null;
   const digest = proposalDigest(row.context, row.applies_when);
-  if (row.digest !== digest) return null;
+  // The stored digest AND the id must both name this exact content: the owner approves by id.
+  if (row.digest !== digest || !proposalIdMatchesDigest(row.id, digest)) return null;
   return { rule, why, applies_when: row.applies_when, digest };
 }
 
