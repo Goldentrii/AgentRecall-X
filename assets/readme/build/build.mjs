@@ -175,8 +175,13 @@ function hero(p, { narrow = false } = {}) {
   b += text(F.display, "Teach one agent.", hs, 22, 168, p.ink, { tracking: -0.012 });
   b += text(F.display, "Every agent", hs, 22, 228, p.ink, { tracking: -0.012 });
   b += text(F.display, "remembers.", hs, 22, 288, p.ink, { tracking: -0.012 });
-  b += text(F.type, "One memory for Claude Code, Codex,", 18, 24, 336, p.muted);
-  b += text(F.type, "Cursor and any MCP client.", 18, 24, 362, p.muted);
+  if (narrow) {
+    b += text(F.type, "One memory for Claude Code,", 21, 24, 338, p.muted);
+    b += text(F.type, "Codex, Cursor and any MCP client.", 21, 24, 366, p.muted);
+  } else {
+    b += text(F.type, "One memory for Claude Code, Codex,", 18, 24, 336, p.muted);
+    b += text(F.type, "Cursor and any MCP client.", 18, 24, 362, p.muted);
+  }
 
   // agents → memory (narrow: the same diagram, moved under the headline)
   const head = b;
@@ -252,9 +257,9 @@ const hosted = (p) => door(p, {
 });
 const local = (p) => door(p, {
   tab: "Local", tabFill: null, title: "On your own machine",
-  lines: ["Fully offline, plain markdown", "Hooks run the memory loop", "One npx command"],
+  lines: ["Fully offline, plain markdown", "MCP server in one npx command", "Optional hooks automate the loop"],
   cta: "Install locally",
-  alt: "Local: runs fully offline on your machine with plain markdown files. Hooks run the memory loop, installed with one npx command.",
+  alt: "Local: runs fully offline on your machine with plain markdown files. The MCP server installs with one npx command, and optional hooks automate the memory loop.",
 });
 
 // ── architecture ──────────────────────────────────────────────────────────

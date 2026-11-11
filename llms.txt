@@ -1,6 +1,6 @@
 # AgentRecall
 
-> One memory shared by every AI agent you use. Rules, corrections and project state follow the user from Claude Code to Codex to Cursor and any MCP client. Use the hosted server (https://recall.aiakada.com/mcp, sign in with GitHub) or run it locally and fully offline (npx -y agent-recall-mcp, plain markdown in ~/.agent-recall/).
+> One memory shared by every AI agent you use. Rules, corrections and project state follow the user from Claude Code to Codex to Cursor and any MCP client. Use the free hosted server (https://recall.aiakada.com/mcp, open sign-up with GitHub) or run it locally and fully offline (npx -y agent-recall-mcp, plain markdown in ~/.agent-recall/).
 
 If you are an AI agent and AgentRecall's tools are connected, run this loop without being asked. Saying "noted" is not saving: only a tool call saves.
 
@@ -29,7 +29,7 @@ If you are an AI agent and AgentRecall's tools are connected, run this loop with
 - `recall`: ranked search across all memory, with `feedback` to re-weight results
 - `check`: record a correction, or check a risky action before doing it
 - `session_end`: save the session journal, insights and the project state card
-- Local only, with `--full`: `check_action`. With `--full` and `AR_EXTRAS=1`: `pipeline_open`, `pipeline_close`, `pipeline_list`, `pipeline_current`, `pipeline_show`, `register_rule`, `digest`
+- With `--full` (local, or a hosted server whose operator enables it): `check_action`. Local only, with `--full` and `AR_EXTRAS=1`: `pipeline_open`, `pipeline_close`, `pipeline_list`, `pipeline_current`, `pipeline_show`, `register_rule`, `digest`
 
 ## Docs
 

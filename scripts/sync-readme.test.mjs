@@ -28,3 +28,12 @@ test("the real README has no relative URL left after absolutize", () => {
   const relative = urls.filter((u) => !/^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(u));
   assert.deepEqual(relative, []);
 });
+
+test("the published package READMEs are in sync (run `npm run sync-readme` after editing README.md)", () => {
+  const lf = (t) => t.replace(/\r\n/g, "\n");
+  const expected = lf(absolutize(fs.readFileSync(new URL("../README.md", import.meta.url), "utf8")));
+  for (const p of ["core", "mcp-server", "sdk", "cli"]) {
+    const actual = lf(fs.readFileSync(new URL(`../packages/${p}/README.md`, import.meta.url), "utf8"));
+    assert.equal(actual, expected, `packages/${p}/README.md is stale`);
+  }
+});
