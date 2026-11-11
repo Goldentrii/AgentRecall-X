@@ -1,92 +1,179 @@
-**English** · [中文](README.zh-CN.md)
-
-<h1 align="center">AgentRecall</h1>
-
-<p align="center"><strong>Correct your agent once. It remembers next session — and we measure whether it actually stopped.</strong></p>
-
-<p align="center">Local-first memory for AI agents, built around a corrections ledger and math you can audit. MCP · SDK · CLI · Skill.</p>
+**English** · [中文](https://github.com/Goldentrii/AgentRecall-X/blob/main/README.zh-CN.md)
 
 <p align="center">
-  <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
-  <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
-  <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
-  <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall-X/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Goldentrii/AgentRecall-X/ci.yml?branch=main&style=flat-square&label=CI%20ubuntu%2Bwindows" alt="CI"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
-  <a href="https://mcpvault.io/servers/agentrecall-x/health?utm_source=external_badge&amp;utm_medium=referral&amp;utm_campaign=mcp_health_report"><img src="https://mcpvault.io/badge/agentrecall-x.svg" alt="MCPVault: claimed"></a>
-  <br>
-  <img src="https://img.shields.io/badge/storage-local_markdown-blue?style=flat-square" alt="Local markdown">
-  <img src="https://img.shields.io/badge/fusion-RRF_k%3D60-8B5CF6?style=flat-square" alt="RRF k=60">
-  <img src="https://img.shields.io/badge/forgetting-e%5E(%E2%88%92t%2FS)-7C3AED?style=flat-square" alt="Forgetting curve">
-  <img src="https://img.shields.io/badge/every_constant-labelled-orange?style=flat-square" alt="Every constant labelled">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/hero-dark.svg">
+    <img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/hero-light.svg" alt="AgentRecall: teach one agent, every agent remembers. Claude Code, Codex, Cursor, claude.ai and any MCP client connect to one memory, and at session_start each agent receives the same cards: HARD RULES, project state and the owner card.">
+  </picture>
 </p>
 
 <p align="center">
-  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farstart-OPEN·START_HERE-22C55E?style=for-the-badge" alt="/arstart"></a>
-  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farsave-SAVE-FF6B6B?style=for-the-badge" alt="/arsave"></a>
-  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farrecall-SEARCH-4ECDC4?style=for-the-badge" alt="/arrecall"></a>
-  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farreflect-CONSOLIDATE-8B5CF6?style=for-the-badge" alt="/arreflect"></a>
+  Your rules, corrections and project state follow you from Claude Code to Codex to Cursor.<br>
+  Use the free hosted server with a GitHub sign-in, or keep everything offline as markdown on your disk.
 </p>
+
+<p align="center">
+  <a href="https://recall.aiakada.com/healthz"><img src="https://img.shields.io/website?url=https%3A%2F%2Frecall.aiakada.com%2Fhealthz&label=hosted&up_message=online&down_message=offline&style=flat-square" alt="Hosted server status"></a>
+  <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=npm&color=18233F" alt="agent-recall-mcp on npm"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-X/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Goldentrii/AgentRecall-X/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-18233F?style=flat-square" alt="MIT license"></a>
+  <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram community"></a>
+</p>
+
+<p align="center">
+  <a href="#hosted-connect-your-agent"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
+  <a href="#local-install"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. Hooks run the memory loop, installed with one npx command. Install locally."></picture></a>
+</p>
+
+## Hosted: connect your agent
+
+One server URL for every agent: **`https://recall.aiakada.com/mcp`**. Add it, sign in with GitHub when the browser opens, and every agent you connect shares the same memory.
+
+**Claude Code**
 
 ```bash
-claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
+claude mcp add --scope user --transport http agent-recall https://recall.aiakada.com/mcp
 ```
+
+Then type `/mcp` inside Claude Code, pick `agent-recall` and choose **Authenticate**.
+
+**Codex**
+
+```bash
+codex mcp add agent-recall --url https://recall.aiakada.com/mcp
+```
+
+Codex opens the sign-in page itself. If you closed it, run `codex mcp login agent-recall`.
+
+**Cursor**: add this to `~/.cursor/mcp.json`, then click **Connect** next to `agent-recall` in Cursor's MCP settings.
+
+```json
+{ "mcpServers": { "agent-recall": { "url": "https://recall.aiakada.com/mcp" } } }
+```
+
+**claude.ai**: Settings → Connectors → **Add custom connector**, and paste the URL `https://recall.aiakada.com/mcp`.
+
+**Any other MCP client** that supports Streamable HTTP with OAuth: give it the URL and nothing else. It finds the sign-in from the server's `401` response.
+
+| | |
+|---|---|
+| **Privacy** | Your memory is private to your account and stored in the EU (Frankfurt). No ads, analytics or trackers. [Privacy policy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md) |
+| **Limits** | 100 MB of memory and 120 requests per minute per user. Reads keep working when you are full |
+| **Corrections** | An agent can only *propose* a correction on the hosted server. It becomes a HARD RULE for your other agents only after it is approved. There is no self-service approval page yet, so the operator approves on request. [How it works](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md#corrections-need-the-owner) |
+| **Your own server** | The same server, as a Compose + Caddy kit for one Ubuntu box: [docs/hosted-server.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md) |
+
+## For agents
+
+> [!NOTE]
+> **You are an AI agent reading this.** AgentRecall is the user's memory across sessions and across agents. If its tools are connected, run this loop without being asked. If they are not, offer your human one of the two installs above. Saying "noted" is not saving: only a tool call saves.
+
+```text
+session begins                       → session_start                 first, before you act (project: "auto")
+a fact or decision worth keeping     → remember(content)
+the human corrects you               → check(human_correction: { rule, why, applies_when })
+                                       on the hosted server this is staged for the owner; tell the human
+before publish / push / deploy / rm  → check(action_description)     obey verdict "blocked"
+past context would help              → recall(query)                 safe any time
+"save", "remember", or before you stop → session_end(summary, insights, state)
+```
+
+- **Tools (default 5):** `session_start` · `remember` · `recall` · `check` · `session_end`. Details in [MCP tools](#mcp-tools).
+- **Don't** claim you will remember something without calling a tool. **Don't** paste the whole memory back to the human; surface only what changes your next action. **Don't** store secrets, tokens or credentials.
+- **Machine-readable summary:** [`llms.txt`](https://github.com/Goldentrii/AgentRecall-X/blob/main/llms.txt).
 
 <details>
-<summary>🤖 <b>Agent found this repo?</b> Install it for your human — and here is how to explain it (click to expand)</summary>
+<summary>Tell your human what you installed, in one breath</summary>
 
-#### 1. Install
+> *"I connected AgentRecall. When you correct me, I save it as a rule, and at the start of every session, in any agent you use, I load those rules before I act, so you shouldn't have to say the same thing twice. Say 'save' anytime and I'll checkpoint."*
 
-```bash
-claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
-```
-
-Other MCP clients: `{ "mcpServers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }`
-
-#### 2. Tell your human, in one breath
-
-> *"I installed AgentRecall. From now on, when you correct me, I save it as a rule on your disk — plain markdown in `~/.agent-recall/`, nothing leaves the machine. Next session I load those rules before I start, so you shouldn't have to say the same thing twice. Say 'save' anytime and I'll checkpoint."*
-
-#### 3. Run this loop yourself
-
-```
-On session start                  → call session_start (before you act)
-When the human corrects you       → call remember with type "correction" — saying "noted" is not saving
-Before publish/push/deploy/delete → call check with action_description; obey verdict "blocked"
-When past context would help      → call recall
-On "save" / "remember" / exit     → call session_end
-```
-
-#### 4. Don't
-
-- Don't claim you'll remember something without calling a tool.
-- Don't paste the whole memory back to the human — surface only what changes the next action.
-- Don't store secrets, tokens or credentials.
+Local install: the memory is plain markdown in `~/.agent-recall/` and nothing leaves the machine. Hosted: it lives in your private space on recall.aiakada.com ([privacy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md)).
 
 </details>
 
+## Local install
+
+Fully offline. Memory is plain markdown in `~/.agent-recall/`; nothing leaves your machine.
+
+### MCP server: for agents
+
+```bash
+# Claude Code
+claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
+
+# Codex
+codex mcp add agent-recall -- npx -y agent-recall-mcp
+```
+
+```jsonc
+// Cursor: .cursor/mcp.json   ·   Windsurf: ~/.codeium/windsurf/mcp_config.json
+{ "mcpServers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }
+
+// VS Code: .vscode/mcp.json
+{ "servers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }
+```
+
+### Hooks: Claude Code runs the loop for you
+
+Locally, Claude Code hooks fire memory without agent discipline. These are the `ar` (CLI) hook commands:
+
+```text
+ar hook-start        SessionStart      inject the cards (owner, hard rules, state); AGENT_RECALL_SESSION_START_MODE=full for every section
+ar hook-correction   UserPromptSubmit  capture corrections silently
+ar hook-ambient      UserPromptSubmit  inject relevant memories (≥2-word overlap floor)
+ar hook-save         UserPromptSubmit  "save"/"retain" → prompt session_end
+ar hook-pretool      PreToolUse        warn on npm publish, git push, rm -rf, deploy, DROP TABLE
+ar hook-end          SessionEnd        auto-save journal if not saved today
+ar health            —                 recent hook failures (fail-loud)
+ar identity set <f>  —                 owner identity card, loaded first by every session
+```
+
+### Skill: Claude Code
+
+```bash
+mkdir -p ~/.claude/skills/agent-recall
+curl -o ~/.claude/skills/agent-recall/SKILL.md \
+  https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/SKILL.md
+```
+
+### SDK: JS/TS apps
+
+```typescript
+import { AgentRecall } from "agent-recall-sdk";
+
+const memory = new AgentRecall({ project: "my-app" });
+await memory.capture("What stack?", "Next.js + Postgres");
+const ctx = await memory.recall("rate limiting");
+```
+
+Each instance gets its own isolated root (`AsyncLocalStorage`), so concurrent instances never share state.
+
+### CLI: terminal, CI, hooks
+
+```bash
+npx agent-recall-cli recall "rate limiting"
+ar bootstrap            # scan git repos, Claude AutoMemory, CLAUDE.md files (read-only, secrets untouched)
+ar bootstrap --import   # import what it found
+```
+
 ---
 
-### Contents
+<p align="center">
+  <b>Below:</b> <a href="#why-agentrecall">Why</a> · <a href="#the-session-loop">Session loop</a> · <a href="#mcp-tools">MCP tools</a> · <a href="#the-nature-of-memory--5-layers">5 memory layers</a> · <a href="#how-memory-compounds">How memory compounds</a> · <a href="#the-math"><b>The math</b></a> · <a href="#measured-not-promised">Measured</a> · <a href="#compared-to-other-memory-tools">Compared</a> · <a href="#optional-extras">Extras</a> · <a href="#architecture">Architecture</a> · <a href="#platforms">Platforms</a> · <a href="#community">Community</a>
+</p>
 
-- [The problem](#the-problem) · [What it does](#what-it-does) · [The session loop](#the-session-loop) · [MCP tools](#mcp-tools)
-- [The nature of memory — 5 layers](#the-nature-of-memory--5-layers) · [How memory compounds](#how-memory-compounds) · [**The math**](#the-math)
-- [Measured, not promised](#measured-not-promised) · [Compared to other memory tools](#compared-to-other-memory-tools)
-- [Install](#install) · [Optional extras](#optional-extras) · [Architecture](#architecture) · [Platforms](#platforms) · [Community](#community) · [Links](#links)
+## Why AgentRecall
 
-## The problem
+You tell your agent *"don't bump the version without asking."* It apologizes, fixes it, and the session ends. Next week a fresh session does it again, or a different agent does, because the correction lived in a chat log nobody reads.
 
-You tell your agent *"don't bump the version without asking."* It apologizes, fixes it, and the session ends. Next week a fresh session does it again — the correction lived in a chat log nobody reads.
-
-AgentRecall turns that sentence into a structured, persistent rule, puts it in front of the next agent *before* it acts, and records whether the mistake came back.
+AgentRecall turns that sentence into a structured, persistent rule, puts it in front of the next agent *before* it acts, whichever agent that is, and records whether the mistake came back.
 
 ```
-── session 3 ─────────────────────────────────────────────
+── session 3 · Claude Code ──────────────────────────────
 you   › no — never bump the version without asking me first
-agent › remember(type: "correction")
-        ✓ saved · severity p0 · applies_when: [release, npm]
+agent › check(human_correction: { rule, why, applies_when: [release, npm] })
+        ✓ saved · severity p0
 
-── session 9 · new agent, no chat history ───────────────
+── session 9 · Codex, no chat history ───────────────────
 session_start › project "my-app" · 1 critical correction
                 watch_for: version bump → ask the owner first
 you   › ship the fix
@@ -94,13 +181,11 @@ agent › Fix is merged. Want me to bump to 1.4.1, or leave the version?
         outcome recorded: heeded
 ```
 
-<sub>Illustrative transcript.</sub>
-
-## What it does
+<sub>Illustrative transcript. On the hosted server, the correction in session 3 waits for approval before session 9 loads it.</sub>
 
 AgentRecall is two things:
 
-1. **A governed corrections ledger.** Every correction (*"not that version"*, *"put this section first"*, *"ask before you assume"*) becomes a structured record — severity, evidence, `applies_when`, retraction, outcome — that persists across sessions, projects and agent restarts. Export format: `corrections-export/v1`, scrubbed on egress.
+1. **A governed corrections ledger.** Every correction (*"not that version"*, *"put this section first"*, *"ask before you assume"*) becomes a structured record (severity, evidence, `applies_when`, retraction, outcome) that persists across sessions, projects, agents and restarts. Export format: `corrections-export/v1`, scrubbed on egress.
 2. **A measurement instrument.** Each correction accumulates `retrieved_count`, and every time the agent meets the same situation the outcome is logged as `heeded` or `recurred`. No public benchmark measures that step; we built the harness first and publish what it finds, including the unflattering numbers.
 
 ## The session loop
@@ -111,9 +196,9 @@ flowchart LR
     B --> C{work}
     C -->|need past knowledge| D["/arrecall · recall"]
     D --> C
-    C -->|corrected| R["remember<br/>type: correction"]
+    C -->|corrected| R["check<br/>human_correction"]
     R --> L[(corrections<br/>ledger)]
-    C -->|risky action| K["check"]
+    C -->|risky action| K["check<br/>action_description"]
     L -.-> K
     C --> E["/arsave · session_end<br/>journal + compound"]
     E --> F([session end])
@@ -124,27 +209,27 @@ flowchart LR
 
 | Command | When | What it does |
 |---|---|---|
-| `/arstart` | **First — every session** | OPEN. No args → status board across all projects → pick → load that project's rooms, corrections and task recall. `/arstart <slug>` loads directly; `/arstart bootstrap` imports existing projects. |
-| `/arsave` | **Last — every session** | SAVE. Journal + palace consolidation + awareness compounding. `/arsave all` merges every parallel session of the day. |
+| `/arstart` | **First, every session** | OPEN. No args → status board across all projects → pick → load that project's rooms, corrections and task recall. `/arstart <slug>` loads directly; `/arstart bootstrap` imports existing projects. |
+| `/arsave` | **Last, every session** | SAVE. Journal + palace consolidation + awareness compounding. `/arsave all` merges every parallel session of the day. |
 | `/arrecall` | Mid-session | SEARCH. Prior fixes, decisions, patterns for the current task. |
 | `/arreflect` | Every K sessions | CONSOLIDATE. Confirm recurrences, cluster new error classes, propose rule re-abstractions (rule edits stay owner-gated). |
 
-> **Without `/arstart`, a fresh agent has zero orientation. Without `/arsave`, nothing compounds.**
+> **Without `/arstart`, a fresh agent has zero orientation. Without `/arsave`, nothing compounds.** The slash commands are Claude Code commands from [`commands/`](https://github.com/Goldentrii/AgentRecall-X/blob/main/commands/); in other agents, and on the hosted server, the same loop runs through the tools.
 
 ## MCP tools
 
-Five tools ship by default. Each description is written for the agent and says *when* to call it.
+Five tools ship by default, locally and hosted. Each description is written for the agent and says *when* to call it.
 
 | Tool | Call it | What it does |
 |---|---|---|
-| `session_start` | First, before acting | Default `mode: "cards"` loads the owner identity card, the HARD RULES and the project state card — nothing else; `mode: "full"` adds insights, continuity, rooms, captures and `watch_for` warnings |
-| `remember` | The moment something is decided or corrected | Saves one fact; auto-routes to journal / palace room / corrections / awareness |
+| `session_start` | First, before acting | Default `mode: "cards"` loads the owner identity card, the HARD RULES and the project state card, nothing else; `mode: "full"` adds insights, continuity, rooms, captures and `watch_for` warnings |
+| `remember` | The moment something is decided | Saves one fact; auto-routes to journal / palace room / awareness |
 | `recall` | Whenever past context would help | Ranked search across every store (RRF), with `useful` feedback that re-weights future ranking |
-| `check` | Before risky or irreversible actions | Matches the plan against known corrections; returns `verdict: "blocked"` when one overrides it |
+| `check` | When corrected, and before risky or irreversible actions | Records a correction (`human_correction: {rule, why, applies_when}`; staged for approval on the hosted server). With `action_description`, matches the plan against known corrections and returns `verdict: "blocked"` when one overrides it |
 | `session_end` | On save / exit | Writes the journal, promotes insights, records trajectory, rewrites the project state card (`state`), optionally opens/closes a pipeline phase |
 
 <details>
-<summary>More tools: <code>--full</code> and <code>AR_EXTRAS=1</code></summary>
+<summary>More tools: <code>--full</code> and <code>AR_EXTRAS=1</code> (local)</summary>
 
 | Surface | Enable | Tools |
 |---|---|---|
@@ -152,25 +237,14 @@ Five tools ship by default. Each description is written for the agent and says *
 | Full | `npx -y agent-recall-mcp --full` | + `check_action` (pre-action matcher for publish / push / deploy) |
 | Extras | `--full` + `AR_EXTRAS=1` | + `pipeline_open` · `pipeline_close` · `pipeline_list` · `pipeline_current` · `pipeline_show` · `register_rule` · `digest` |
 
-List what your install exposes: `npx -y agent-recall-mcp --list-tools`.
+List what your install exposes: `npx -y agent-recall-mcp --list-tools`. The hosted server never enables the extras.
 
 </details>
 
 > [!IMPORTANT]
-> **The Automaticity Law — why only 5.** Memory only compounds if it fires without being asked. Across 44 projects and weeks of real use, the pull tools (`recall`, `memory_query`) saw **zero organic calls** — including from the agent that built them. Push channels (`session_start`, `session_end`, correction hooks) are what change behavior. Every extra default tool costs definition tokens every session for no return. <sub>(Self-measured on the owner's store, 2026-06-12.)</sub>
+> **The Automaticity Law: why only 5.** Memory only compounds if it fires without being asked. Across 44 projects and weeks of real use, the pull tools (`recall`, `memory_query`) saw **zero organic calls**, including from the agent that built them. Push channels (`session_start`, `session_end`, correction hooks) are what change behavior. Every extra default tool costs definition tokens every session for no return. <sub>(Self-measured on the owner's store, 2026-06-12.)</sub>
 >
-> So on Claude Code, wire the hooks — the loop then runs without agent discipline:
->
-> ```text
-> ar hook-start        SessionStart      inject the cards (owner, hard rules, state); AGENT_RECALL_SESSION_START_MODE=full for every section
-> ar hook-correction   UserPromptSubmit  capture corrections silently
-> ar hook-ambient      UserPromptSubmit  inject relevant memories (≥2-word overlap floor)
-> ar hook-save         UserPromptSubmit  "save"/"retain" → prompt session_end
-> ar hook-pretool      PreToolUse        warn on npm publish, git push, rm -rf, deploy, DROP TABLE
-> ar hook-end          SessionEnd        auto-save journal if not saved today
-> ar health            —                 recent hook failures (fail-loud)
-> ar identity set <f>  —                 owner identity card, loaded first by every session
-> ```
+> That is why the local install ships [hooks](#hooks-claude-code-runs-the-loop-for-you), and why the hosted server sends every agent instructions to call `session_start` first and `session_end` before it stops.
 
 ## The nature of memory — 5 layers
 
@@ -186,7 +260,7 @@ The cognitive-psychology taxonomy, mapped to plain files. Each layer forgets at 
 | + | **Awareness** | Cross-project insights promoted from repeated corrections | `palace/awareness` | confirmation-weighted |
 
 ```text
-~/.agent-recall/
+~/.agent-recall/                (hosted: one private copy of this tree per user)
 ├── projects/<slug>/
 │   ├── journal/            episodic — one entry per session
 │   ├── corrections/        behavioral rules + outcome ledger
@@ -207,7 +281,7 @@ All layers share one naming grammar, so an agent can compose a retrieval path fr
 
 ```mermaid
 flowchart LR
-    C["correction<br/>(remember / hook)"] --> L[(ledger)]
+    C["correction<br/>(check / hook)"] --> L[(ledger)]
     L --> S["session_start<br/>ranked by severity,<br/>proof, recency"]
     S --> O{"same situation<br/>again?"}
     O -->|heeded| P["proof_count +1<br/>stability × 1.3"]
@@ -340,7 +414,7 @@ Today, accumulated corrections are **clustering + decay + set-cosine**: a tally,
 
 Falsifiable claim: $`\mathrm{SNR}_N`$ rises monotonically for a consistent correction stream and stalls when corrections conflict. **Want to build it? This is the most important open problem in the repo.**
 
-<sub>Full derivations, inputs, and every constant's provenance: [`packages/core/src/MATH.md`](packages/core/src/MATH.md).</sub>
+<sub>Full derivations, inputs, and every constant's provenance: [`packages/core/src/MATH.md`](https://github.com/Goldentrii/AgentRecall-X/blob/main/packages/core/src/MATH.md).</sub>
 
 ## Measured, not promised
 
@@ -358,16 +432,16 @@ Agent-memory benchmarks test retrieval. None tests whether a correction changes 
 | 🔒 | Golden eval on a lived-in store (keyword → embeddings) | 75% → **90%** | fix7 report, 2026-09-12 |
 | 🔒 | `session_start` on a lived-in store | 1,489 tokens · 363 ms p95 | `UPDATE-LOG.md` §C2 |
 
-<sub>🔁 regenerates from this repo · 🔒 self-measured on the owner's private store, not reproducible here. Brackets are 95% intervals. The 80.8% embeddings leg is measured locally with the opt-in model (CI never downloads it, so no artifact is committed). Timings are machine-dependent; CI gates schema and determinism, never timing values.</sub>
+<sub>🔁 regenerates from this repo · 🔒 self-measured on the owner's private store, not reproducible here. Brackets are 95% intervals. The 80.8% embeddings leg is measured locally with the opt-in model (CI never downloads it, so no artifact is committed). Timings are machine-dependent; CI gates schema and determinism, never timing values. All figures are for the local install; the hosted server adds network time.</sub>
 
 <details>
 <summary>What these numbers mean</summary>
 
-We captured about a third of real corrections in our own use. The heed instrument used to default to "heeded" without evidence — it was reset to "unknown," so **0/3** is the honest starting point, not a regression (the pre-reset 92.5% is an instrument-biased upper bound; do not cite it). Offline transfer scores 0 on our corpus because 32 active corrections across 19 projects is too sparse to front-run mistakes — a density problem, not a retrieval one (confirmed 5× internally). Transfer recall cannot support a point estimate below 39 classes (claim-gate ledger, [benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6).
+We captured about a third of real corrections in our own use. The heed instrument used to default to "heeded" without evidence — it was reset to "unknown," so **0/3** is the honest starting point, not a regression (the pre-reset 92.5% is an instrument-biased upper bound; do not cite it). Offline transfer scores 0 on our corpus because 32 active corrections across 19 projects is too sparse to front-run mistakes — a density problem, not a retrieval one (confirmed 5× internally). Transfer recall cannot support a point estimate below 39 classes (claim-gate ledger, [benchmark spec](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) §2.6).
 
 The fixture numbers are smaller than the lived-in ones because golden-v1 is synthetic and thin (3 projects). Every remaining fixture miss is a committed structural trap: pipeline dir, loose rooms file, cross-project silo.
 
-Reproduce everything: [`docs/eval/REPRODUCE.md`](docs/eval/REPRODUCE.md).
+Reproduce everything: [`docs/eval/REPRODUCE.md`](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/eval/REPRODUCE.md).
 
 </details>
 
@@ -378,59 +452,11 @@ Reproduce everything: [`docs/eval/REPRODUCE.md`](docs/eval/REPRODUCE.md).
 | Optimizes for | Recalling facts | Not repeating mistakes |
 | Corrections | Another memory row | Governed ledger: severity, evidence, retraction, outcome |
 | Measures | Retrieval (LongMemEval, LoCoMo) | Retrieval **and** behavior change across sessions |
-| Storage | Hosted service or DB | Markdown on your disk; Supabase mirror optional |
+| Storage | Hosted service or DB | Markdown on your disk, or a private folder per user on the hosted server (same files) |
 | Ranking | Usually opaque | Every formula and constant labelled (see [The math](#the-math)) |
 | Per-session cost | ~7k tokens/query (Mem0's published figure) | ~88 tokens at `session_start` (cards default; fixture, no cards) |
 
-<sub>Competitor figures are their own published numbers, not measured side by side. Landscape: [`docs/research/agent-memory-landscape-2026-07.md`](docs/research/agent-memory-landscape-2026-07.md).</sub>
-
-## Install
-
-### MCP server — for agents
-
-```bash
-# Claude Code
-claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp
-
-# Codex
-codex mcp add agent-recall -- npx -y agent-recall-mcp
-```
-
-```jsonc
-// Cursor — .cursor/mcp.json   ·   Windsurf — ~/.codeium/windsurf/mcp_config.json
-{ "mcpServers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }
-
-// VS Code — .vscode/mcp.json
-{ "servers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }
-```
-
-### Skill — Claude Code
-
-```bash
-mkdir -p ~/.claude/skills/agent-recall
-curl -o ~/.claude/skills/agent-recall/SKILL.md \
-  https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/SKILL.md
-```
-
-### SDK — JS/TS apps
-
-```typescript
-import { AgentRecall } from "agent-recall-sdk";
-
-const memory = new AgentRecall({ project: "my-app" });
-await memory.capture("What stack?", "Next.js + Postgres");
-const ctx = await memory.recall("rate limiting");
-```
-
-Each instance gets its own isolated root (`AsyncLocalStorage`), so concurrent instances never share state.
-
-### CLI — terminal, CI, hooks
-
-```bash
-npx agent-recall-cli recall "rate limiting"
-ar bootstrap            # scan git repos, Claude AutoMemory, CLAUDE.md files (read-only, secrets untouched)
-ar bootstrap --import   # import what it found
-```
+<sub>Competitor figures are their own published numbers, not measured side by side. Landscape: [`docs/research/agent-memory-landscape-2026-07.md`](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/research/agent-memory-landscape-2026-07.md).</sub>
 
 ## Optional extras
 
@@ -475,19 +501,42 @@ Needs a live Claude Code login (`claude login` if it stops).
 <details>
 <summary>🧪 <b>Experimental:</b> recurrence &amp; reflection harness kit</summary>
 
-[`experimental/harness-kit/`](experimental/harness-kit/) — Claude Code hooks that answer "did the correction change behavior?": a SessionStart scoreboard, an error-class taxonomy with mechanical phantom detection (violation dated after its rule), an overdue-reflection nudge, and an optional model-dispatch guard. North-star: post-re-abstraction phantom rate → 0. First run: 8 error classes and 18 phantoms in 109 corrections; 6 rules re-abstracted the same day. Python 3 stdlib only.
+[`experimental/harness-kit/`](https://github.com/Goldentrii/AgentRecall-X/blob/main/experimental/harness-kit/) — Claude Code hooks that answer "did the correction change behavior?": a SessionStart scoreboard, an error-class taxonomy with mechanical phantom detection (violation dated after its rule), an overdue-reflection nudge, and an optional model-dispatch guard. North-star: post-re-abstraction phantom rate → 0. First run: 8 error classes and 18 phantoms in 109 corrections; 6 rules re-abstracted the same day. Python 3 stdlib only.
 
 </details>
 
 ## Architecture
 
+Local and hosted are the same server with two front doors. Both MCP entry points assemble their server in `build-server.ts`, and everything runs on `agent-recall-core`.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/architecture-dark.svg">
+    <img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/architecture-light.svg" alt="Architecture. Local mode: the ar CLI with hooks, the SDK, and agent-recall-mcp over stdio write to ~/.agent-recall on your disk. Hosted mode: agents reach Caddy (deploy/hosted) over HTTPS, then agent-recall-server (packages/mcp-server/src/http) with OAuth, tokens and limits. Both MCP entry points build their server with build-server.ts, and everything runs on agent-recall-core. Hosted memory is one folder per user under DATA/tenants.">
+  </picture>
+</p>
+
 ```text
 packages/
-├── core/         storage, retrieval, math, tool logic     agent-recall-core
-├── mcp-server/   thin MCP wrappers                        agent-recall-mcp
-├── sdk/          programmatic API                         agent-recall-sdk
-└── cli/          the `ar` command + hooks                 agent-recall-cli
+├── core/                    storage, retrieval, math, tool logic          agent-recall-core
+├── mcp-server/              MCP wrappers                                  agent-recall-mcp
+│   └── src/
+│       ├── build-server.ts  one server assembly, shared by both modes
+│       ├── index.ts         local: stdio, one user           (npx agent-recall-mcp)
+│       └── http/            hosted: HTTPS, OAuth, tokens, per-user limits (agent-recall-server)
+├── sdk/                     programmatic API                              agent-recall-sdk
+└── cli/                     the `ar` command + hooks                      agent-recall-cli
+deploy/hosted/               Compose + Caddy kit for a hosted server on one Ubuntu box
 ```
+
+| | Local | Hosted |
+|---|---|---|
+| Transport | stdio, one process per agent | Streamable HTTP, `POST /mcp`, a fresh server per request |
+| Who | You | Many users; every request runs in its own tenant scope |
+| Storage | `~/.agent-recall/` | `DATA/tenants/<uid>/`, the same file layout |
+| Sign-in | — | OAuth 2.1 (GitHub, Google) or operator-issued tokens |
+| Lifecycle | Hooks fire `session_start` / `session_end` | The server tells the agent to call them |
+| Corrections | Activate directly | Staged until approved |
 
 ```mermaid
 flowchart LR
@@ -503,35 +552,40 @@ flowchart LR
     C --> R[results + alsoLinked]
 ```
 
-All memory is local markdown. An optional Supabase mirror adds pgvector recall with the same RRF fusion; all-local stays the default. Writes go through a progress-aware file lock with NTFS-safe release; alignment and feedback logs are append-only NDJSON.
+All memory is markdown files. An optional Supabase mirror (local installs only) adds pgvector recall with the same RRF fusion. Writes go through a progress-aware file lock with NTFS-safe release; alignment and feedback logs are append-only NDJSON. Running your own hosted server: [docs/hosted-server.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md).
 
 ## Platforms
 
-| Platform | Mechanism | Status |
+| Platform | Local | Hosted (`recall.aiakada.com`) |
 |---|---|---|
-| Claude Code | MCP + skill + hooks | Primary |
-| Codex · Cursor · Windsurf · VS Code (Copilot) | MCP | Supported |
-| Any JS/TS app | `agent-recall-sdk` | Supported |
-| Terminal / CI | `ar` | Supported |
+| Claude Code | MCP + skill + hooks (primary) | `claude mcp add --transport http`, then `/mcp` → Authenticate |
+| Codex | MCP (stdio) | `codex mcp add --url`, GitHub sign-in |
+| Cursor | MCP (stdio) | `mcp.json` with the `url` |
+| claude.ai | — | Custom connector with the URL |
+| Windsurf · VS Code (Copilot) | MCP (stdio) | Any Streamable HTTP + OAuth client; not tested yet |
+| Any JS/TS app | `agent-recall-sdk` | — |
+| Terminal / CI | `ar` | — |
 
 CI runs build + regression + tests on `ubuntu-latest` and `windows-latest`.
 
 ## Community
 
-- 💬 [**Telegram**](https://t.me/+ywZwoHrg3AM0NDVi) — questions, feedback, requests
-- 🗣️ [**GitHub Discussions**](https://github.com/Goldentrii/AgentRecall-X/discussions) — field reports, benchmark numbers, adapters, 中文区
-- 🐛 [**GitHub Issues**](https://github.com/Goldentrii/AgentRecall-X/issues) — bugs and features
+AgentRecall is built in the open, and it gets better with every person who uses it and reports back.
+
+- 💬 [**Telegram**](https://t.me/+ywZwoHrg3AM0NDVi): questions, feedback, requests
+- 🗣️ [**GitHub Discussions**](https://github.com/Goldentrii/AgentRecall-X/discussions): field reports, benchmark numbers, adapters, 中文区
+- 🐛 [**GitHub Issues**](https://github.com/Goldentrii/AgentRecall-X/issues): bugs and features. For the hosted server, please don't post personal data in issues; write to the contact in [PRIVACY.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md)
 - 📦 npm: [agent-recall-mcp](https://www.npmjs.com/package/agent-recall-mcp) · [agent-recall-sdk](https://www.npmjs.com/package/agent-recall-sdk) · [agent-recall-cli](https://www.npmjs.com/package/agent-recall-cli)
 
 > [!TIP]
-> **The 15-minute contribution that matters most.** The field has vendor-selected positives and no external baselines for behavior change. Use AgentRecall for a week, then:
+> **The 15-minute contribution that matters most.** The field has vendor-selected positives and no external baselines for behavior change. Use AgentRecall locally for a week, then:
 >
 > ```bash
 > git clone https://github.com/Goldentrii/AgentRecall-X.git && cd AgentRecall-X
 > npm ci && npm run bench    # reads your local ~/.agent-recall corpus
 > ```
 >
-> Post the result in [Discussions → Benchmark Numbers](https://github.com/Goldentrii/AgentRecall-X/discussions) — a low score is a valid result. More in [CONTRIBUTORS-WANTED.md](CONTRIBUTORS-WANTED.md).
+> Post the result in [Discussions → Benchmark Numbers](https://github.com/Goldentrii/AgentRecall-X/discussions); a low score is a valid result. More in [CONTRIBUTORS-WANTED.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/CONTRIBUTORS-WANTED.md).
 
 ### Contributors
 
@@ -539,17 +593,21 @@ CI runs build + regression + tests on `ubuntu-latest` and `windows-latest`.
 
 Thanks to [@buer5](https://github.com/buer5), [@lonelyhty](https://github.com/lonelyhty) and 雷昊 for the Windows portability work and fixes that shipped in 3.5.x.
 
+<a href="https://mcpvault.io/servers/agentrecall-x/health?utm_source=external_badge&amp;utm_medium=referral&amp;utm_campaign=mcp_health_report"><img src="https://mcpvault.io/badge/agentrecall-x.svg" alt="MCPVault: claimed"></a>
+
 <a href="https://star-history.com/#Goldentrii/AgentRecall-X&Date"><img src="https://api.star-history.com/svg?repos=Goldentrii/AgentRecall-X&type=Date" alt="Star history" width="600"></a>
 
 ## Links
 
-- [README.full.md](README.full.md) — full reference: SDK API, CLI, every tool parameter
-- [packages/core/src/MATH.md](packages/core/src/MATH.md) — every formula, constant and label
-- [docs/eval/REPRODUCE.md](docs/eval/REPRODUCE.md) — regenerate every 🔁 number
-- [CHANGELOG.md](CHANGELOG.md) · [UPDATE-LOG.md](UPDATE-LOG.md) — what changed, and the reasoning
-- [Correction-transfer benchmark spec](docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) · [Agent-memory landscape 2026](docs/research/agent-memory-landscape-2026-07.md)
-- [SKILL.md](SKILL.md) — Claude Code skill · [AGENTS.md](AGENTS.md) — for agents working on this repo
-- Previous README: [docs/archive/README-2026-10-13.md](docs/archive/README-2026-10-13.md)
+- [docs/hosted-server.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md): run, operate and secure a hosted server · [PRIVACY.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md): the hosted service's privacy policy
+- [README.full.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/README.full.md): full reference: SDK API, CLI, every tool parameter
+- [packages/core/src/MATH.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/packages/core/src/MATH.md): every formula, constant and label
+- [docs/eval/REPRODUCE.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/eval/REPRODUCE.md): regenerate every 🔁 number
+- [CHANGELOG.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/CHANGELOG.md) · [UPDATE-LOG.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/UPDATE-LOG.md): what changed, and the reasoning
+- [Correction-transfer benchmark spec](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/proposals/2026-07-02-correction-transfer-benchmark-spec.md) · [Agent-memory landscape 2026](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/research/agent-memory-landscape-2026-07.md)
+- [SKILL.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/SKILL.md): Claude Code skill · [AGENTS.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/AGENTS.md): for agents working on this repo · [llms.txt](https://github.com/Goldentrii/AgentRecall-X/blob/main/llms.txt): this README for machines
+- README artwork: [assets/readme/](https://github.com/Goldentrii/AgentRecall-X/blob/main/assets/readme/) (generated by `assets/readme/build/`)
+- Previous README: [docs/archive/README-2026-10-13.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/archive/README-2026-10-13.md)
 
 ## Contributing
 
@@ -557,4 +615,4 @@ PRs welcome. Open an issue first for anything substantive — the design is opin
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE).
