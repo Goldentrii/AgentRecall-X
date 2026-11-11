@@ -9,6 +9,7 @@
  *   AR_OAUTH_GOOGLE_CLIENT_ID / _SECRET Google OAuth client (callback: <public>/authorize/callback/google)
  *   AR_OAUTH_REDIRECT_ALLOW             extra allowed client redirect URI prefixes, comma-separated
  *   AR_OAUTH_SIGNUP=invite|open         invite (default): only accounts linked with `identity link` may sign in
+ *   AR_PRIVACY_URL                      optional https link to the privacy policy, shown on the sign-in page
  *   AR_TRUST_PROXY=1|true|yes|on        trust ONE proxy hop for the client IP (0|false|no|off or empty = no)
  *
  * Nothing configured → null (server == v1). Anything half-configured (a lone
@@ -36,6 +37,22 @@ export interface OAuthConfig {
   trustProxy: boolean;
   /** invite: only operator-linked accounts may sign in (no tenant is created for anyone else). */
   signup: SignupMode;
+  /** AR_PRIVACY_URL: the operator's privacy policy, linked from the sign-in page (https only). */
+  privacyUrl?: URL;
+}
+
+function parsePrivacyUrl(raw: string | undefined): URL | undefined {
+  const v = clean(raw);
+  if (v === undefined) return undefined;
+  let u: URL;
+  try {
+    u = new URL(v);
+  } catch {
+    throw new OAuthConfigError("AR_PRIVACY_URL is not a valid URL");
+  }
+  if (u.username || u.password) throw new OAuthConfigError("AR_PRIVACY_URL must not contain credentials");
+  if (u.protocol !== "https:") throw new OAuthConfigError("AR_PRIVACY_URL must be an https URL");
+  return u;
 }
 
 export type SignupMode = "invite" | "open";
@@ -121,5 +138,6 @@ export function loadOAuthConfig(flags: OAuthConfigInput = {}, env: NodeJS.Proces
     redirectAllow,
     trustProxy: parseBool("AR_TRUST_PROXY", env.AR_TRUST_PROXY),
     signup: parseSignup(env.AR_OAUTH_SIGNUP),
+    privacyUrl: parsePrivacyUrl(env.AR_PRIVACY_URL),
   };
 }

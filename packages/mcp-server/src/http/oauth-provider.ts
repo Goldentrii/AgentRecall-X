@@ -249,6 +249,7 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
     return signInPage({
       requestId, clientName, redirectHost: redirectHost(redirectUri), destination: destinationKind(redirectUri), error,
       providers: this.providers.map((p) => ({ name: p, label: PROVIDER_LABEL[p] })),
+      privacyUrl: this.d.config.privacyUrl?.href,
     });
   }
 
