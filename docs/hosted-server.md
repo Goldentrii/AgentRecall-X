@@ -183,6 +183,38 @@ Revocation takes effect on the next request. The server logs `oauth login github
 
 - A restart aborts sign-ins in progress (they live in memory); clients just retry. Issued tokens survive restarts.
 
+## Corrections need the owner
+
+On the hosted server an agent can **propose** a correction but cannot **activate** one.
+
+Why: a correction is loaded by every agent of that user at `session_start`, and a P0 shows up under "HARD RULES (always follow, no exceptions)". Whoever holds a user's token, or steers an agent that does (for example through text the agent read), could otherwise plant a rule for all of that user's agents.
+
+- Every `human_correction` sent through `check` is staged, including the structured `{rule, why, applies_when}` form and `pending_id`. The tool answers `status: "staged"` and tells the agent it is waiting for the owner.
+- Staged text is not loaded anywhere: not in HARD RULES, `watch_for` or recall. `session_start` only shows a count ("N proposed corrections await the owner's confirmation").
+- Only the operator CLI activates one:
+
+```bash
+agent-recall-server corrections list                            # counts per user: ready / incomplete
+agent-recall-server corrections list --uid alice [--limit 20]   # that user's proposals in full: rule, why, applies_when
+agent-recall-server corrections approve <id> --uid alice        # active from the next session_start
+agent-recall-server corrections reject  <id> --uid alice
+```
+
+  Add `--project <slug>` for a project other than `main`. In Docker, prefix each command with `docker exec agent-recall` (deploy kit: `sudo docker compose exec server`).
+- `list` marks each row `ready` (complete structured form, can be approved) or `incomplete` (a plain-string capture; ask the agent to re-submit it in the structured form, or reject it). Read the rule before approving: approval is the only check.
+- **An id always means exactly the text `list` shows.** A `ready` row is printed in full (rule, why, applies_when) and never changes: re-submitting the same rule with any difference, even one symbol, creates a separate row with its own id. The id ends in a 128-bit digest of that content, a staged row is never overwritten, and `approve` refuses a row whose id or stored digest does not match its content. `approve` activates what that id showed, at the severity it showed.
+- Without `--uid`, `list` prints one line of counts per user and no rule text, so one user's proposals cannot bury another's. With `--uid` it prints up to `--limit` rows (default 20, max 200), ready proposals first, and says how many it left out.
+- Insights an agent saves through `session_end` are memory, not rules: they are shown only in the full-mode "Insights" list and never under HARD RULES, behaviour policies or `watch_for`. They are not gated.
+- Proposal text is reduced to visible characters before it is stored: control characters, newlines, zero-width and bidi characters and Unicode tag characters become a space. A rule over 200 characters or a why over 600 is refused, not truncated. `list` prints anything unexpected as an escape such as `\u{200b}`.
+- `check`'s `delta` is not recorded on the hosted server, so it cannot feed `watch_for` or auto-promoted insights.
+- An agent can discard a partial capture (`resolution: "reject"`), logged in `corrections/_pending/_rejected.jsonl`. It cannot discard or replace a `ready` proposal; only `corrections reject` can.
+- A staged row expires 14 days after it was last submitted. At most 200 rows are kept per project; beyond that the oldest are dropped and logged.
+- Local (stdio) installs are unchanged: there the structured form activates directly.
+
+**What this does not cover.** The state card (`Goal`, `Next`, `Blockers`, `Pointers`) is written by agents through `session_end` and is loaded at every `session_start`. It is shown as state, not as a rule, but it is agent-written text every agent of that user reads. Treat a hosted user's token as able to write that card.
+
+There is no self-service approval yet: a user who is not the operator has to ask the operator. See [Not in v1](#not-in-v1).
+
 ## Operations
 
 - **Health:** `GET /healthz` returns `{ ok, version }`. The Docker image has a `HEALTHCHECK`.
@@ -210,7 +242,7 @@ Revocation takes effect on the next request. The server logs `oauth login github
 
 ## Not in v1
 
-- A website for self-serve tokens, Client ID Metadata Documents, and a web page to list or revoke OAuth grants (CLI only)
+- A website for self-serve tokens, Client ID Metadata Documents, and a web page to list or revoke OAuth grants or to approve corrections (CLI only)
 - Per-tenant Supabase or encryption at rest
 - Per-user plans (different quotas or rates per user)
 - Stateful MCP sessions (each `session_end` currently records its own session card)

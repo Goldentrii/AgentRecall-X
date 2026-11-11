@@ -18,6 +18,7 @@ export {
   withTenant,
   getTenantContext,
   isTenantScoped,
+  agentCorrectionsStaged,
   enableStrictTenantMode,
   toDisplayPath,
   redactTenantPaths,
@@ -545,6 +546,7 @@ export {
   PROMOTION_CONFIRMATION_THRESHOLD,
   type PromotionResult,
 } from "./tools-logic/insight-promotion.js";
+export { confirmPendingCorrection, readStagedProposal, cleanProposalText, PROPOSAL_RULE_MAX, PROPOSAL_WHY_MAX, type ConfirmPendingResult, type StagedProposal } from "./tools-logic/check.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)
