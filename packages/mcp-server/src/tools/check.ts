@@ -1,11 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { check, fenceMemory } from "agent-recall-core";
+import { check, fenceMemory, agentCorrectionsStaged } from "agent-recall-core";
 
 export function register(server: McpServer): void {
   server.registerTool("check", {
     title: "Check Understanding",
-    description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent. Also call BEFORE a high-risk action — publish, deploy, delete, credential exposure, external send/message, or any other irreversible write — passing `action_description` (one sentence, what you're about to do). Returns matching corrections/rules/insights plus a `verdict`: `blocked` means an authoritative correction OVERRIDES the plan — read it before proceeding. To RECORD a durable human correction, pass `human_correction` as the STRUCTURED object {rule, why, applies_when} — a plain string is only STAGED for later review, never activated.",
+    description: "[MID-SESSION — safe any time; for alignment, before risky decisions] Use when the user asks to validate understanding, verify alignment, or check if their interpretation matches the human's intent. Also call BEFORE a high-risk action — publish, deploy, delete, credential exposure, external send/message, or any other irreversible write — passing `action_description` (one sentence, what you're about to do). Returns matching corrections/rules/insights plus a `verdict`: `blocked` means an authoritative correction OVERRIDES the plan — read it before proceeding. To RECORD a durable human correction, pass `human_correction` as the STRUCTURED object {rule, why, applies_when} — a plain string is only STAGED for later review, never activated." + (agentCorrectionsStaged()
+      ? " ON THIS SERVER agents can only PROPOSE corrections: every human_correction, including the structured form and pending_id, is staged for the owner's confirmation. You cannot activate, promote or confirm one; tell the user it is waiting for the owner."
+      : ""),
     inputSchema: {
       goal: z.string().optional().describe("The goal or decision question you're checking alignment on. Required for alignment checks; optional when recording a pure decision trail (prior/posterior/evidence)."),
       understanding: z.string().optional().describe("Alias for goal — use when saying 'check my understanding: X'. Provide either goal or understanding."),

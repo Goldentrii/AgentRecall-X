@@ -11,14 +11,18 @@ import { resolveProject } from "../storage/project.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
-import { writeCorrection, splitSentences, detectSeverity } from "../storage/corrections.js";
+import { writeCorrection, readCorrections, splitSentences, detectSeverity } from "../storage/corrections.js";
 import {
   stagePendingCorrection,
+  listPendingCorrections,
   resolvePendingCorrection,
   validateStructuredCorrection,
+  proposalDigest,
+  type PendingRecord,
 } from "../storage/pending.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
+import { agentCorrectionsStaged } from "../types.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
@@ -45,7 +49,10 @@ export interface EvidenceFactor {
  * human_correction form, the ONLY path into the active corrections ledger.
  * All fields optional at the type level (the MCP schema mirrors this);
  * completeness is enforced by validateStructuredCorrection with an
- * agent_instruction on failure. `pending_id` resolves a staged _pending/
+ * agent_instruction on failure. In an agent channel (owner gate, see
+ * TenantContext.stageAgentCorrections) even the valid structured form is only
+ * STAGED and confirmPendingCorrection is the single activation path; the rest
+ * of this comment describes the local, ungated path. `pending_id` resolves a staged _pending/
  * item: with a valid {rule,why,applies_when} it PROMOTES it (default
  * resolution), with `resolution:"reject"` it discards it to
  * _pending/_rejected.jsonl (rule/why/applies_when not required for reject;
@@ -198,6 +205,129 @@ const SOURCE_CHANNEL_TABLE: Record<string, "hook"> = {
   "hook-correction": "hook",
 };
 
+/** Joins rule and why in a correction's stored text; confirmPendingCorrection splits a staged row on it. */
+const WHY_SEPARATOR = "\n\nWhy: ";
+
+/** Owner gate — caps on a proposal, so the owner always reads ALL of what approving it activates. */
+export const PROPOSAL_RULE_MAX = 200;
+export const PROPOSAL_WHY_MAX = 600;
+
+/**
+ * Owner gate — reduce agent-written proposal text to what a human reviewer can
+ * see: letters, marks, digits, punctuation, symbols and plain spaces. Controls,
+ * newlines and every format character (zero-width, bidi, U+E00xx tags, BOM) are
+ * invisible in a terminal yet would be activated verbatim, so they become a
+ * space; runs of spaces collapse.
+ */
+export function cleanProposalText(s: string): string {
+  return s.replace(/[^\p{L}\p{M}\p{N}\p{P}\p{S}\p{Zs}]/gu, " ").replace(/\p{Zs}+/gu, " ").trim();
+}
+
+/** A staged proposal exactly as approving it would activate it. */
+export interface StagedProposal {
+  rule: string;
+  why: string;
+  applies_when: string[];
+  digest: string;
+}
+
+/**
+ * Owner gate — parse a staged row into the proposal it carries, or null when
+ * the row is not a complete, intact `check_structured_unconfirmed` proposal.
+ * The operator CLI prints this and confirmPendingCorrection activates this, so
+ * what the owner reads is what becomes active. A row whose stored digest does
+ * not match its content (edited on disk, or written by older code) is refused.
+ */
+export function readStagedProposal(row: PendingRecord): StagedProposal | null {
+  if (row.kind !== "correction" || row.channel !== "check_structured_unconfirmed") return null;
+  const cut = row.context.indexOf(WHY_SEPARATOR);
+  if (cut < 0 || !row.applies_when?.length) return null;
+  const rule = row.context.slice(0, cut).trim();
+  const why = row.context.slice(cut + WHY_SEPARATOR.length).trim();
+  if (!rule || !why) return null;
+  const digest = proposalDigest(row.context, row.applies_when);
+  if (row.digest !== digest) return null;
+  return { rule, why, applies_when: row.applies_when, digest };
+}
+
+/** Partial captures an agent may still discard or complete; a proposal awaiting the owner is not one. */
+function refuseUnlessPartialCapture(row: PendingRecord): string | undefined {
+  return row.channel === "check_structured_unconfirmed"
+    ? "this proposal is waiting for the owner; only the owner can reject or replace it"
+    : undefined;
+}
+
+export interface ConfirmPendingResult {
+  ok: boolean;
+  /** Id of the new active correction, when ok and it can be told apart (ids are date + rule slug, so not always). */
+  correction_id?: string;
+  /** True when ok but the rule folded into an already-active correction with the same identity (its text is kept). */
+  merged?: boolean;
+  rule?: string;
+  /** Why it was not confirmed, when !ok. */
+  reason?: string;
+}
+
+/**
+ * Owner gate — the ONLY way a correction staged from an agent channel becomes
+ * active. Refuses to run inside an agent channel (TenantContext
+ * .stageAgentCorrections), so no MCP tool call can reach it; the hosted
+ * operator CLI calls it from a plain tenant scope.
+ *
+ * Confirms a row only when it carries a complete {rule, why, applies_when}.
+ * The write goes through check()'s normal validated path, so the quality gate,
+ * severity classifier and audit trail are the same as a direct capture.
+ */
+export async function confirmPendingCorrection(project: string, id: string): Promise<ConfirmPendingResult> {
+  if (agentCorrectionsStaged()) {
+    return { ok: false, reason: "only the owner (operator) can confirm a correction; this is an agent channel" };
+  }
+  const slug = await resolveProject(project);
+  const row = (await listPendingCorrections(slug)).find((r) => r.id === id);
+  if (!row) return { ok: false, reason: `pending correction not found: ${id}` };
+  const proposal = readStagedProposal(row);
+  if (!proposal) {
+    return {
+      ok: false,
+      rule: row.rule,
+      reason: "this capture has no complete {rule, why, applies_when}, so it cannot be confirmed as it stands; " +
+        "have the agent re-submit it in the structured form, or reject it",
+    };
+  }
+  const { rule, why, applies_when } = proposal;
+  // Counted, not matched by id: two active records can share an id (date + rule slug).
+  const before = readCorrections(slug);
+  const beforeIds = new Set(before.map((c) => c.id));
+  const added = (): { grew: boolean; id?: string } => {
+    const now = readCorrections(slug);
+    return { grew: now.length > before.length, id: now.find((c) => !beforeIds.has(c.id))?.id };
+  };
+  let res: CheckResult;
+  try {
+    res = await check({
+      goal: `owner confirmation of staged correction ${id}`,
+      confidence: "high",
+      project: slug,
+      human_correction: { rule, why, applies_when, pending_id: id },
+    });
+  } catch (err) {
+    // The write may or may not have happened: say which, never a bare failure.
+    const a = added();
+    const detail = err instanceof Error ? err.message : String(err);
+    return a.grew
+      ? { ok: true, rule, ...(a.id ? { correction_id: a.id } : {}), reason: `activated, but the confirmation did not finish cleanly: ${detail}` }
+      : { ok: false, rule, reason: `confirmation failed before the correction was written: ${detail}` };
+  }
+  if (res.correction_gate_rejected) return { ok: false, rule, reason: res.correction_gate_rejected };
+  const a = added();
+  const where = a.grew ? (a.id ? { correction_id: a.id } : {}) : { merged: true };
+  if (res.correction_pending?.status !== "promoted") {
+    // The active write succeeded (no gate rejection) but the staged row could not be retired.
+    return { ok: true, rule, ...where, reason: `activated; the staged row was not removed (${res.correction_pending?.reason ?? res.correction_pending?.status ?? "unknown"})` };
+  }
+  return { ok: true, rule, ...where };
+}
+
 export async function check(input: CheckInput): Promise<CheckResult> {
   const slug = await resolveProject(input.project);
 
@@ -233,11 +363,15 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         correctionPending = {
           id: stageRes.id,
           status: "staged",
-          agent_instruction:
-            `human_correction was STAGED for review, not activated. To activate it, re-call check() with ` +
-            `human_correction as an OBJECT: {rule: "<ONE imperative sentence>", why: "<concrete evidence>", ` +
-            `applies_when: ["<context>", ...], pending_id: "${stageRes.id}"}. ` +
-            `To discard it: {pending_id: "${stageRes.id}", resolution: "reject"}.`,
+          agent_instruction: agentCorrectionsStaged()
+            ? `human_correction was STAGED for the owner, not activated. On this server only the owner can confirm a ` +
+              `correction. To give them a complete proposal, call check() again with human_correction as an OBJECT: ` +
+              `{rule: "<ONE imperative sentence>", why: "<concrete evidence>", applies_when: ["<context>", ...], ` +
+              `pending_id: "${stageRes.id}"}; it stays staged. To discard it: {pending_id: "${stageRes.id}", resolution: "reject"}.`
+            : `human_correction was STAGED for review, not activated. To activate it, re-call check() with ` +
+              `human_correction as an OBJECT: {rule: "<ONE imperative sentence>", why: "<concrete evidence>", ` +
+              `applies_when: ["<context>", ...], pending_id: "${stageRes.id}"}. ` +
+              `To discard it: {pending_id: "${stageRes.id}", resolution: "reject"}.`,
         };
       } else if (stageRes.rejected) {
         correctionPending = { status: "rejected_junk", reason: stageRes.reason };
@@ -253,14 +387,43 @@ export async function check(input: CheckInput): Promise<CheckResult> {
       if (!hc.pending_id) {
         correctionPending = { status: "not_found", reason: "resolution:'reject' requires a pending_id" };
       } else {
-        const res = await resolvePendingCorrection(slug, hc.pending_id, "reject", { reason: hc.why });
+        const res = await resolvePendingCorrection(slug, hc.pending_id, "reject", {
+          reason: hc.why,
+          // Owner gate: an agent may discard a partial capture, never a proposal awaiting the owner.
+          ...(agentCorrectionsStaged() ? { refuse: refuseUnlessPartialCapture } : {}),
+        });
         correctionPending = res.success
           ? { id: hc.pending_id, status: "review_rejected" }
           : { id: hc.pending_id, status: "not_found", reason: res.error };
       }
     } else {
-      const validation = validateStructuredCorrection(hc);
-      if (!validation.ok) {
+      // Owner gate: in an agent channel the proposal is cleaned BEFORE validation,
+      // so what is validated, staged, shown to the owner and activated is one text.
+      const gated = agentCorrectionsStaged();
+      const proposed = gated
+        ? {
+            ...hc,
+            rule: typeof hc.rule === "string" ? cleanProposalText(hc.rule) : hc.rule,
+            why: typeof hc.why === "string" ? cleanProposalText(hc.why) : hc.why,
+            applies_when: Array.isArray(hc.applies_when) ? hc.applies_when.map((t) => cleanProposalText(String(t))).filter(Boolean) : hc.applies_when,
+          }
+        : hc;
+      const validation = validateStructuredCorrection(proposed);
+      const tooLong = gated && validation.ok
+        ? [
+            (proposed.rule?.length ?? 0) > PROPOSAL_RULE_MAX ? `rule: longer than ${PROPOSAL_RULE_MAX} characters` : "",
+            (proposed.why?.length ?? 0) > PROPOSAL_WHY_MAX ? `why: longer than ${PROPOSAL_WHY_MAX} characters` : "",
+          ].filter(Boolean).join("; ")
+        : "";
+      if (tooLong) {
+        // Not staged: the owner must be able to read all of what they approve.
+        gateRejection = tooLong;
+        correctionPending = {
+          status: "invalid_structured",
+          reason: tooLong,
+          agent_instruction: `Shorten it and call check() again: rule at most ${PROPOSAL_RULE_MAX} characters, why at most ${PROPOSAL_WHY_MAX}. Nothing was staged.`,
+        };
+      } else if (!validation.ok) {
         // Incomplete structured form: rejected with a restructure instruction,
         // and STAGED (never silently dropped).
         const reason = validation.failures.map((f) => `${f.field}: ${f.reason}`).join("; ");
@@ -280,13 +443,52 @@ export async function check(input: CheckInput): Promise<CheckResult> {
           reason,
           agent_instruction: validation.agent_instruction,
         };
+      } else if (agentCorrectionsStaged()) {
+        // Owner gate: in an agent channel a COMPLETE structured correction is a
+        // proposal. It is staged with everything the owner needs (rule, why,
+        // applies_when) and only confirmPendingCorrection() can activate it.
+        const rule = proposed.rule!;
+        const stageRes = await stagePendingCorrection(slug, {
+          kind: "correction",
+          channel: "check_structured_unconfirmed",
+          text: `${rule}${WHY_SEPARATOR}${proposed.why!}`,
+          rule: splitSentences(rule)[0] ?? rule,
+          applies_when: proposed.applies_when,
+          // Same input the active path classifies (the FULL rule, never the why),
+          // so the severity the owner sees is the severity that gets activated.
+          severity: detectSeverity(rule),
+          reason: "structured correction from an agent channel — awaiting the owner's confirmation",
+          source: getSessionId(),
+        });
+        if (stageRes.staged) {
+          // A pending_id names the earlier PARTIAL capture this completes. Staging
+          // already retired same-rule partials; this covers a reworded rule. A
+          // proposal awaiting the owner is never retired from here.
+          if (hc.pending_id && hc.pending_id !== stageRes.id) {
+            await resolvePendingCorrection(slug, hc.pending_id, "reject", {
+              reason: `superseded by ${stageRes.id}`,
+              refuse: refuseUnlessPartialCapture,
+            });
+          }
+          correctionPending = {
+            id: stageRes.id,
+            status: "staged",
+            agent_instruction:
+              "The correction was STAGED for the owner's confirmation and is NOT active. On this server agents cannot " +
+              "activate corrections. Tell the user it is waiting for the owner to confirm; do not retry or re-submit it.",
+          };
+        } else if (stageRes.rejected) {
+          correctionPending = { status: "rejected_junk", reason: stageRes.reason };
+        } else {
+          correctionPending = { status: "staging_failed", reason: stageRes.reason };
+        }
       } else {
         // Validated STRUCTURED form → the active corrections ledger.
         try {
           const rule = hc.rule!.trim();
           const why = hc.why!.trim();
           const appliesWhen = hc.applies_when!;
-          const corrText = `${rule}\n\nWhy: ${why}`;
+          const corrText = `${rule}${WHY_SEPARATOR}${why}`;
           const corrDate = todayISO();
           // v3 (Loop 8): decimal-safe title slice — the rule is one sentence by
           // validation, so this is normally the full rule.
@@ -363,7 +565,13 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   // delta is recorded when no human_correction was supplied (pure alignment
   // note) or when the structured form activated; it is suppressed whenever the
   // accompanying human_correction was merely staged/rejected.
-  const deltaAllowed = input.human_correction === undefined || activatedRule !== undefined;
+  //
+  // Owner gate: in an agent channel NOTHING is the validated channel, so delta
+  // is never recorded there. Otherwise check({delta: 'Correction: "Never …"'})
+  // with no human_correction at all would seed watch_for ("P0 correction —
+  // follow this rule strictly") and, after three repeats, an auto-promoted
+  // insight: the same always-loaded text the gate exists to stop.
+  const deltaAllowed = !agentCorrectionsStaged() && (input.human_correction === undefined || activatedRule !== undefined);
   const record: AlignmentRecord = {
     date: todayISO(),
     goal: input.goal,
@@ -515,7 +723,8 @@ export async function check(input: CheckInput): Promise<CheckResult> {
   // 4. Phase 5: auto-promote strong patterns (3+) to awareness
   // Quality gate: skip patterns that are raw speech fragments, not actionable insights.
   let autoPromoted = 0;
-  for (const w of watchFor) {
+  // Owner gate: an agent channel never promotes a watch pattern into an insight.
+  for (const w of agentCorrectionsStaged() ? [] : watchFor) {
     if (w.frequency >= 3) {
       const words = w.pattern.split(/\s+/).filter((word: string) => word.length > 1);
       // Quality filters: must be ≥5 meaningful words and contain an action verb signal

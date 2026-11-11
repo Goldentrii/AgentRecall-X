@@ -14,6 +14,8 @@
  * validation — stages HERE instead of the active corrections ledger. The
  * active ledger is reachable ONLY through check()'s validated STRUCTURED
  * form {rule, why, applies_when} (or an explicit promote of a staged item).
+ * Behind the owner gate (hosted server) that form is staged here too, as
+ * `check_structured_unconfirmed`, and only confirmPendingCorrection activates.
  *
  * INVARIANTS
  *  - Nothing is silently dropped: a capture either becomes a *.json row here
@@ -78,6 +80,7 @@ export type PendingKind = "correction" | "insight";
 export type PendingChannel =
   | "check_string"               // check() legacy string human_correction
   | "check_structured_incomplete" // structured form that failed completeness
+  | "check_structured_unconfirmed" // COMPLETE structured form from an agent channel, awaiting the owner (owner gate)
   | "hook"                        // CLI hook-correction channel
   | "session_end_insight";        // session_end insight that failed completeness
 
@@ -94,6 +97,8 @@ export interface PendingRecord {
   severity: "p0" | "p1"; // stamped with the same classifier a direct capture gets
   applies_when?: string[];
   reason: string;      // why this is pending, not active
+  /** Owner gate rows only: proposalDigest(context, applies_when), fixed for the life of the row. */
+  digest?: string;
   provenance: { source: string; mode: "told" | "observed" };
 }
 
@@ -109,6 +114,8 @@ export interface StagePendingInput {
   reason: string;
   /** Provenance source — session id / hook name. Defaults to the channel. */
   source?: string;
+  /** Severity decided by the caller; default classifies rule + text. */
+  severity?: "p0" | "p1";
 }
 
 export interface StagePendingResult {
@@ -276,6 +283,15 @@ export async function listPendingCorrections(project: string): Promise<PendingRe
 // Stage
 // ---------------------------------------------------------------------------
 
+/**
+ * Owner gate — digest of exactly what approving a staged proposal activates:
+ * the stored context (rule + why) and applies_when. Stored on the row and part
+ * of its id, so an id can never come to mean different content.
+ */
+export function proposalDigest(context: string, appliesWhen: string[] | undefined): string {
+  return crypto.createHash("sha256").update(JSON.stringify([context, appliesWhen ?? []])).digest("hex").slice(0, 16);
+}
+
 function pendingId(date: string, scrubbedRule: string, identity: string): string {
   const slug = byteCap(sanitizeName(stripInterjections(scrubbedRule) || scrubbedRule || "pending", 32), 32)
     .replace(/-+$/g, "") || "pending";
@@ -317,9 +333,27 @@ export async function stagePendingCorrection(project: string, input: StagePendin
       // rows. Review fix (2026-09-11, HIGH-2 guard): an EMPTY identity (rule
       // made entirely of stripped symbols) must never match anything — without
       // this, distinct symbol-only captures would fold into one row.
+      //
+      // Owner gate: a `check_structured_unconfirmed` row is a proposal the
+      // owner approves BY ID, so its content must never change under that id.
+      // Such a row is keyed by a digest of exactly what would be activated
+      // (context + applies_when): an identical re-submission bumps seen_count,
+      // anything else — even one flipped symbol that distills to the same
+      // identity ("coverage < 80%" vs "> 80%") — becomes its OWN row with its
+      // own id. A complete proposal retires earlier PARTIAL captures of the same
+      // rule (string form, hook) instead of rewriting them in place.
+      const complete = input.channel === "check_structured_unconfirmed";
+      const appliesWhen = input.applies_when && input.applies_when.length > 0
+        ? input.applies_when.map((t) => scrubForCloud(t))
+        : undefined;
+      const digest = complete ? proposalDigest(context, appliesWhen) : undefined;
+      const retire: Array<{ file: string; record: PendingRecord }> = [];
       for (const entry of identity ? readPendingRaw(project) : []) {
         if (entry.record.kind !== input.kind) continue;
         if (distillRuleIdentity(entry.record.rule) !== identity) continue;
+        const entryComplete = entry.record.channel === "check_structured_unconfirmed";
+        if (complete && entryComplete && entry.record.digest !== digest) continue; // different content: separate row
+        if (complete && !entryComplete) { retire.push(entry); continue; }
         const merged: PendingRecord = {
           ...entry.record,
           seen_count: (entry.record.seen_count ?? 1) + 1,
@@ -330,7 +364,7 @@ export async function stagePendingCorrection(project: string, input: StagePendin
       }
 
       const record: PendingRecord = {
-        id: pendingId(date, rule, identity),
+        id: pendingId(date, rule, complete ? `${identity}:${digest}` : identity),
         ts: nowISO,
         last_seen: nowISO,
         seen_count: 1,
@@ -340,16 +374,29 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         rule,
         context,
         // Same severity classifier a direct capture would get (S-M1 twin:
-        // the classifier sees ONLY what the caller scoped into `text`).
-        severity: detectSeverity(`${ruleRaw} ${contextRaw}`),
-        ...(input.applies_when && input.applies_when.length > 0
-          ? { applies_when: input.applies_when.map((t) => scrubForCloud(t)) }
-          : {}),
+        // the classifier sees ONLY what the caller scoped into `text`). A
+        // caller that knows better (the owner gate classifies the full rule,
+        // never the why) passes `severity`.
+        severity: input.severity ?? detectSeverity(`${ruleRaw} ${contextRaw}`),
+        ...(appliesWhen ? { applies_when: appliesWhen } : {}),
+        ...(digest ? { digest } : {}),
         reason: input.reason,
         provenance: { source: input.source ?? input.channel, mode: "told" },
       };
 
       writeRecordAtomic(path.join(dir, `${record.id}.json`), record);
+      for (const old of retire) {
+        if (old.record.id === record.id) continue;
+        try {
+          fs.unlinkSync(path.join(dir, old.file));
+          logPendingRejection(project, {
+            id: old.record.id,
+            rule: old.record.rule,
+            reason: `superseded by complete proposal ${record.id}`,
+            channel: old.record.channel,
+          });
+        } catch { /* best effort: a leftover partial row is harmless */ }
+      }
       prunePending(project);
       return { staged: true, merged: false, id: record.id };
     });
@@ -371,12 +418,17 @@ export async function stagePendingCorrection(project: string, input: StagePendin
  * promotion audit line (the ACTIVE write itself is the caller's job — check()
  * runs the validated structured write first, then resolves). "reject" removes
  * the row and appends it to _rejected.jsonl with the reviewer's reason.
+ *
+ * `detail.refuse` runs under the lock on the row about to be resolved; a
+ * returned string leaves the row untouched and becomes the error. The owner
+ * gate uses it so an agent channel can only discard partial captures, never a
+ * proposal that is waiting for the owner.
  */
 export async function resolvePendingCorrection(
   project: string,
   id: string,
   action: "promote" | "reject",
-  detail?: { reason?: string; correction_id?: string },
+  detail?: { reason?: string; correction_id?: string; refuse?: (row: PendingRecord) => string | undefined },
 ): Promise<ResolvePendingResult> {
   try {
     return await withLock(`pending-${project}`, (): ResolvePendingResult => {
@@ -385,6 +437,8 @@ export async function resolvePendingCorrection(
       if (!entry) {
         return { success: false, error: `pending correction not found: ${id}` };
       }
+      const refused = detail?.refuse?.(entry.record);
+      if (refused) return { success: false, error: refused };
       try {
         fs.unlinkSync(path.join(dir, entry.file));
       } catch (err) {

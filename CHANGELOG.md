@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Hosted server: agents can propose corrections but not activate them (owner gate).** `check`'s structured `human_correction` used to write straight to the active ledger, so anyone holding a tenant's token, or steering an agent that does, could plant a P0 that every other agent of that tenant loads at `session_start` under "HARD RULES (always follow, no exceptions)". Every hosted MCP request now runs with `TenantContext.stageAgentCorrections`: the structured form (and `pending_id` promotion) is staged as `check_structured_unconfirmed` and answers `status: "staged"`; staged text is loaded nowhere and `session_start` shows only a count. Activation is operator-only: `agent-recall-server corrections list | approve <id> --uid <uid> | reject <id> --uid <uid>` (new core export `confirmPendingCorrection`, which refuses to run inside an agent channel, also when a tenant scope is nested in one). A proposal row is immutable and keyed by a digest of its content, so an id always activates exactly the text `corrections list` printed, at the listed severity; a re-submission that differs in any way is a separate row. Proposal text is reduced to visible characters and capped (rule 200, why 600) before staging. In an agent channel `check` no longer records `delta` (it fed `watch_for` and auto-promoted insights) and cannot discard or replace a proposal that awaits the owner. Local stdio installs are unchanged. Not covered: the agent-written state card. Docs: `docs/hosted-server.md` "Corrections need the owner".
+
 ### Added
 
 - Identity card `<root>/identity-card.md` (≤1,600 chars, versioned, personal tier, never synced). Created and replaced only via `ar identity init` / `ar identity set <file>`; `ar identity show` prints the stored file (frontmatter + body, fenced) and that output feeds straight back into `set`, which drops the fence lines. Over-cap, secret or NUL-laden (UTF-16) bodies are rejected, and `version:` must be a plain integer (anything else reads as a malformed card). `session_start` returns it as `owner` and renders it first, inside the fence.
