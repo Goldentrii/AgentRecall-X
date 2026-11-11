@@ -8,7 +8,7 @@ The service is a free, early-stage project run by one person. It has no ads, no 
 
 ## Who is responsible
 
-Data controller (GDPR Art. 4(7)): **[NAME]**, contact: **[CONTACT EMAIL]**.
+Data controller (GDPR Art. 4(7)): **Tong Wu**, contact: **tongwu0824@gmail.com**.
 
 Use that address for questions, data requests and deletion. Please don't post personal data in public GitHub issues.
 
