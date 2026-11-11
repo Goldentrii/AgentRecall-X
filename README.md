@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://recall.aiakada.com/healthz"><img src="https://img.shields.io/website?url=https%3A%2F%2Frecall.aiakada.com%2Fhealthz&label=hosted&up_message=online&down_message=offline&style=flat-square" alt="Hosted server status"></a>
+  <a href="https://recall.aiakada.com/healthz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Frecall.aiakada.com%2Fhealthz&query=%24.version&label=hosted&prefix=v&suffix=%20live&color=2E9E6A&style=flat-square" alt="Hosted server status"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=npm&color=18233F" alt="agent-recall-mcp on npm"></a>
   <a href="https://github.com/Goldentrii/AgentRecall-X/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Goldentrii/AgentRecall-X/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
   <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-18233F?style=flat-square" alt="MIT license"></a>
@@ -55,12 +55,10 @@ Codex opens the sign-in page itself. If you closed it, run `codex mcp login agen
 
 **Any other MCP client** that supports Streamable HTTP with OAuth: give it the URL and nothing else. It finds the sign-in from the server's `401` response.
 
-| | |
-|---|---|
-| **Privacy** | Your memory is private to your account and stored in the EU (Frankfurt). No ads, analytics or trackers. [Privacy policy](PRIVACY.md) |
-| **Limits** | 100 MB of memory and 120 requests per minute per user. Reads keep working when you are full |
-| **Corrections** | An agent can only *propose* a correction on the hosted server. It becomes a HARD RULE for your other agents only after it is approved. There is no self-service approval page yet, so the operator approves on request. [How it works](docs/hosted-server.md#corrections-need-the-owner) |
-| **Your own server** | The same server, as a Compose + Caddy kit for one Ubuntu box: [docs/hosted-server.md](docs/hosted-server.md) |
+- 🔒 **Private, in the EU.** Your memory is visible only to your account and stored in Frankfurt. No ads, analytics or trackers. [Privacy policy](PRIVACY.md)
+- 📏 **Limits.** 100 MB of memory and 120 requests per minute per user. Reads keep working when you are full.
+- ✋ **Corrections wait for approval.** An agent can only *propose* a correction here; it becomes a HARD RULE for your other agents once approved. There is no self-service approval page yet, so the operator approves on request. [How it works](docs/hosted-server.md#corrections-need-the-owner)
+- 🛠️ **Run your own.** The same server as a Compose + Caddy kit for one Ubuntu box: [docs/hosted-server.md](docs/hosted-server.md)
 
 ## For agents
 
@@ -68,15 +66,15 @@ Codex opens the sign-in page itself. If you closed it, run `codex mcp login agen
 > **You are an AI agent reading this.** AgentRecall is the user's memory across sessions and across agents. If its tools are connected, run this loop without being asked. If they are not, offer your human one of the two installs above. Saying "noted" is not saving: only a tool call saves.
 
 ```text
-session begins                       → session_start                 first, before you act (project: "auto")
-a fact or decision worth keeping     → remember(content)
-the human corrects you               → check(human_correction: { rule, why, applies_when })
-                                       on the hosted server this is staged for the owner; tell the human
-before publish / push / deploy / rm  → check(action_description)     obey verdict "blocked"
-past context would help              → recall(query)                 safe any time
-"save", "remember", or before you stop → session_end(summary, insights, state)
+session begins              → session_start               first, before you act
+a fact or decision to keep  → remember(content)
+the human corrects you      → check(human_correction: { rule, why, applies_when })
+before publish/push/delete  → check(action_description)   obey verdict "blocked"
+past context would help     → recall(query)               safe any time
+"save", or before you stop  → session_end(summary, insights, state)
 ```
 
+- **Hosted server:** corrections you record are staged for the owner's approval. Tell the human it is waiting for the owner.
 - **Tools (default 5):** `session_start` · `remember` · `recall` · `check` · `session_end`. Details in [MCP tools](#mcp-tools).
 - **Don't** claim you will remember something without calling a tool. **Don't** paste the whole memory back to the human; surface only what changes your next action. **Don't** store secrets, tokens or credentials.
 - **Machine-readable summary:** [`llms.txt`](llms.txt).
@@ -116,16 +114,16 @@ codex mcp add agent-recall -- npx -y agent-recall-mcp
 
 Locally, Claude Code hooks fire memory without agent discipline. These are the `ar` (CLI) hook commands:
 
-```text
-ar hook-start        SessionStart      inject the cards (owner, hard rules, state); AGENT_RECALL_SESSION_START_MODE=full for every section
-ar hook-correction   UserPromptSubmit  capture corrections silently
-ar hook-ambient      UserPromptSubmit  inject relevant memories (≥2-word overlap floor)
-ar hook-save         UserPromptSubmit  "save"/"retain" → prompt session_end
-ar hook-pretool      PreToolUse        warn on npm publish, git push, rm -rf, deploy, DROP TABLE
-ar hook-end          SessionEnd        auto-save journal if not saved today
-ar health            —                 recent hook failures (fail-loud)
-ar identity set <f>  —                 owner identity card, loaded first by every session
-```
+| Command | Claude Code hook | What it does |
+|---|---|---|
+| `ar hook-start` | SessionStart | Injects the cards (owner, hard rules, state). `AGENT_RECALL_SESSION_START_MODE=full` for every section |
+| `ar hook-correction` | UserPromptSubmit | Captures corrections silently |
+| `ar hook-ambient` | UserPromptSubmit | Injects relevant memories (≥2-word overlap floor) |
+| `ar hook-save` | UserPromptSubmit | "save" / "retain" → prompts `session_end` |
+| `ar hook-pretool` | PreToolUse | Warns on npm publish, git push, rm -rf, deploy, DROP TABLE |
+| `ar hook-end` | SessionEnd | Auto-saves the journal if not saved today |
+| `ar health` | — | Recent hook failures (fail-loud) |
+| `ar identity set <file>` | — | Owner identity card, loaded first by every session |
 
 ### Skill: Claude Code
 
