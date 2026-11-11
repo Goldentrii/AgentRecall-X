@@ -1,0 +1,9 @@
+# Caddy gets and renews a Let's Encrypt certificate for $AR_DOMAIN automatically
+# (port 80 must be reachable for the HTTP-01 challenge, and DNS must point here).
+# No access log on purpose: agent-recall-server already logs one line per request
+# (method, path, uid, status, ms) and never logs tokens or bodies.
+{$AR_DOMAIN} {
+	encode zstd gzip
+	header -Server
+	reverse_proxy server:8787
+}

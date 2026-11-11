@@ -1,7 +1,7 @@
 // packages/core/src/supabase/config.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getRoot } from "../types.js";
+import { getRoot, isTenantScoped } from "../types.js";
 
 export interface SupabaseConfig {
   supabase_url: string;
@@ -42,6 +42,11 @@ function configPath(): string {
 }
 
 export function readSupabaseConfig(): SupabaseConfig | null {
+  // Hosted multi-tenant mode: Supabase is OFF. The client, remote recall backend
+  // and embedding provider are process-wide singletons, and env overrides apply
+  // to every tenant, so any of them would route one tenant's data through
+  // another's project/key. Per-tenant backends are a later phase.
+  if (isTenantScoped()) return null;
   let config: Partial<SupabaseConfig> = {};
 
   const p = configPath();

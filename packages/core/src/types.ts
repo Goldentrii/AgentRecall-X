@@ -64,11 +64,108 @@ export function withRoot<T>(root: string, fn: () => T): T {
   return _rootScope.run(root, fn);
 }
 
+// ---------------------------------------------------------------------------
+// Multi-tenant scope (hosted server). One process serves many users; every
+// request runs inside withTenant(). Inside a tenant scope, everything that is
+// process-global or tied to the server's OS user is switched off or derived
+// from the tenant: storage root, session id, default project, legacy
+// ~/.claude scans, Supabase/cloud-embedding config (process-wide singletons
+// and env overrides that would cross tenants). See
+// docs/superpowers/plans/2026-11-07-hosted-server-target.md.
+// ---------------------------------------------------------------------------
+
+export interface TenantContext {
+  /** Absolute storage root for this tenant (e.g. DATA/tenants/<uid>). */
+  root: string;
+  /** Per-request/MCP-session id: lowercase hex/uuid chars only. */
+  sid: string;
+  /** Project slug used when a tool is called with project "auto". */
+  defaultProject: string;
+}
+
+const _tenantScope = new AsyncLocalStorage<TenantContext>();
+let _strictTenantMode = false;
+const TENANT_SID_RE = /^[a-f0-9-]{6,64}$/;
+const TENANT_PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Run `fn` as tenant `ctx`. Validates the context: a malformed root/sid/project
+ * is a server bug, so it throws rather than silently falling back.
+ */
+export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
+  if (!path.isAbsolute(ctx.root)) throw new Error("withTenant: root must be absolute");
+  if (!TENANT_SID_RE.test(ctx.sid)) throw new Error("withTenant: sid must match " + TENANT_SID_RE);
+  if (!TENANT_PROJECT_RE.test(ctx.defaultProject)) throw new Error("withTenant: defaultProject must match " + TENANT_PROJECT_RE);
+  return _tenantScope.run({ ...ctx, root: path.resolve(ctx.root) }, fn);
+}
+
+export function getTenantContext(): TenantContext | undefined {
+  return _tenantScope.getStore();
+}
+
+export function isTenantScoped(): boolean {
+  return _tenantScope.getStore() !== undefined;
+}
+
+/**
+ * Hosted server only: from now on, getRoot() outside a tenant scope THROWS
+ * instead of falling back to the server user's default store. Defence in
+ * depth: any code path that loses the tenant context fails loudly instead of
+ * reading/writing another store. Irreversible for the process lifetime.
+ */
+export function enableStrictTenantMode(): void {
+  _strictTenantMode = true;
+}
+
 export function getRoot(): string {
+  const tenant = _tenantScope.getStore();
+  if (tenant) return tenant.root;
+  if (_strictTenantMode) {
+    throw new Error("[agent-recall] getRoot() called outside a tenant scope while strict tenant mode is on");
+  }
   return _rootScope.getStore() ?? _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }
 
+/** Prefix shown to agents in place of the hosted tenant root. */
+export const HOSTED_DISPLAY_ROOT = "hosted:";
+
+/**
+ * A store path as shown to the agent. Locally: the root becomes
+ * "~/.agent-recall" (unchanged behaviour). Inside a tenant: the root becomes
+ * "hosted:" with forward slashes, so responses never reveal the server's
+ * filesystem layout and never point the agent at a local ~/.agent-recall.
+ */
+export function toDisplayPath(p: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant) return p.replace(getRoot(), "~/.agent-recall");
+  if (p !== tenant.root && !p.startsWith(tenant.root + path.sep)) {
+    // Fail closed: an absolute path outside the tenant is server layout, not the agent's business.
+    return path.isAbsolute(p) ? `${HOSTED_DISPLAY_ROOT}<outside-tenant>` : p;
+  }
+  return HOSTED_DISPLAY_ROOT + p.slice(tenant.root.length).replace(/\\/g, "/");
+}
+
+/**
+ * Hosted backstop: replace every occurrence of the tenant root in free text
+ * (tool results, error messages) with "hosted:". Covers the native form, the
+ * forward-slash form and the JSON-escaped form (Windows backslashes doubled).
+ * Identity outside a tenant scope.
+ */
+export function redactTenantPaths(s: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant || !s) return s;
+  const forms = new Set([tenant.root, tenant.root.replace(/\\/g, "/"), tenant.root.replace(/\\/g, "\\\\")]);
+  let out = s;
+  for (const form of [...forms].sort((a, b) => b.length - a.length)) out = out.split(form).join(HOSTED_DISPLAY_ROOT);
+  return out;
+}
+
 export function getLegacyRoot(): string {
+  // Inside a tenant, never scan the server OS user's ~/.claude/projects:
+  // return a tenant-local path that does not exist, so every caller's
+  // existsSync() guard skips the legacy scan.
+  const tenant = _tenantScope.getStore();
+  if (tenant) return path.join(tenant.root, "_legacy-disabled");
   return path.join(os.homedir(), ".claude", "projects");
 }
 

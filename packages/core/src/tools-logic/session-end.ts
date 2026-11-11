@@ -20,7 +20,7 @@ import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir, palaceDir, projectSubPath, projectsRootDir } from "../storage/paths.js";
 import { readAwarenessState } from "../palace/awareness.js";
 import { todayISO } from "../storage/fs-utils.js";
-import { getRoot } from "../types.js";
+import { toDisplayPath } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
 import { getSessionId, getCachedSessionEnd, setCachedSessionEnd } from "../storage/session.js";
@@ -880,7 +880,6 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   }
 
   // 5. Render save card — server-side, always correct
-  const root = getRoot();
   const date = todayISO();
   const jDir = journalDir(slug);
   const journalCount = fs.existsSync(jDir)
@@ -946,7 +945,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     `  AgentRecall  ✓ Saved    ${slug}   ${date}   #${journalCount}`,
     line,
     "",
-    `  Journal       ${jDir.replace(root, "~/.agent-recall")}/`,
+    `  Journal       ${toDisplayPath(jDir)}/`,
     `                └─ ${date}.md                    ${journalWritten ? "[written]" : journalWriteError ? `[FAILED: ${journalWriteError}]` : "[skipped]"}`,
     "",
     `  Awareness     ${insightsAdded} added, ${insightsConfirmed} confirmed  (${totalInsights} total)`,
@@ -958,7 +957,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
 
   if (palaceConsolidated && roomNames.length > 0) {
     // F2 fix (independent review, 2026-07-20): route through paths.ts (see corrDir above).
-    const palacePath = `${palaceDir(slug)}/`.replace(root, "~/.agent-recall");
+    const palacePath = `${toDisplayPath(palaceDir(slug))}/`;
     cardLines.push(`  Palace        ${palacePath}`);
     for (let i = 0; i < roomNames.length; i++) {
       const prefix = i === roomNames.length - 1 ? "└─" : "├─";

@@ -6,24 +6,27 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "agent-recall-mcp": "dist/index.js"
+    "agent-recall-mcp": "dist/index.js",
+    "agent-recall-server": "dist/http/cli.js"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
+    "build": "tsc && node -e \"for (const f of ['dist/index.js','dist/http/cli.js']) require('fs').chmodSync(f, 0o755)\"",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "agent-recall-core": "3.5.2",
-    "@modelcontextprotocol/sdk": "^1.28.0",
+    "express": "^5.2.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   },
   "keywords": [
     "mcp",
