@@ -8,7 +8,8 @@
  *   agent-recall-server token list   [--data DIR]
  *   agent-recall-server token revoke <id> [--data DIR]
  *   agent-recall-server usage        [--quota-mb 100] [--data DIR]
- *   agent-recall-server identity link --github-id <n> | --google-sub <s> --uid <uid> [--data DIR]
+ *   agent-recall-server identity link --github-id <n> | --google-sub <s> [--uid <uid>] [--data DIR]
+ *   agent-recall-server identity unlink --github-id <n> | --google-sub <s> [--data DIR]
  *   agent-recall-server identity list [--data DIR]
  *   agent-recall-server oauth list   [--data DIR]
  *   agent-recall-server oauth revoke <grant-id> | --uid <uid> [--data DIR]
@@ -26,7 +27,7 @@ import { startHttpServer, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } 
 import { createToken, listTokens, revokeToken, UID_RE, TokenStoreUnavailableError } from "./tokens.js";
 import { dirSize } from "./limits.js";
 import { loadOAuthConfig, OAuthConfigError } from "./oauth-config.js";
-import { linkIdentity, listIdentities } from "./identities.js";
+import { linkIdentity, listIdentities, unlinkIdentity } from "./identities.js";
 import { operatorRevokeGrant, operatorRevokeUid, readGrantsFresh, readJsonFreshRevoked } from "./oauth-store.js";
 
 const USAGE = `agent-recall-server v${VERSION}
@@ -38,8 +39,9 @@ Usage:
   agent-recall-server token list [--data DIR]
   agent-recall-server token revoke <id> [--data DIR]
   agent-recall-server usage [--quota-mb 100] [--data DIR]
-  agent-recall-server identity link --github-id <n> --uid <uid> [--data DIR]
-  agent-recall-server identity link --google-sub <s> --uid <uid> [--data DIR]
+  agent-recall-server identity link --github-id <n> [--uid <uid>] [--data DIR]
+  agent-recall-server identity link --google-sub <s> [--uid <uid>] [--data DIR]
+  agent-recall-server identity unlink --github-id <n> | --google-sub <s> [--data DIR]
   agent-recall-server identity list [--data DIR]
   agent-recall-server oauth list [--data DIR]
   agent-recall-server oauth revoke <grant-id> [--data DIR]
@@ -49,6 +51,8 @@ OAuth sign-in with GitHub / Google is on only when a public URL and at least one
   --public-url / $AR_PUBLIC_URL            public https origin of this server (the OAuth issuer)
   $AR_OAUTH_GITHUB_CLIENT_ID + $AR_OAUTH_GITHUB_CLIENT_SECRET     callback <public>/authorize/callback/github
   $AR_OAUTH_GOOGLE_CLIENT_ID + $AR_OAUTH_GOOGLE_CLIENT_SECRET     callback <public>/authorize/callback/google
+Sign-up is invite-only by default: only accounts invited with 'identity link' can sign in
+(omit --uid to give the account its own gh-<id> / gg-<sub> tenant). AR_OAUTH_SIGNUP=open lets anyone in.
 Optional env: AR_OAUTH_REDIRECT_ALLOW (extra redirect URI prefixes, comma-separated),
 AR_TRUST_PROXY=1 (trust one proxy hop for client IPs; set it behind Caddy).
 
@@ -201,16 +205,39 @@ async function main(argv: string[]): Promise<void> {
       const gh = flag(args, "--github-id");
       const gg = flag(args, "--google-sub");
       const uid = flag(args, "--uid");
-      if (!uid || (gh === undefined) === (gg === undefined)) fail("identity link needs --uid <uid> and exactly one of --github-id <n> or --google-sub <s>");
+      if ((gh === undefined) === (gg === undefined)) fail("identity link needs exactly one of --github-id <n> or --google-sub <s> (and optionally --uid <uid>)");
       const provider = gh !== undefined ? "github" : "google";
       const subject = (gh ?? gg) as string;
+      let target: string;
       try {
-        linkIdentity(dir, provider, subject, uid as string);
+        target = linkIdentity(dir, provider, subject, uid);
       } catch (err) {
         if (err instanceof TokenStoreUnavailableError) throw err;
         fail((err as Error).message);
       }
-      process.stdout.write(`linked ${provider} ${subject} -> uid "${uid}"\n`);
+      process.stdout.write(
+        `linked ${provider} ${subject} -> uid "${target}"\n` +
+        "Existing sign-ins of this account keep their old tenant until they end; to move them now: oauth revoke --uid <old uid>\n",
+      );
+      return;
+    }
+    if (sub === "unlink") {
+      const gh = flag(args, "--github-id");
+      const gg = flag(args, "--google-sub");
+      if ((gh === undefined) === (gg === undefined)) fail("identity unlink needs exactly one of --github-id <n> or --google-sub <s>");
+      const provider = gh !== undefined ? "github" : "google";
+      const subject = (gh ?? gg) as string;
+      let was: string | null;
+      try {
+        was = unlinkIdentity(dir, provider, subject);
+      } catch (err) {
+        fail((err as Error).message);
+      }
+      if (was === null) fail(`no identity link for ${provider} ${subject}`);
+      process.stdout.write(
+        `unlinked ${provider} ${subject} (was uid "${was}"). In invite mode it can no longer sign in.\n` +
+        `Sign-ins it already has keep working until they end; to cut them off now: oauth revoke --uid ${was}\n`,
+      );
       return;
     }
     if (sub === "list") {

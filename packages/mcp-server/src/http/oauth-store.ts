@@ -7,8 +7,13 @@
  *
  * Token formats: access `aro_` + 32 random bytes (1 h), refresh `arr_` + 32 random
  * bytes (30 d, rotated on every use). Presenting an already-rotated refresh token
- * revokes the whole grant (theft signal). All expiries are compared against
- * Date.now() at check time (or the injected clock), never against cached values.
+ * revokes the whole grant (theft signal), except the most recently rotated one by the
+ * same client inside a short grace window (a lost /token response is not theft).
+ * All expiries are compared against Date.now() at check time (or the injected clock).
+ *
+ * Every change is written to disk FIRST and only then applied in memory: a failed
+ * write (EPERM from an antivirus lock, ENOSPC) leaves memory exactly as on disk, so
+ * a client's retry with the same token still works.
  */
 import * as path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
@@ -25,6 +30,10 @@ export const ABSOLUTE_GRANT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_ACCESS_PER_GRANT = 8;
 const MAX_ROTATED_PER_GRANT = 50;
 const REVOKED_GRANT_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+/** Live grants per uid (one per signed-in client/device); a new sign-in evicts the oldest beyond this. */
+export const MAX_GRANTS_PER_UID = 20;
+/** The just-rotated refresh token still works this long, for the same client only. */
+export const REFRESH_GRACE_MS = 10 * 1000;
 
 const ACCESS_RE = /^aro_[A-Za-z0-9_-]{43}$/;
 const REFRESH_RE = /^arr_[A-Za-z0-9_-]{43}$/;
@@ -48,7 +57,11 @@ export interface Grant {
   access: Array<{ hash: string; exp: number }>;
   refresh: { hash: string; exp: number };
   rotated: string[];
+  /** The refresh token rotated last, still accepted from the same client until `until` (ms epoch). */
+  grace?: { hash: string; until: number };
 }
+
+export type JsonWriter = (filePath: string, data: unknown) => void;
 
 interface ClientsFile { version: 1; clients: StoredClient[] }
 interface GrantsFile { version: 1; grants: Grant[] }
@@ -124,7 +137,12 @@ export class OAuthStore {
   private readonly clientsPath: string;
   private readonly grantsPath: string;
 
-  constructor(private readonly dataDir: string, private readonly now: () => number = Date.now) {
+  constructor(
+    private readonly dataDir: string,
+    private readonly now: () => number = Date.now,
+    /** Test seam: the file writer (default atomic tmp + rename). */
+    private readonly write: JsonWriter = writeJsonAtomic,
+  ) {
     this.clientsPath = path.join(serverDir(dataDir), "oauth-clients.json");
     this.grantsPath = path.join(serverDir(dataDir), "oauth-grants.json");
     // Fail closed on a corrupt file: starting empty would let the next write destroy every grant.
@@ -142,17 +160,10 @@ export class OAuthStore {
   }
 
   addClient(client: StoredClient): void {
-    if (this.clients.size >= MAX_CLIENTS) this.pruneClients();
-    this.clients.set(client.client_id, client);
-    this.persistClients();
-  }
-
-  private pruneClients(): void {
-    // Oldest never-used first; if every client has been used, least recently used.
-    let victim: StoredClient | undefined;
-    const rank = (c: StoredClient) => (c.last_used_at === undefined ? 0 : 1) * 1e15 + (c.last_used_at ?? (c.client_id_issued_at ?? 0) * 1000);
-    for (const c of this.clients.values()) if (!victim || rank(c) < rank(victim)) victim = c;
-    if (victim) this.clients.delete(victim.client_id);
+    const next = new Map(this.clients);
+    if (next.size >= MAX_CLIENTS) pruneOneClient(next);
+    next.set(client.client_id, client);
+    this.commitClients(next);
   }
 
   touchClient(id: string): void {
@@ -160,16 +171,19 @@ export class OAuthStore {
     if (!c) return;
     const t = this.now();
     if (c.last_used_at !== undefined && t - c.last_used_at < CLIENT_TOUCH_MS) return; // persist at most once per client per hour
-    c.last_used_at = t;
-    this.persistClients();
+    const next = new Map(this.clients);
+    next.set(id, { ...c, last_used_at: t });
+    this.commitClients(next);
   }
 
   clientCount(): number {
     return this.clients.size;
   }
 
-  private persistClients(): void {
-    writeJsonAtomic(this.clientsPath, { version: 1, clients: [...this.clients.values()] } satisfies ClientsFile);
+  /** Write, then swap: a failed write leaves the in-memory clients as on disk. */
+  private commitClients(next: Map<string, StoredClient>): void {
+    this.write(this.clientsPath, { version: 1, clients: [...next.values()] } satisfies ClientsFile);
+    this.clients = next;
   }
 
   // ---- grants & tokens ----
@@ -185,21 +199,30 @@ export class OAuthStore {
     }
   }
 
-  private persistGrants(): void {
+  /**
+   * Prune `next` (expired grants, old revoked ones, expired access tokens) WITHOUT touching
+   * any grant object that is live in memory, write it, and only then make it current.
+   */
+  private commitGrants(next: Grant[]): void {
     const t = this.now();
-    this.grants = this.grants.filter((g) => {
-      if (g.revoked_at) return t - Date.parse(g.revoked_at) < REVOKED_GRANT_KEEP_MS;
-      return g.refresh.exp > t;
-    });
-    for (const g of this.grants) g.access = g.access.filter((a) => a.exp > t).slice(-MAX_ACCESS_PER_GRANT);
+    const kept = next
+      .filter((g) => (g.revoked_at ? t - Date.parse(g.revoked_at) < REVOKED_GRANT_KEEP_MS : g.refresh.exp > t))
+      .map((g) => {
+        const access = g.access.filter((a) => a.exp > t).slice(-MAX_ACCESS_PER_GRANT);
+        return access.length === g.access.length ? g : { ...g, access };
+      });
+    this.write(this.grantsPath, { version: 1, grants: kept } satisfies GrantsFile);
+    this.grants = kept;
     this.reindex();
-    writeJsonAtomic(this.grantsPath, { version: 1, grants: this.grants } satisfies GrantsFile);
   }
 
-  private mintAccess(grant: Grant): { token: string } {
+  private replaceGrant(old: Grant, updated: Grant): void {
+    this.commitGrants(this.grants.map((g) => (g === old ? updated : g)));
+  }
+
+  private newAccess(): { token: string; entry: { hash: string; exp: number } } {
     const token = "aro_" + randomBytes(32).toString("base64url");
-    grant.access.push({ hash: sha256Hex(token), exp: this.now() + ACCESS_TTL_MS });
-    return { token };
+    return { token, entry: { hash: sha256Hex(token), exp: this.now() + ACCESS_TTL_MS } };
   }
 
   hasGrantForUid(uid: string): boolean {
@@ -211,20 +234,25 @@ export class OAuthStore {
     let id: string;
     do { id = randomBytes(6).toString("hex"); } while (this.grants.some((g) => g.id === id));
     const refreshToken = "arr_" + randomBytes(32).toString("base64url");
+    const access = this.newAccess();
     const grant: Grant = {
       id,
       uid: p.uid,
       client_id: p.clientId,
       resource: p.resource,
       created_at: new Date(t).toISOString(),
-      access: [],
+      access: [access.entry],
       refresh: { hash: sha256Hex(refreshToken), exp: t + REFRESH_TTL_MS },
       rotated: [],
     };
-    const { token } = this.mintAccess(grant);
-    this.grants.push(grant);
-    this.persistGrants();
-    return { access_token: token, refresh_token: refreshToken, expires_in: ACCESS_TTL_MS / 1000 };
+    // Bound grants per uid (live AND revoked, so sign-in + revoke loops are bounded too): one account
+    // signing in again and again evicts its own oldest grants, so the grants file (rewritten on every
+    // change) cannot grow without limit. An evicted revoked grant only loses its reuse-detection record.
+    const at = (g: Grant) => Date.parse(g.created_at) || 0; // a corrupt date sorts first instead of breaking the order
+    const own = this.grants.filter((g) => g.uid === p.uid).sort((a, b) => at(a) - at(b));
+    const evict = new Set(own.slice(0, Math.max(0, own.length - (MAX_GRANTS_PER_UID - 1))));
+    this.commitGrants([...this.grants.filter((g) => !evict.has(g)), grant]);
+    return { access_token: access.token, refresh_token: refreshToken, expires_in: ACCESS_TTL_MS / 1000 };
   }
 
   /** Operator revocations, re-read (mtime-cached) on every check so the CLI takes effect at once. */
@@ -253,27 +281,38 @@ export class OAuthStore {
     return { uid: g.uid, clientId: g.client_id, resource: g.resource, expiresAt: entry.exp };
   }
 
+  /** Issue a new refresh + access token for `g`. `grace` = whether this rotation starts a new grace window. */
+  private rotate(g: Grant, startGrace: boolean): RefreshResult {
+    const t = this.now();
+    const next = "arr_" + randomBytes(32).toString("base64url");
+    const access = this.newAccess();
+    const updated: Grant = {
+      ...g,
+      rotated: [...g.rotated, g.refresh.hash].slice(-MAX_ROTATED_PER_GRANT),
+      refresh: { hash: sha256Hex(next), exp: Math.min(t + REFRESH_TTL_MS, Date.parse(g.created_at) + ABSOLUTE_GRANT_TTL_MS) },
+      access: [...g.access, access.entry],
+      // One retry per rotation: a grace use clears the window, so a stolen old token cannot keep minting tokens.
+      grace: startGrace ? { hash: g.refresh.hash, until: t + REFRESH_GRACE_MS } : undefined,
+    };
+    this.replaceGrant(g, updated);
+    return { type: "ok", grant: updated, tokens: { access_token: access.token, refresh_token: next, expires_in: ACCESS_TTL_MS / 1000 } };
+  }
+
   rotateRefresh(clientId: string, refreshToken: string): RefreshResult {
     if (!REFRESH_RE.test(refreshToken)) return { type: "invalid" };
     const h = sha256Hex(refreshToken);
     const stale = this.byRotated.get(h);
     if (stale) {
       if (stale.client_id !== clientId) return { type: "invalid" };
-      if (!stale.revoked_at) {
-        stale.revoked_at = new Date(this.now()).toISOString();
-        this.persistGrants();
-      }
+      const t = this.now();
+      // The client never got the response to its last refresh: same token again, inside the window.
+      if (stale.grace?.hash === h && t < stale.grace.until && this.live(stale) && stale.refresh.exp > t) return this.rotate(stale, false);
+      if (!stale.revoked_at) this.replaceGrant(stale, { ...stale, revoked_at: new Date(t).toISOString() });
       return { type: "reuse", grantId: stale.id };
     }
     const g = this.byRefresh.get(h);
     if (!g || g.client_id !== clientId || !this.live(g) || g.refresh.exp <= this.now()) return { type: "invalid" };
-    const next = "arr_" + randomBytes(32).toString("base64url");
-    g.rotated.push(g.refresh.hash);
-    g.rotated = g.rotated.slice(-MAX_ROTATED_PER_GRANT);
-    g.refresh = { hash: sha256Hex(next), exp: Math.min(this.now() + REFRESH_TTL_MS, Date.parse(g.created_at) + ABSOLUTE_GRANT_TTL_MS) };
-    const { token } = this.mintAccess(g);
-    this.persistGrants();
-    return { type: "ok", grant: g, tokens: { access_token: token, refresh_token: next, expires_in: ACCESS_TTL_MS / 1000 } };
+    return this.rotate(g, true);
   }
 
   /** RFC 7009: unknown/foreign tokens are ignored silently. Refresh token → whole grant; access token → that token. */
@@ -281,14 +320,20 @@ export class OAuthStore {
     const h = sha256Hex(token);
     const byRefresh = this.byRefresh.get(h);
     if (byRefresh && byRefresh.client_id === clientId) {
-      byRefresh.revoked_at ??= new Date(this.now()).toISOString();
-      this.persistGrants();
+      if (!byRefresh.revoked_at) this.replaceGrant(byRefresh, { ...byRefresh, revoked_at: new Date(this.now()).toISOString() });
       return;
     }
     const byAccess = this.byAccess.get(h);
     if (byAccess && byAccess.client_id === clientId) {
-      byAccess.access = byAccess.access.filter((a) => a.hash !== h);
-      this.persistGrants();
+      this.replaceGrant(byAccess, { ...byAccess, access: byAccess.access.filter((a) => a.hash !== h) });
     }
   }
+}
+
+/** Oldest never-used client first; if every client has been used, the least recently used. */
+function pruneOneClient(clients: Map<string, StoredClient>): void {
+  let victim: StoredClient | undefined;
+  const rank = (c: StoredClient) => (c.last_used_at === undefined ? 0 : 1) * 1e15 + (c.last_used_at ?? (c.client_id_issued_at ?? 0) * 1000);
+  for (const c of clients.values()) if (!victim || rank(c) < rank(victim)) victim = c;
+  if (victim) clients.delete(victim.client_id);
 }

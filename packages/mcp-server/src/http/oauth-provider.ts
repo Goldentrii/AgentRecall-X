@@ -9,7 +9,7 @@
  *   authorization codes 32 bytes, 60 s, single use, bound to client+redirect+resource+PKCE challenge
  * Persistent (oauth-store.ts): clients, grants, token hashes.
  */
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
@@ -23,7 +23,7 @@ import type { OAuthConfig, ProviderName } from "./oauth-config.js";
 import { isAllowedRedirect } from "./redirect-policy.js";
 import { OAuthStore, sha256Hex, type StoredClient, type IssuedTokens } from "./oauth-store.js";
 import { Federation, FederationError, PROVIDER_LABEL, b64url, formActionOrigins, newPkce } from "./federation.js";
-import { resolveUid } from "./identities.js";
+import { resolveIdentity, IdentityLinkError } from "./identities.js";
 import { errorPage, signInPage, pageHeaders as pageHeadersFor } from "./oauth-pages.js";
 
 export const OAUTH_SCOPE = "memory";
@@ -36,6 +36,8 @@ const MAX_LOGGED_SUBJECTS = 10_000;
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 export const CODE_TTL_MS = 60 * 1000;
 const DEFAULT_MAX_PENDING = 10_000;
+/** Live sign-in requests one client address (IPv4, or IPv6 /64) may hold, so one address cannot fill the table. */
+const DEFAULT_MAX_PENDING_PER_KEY = 30;
 const MAX_CODES = 10_000;
 const MAX_CHALLENGE_LOOKUPS = 5;
 const MAX_REDIRECT_URIS = 3;
@@ -49,6 +51,11 @@ const MSG_BUSY = "The sign-in service is busy right now. Please retry in a few s
 const MSG_TOO_MANY_STARTS = "Too many sign-in attempts for this request. Go back to your app and start again.";
 const MSG_REJECTED = "Sign-in failed. Please try again, or use another account.";
 const MSG_UNAVAILABLE = "Sign-in is temporarily unavailable. Please try again in a few minutes.";
+const MSG_LINK = "This account cannot sign in because of a server configuration problem. Ask the server operator to check its identity link.";
+const MSG_PER_KEY = "Too many open sign-in requests from your network. Finish or close the open ones, then try again in a few minutes.";
+const notInvited = (provider: ProviderName, subject: string): string =>
+  `This ${PROVIDER_LABEL[provider]} account is not invited to this AgentRecall server. ` +
+  `To get access, send this id to the server operator: ${provider} ${subject}`;
 
 interface Upstream {
   stateHash: string;
@@ -67,6 +74,8 @@ interface Pending {
   created: number;
   /** sha256 of the browser cookie issued with the sign-in page. */
   cookieHash: string;
+  /** Client address bucket the request counts against (per-address pending cap). */
+  key: string;
   /** Provider redirects issued for this request (capped). */
   starts: number;
   upstream?: Upstream;
@@ -84,7 +93,7 @@ interface CodeRecord {
 
 export type LoginResult =
   | { kind: "redirect"; location: string; clearCookieFor?: string }
-  | { kind: "page"; status: number; html: string; csp: string[] };
+  | { kind: "page"; status: number; html: string; csp: string[]; clearCookieFor?: string };
 
 export interface ProviderDeps {
   config: OAuthConfig;
@@ -93,6 +102,10 @@ export interface ProviderDeps {
   federation: Federation;
   /** Test seam: cap on live sign-in requests. */
   maxPending?: number;
+  /** Test seam: cap on live sign-in requests per client address. */
+  maxPendingPerKey?: number;
+  /** Client address bucket for an /authorize request (oauth-app passes the rate-limit IP key). */
+  keyOf?: (req: Request) => string;
   log: (line: string) => void;
   now: () => number;
 }
@@ -106,6 +119,8 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
   private readonly stateIndex = new Map<string, string>();
   private readonly codes = new Map<string, CodeRecord>();
   private readonly loggedSubjects = new Set<string>();
+  private readonly pendingPerKey = new Map<string, number>();
+  private readonly maxPendingPerKey: number;
   private readonly providers: ProviderName[];
   private readonly maxPending: number;
   /** Origins the sign-in page may redirect its form to (the providers' authorize endpoints). */
@@ -114,6 +129,7 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
   constructor(private readonly d: ProviderDeps) {
     this.providers = d.federation.enabledProviders();
     this.maxPending = d.maxPending ?? DEFAULT_MAX_PENDING;
+    this.maxPendingPerKey = d.maxPendingPerKey ?? DEFAULT_MAX_PENDING_PER_KEY;
     this.formOrigins = formActionOrigins(d.federation.urls, this.providers);
     this.clientsStore = {
       getClient: (id) => this.allowedClient(id),
@@ -202,7 +218,13 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
       throw new InvalidRequestError("code_challenge is not a valid S256 challenge");
     }
     const cookie = randomBytes(32).toString("base64url");
+    const key = this.d.keyOf && res.req ? this.d.keyOf(res.req) : "-";
+    if (this.livePendingFor(key) >= this.maxPendingPerKey) {
+      res.status(429).set(this.pageHeaders()).set("retry-after", "60").send(errorPage(MSG_PER_KEY));
+      return;
+    }
     const id = this.createPending({
+      key,
       clientId: client.client_id,
       clientName: client.client_name ?? "Unnamed application",
       redirectUri: params.redirectUri,
@@ -230,22 +252,38 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
     });
   }
 
+  private evictExpiredPending(): void {
+    const t = this.d.now();
+    for (const [k, v] of this.pending) if (t - v.created >= PENDING_TTL_MS) this.dropPending(k);
+  }
+
+  /** Live sign-in requests held by one client address (expired ones are dropped first when it looks full). */
+  private livePendingFor(key: string): number {
+    if ((this.pendingPerKey.get(key) ?? 0) >= this.maxPendingPerKey) this.evictExpiredPending();
+    return this.pendingPerKey.get(key) ?? 0;
+  }
+
   /** null when full of LIVE sign-ins: expired ones are evicted, live ones never are (no FIFO eviction). */
   private createPending(p: Omit<Pending, "created" | "upstream">): string | null {
     const t = this.d.now();
     if (this.pending.size >= this.maxPending) {
-      for (const [k, v] of this.pending) if (t - v.created >= PENDING_TTL_MS) this.dropPending(k);
+      this.evictExpiredPending();
       if (this.pending.size >= this.maxPending) return null;
     }
     const id = randomBytes(32).toString("base64url");
     this.pending.set(id, { ...p, created: t });
+    this.pendingPerKey.set(p.key, (this.pendingPerKey.get(p.key) ?? 0) + 1);
     return id;
   }
 
   private dropPending(id: string): void {
     const p = this.pending.get(id);
-    if (p?.upstream) this.stateIndex.delete(p.upstream.stateHash);
+    if (!p) return;
+    if (p.upstream) this.stateIndex.delete(p.upstream.stateHash);
     this.pending.delete(id);
+    const n = (this.pendingPerKey.get(p.key) ?? 1) - 1;
+    if (n <= 0) this.pendingPerKey.delete(p.key);
+    else this.pendingPerKey.set(p.key, n);
   }
 
   private getPending(id: unknown): { id: string; p: Pending } | null {
@@ -354,9 +392,22 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
     if (this.pending.get(id) !== p) return this.dead();
     let uid: string;
     try {
-      uid = resolveUid(this.d.dataDir, up.provider, subject);
+      const who = resolveIdentity(this.d.dataDir, up.provider, subject);
+      if (!who.linked && this.d.config.signup === "invite") {
+        // Invite-only: no code, no grant, no tenant for an account the operator has not linked.
+        this.dropPending(id);
+        const flag = up.provider === "github" ? "--github-id" : "--google-sub";
+        this.d.log(`[oauth] sign-in refused (not invited) ${up.provider}=${subject}; invite with: identity link ${flag} ${subject}`);
+        return { kind: "page", status: 403, html: errorPage(notInvited(up.provider, subject)), csp: [], clearCookieFor: id };
+      }
+      uid = who.uid;
     } catch (err) {
       this.d.log(`[oauth] identity resolution failed: ${(err as Error).message}`);
+      if (err instanceof IdentityLinkError) {
+        // A misconfigured link: retrying cannot help, so end the request instead of offering "try again".
+        this.dropPending(id);
+        return { kind: "page", status: 403, html: errorPage(MSG_LINK), csp: [], clearCookieFor: id };
+      }
       return this.retryPage(p, id, 503, MSG_UNAVAILABLE);
     }
     this.dropPending(id);

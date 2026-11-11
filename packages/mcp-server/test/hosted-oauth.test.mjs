@@ -84,6 +84,7 @@ async function startMock() {
       const verify = (prov, creds) => rec && rec.provider === prov && body.client_id === creds.id && body.client_secret === creds.secret
         && body.redirect_uri === `${state.base}/authorize/callback/${prov}` && sha256b64(body.code_verifier ?? "") === rec.challenge;
       if (req.method === "POST" && req.url === "/gh/token") {
+        if (state.ghTokenMode === "hang") return; // never answers: the server's provider timeout must fire
         if (!verify("github", GH)) return send(200, { error: "bad_verification_code" });
         state.codes.delete(body.code);
         state.tokens = { ...(state.tokens ?? {}), [`gho_${body.code}`]: rec };
@@ -121,7 +122,7 @@ async function startMock() {
 }
 
 /** Start an in-process hosted server (OAuth on unless `oauth: false`) + mock providers. */
-async function startEnv({ oauth = true, providers = ["github", "google"], loginLimits = { perIp: 1000, global: 10000, windowMs: 600000 }, providerTimeoutMs, maxPending, env = {}, seed } = {}) {
+async function startEnv({ oauth = true, providers = ["github", "google"], loginLimits = { perIp: 1000, global: 10000, windowMs: 600000 }, providerTimeoutMs, maxPending, maxPendingPerKey, env = {}, seed, signup = "open" } = {}) {
   const dataDir = fs.mkdtempSync(path.join(root, "data-"));
   const mock = await startMock();
   const port = await freePort();
@@ -129,7 +130,8 @@ async function startEnv({ oauth = true, providers = ["github", "google"], loginL
   mock.state.base = base;
   const clock = { offset: 0 };
   const logs = [];
-  const penv = { ...env };
+  // Most tests exercise the flow itself, so they opt into open sign-up; invite-only (the default) has its own tests.
+  const penv = { ...(signup ? { AR_OAUTH_SIGNUP: signup } : {}), ...env };
   if (providers.includes("github")) { penv.AR_OAUTH_GITHUB_CLIENT_ID = GH.id; penv.AR_OAUTH_GITHUB_CLIENT_SECRET = GH.secret; }
   if (providers.includes("google")) { penv.AR_OAUTH_GOOGLE_CLIENT_ID = GG.id; penv.AR_OAUTH_GOOGLE_CLIENT_SECRET = GG.secret; }
   const config = oauth ? loadOAuthConfig({ publicUrl: base }, penv) : null;
@@ -138,7 +140,7 @@ async function startEnv({ oauth = true, providers = ["github", "google"], loginL
     seed?.(dataDir, base);
     server = await startHttpServer({
       dataDir, port, host: "127.0.0.1", full: false, oauth: config, log: (l) => logs.push(l),
-      oauthTesting: { now: () => Date.now() + clock.offset, loginLimits, providerUrls: mock.urls, providerTimeoutMs, maxPending },
+      oauthTesting: { now: () => Date.now() + clock.offset, loginLimits, providerUrls: mock.urls, providerTimeoutMs, maxPending, maxPendingPerKey },
     });
   } catch (err) {
     await mock.close();
@@ -849,7 +851,7 @@ describe("oauth — federated sign-in", () => {
     } finally { env.clock.offset = 0; }
   });
 
-  it("L3: `token create --uid gh-…/gg-…` is refused, `identity link` to such a uid is not", () => {
+  it("L3: `token create --uid gh-…/gg-…` is refused; `identity link` only to the account's own gh-/gg- uid", () => {
     const run = (...args) => spawnSync(process.execPath, [CLI, ...args, "--data", env.dataDir], { encoding: "utf-8", env: cliEnv() });
     for (const uid of ["gh-5", "gg-5"]) {
       const bad = run("token", "create", "--uid", uid);
@@ -857,7 +859,12 @@ describe("oauth — federated sign-in", () => {
       assert.match(bad.stderr, /reserved/);
     }
     assert.equal(run("token", "create", "--uid", "plain-user").status, 0);
-    assert.equal(run("identity", "link", "--github-id", "5", "--uid", "gh-9").status, 0);
+    const foreign = run("identity", "link", "--github-id", "5", "--uid", "gh-9");
+    assert.notEqual(foreign.status, 0, "gh-9 belongs to GitHub account 9, never to account 5");
+    assert.match(foreign.stderr, /belongs to/);
+    assert.equal(run("identity", "link", "--github-id", "5", "--uid", "gh-5").status, 0);
+    assert.equal(run("identity", "link", "--google-sub", "6", "--uid", "gg-6").status, 0);
+    assert.notEqual(run("identity", "link", "--google-sub", "6", "--uid", "gh-6").status, 0, "a Google account never maps onto a gh- uid");
     assert.notEqual(run("identity", "link", "--github-id", "5", "--google-sub", "6", "--uid", "x-user").status, 0);
     assert.notEqual(run("identity", "link", "--github-id", "abc", "--uid", "x-user").status, 0);
   });
@@ -1166,5 +1173,250 @@ describe("oauth round 5 — pending cap (L4) and stored clients (L8)", () => {
       assert.equal(r.status, 400);
       assert.equal(r.headers.get("location"), null);
     } finally { await env.close(); }
+  });
+});
+
+// ---- review round 6 (PR #50): invite-only, grant caps, write-then-commit, reserved uids ----
+
+const { OAuthStore, MAX_GRANTS_PER_UID, REFRESH_GRACE_MS } = await load("oauth-store.js");
+
+describe("oauth round 6 — invite-only sign-up (default)", () => {
+  let env, client;
+  before(async () => { env = await startEnv({ signup: null }); client = await newClient(env); });
+  after(async () => env?.close());
+
+  it("config: invite is the default; open must be explicit; anything else fails closed", () => {
+    const base = { AR_PUBLIC_URL: "https://recall.example", AR_OAUTH_GITHUB_CLIENT_ID: "i", AR_OAUTH_GITHUB_CLIENT_SECRET: "s" };
+    assert.equal(loadOAuthConfig({}, base).signup, "invite");
+    assert.equal(loadOAuthConfig({}, { ...base, AR_OAUTH_SIGNUP: "" }).signup, "invite", "empty (compose default) = invite");
+    assert.equal(loadOAuthConfig({}, { ...base, AR_OAUTH_SIGNUP: "open" }).signup, "open");
+    assert.equal(loadOAuthConfig({}, { ...base, AR_OAUTH_SIGNUP: "INVITE" }).signup, "invite");
+    assert.throws(() => loadOAuthConfig({}, { ...base, AR_OAUTH_SIGNUP: "yes" }), OAuthConfigError);
+  });
+
+  it("an account nobody invited gets a 403 page naming its id, no code, and no tenant", async () => {
+    const a = await authorize(env, client);
+    const { cb } = await attempt(env, a, "github", { profile: { id: 4242 } });
+    assert.equal(cb.status, 403);
+    assert.equal(cb.code, null);
+    assert.match(cb.text, /not invited/i);
+    assert.match(cb.text, /4242/, "the user can send their id to the operator");
+    assert.ok(env.logs.some((l) => /not invited.*github=4242/.test(l)), env.logs.join("\n"));
+    assert.ok(!fs.existsSync(path.join(env.dataDir, "tenants", "gh-4242")));
+  });
+
+  it("`identity link` without --uid invites the account at its own gh-/gg- uid; with --uid onto an existing tenant", async () => {
+    assert.match(cli(env, "identity", "link", "--github-id", "4343"), /linked github 4343 -> uid "gh-4343"/);
+    cli(env, "identity", "link", "--google-sub", "777000", "--uid", "carol-existing");
+    for (const [provider, profile, uid] of [["github", { id: 4343 }, "gh-4343"], ["google", { sub: "777000" }, "carol-existing"]]) {
+      const tokens = await getTokens(env, client, { provider, profile });
+      const marker = "invite-" + b64url(randomBytes(5));
+      const c = await mcpClient(env, tokens.access_token);
+      await c.callTool({ name: "remember", arguments: { content: marker } });
+      await c.close();
+      assert.ok(walkFiles(path.join(env.dataDir, "tenants", uid)).some((f) => fs.readFileSync(f, "utf-8").includes(marker)), uid);
+    }
+  });
+});
+
+describe("oauth round 6 — grants are capped per user", () => {
+  let env, client;
+  before(async () => { env = await startEnv(); client = await newClient(env); });
+  after(async () => env?.close());
+
+  it("at most MAX_GRANTS_PER_UID live grants per uid: the oldest is evicted, the newest works", async () => {
+    const first = await getTokens(env, client, { profile: { id: 555 } });
+    let last;
+    for (let i = 0; i < MAX_GRANTS_PER_UID; i++) last = await getTokens(env, client, { profile: { id: 555 } });
+    const grants = JSON.parse(fs.readFileSync(path.join(env.dataDir, "_server", "oauth-grants.json"), "utf-8")).grants;
+    assert.equal(grants.filter((g) => g.uid === "gh-555").length, MAX_GRANTS_PER_UID);
+    assert.equal(await mcpStatus(env, first.access_token), 401, "evicted grant");
+    assert.equal(await mcpStatus(env, last.access_token), 200);
+    const other = await getTokens(env, client, { profile: { id: 556 } });
+    assert.equal(await mcpStatus(env, other.access_token), 200, "another user is unaffected");
+  });
+});
+
+describe("oauth round 6 — store writes to disk before changing memory", () => {
+  const fresh = () => {
+    const dir = fs.mkdtempSync(path.join(root, "store-"));
+    fs.mkdirSync(path.join(dir, "_server"), { recursive: true });
+    const clock = { t: 1_800_000_000_000 };
+    let fail = false;
+    const write = (file, data) => {
+      if (fail) throw Object.assign(new Error("EPERM: rename (simulated antivirus lock)"), { code: "EPERM" });
+      fs.writeFileSync(file, JSON.stringify(data));
+    };
+    const store = new OAuthStore(dir, () => clock.t, write);
+    return { store, clock, setFail: (v) => { fail = v; } };
+  };
+
+  it("error path: a failed write during refresh changes nothing, so the client's retry with the same token works", () => {
+    const { store, setFail } = fresh();
+    const issued = store.createGrant({ uid: "alice", clientId: "c1", resource: "https://r/mcp" });
+    setFail(true);
+    assert.throws(() => store.rotateRefresh("c1", issued.refresh_token), /EPERM/);
+    setFail(false);
+    const retry = store.rotateRefresh("c1", issued.refresh_token);
+    assert.equal(retry.type, "ok", "not treated as token theft");
+    assert.ok(store.resolveAccess(retry.tokens.access_token));
+  });
+
+  it("error path: a failed write during sign-in leaves no half-created grant", () => {
+    const { store, setFail } = fresh();
+    setFail(true);
+    assert.throws(() => store.createGrant({ uid: "bob", clientId: "c1", resource: "https://r/mcp" }), /EPERM/);
+    setFail(false);
+    assert.equal(store.hasGrantForUid("bob"), false);
+  });
+
+  it("a lost refresh response: the previous token still works inside the grace window, then reuse revokes the grant", () => {
+    const { store, clock } = fresh();
+    const r0 = store.createGrant({ uid: "carol", clientId: "c1", resource: "https://r/mcp" }).refresh_token;
+    const first = store.rotateRefresh("c1", r0);
+    assert.equal(first.type, "ok");
+    clock.t += REFRESH_GRACE_MS - 1;
+    assert.equal(store.rotateRefresh("c2", r0).type, "invalid", "another client never benefits from the grace");
+    const again = store.rotateRefresh("c1", r0);
+    assert.equal(again.type, "ok", "inside the grace window the client that lost the response gets new tokens");
+    assert.equal(store.rotateRefresh("c1", r0).type, "reuse", "one retry only: a second replay is a theft signal");
+    assert.equal(store.resolveAccess(again.tokens.access_token), null, "and the whole grant is revoked");
+  });
+
+  it("the grace window ends after REFRESH_GRACE_MS", () => {
+    const { store, clock } = fresh();
+    const r0 = store.createGrant({ uid: "dave", clientId: "c1", resource: "https://r/mcp" }).refresh_token;
+    const first = store.rotateRefresh("c1", r0);
+    clock.t += REFRESH_GRACE_MS + 1;
+    assert.equal(store.rotateRefresh("c1", r0).type, "reuse");
+    assert.equal(store.resolveAccess(first.tokens.access_token), null);
+  });
+
+  it("error path: a failed write while revoking on reuse leaves memory unchanged; the next attempt revokes", () => {
+    const { store, clock, setFail } = fresh();
+    const r0 = store.createGrant({ uid: "erin", clientId: "c1", resource: "https://r/mcp" }).refresh_token;
+    const first = store.rotateRefresh("c1", r0);
+    clock.t += REFRESH_GRACE_MS + 1;
+    setFail(true);
+    assert.throws(() => store.rotateRefresh("c1", r0), /EPERM/);
+    assert.ok(store.resolveAccess(first.tokens.access_token), "nothing half-applied");
+    setFail(false);
+    assert.equal(store.rotateRefresh("c1", r0).type, "reuse");
+    assert.equal(store.resolveAccess(first.tokens.access_token), null);
+  });
+});
+
+describe("oauth round 6 — reserved gh-/gg- uids", () => {
+  const legacyToken = (extra = {}) => (dataDir) => {
+    fs.mkdirSync(path.join(dataDir, "_server"), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, "_server", "tokens.json"), JSON.stringify({ version: 1, tokens: [
+      { id: "aaaaaaaaaaaa", uid: "gh-101", label: "legacy", hash: "0".repeat(64), created_at: "2026-01-01T00:00:00.000Z", ...extra },
+    ] }));
+  };
+
+  it("OAuth refuses to start while tokens.json holds an active static token for a gh-/gg- uid; OAuth off is unaffected", async () => {
+    await assert.rejects(startEnv({ seed: legacyToken() }), /gh-101[\s\S]*reserved/);
+    const off = await startEnv({ oauth: false, seed: legacyToken() });
+    await off.close();
+  });
+
+  it("a stored link onto someone else's gh- uid ends the sign-in (403, no retry offered, no code)", async () => {
+    const env = await startEnv({
+      signup: null,
+      seed: (dataDir) => {
+        fs.mkdirSync(path.join(dataDir, "_server"), { recursive: true });
+        fs.writeFileSync(path.join(dataDir, "_server", "identities.json"), JSON.stringify({ version: 1, links: { "github:5": "gh-9" } }));
+      },
+    });
+    try {
+      const client = await newClient(env);
+      const a = await authorize(env, client);
+      const { cb } = await attempt(env, a, "github", { profile: { id: 5 } });
+      assert.equal(cb.status, 403);
+      assert.equal(cb.code, null);
+      assert.match(cb.text, /configuration problem/);
+      assert.doesNotMatch(cb.text, /name="request_id"/, "no retry form");
+      assert.ok(!fs.existsSync(path.join(env.dataDir, "tenants", "gh-9")));
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("`identity unlink` un-invites an account", async () => {
+    const env = await startEnv({ signup: null });
+    try {
+      const client = await newClient(env);
+      cli(env, "identity", "link", "--github-id", "6161");
+      await getTokens(env, client, { profile: { id: 6161 } });
+      assert.match(cli(env, "identity", "unlink", "--github-id", "6161"), /unlinked github 6161 \(was uid "gh-6161"\)[\s\S]*oauth revoke --uid gh-6161/);
+      const a = await authorize(env, client);
+      const { cb } = await attempt(env, a, "github", { profile: { id: 6161 } });
+      assert.equal(cb.status, 403);
+      assert.match(cb.text, /not invited/i);
+      const r = spawnSync(process.execPath, [CLI, "identity", "unlink", "--github-id", "6161", "--data", env.dataDir], { encoding: "utf-8", env: cliEnv() });
+      assert.notEqual(r.status, 0, "unlinking twice reports there is no link");
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("a revoked legacy gh- token does not block startup", async () => {
+    const env = await startEnv({ seed: legacyToken({ revoked_at: "2026-02-01T00:00:00.000Z" }) });
+    await env.close();
+  });
+});
+
+describe("oauth round 6 — small fixes", () => {
+  it("a provider that never answers times out into the retry page; the request stays retryable", async () => {
+    const env = await startEnv({ providerTimeoutMs: 100 });
+    try {
+      const client = await newClient(env);
+      const a = await authorize(env, client);
+      env.mock.state.ghTokenMode = "hang";
+      const t0 = Date.now();
+      const { cb } = await attempt(env, a, "github");
+      assert.equal(cb.status, 503);
+      assert.ok(Date.now() - t0 < 5000, "bounded by the timeout");
+      assert.match(cb.text, /temporarily unavailable/i);
+      env.mock.state.ghTokenMode = "ok";
+      const { cb: ok } = await attempt(env, a, "github");
+      assert.equal(ok.status, 302, "the same request can be retried");
+      assert.ok(ok.code);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("AR_TRUST_PROXY accepts the usual spellings and refuses unknown values", () => {
+    const base = { AR_PUBLIC_URL: "https://recall.example", AR_OAUTH_GITHUB_CLIENT_ID: "i", AR_OAUTH_GITHUB_CLIENT_SECRET: "s" };
+    for (const v of ["1", "true", "YES", "on"]) assert.equal(loadOAuthConfig({}, { ...base, AR_TRUST_PROXY: v }).trustProxy, true, v);
+    for (const v of ["", "0", "false", "no", "OFF"]) assert.equal(loadOAuthConfig({}, { ...base, AR_TRUST_PROXY: v }).trustProxy, false, v);
+    assert.throws(() => loadOAuthConfig({}, { ...base, AR_TRUST_PROXY: "maybe" }), OAuthConfigError);
+  });
+
+  it("AR_PUBLIC_URL errors never echo credentials", () => {
+    const env = { AR_OAUTH_GITHUB_CLIENT_ID: "i", AR_OAUTH_GITHUB_CLIENT_SECRET: "s" };
+    for (const url of ["http://user:hunter2@recall.example", "https://user:hunter2@recall.example/path", "ftp://user:hunter2@x"]) {
+      try {
+        loadOAuthConfig({}, { ...env, AR_PUBLIC_URL: url });
+        assert.fail("should throw");
+      } catch (err) {
+        assert.ok(err instanceof OAuthConfigError, String(err));
+        assert.doesNotMatch(err.message, /hunter2/);
+      }
+    }
+  });
+
+  it("one client address cannot fill the sign-in table for everyone (per-address pending cap)", async () => {
+    const env = await startEnv({ maxPendingPerKey: 3 });
+    try {
+      const client = await newClient(env);
+      for (let i = 0; i < 3; i++) assert.equal((await authorize(env, client)).status, 200);
+      const capped = await authorize(env, client);
+      assert.equal(capped.status, 429);
+      assert.ok(capped.res.headers.get("retry-after"));
+    } finally {
+      await env.close();
+    }
   });
 });

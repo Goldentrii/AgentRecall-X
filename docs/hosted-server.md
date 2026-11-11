@@ -112,7 +112,7 @@ claude.ai custom connectors need OAuth: see the next section. Without OAuth conf
 
 ## Connect with OAuth
 
-Optional. AgentRecall has its **own accounts**, created the first time someone signs in with **GitHub** or **Google**. An OAuth-capable MCP client (Claude Code, claude.ai custom connectors, Cursor, Codex) connects with just the URL: it opens a browser, the user picks "Continue with GitHub" or "Continue with Google", and the client receives tokens bound to that user's tenant. The server is its own OAuth authorization server. AgentRecall never sees or stores a password; GitHub and Google only tell it a stable numeric account id. Static `ar_` tokens keep working unchanged.
+Optional. AgentRecall has its **own accounts**, tied to a **GitHub** or **Google** sign-in. **Sign-up is invite-only by default**: only accounts the operator has invited with `identity link` can sign in. An OAuth-capable MCP client (Claude Code, claude.ai custom connectors, Cursor, Codex) connects with just the URL: it opens a browser, the user picks "Continue with GitHub" or "Continue with Google", and the client receives tokens bound to that user's tenant. The server is its own OAuth authorization server. AgentRecall never sees or stores a password; GitHub and Google only tell it a stable numeric account id. Static `ar_` tokens keep working unchanged.
 
 ### Turn it on
 
@@ -123,8 +123,9 @@ OAuth is **off** unless a public URL and at least one provider are configured; o
 | `AR_PUBLIC_URL` / `--public-url` | Public origin of this server, e.g. `https://recall.example.com`. This is the OAuth issuer. Must be https (http only for localhost), origin only. |
 | `AR_OAUTH_GITHUB_CLIENT_ID`, `AR_OAUTH_GITHUB_CLIENT_SECRET` | A GitHub OAuth app. Authorization callback URL: `<AR_PUBLIC_URL>/authorize/callback/github`. No scopes are needed. |
 | `AR_OAUTH_GOOGLE_CLIENT_ID`, `AR_OAUTH_GOOGLE_CLIENT_SECRET` | A Google OAuth client (type "Web application"). Authorized redirect URI: `<AR_PUBLIC_URL>/authorize/callback/google`. Only the `openid` scope is used. |
+| `AR_OAUTH_SIGNUP` | `invite` (default; empty also means invite) or `open`. Invite: an account that is not linked gets a "not invited" page showing its provider id, nothing is created, and the server logs the id and the `identity link` command to invite it. Open: anyone with a GitHub/Google account gets a tenant with the default quota. Any other value stops the server from starting. |
 | `AR_OAUTH_REDIRECT_ALLOW` | Optional. Extra allowed client redirect URI prefixes, comma-separated (for example `https://vscode.dev/redirect`). Matched at a URL boundary. |
-| `AR_TRUST_PROXY=1` | Trust one proxy hop for the client IP. Set it behind Caddy (the deploy kit does); otherwise all users share one IP for rate limits (the server logs one warning when it sees `X-Forwarded-For` without it). Only set it behind a proxy that **overwrites** `X-Forwarded-For` (Caddy does) and never with the server port reachable directly: a client could then forge the header and dodge every per-IP limit. |
+| `AR_TRUST_PROXY=1` | `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off` (empty = off; anything else stops the server from starting). Trust one proxy hop for the client IP. Set it behind Caddy (the deploy kit does); otherwise all users share one IP for rate limits (the server logs one warning when it sees `X-Forwarded-For` without it). Only set it behind a proxy that **overwrites** `X-Forwarded-For` (Caddy does) and never with the server port reachable directly: a client could then forge the header and dodge every per-IP limit. |
 
 Client secrets are read from the environment only (never from command-line flags) and are never logged or sent to the browser. With the deploy kit, put these variables in `deploy/hosted/.env` and restart the stack.
 
@@ -140,25 +141,32 @@ claude.ai: add a custom connector with the URL `https://recall.example.com/mcp`.
 ### How it works
 
 - Client endpoints: `/.well-known/oauth-protected-resource[/mcp]`, `/.well-known/oauth-authorization-server`, `POST /register` (dynamic client registration), `/authorize`, `POST /token`, `POST /revoke`. Browser endpoints: `POST /authorize/start`, `GET /authorize/callback/{github,google}`.
-- Sign-in: `/authorize` shows the app name, where it returns to, and one button per configured provider, and sets a short-lived `HttpOnly` cookie (`ar_oauth`, `SameSite=Lax`, scoped to `/authorize`) that ties the whole sign-in to that browser. The button posts to `/authorize/start`, which redirects to the provider with a one-time `state` and PKCE (plus a nonce for Google). The callback only proceeds if the `state` is ours and unused, belongs to that provider, and the cookie matches. If the user declines, the client gets `error=access_denied` with its own `state`.
+- Sign-in: `/authorize` shows the app name, where it returns to, and one button per configured provider, and sets a short-lived `HttpOnly` cookie per sign-in (`ar_oauth_<12 hex>`, `SameSite=Lax`, scoped to `/authorize`, so parallel sign-ins in one browser do not clash) that ties the whole sign-in to that browser. The button posts to `/authorize/start`, which redirects to the provider with a one-time `state` and PKCE (plus a nonce for Google). The callback only proceeds if the `state` is ours and unused, belongs to that provider, and the cookie matches. If the user declines, the client gets `error=access_denied` with its own `state`.
 - PKCE (S256) is required toward clients. Access tokens (`aro_…`) last 1 hour; refresh tokens (`arr_…`) last 30 days and rotate on every use. A grant also ends 90 days after sign-in however often it is refreshed; the user then signs in again.
-- Reusing a rotated refresh token revokes the whole grant. This also happens when a client simply retries after losing the response to a refresh: that user is signed out and must sign in again.
+- Reusing a rotated refresh token revokes the whole grant. The one exception: the same client may present its just-rotated refresh token once more within 10 seconds (it lost the response) and gets fresh tokens instead of being signed out.
+- Each user keeps at most 20 grants (one per signed-in app or device); a new sign-in beyond that ends the oldest one (by sign-in time, not last use). Every token change is written to disk before it takes effect, so a failed write never signs anyone out.
 - Provider accounts are only checked at sign-in. To cut off a user immediately, run `agent-recall-server oauth revoke --uid <uid>`; otherwise their grants live until the 90-day limit.
 - Only SHA-256 hashes of tokens are stored (`DATA/_server/oauth-grants.json`, mode 0600). Provider tokens are used once to read the account id and then discarded.
 - Redirects are limited to loopback (`http://127.0.0.1|localhost|[::1]:*`), `https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, Cursor's `cursor://anysphere.cursor-retrieval/…`, and `AR_OAUTH_REDIRECT_ALLOW` prefixes. Anything else is refused at registration and again at `/authorize`. Prefixes are matched against the normalized URL, and URIs containing `%2e`, `%2f`, `%5c` or `.`/`..` path segments are refused.
 - A client may register at most 3 redirect URIs (each up to 1024 chars); its name is capped at 100 chars and stripped of control and bidi characters. `/register` allows 20 per hour per IP.
-- `/authorize/start` and the callback are each limited to 10 hits per 10 minutes per client IP (IPv6 counted per /64) and 300 overall; only requests carrying a live request id or state spend the overall budget.
+- One client address (IPv4, or IPv6 /64) may have at most 30 sign-ins open at once; beyond that `/authorize` answers 429. `/authorize/start` and the callback are each limited to 10 hits per 10 minutes per client IP (IPv6 counted per /64) and 300 overall; only requests carrying a live request id or state spend the overall budget.
 - Provider calls have a 10 s timeout and never follow redirects. If a provider is down or answers something unexpected, the user sees a generic message and can try again; static tokens are unaffected.
 
 ### Accounts and tenants
 
-A first sign-in creates the tenant `gh-<github id>` or `gg-<google sub>`; those uid prefixes are reserved, so `token create --uid gh-…` is refused. To attach a provider account to an existing tenant (for example one that already has a static token):
+Invite an account with `identity link`. Without `--uid` it gets its own tenant, `gh-<github id>` or `gg-<google sub>`; with `--uid` it signs into an existing tenant (for example one that already has a static token). You find a GitHub id at `https://api.github.com/users/<login>`; for any account, the "not invited" page and the server log show the id after one sign-in attempt.
 
 ```bash
-agent-recall-server identity link --github-id 42 --uid alice      # takes effect on the next sign-in
+agent-recall-server identity link --github-id 42                  # invite: tenant gh-42
+agent-recall-server identity link --github-id 42 --uid alice      # or: sign into the existing tenant alice
 agent-recall-server identity link --google-sub 1100000000000000000 --uid alice
+agent-recall-server identity unlink --github-id 42                # un-invite (then: oauth revoke --uid <uid> to end its sign-ins now)
 agent-recall-server identity list
 ```
+
+A link takes effect on the next sign-in. Sign-ins made before a re-link keep their old tenant until they end; run `oauth revoke --uid <old uid>` to move them now.
+
+The `gh-`/`gg-` prefixes are reserved: `token create --uid gh-…` is refused, `identity link` onto another account's `gh-`/`gg-` uid is refused, and OAuth refuses to start while an active static token uses such a uid (revoke it and issue one for a plain uid).
 
 ### Operate
 

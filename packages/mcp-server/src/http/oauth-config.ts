@@ -8,7 +8,8 @@
  *   AR_OAUTH_GITHUB_CLIENT_ID / _SECRET GitHub OAuth app (callback: <public>/authorize/callback/github)
  *   AR_OAUTH_GOOGLE_CLIENT_ID / _SECRET Google OAuth client (callback: <public>/authorize/callback/google)
  *   AR_OAUTH_REDIRECT_ALLOW             extra allowed client redirect URI prefixes, comma-separated
- *   AR_TRUST_PROXY=1                    trust ONE proxy hop for the client IP
+ *   AR_OAUTH_SIGNUP=invite|open         invite (default): only accounts linked with `identity link` may sign in
+ *   AR_TRUST_PROXY=1|true|yes|on        trust ONE proxy hop for the client IP (0|false|no|off or empty = no)
  *
  * Nothing configured → null (server == v1). Anything half-configured (a lone
  * id or secret, a public URL without a provider, a provider without a public
@@ -33,7 +34,11 @@ export interface OAuthConfig {
   providers: Partial<Record<ProviderName, ProviderCreds>>;
   redirectAllow: string[];
   trustProxy: boolean;
+  /** invite: only operator-linked accounts may sign in (no tenant is created for anyone else). */
+  signup: SignupMode;
 }
+
+export type SignupMode = "invite" | "open";
 
 export interface OAuthConfigInput {
   publicUrl?: string;
@@ -45,20 +50,44 @@ function clean(v: string | undefined): string | undefined {
   return v === undefined || v.trim() === "" ? undefined : v.trim();
 }
 
+/** The value as it may appear in an error message: any userinfo (user:password@) masked. */
+function shown(raw: string): string {
+  return raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, "$1***@");
+}
+
 export function parseOrigin(name: string, raw: string): URL {
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    throw new OAuthConfigError(`${name} is not a valid URL: "${raw}"`);
+    throw new OAuthConfigError(`${name} is not a valid URL: "${shown(raw)}"`);
   }
-  const secure = u.protocol === "https:" || (u.protocol === "http:" && LOCAL_HOSTS.has(u.hostname));
-  if (!secure) throw new OAuthConfigError(`${name} must be https (http only for localhost), got "${raw}"`);
+  // Credentials first, so no later message ever echoes them.
   if (u.username || u.password) throw new OAuthConfigError(`${name} must not contain credentials`);
+  const secure = u.protocol === "https:" || (u.protocol === "http:" && LOCAL_HOSTS.has(u.hostname));
+  if (!secure) throw new OAuthConfigError(`${name} must be https (http only for localhost), got "${shown(raw)}"`);
   if (u.search || u.hash || u.pathname !== "/") {
-    throw new OAuthConfigError(`${name} must be an origin only (no path, query or fragment), got "${raw}"`);
+    throw new OAuthConfigError(`${name} must be an origin only (no path, query or fragment), got "${shown(raw)}"`);
   }
   return u;
+}
+
+const TRUE_WORDS = new Set(["1", "true", "yes", "on"]);
+const FALSE_WORDS = new Set(["", "0", "false", "no", "off"]);
+
+/** A yes/no setting; an unrecognised value fails closed instead of silently meaning "no". */
+function parseBool(name: string, raw: string | undefined): boolean {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (TRUE_WORDS.has(v)) return true;
+  if (FALSE_WORDS.has(v)) return false;
+  throw new OAuthConfigError(`${name} must be one of 1/true/yes/on or 0/false/no/off, got "${raw}"`);
+}
+
+function parseSignup(raw: string | undefined): SignupMode {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "" || v === "invite") return "invite";
+  if (v === "open") return "open";
+  throw new OAuthConfigError(`AR_OAUTH_SIGNUP must be "invite" (default) or "open", got "${raw}"`);
 }
 
 export function loadOAuthConfig(flags: OAuthConfigInput = {}, env: NodeJS.ProcessEnv = process.env): OAuthConfig | null {
@@ -85,12 +114,12 @@ export function loadOAuthConfig(flags: OAuthConfigInput = {}, env: NodeJS.Proces
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  const tp = (clean(env.AR_TRUST_PROXY) ?? "").toLowerCase();
   return {
     publicUrl,
     resourceUrl: new URL("/mcp", publicUrl),
     providers,
     redirectAllow,
-    trustProxy: tp === "1" || tp === "true",
+    trustProxy: parseBool("AR_TRUST_PROXY", env.AR_TRUST_PROXY),
+    signup: parseSignup(env.AR_OAUTH_SIGNUP),
   };
 }

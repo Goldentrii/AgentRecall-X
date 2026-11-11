@@ -33,6 +33,7 @@ services:
       AR_OAUTH_GOOGLE_CLIENT_ID: ${AR_OAUTH_GOOGLE_CLIENT_ID:-}
       AR_OAUTH_GOOGLE_CLIENT_SECRET: ${AR_OAUTH_GOOGLE_CLIENT_SECRET:-}
       AR_OAUTH_REDIRECT_ALLOW: ${AR_OAUTH_REDIRECT_ALLOW:-}
+      AR_OAUTH_SIGNUP: ${AR_OAUTH_SIGNUP:-}  # empty = invite-only (only accounts added with `identity link`); "open" = anyone
       AR_TRUST_PROXY: "1"  # Caddy is the one proxy hop in front
     volumes:
       - ar-data:/data

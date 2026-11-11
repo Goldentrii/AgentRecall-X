@@ -39,7 +39,7 @@ Provider base URLs can be overridden only through the test option object (`Serve
 ## Flow
 
 1. Client hits `/mcp` → 401 with `resource_metadata` → discovers AS → `POST /register` → `GET /authorize?…&code_challenge=…&resource=<public>/mcp`.
-2. `/authorize` stores a **pending request** (random 32-byte id, 10 min TTL, in memory) and a cookie `ar_oauth=<random 32 bytes>` (`HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=600; Secure` when the public URL is https) whose hash is bound to it. The page shows the client name, the redirect host, and one button per configured provider.
+2. `/authorize` stores a **pending request** (random 32-byte id, 10 min TTL, in memory) and a per-request cookie `ar_oauth_<12 hex of the request id hash>=<random 32 bytes>` (`HttpOnly; SameSite=Lax; Path=/authorize; Max-Age=600; Secure` when the public URL is https) whose hash is bound to it. The page shows the client name, the redirect host, and one button per configured provider.
 3. `POST /authorize/start` (`request_id`, `provider`): the request must be live, the cookie must match, the provider must be configured. A fresh upstream `state` (32 bytes, single use, replaces any older one), a provider PKCE verifier (kept server-side) and, for Google, a nonce are created; 302 to the provider.
    - GitHub: `github.com/login/oauth/authorize?client_id&redirect_uri&state&code_challenge&code_challenge_method=S256` (no scopes).
    - Google: `accounts.google.com/o/oauth2/v2/auth?…&response_type=code&scope=openid&nonce&prompt=select_account`.
@@ -74,7 +74,7 @@ Pending requests, upstream states and authorization codes are in memory only (a 
 ## Security rules
 
 - PKCE S256 mandatory toward clients and toward providers. `state` echoed to the client.
-- **Browser binding:** the `ar_oauth` cookie ties start and callback to the browser that loaded the sign-in page (stops login CSRF and a victim finishing an attacker's flow). `state` is single use, provider-bound and unguessable.
+- **Browser binding:** the per-request `ar_oauth_<…>` cookie ties start and callback to the browser that loaded the sign-in page (stops login CSRF and a victim finishing an attacker's flow). `state` is single use, provider-bound and unguessable.
 - **Redirect policy** (at `/register` and `/authorize`): loopback `http://127.0.0.1:*`, `http://localhost:*`, `http://[::1]:*`; `https://claude.ai/api/mcp/auth_callback`; `https://claude.com/api/mcp/auth_callback`; `cursor://anysphere.cursor-retrieval/`; plus `AR_OAUTH_REDIRECT_ALLOW` prefixes (matched on the normalized URL; `%2e`, `%2f`, `%5c` and dot segments refused). Everything else → `invalid_redirect_uri`.
 - `resource` (RFC 8707), when sent, must equal `<public>/mcp`.
 - Pages: `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self' <provider origins>; frame-ancestors 'none'`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. The provider origins (github.com, accounts.google.com) are in `form-action` because browsers also apply it to the redirect after the form POST. All interpolated values are HTML-escaped. There is no password or code field anywhere.
@@ -107,3 +107,14 @@ Pending requests, upstream states and authorization codes are in memory only (a 
 - A web page to list/revoke grants (CLI only)
 - Account linking across providers (link two provider accounts to one tenant with `identity link` by hand)
 - Email or password sign-in
+
+## Review round 6 (2026-11-11)
+
+- **Invite-only by default** (`AR_OAUTH_SIGNUP=invite`): an account that is not linked with `identity link` gets a 403 "not invited" page showing its provider id; no code, grant or tenant is created. `open` restores self-service sign-up. Reason: open sign-up gave every GitHub/Google account 100 MB of the server's disk before onboarding and the privacy policy were decided.
+- **Grants capped at 20 per uid** (live and revoked); a new sign-in evicts that uid's oldest. Bounds `oauth-grants.json`, which is rewritten on every change.
+- **Write first, then apply**: every grant/client change builds the next state, writes it, and only then swaps it into memory. A failed write (EPERM from an antivirus lock, ENOSPC) leaves memory as on disk, so a retry with the same refresh token is not mistaken for theft.
+- **Refresh grace**: the just-rotated refresh token is accepted ONCE more from the same client within 10 s (lost `/token` response); a second replay, or any replay after 10 s, revokes the grant as before. One retry only, so a stolen old token cannot keep minting tokens.
+- **Un-invite**: `identity unlink` removes a link; a stored link onto another account's reserved uid ends the sign-in with a terminal 403 instead of a retry page.
+- **Reserved uids enforced everywhere**: `identity link` may target a `gh-`/`gg-` uid only if it is the account's own; a stored link onto someone else's reserved uid is refused at sign-in; OAuth refuses to start while an active static token uses a reserved uid.
+- **Per-address pending cap**: 30 open sign-in requests per client address (IPv6 per /64), so one address cannot fill the 10 000-entry table.
+- Small: `AR_TRUST_PROXY` accepts 1/true/yes/on and 0/false/no/off and refuses anything else; `AR_PUBLIC_URL` errors mask credentials; SDK minimum `^1.29.0`; a provider that never answers is covered by a timeout test.

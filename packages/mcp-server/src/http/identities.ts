@@ -37,12 +37,46 @@ export function assertSubject(provider: ProviderName, subject: string | number):
   return s;
 }
 
-export function linkIdentity(dataDir: string, provider: ProviderName, subject: string | number, uid: string): void {
+/** `gh-`/`gg-` uids belong to exactly one federated account. */
+export const RESERVED_UID_RE = /^g[hg]-/;
+
+/** A stored link the server refuses to follow (operator must fix it; retrying cannot help). */
+export class IdentityLinkError extends Error {}
+
+/** The tenant an account gets when it is not linked elsewhere: `gh-<id>` / `gg-<sub>`. */
+export function defaultUid(provider: ProviderName, subject: string | number): string {
+  return `${UID_PREFIX[provider]}${assertSubject(provider, subject)}`;
+}
+
+/**
+ * Link (and so, in invite mode, invite) an account. `uid` omitted → the account's own
+ * `gh-<id>` / `gg-<sub>`. A reserved `gh-`/`gg-` uid can only be the account's own: linking
+ * GitHub 5 onto `gh-9` would hand GitHub user 9's memory to user 5.
+ */
+export function linkIdentity(dataDir: string, provider: ProviderName, subject: string | number, uid?: string): string {
   const id = assertSubject(provider, subject);
-  validateUid(uid);
+  const own = defaultUid(provider, id);
+  const target = uid ?? own;
+  validateUid(target);
+  if (RESERVED_UID_RE.test(target) && target !== own) {
+    throw new Error(`uid "${target}" belongs to another ${target.startsWith("gh-") ? "GitHub" : "Google"} account; link ${provider} ${id} to "${own}" or to a plain uid`);
+  }
   const file = readJsonFresh(filePath(dataDir), parse, empty);
-  file.links[`${provider}:${id}`] = uid;
+  file.links[`${provider}:${id}`] = target;
   writeJsonAtomic(filePath(dataDir), file);
+  return target;
+}
+
+/** Remove an account's link (in invite mode: un-invite it). Returns the uid it pointed to, or null if there was none. */
+export function unlinkIdentity(dataDir: string, provider: ProviderName, subject: string | number): string | null {
+  const id = assertSubject(provider, subject);
+  const file = readJsonFresh(filePath(dataDir), parse, empty);
+  const key = `${provider}:${id}`;
+  const uid = file.links[key];
+  if (typeof uid !== "string") return null;
+  delete file.links[key];
+  writeJsonAtomic(filePath(dataDir), file);
+  return uid;
 }
 
 export function listIdentities(dataDir: string): Array<{ provider: string; subject: string; uid: string }> {
@@ -53,9 +87,18 @@ export function listIdentities(dataDir: string): Array<{ provider: string; subje
   });
 }
 
-/** uid for a federated account: operator link, else `gh-<id>` / `gg-<sub>`. Always validated. */
-export function resolveUid(dataDir: string, provider: ProviderName, subject: string | number): string {
+/** uid for a federated account (operator link, else `gh-<id>` / `gg-<sub>`, always validated), and whether the operator linked it. */
+export function resolveIdentity(dataDir: string, provider: ProviderName, subject: string | number): { uid: string; linked: boolean } {
   const id = assertSubject(provider, subject);
   const linked = readJsonCached(filePath(dataDir), parse, empty).links[`${provider}:${id}`];
-  return validateUid(typeof linked === "string" ? linked : `${UID_PREFIX[provider]}${id}`);
+  if (typeof linked === "string") {
+    // A hand-edited or pre-rule link onto someone else's gh-/gg- uid is refused, never followed.
+    if (RESERVED_UID_RE.test(linked) && linked !== defaultUid(provider, id)) throw new IdentityLinkError(`identity ${provider}:${id} is linked to reserved uid "${linked}"`);
+    return { uid: validateUid(linked), linked: true };
+  }
+  return { uid: validateUid(defaultUid(provider, id)), linked: false };
+}
+
+export function resolveUid(dataDir: string, provider: ProviderName, subject: string | number): string {
+  return resolveIdentity(dataDir, provider, subject).uid;
 }

@@ -11,7 +11,9 @@ import type * as http from "node:http";
 import * as net from "node:net";
 import express from "express";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
-import type { OAuthConfig } from "./oauth-config.js";
+import { OAuthConfigError, type OAuthConfig } from "./oauth-config.js";
+import { listTokens } from "./tokens.js";
+import { RESERVED_UID_RE } from "./identities.js";
 import { OAuthStore } from "./oauth-store.js";
 import { FederatedOAuthProvider, OAUTH_SCOPE } from "./oauth-provider.js";
 import { Federation, DEFAULT_PROVIDER_URLS, type ProviderUrls } from "./federation.js";
@@ -40,6 +42,23 @@ export interface OAuthOptions {
   providerTimeoutMs?: number;
   /** Test seam: cap on live sign-in requests. */
   maxPending?: number;
+  /** Test seam: cap on live sign-in requests per client address. */
+  maxPendingPerKey?: number;
+}
+
+/**
+ * gh-/gg- uids belong to federated accounts. An active static token for such a uid
+ * (from before the prefix was reserved) would let the matching GitHub/Google user sign
+ * straight into that tenant, so OAuth refuses to start until the operator resolves it.
+ */
+function assertNoReservedStaticUids(dataDir: string): void {
+  const clash = listTokens(dataDir).filter((t) => !t.revoked_at && RESERVED_UID_RE.test(t.uid));
+  if (clash.length === 0) return;
+  const list = clash.map((t) => `${t.id} (uid ${t.uid})`).join(", ");
+  throw new OAuthConfigError(
+    `OAuth cannot start: static token(s) ${list} use a uid with the reserved gh-/gg- prefix, which belongs to GitHub/Google sign-ins. ` +
+    "Revoke them (token revoke <id>) and issue a token for a plain uid, then start again.",
+  );
 }
 
 export interface OAuthRuntime {
@@ -97,10 +116,13 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   const { config, log } = opts;
   const now = opts.now ?? Date.now;
   const limits = opts.loginLimits ?? DEFAULT_LOGIN_LIMITS;
+  assertNoReservedStaticUids(opts.dataDir);
   const store = new OAuthStore(opts.dataDir, now);
   const provider = new FederatedOAuthProvider({
     config, dataDir: opts.dataDir, store, log, now,
     maxPending: opts.maxPending,
+    maxPendingPerKey: opts.maxPendingPerKey,
+    keyOf: (req) => ipKey(req.ip),
     federation: new Federation(config, opts.providerUrls ?? DEFAULT_PROVIDER_URLS, opts.fetchImpl, now, opts.providerTimeoutMs),
   });
   const startIp = new WindowCounter(limits.perIp, limits.windowMs, now);
@@ -116,6 +138,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
       if (r.clearCookieFor) res.set("set-cookie", provider.cookieHeader(r.clearCookieFor, null));
       res.redirect(302, r.location);
     } else {
+      if (r.clearCookieFor) res.set("set-cookie", provider.cookieHeader(r.clearCookieFor, null));
       res.status(r.status).set(pageHeaders(r.csp)).send(r.html);
     }
   };
@@ -125,7 +148,6 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   app.disable("x-powered-by");
   if (config.trustProxy) app.set("trust proxy", 1);
 
-  // RFC 9728 also allows the un-suffixed PRM URL; serve the same document there.
   let warnedForwarded = false;
   app.use((req, _res, next) => {
     if (!config.trustProxy && !warnedForwarded && req.headers["x-forwarded-for"] !== undefined) {
@@ -134,6 +156,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     }
     next();
   });
+  // RFC 9728 also allows the un-suffixed PRM URL; serve the same document there.
   app.use((req, _res, next) => {
     if (req.path === "/.well-known/oauth-protected-resource") req.url = "/.well-known/oauth-protected-resource/mcp";
     next();
