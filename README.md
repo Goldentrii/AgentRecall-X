@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  The rules you set, the corrections you make and the state of your project,<br>
+  The rules you set, the corrections you make and the state of your project,
   handed to every agent at the start of every session. Hosted for free, or offline on your disk.
 </p>
 
