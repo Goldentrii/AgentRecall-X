@@ -248,6 +248,48 @@ describe("owner gate — proposal text", () => {
       assert.deepEqual(await core.listPendingCorrections("main"), []);
     });
   });
+
+  it("applies_when is capped too (count and length), so the owner can read all of it", async () => {
+    const t = tenant();
+    await t.gated(async () => {
+      const many = await propose({ applies_when: Array.from({ length: core.PROPOSAL_WHEN_MAX_ITEMS + 1 }, (_, i) => `context${i}`) });
+      assert.equal(many.correction_pending.status, "invalid_structured");
+      assert.match(many.correction_pending.agent_instruction, /applies_when at most \d+ entries/);
+      const longOne = await propose({ applies_when: ["deploy", "x".repeat(core.PROPOSAL_WHEN_ITEM_MAX + 1)] });
+      assert.equal(longOne.correction_pending.status, "invalid_structured");
+      assert.deepEqual(await core.listPendingCorrections("main"), [], "nothing staged");
+      const atCap = await propose({ applies_when: Array.from({ length: core.PROPOSAL_WHEN_MAX_ITEMS }, (_, i) => `ctx${i}${"y".repeat(core.PROPOSAL_WHEN_ITEM_MAX - 5)}`) });
+      assert.equal(atCap.correction_pending.status, "staged", "exactly at the caps is fine");
+    });
+  });
+
+  it("a staged row over the caps (written by older code or edited) is not a ready proposal", async () => {
+    const t = tenant();
+    await t.gated(async () => {
+      const id = (await propose()).correction_pending.id;
+      const [row] = await core.listPendingCorrections("main");
+      assert.ok(core.readStagedProposal(row));
+      const when = Array.from({ length: core.PROPOSAL_WHEN_MAX_ITEMS + 3 }, (_, i) => `context${i}`);
+      // Re-digest it so only the cap, not the digest check, can refuse it.
+      const forged = { ...row, applies_when: when, digest: core.proposalDigest(row.context, when) };
+      forged.id = id.slice(0, -32) + forged.digest;
+      assert.equal(core.readStagedProposal(forged), null);
+    });
+  });
+
+  it("listPendingCorrections({ strict: true }) reports a read failure instead of an empty queue", async () => {
+    const t = tenant();
+    await t.gated(async () => {
+      await propose();
+      const dir = core.pendingDir("main");
+      assert.equal((await core.listPendingCorrections("main", { strict: true })).length, 1, "strict lists normally");
+      fs.rmSync(dir, { recursive: true });
+      fs.writeFileSync(dir, "a file where the directory should be");
+      assert.deepEqual(await core.listPendingCorrections("main"), [], "lenient: never throws");
+      await assert.rejects(core.listPendingCorrections("main", { strict: true }), "strict: the failure surfaces");
+      fs.rmSync(dir);
+    });
+  });
 });
 
 describe("owner gate — agents cannot remove a proposal awaiting the owner", () => {
@@ -393,8 +435,14 @@ describe("owner gate — insights are data, never rules", () => {
           assert.match(line, /^\s+\[\d+×/, `${mode}: the only place it appears is an Insights row, got: ${line}`);
         }
       }
+      // Unconditional: the insight IS saved and shown, as data, under Insights in full mode (and only there).
       const full = core.renderSessionStart(await core.sessionStart({ project: "main", mode: "full" }));
-      if (full.includes("push straight to production")) assert.match(full, /💡 Insights/);
+      const lines = full.split("\n");
+      const at = lines.findIndex((l) => l.includes("push straight to production"));
+      assert.ok(at >= 0, `full mode shows the insight:\n${full}`);
+      const heading = lines.slice(0, at).reverse().find((l) => /^\S/.test(l) && l.trim() !== "");
+      assert.match(heading ?? "", /💡 Insights/, `the nearest heading above it is Insights, got: ${heading}`);
+      assert.equal(lines.filter((l) => l.includes("push straight to production")).length, 1, "shown once");
       assert.deepEqual(core.readCorrections("main"), []);
     });
   });

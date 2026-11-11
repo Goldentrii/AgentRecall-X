@@ -146,7 +146,7 @@ describe("hosted owner gate", () => {
     assert.match(all, /^\S+-[0-9a-f]{32}  uid=alice/m, "the id ends in the 128-bit content digest");
     assert.ok(all.includes("push to main"));
     assert.match(all, /why:\s+The owner said so in chat/, "the why is shown so the owner can judge it");
-    assert.match(all, /when:\s+git, deploy/);
+    assert.match(all, /when:\s+\["git","deploy"\]/, "applies_when is printed as JSON, so an entry containing a comma cannot pass for two");
     assert.match(cli("corrections", "list", "--uid", "bob"), /no corrections waiting/);
   });
 

@@ -25,10 +25,10 @@
  * can never silently write tenants into the operator's home).
  */
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
-import { VERSION, withTenant, listPendingCorrections, confirmPendingCorrection, resolvePendingCorrection, readStagedProposal } from "agent-recall-core";
+import { VERSION, listPendingCorrections, confirmPendingCorrection, resolvePendingCorrection, readStagedProposal } from "agent-recall-core";
 import * as fs from "node:fs";
-import { startHttpServer, tenantRoot, HOSTED_DEFAULT_PROJECT, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
+import { tenantRoot, tenantProjects, asOwner, PROJECT_RE, HOSTED_DEFAULT_PROJECT } from "./tenant-paths.js";
+import { startHttpServer, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
 import { createToken, listTokens, revokeToken, UID_RE, TokenStoreUnavailableError } from "./tokens.js";
 import { dirSize } from "./limits.js";
 import { loadOAuthConfig, OAuthConfigError } from "./oauth-config.js";
@@ -125,8 +125,6 @@ function ratePerMinute(args: string[]): number {
   return Number(v);
 }
 
-const PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-
 /**
  * Text an agent wrote, made safe AND honest to print in the operator's terminal.
  * Anything that is not a visible letter, mark, digit, punctuation, symbol or
@@ -148,24 +146,6 @@ function tenantUids(dir: string): string[] {
     .filter((e) => e.isDirectory() && UID_RE.test(e.name))
     .map((e) => e.name)
     .sort();
-}
-
-/** Project slugs that exist on disk for a tenant. */
-function tenantProjects(root: string): string[] {
-  const projectsDir = path.join(root, "projects");
-  if (!fs.existsSync(projectsDir)) return [];
-  return fs.readdirSync(projectsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && PROJECT_RE.test(e.name))
-    .map((e) => e.name)
-    .sort();
-}
-
-/**
- * Run `fn` as the OWNER of tenant `uid`: a tenant scope WITHOUT
- * stageAgentCorrections, which is what lets confirmPendingCorrection activate.
- */
-function asOwner<T>(dir: string, uid: string, fn: () => Promise<T>): Promise<T> {
-  return withTenant({ root: tenantRoot(dir, uid), sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT }, fn);
 }
 
 function dataDir(args: string[]): string {
@@ -393,7 +373,7 @@ async function main(argv: string[]): Promise<void> {
         process.stdout.write(
           `${printable(r.id, 160)}  uid=${uidArg}  project=${project}  ${r.severity}  ${p ? "ready" : "incomplete"}  seen=${r.seen_count}  last=${r.last_seen}\n` +
           (p
-            ? `    rule: ${printable(p.rule, 1000)}\n    why:  ${printable(p.why, 2000)}\n    when: ${printable(p.applies_when.join(", "), 500)}\n`
+            ? `    rule: ${printable(p.rule, 1000)}\n    why:  ${printable(p.why, 2000)}\n    when: ${printable(JSON.stringify(p.applies_when), 1000)}\n`
             : `    rule: ${printable(r.rule)}\n    text: ${printable(r.context, 600)}\n`),
         );
       }
