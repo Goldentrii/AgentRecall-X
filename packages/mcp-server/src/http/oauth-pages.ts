@@ -57,6 +57,8 @@ export interface SignInView {
   /** Configured providers only: [{name:"github", label:"GitHub"}]. */
   providers: Array<{ name: string; label: string }>;
   error?: string;
+  /** Operator's privacy policy (validated https URL from AR_PRIVACY_URL); omitted = no link. */
+  privacyUrl?: string;
 }
 
 export function signInPage(v: SignInView): string {
@@ -72,7 +74,10 @@ export function signInPage(v: SignInView): string {
     `<form method="post" action="/authorize/start">` +
     `<input type="hidden" name="request_id" value="${esc(v.requestId)}">` +
     v.providers.map((p) => `<button type="submit" name="provider" value="${esc(p.name)}">Continue with ${esc(p.label)}</button>`).join("") +
-    `</form>`);
+    `</form>` +
+    (v.privacyUrl
+      ? `<p class="note">Your memory is stored on this server. <a href="${esc(v.privacyUrl)}" rel="noopener noreferrer" target="_blank">Privacy policy</a></p>`
+      : ""));
 }
 
 export function errorPage(message: string): string {

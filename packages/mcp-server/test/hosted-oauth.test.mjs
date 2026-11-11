@@ -1420,3 +1420,35 @@ describe("oauth round 6 — small fixes", () => {
     }
   });
 });
+
+describe("oauth — privacy policy link", () => {
+  const base = { AR_PUBLIC_URL: "https://recall.example", AR_OAUTH_GITHUB_CLIENT_ID: "i", AR_OAUTH_GITHUB_CLIENT_SECRET: "s" };
+
+  it("AR_PRIVACY_URL: https only, no credentials; empty = no link", () => {
+    assert.equal(loadOAuthConfig({}, base).privacyUrl, undefined);
+    assert.equal(loadOAuthConfig({}, { ...base, AR_PRIVACY_URL: "" }).privacyUrl, undefined);
+    assert.equal(loadOAuthConfig({}, { ...base, AR_PRIVACY_URL: "https://github.com/o/r/blob/main/PRIVACY.md" }).privacyUrl.href, "https://github.com/o/r/blob/main/PRIVACY.md");
+    for (const bad of ["http://example.com/p", "javascript:alert(1)", "https://u:pw@example.com/p", "not a url"]) {
+      assert.throws(() => loadOAuthConfig({}, { ...base, AR_PRIVACY_URL: bad }), OAuthConfigError, bad);
+    }
+  });
+
+  it("the sign-in page links the policy when configured, and not otherwise", async () => {
+    const url = "https://example.org/privacy?a=1&b=<x>";
+    const on = await startEnv({ env: { AR_PRIVACY_URL: url } });
+    try {
+      const a = await authorize(on, await newClient(on));
+      assert.equal(a.status, 200);
+      assert.match(a.html, /<a href="https:\/\/example\.org\/privacy\?a=1&amp;b=%3Cx%3E" rel="noopener noreferrer" target="_blank">Privacy policy<\/a>/);
+    } finally {
+      await on.close();
+    }
+    const off = await startEnv();
+    try {
+      const a = await authorize(off, await newClient(off));
+      assert.doesNotMatch(a.html, /Privacy policy/);
+    } finally {
+      await off.close();
+    }
+  });
+});
