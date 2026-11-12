@@ -252,7 +252,10 @@ describe("review page — real agent-recall-server binary", () => {
   it("the owner sees an agent's proposal, escaped, and approving it makes it a HARD RULE", async () => {
     const agent = await mcp(srv.base, tokenAlice);
     const rule = `Never paste <script>alert("x")</script> & 'tokens' into deploy logs without asking the owner.`;
-    assert.match(textOf(await propose(agent, rule)), /"status":\s*"staged"/);
+    const staged = textOf(await propose(agent, rule));
+    assert.match(staged, /"status":\s*"staged"/);
+    assert.ok(staged.includes(`${srv.base}/review`), "the agent is told where the owner approves it");
+    assert.ok((await sessionStart(agent)).includes(`${srv.base}/review`), "and so is the next session_start");
 
     const b = owner;
     const page = await b.go("/review");

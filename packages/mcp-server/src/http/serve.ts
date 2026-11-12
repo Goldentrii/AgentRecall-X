@@ -228,7 +228,9 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       if (usage && writes) usage.add(uid, raw.length);
 
       // stageAgentCorrections: a token holder can propose a correction but never activate one (owner gate).
-      await withTenant({ root, sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT, stageAgentCorrections: true }, async () => {
+      // reviewUrl: where the owner approves them (the /review page exists only with OAuth on).
+      const reviewUrl = oauth ? `${oauth.site.base}/review` : undefined;
+      await withTenant({ root, sid: randomUUID(), defaultProject: HOSTED_DEFAULT_PROJECT, stageAgentCorrections: true, reviewUrl }, async () => {
         const server = buildServer({ tier: "B", full: opts.full, extras: false, ambientCapture: false, redactPaths: true });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         res.on("close", () => {

@@ -14,7 +14,7 @@ import { resolveProject, isValidProjectSlug } from "../storage/project.js";
 import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
-import { DEFAULT_PALACE_ROOMS, getRoot } from "../types.js";
+import { DEFAULT_PALACE_ROOMS, getRoot, isTenantScoped } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
 import { readIdentityCard } from "../storage/identity-card.js";
 import { readStateCard, stateCardHasContent, type StateCard } from "../storage/state-card.js";
@@ -1503,9 +1503,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     mirror_available: mirrorAvailable,
     // fix5: absent-when-zero — see the field's doc comment above.
     unclaimed_cards: unclaimedCount > 0 ? unclaimedCount : undefined,
-    empty_state: !isEmpty ? undefined : full
-      ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions."
-      : `No cards yet for ${slug} — session_end writes the state card; ar identity init creates the owner card.`,
+    // Hosted: a new user has no CLI, so the text names only tools the agent can call here.
+    empty_state: !isEmpty ? undefined : isTenantScoped()
+      ? `No memory yet for ${slug}: this is a new AgentRecall memory. Ask the user which rules every agent should follow and save each with remember; session_end before you stop writes the first state card.`
+      : full
+        ? "No memory found for this project. Try `ar bootstrap` in a terminal to import existing projects, or start working and use remember() to save decisions."
+        : `No cards yet for ${slug} — session_end writes the state card; ar identity init creates the owner card.`,
     // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
     ab_arm: abArm ?? undefined,
   };
