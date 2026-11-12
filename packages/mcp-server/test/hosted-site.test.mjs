@@ -655,3 +655,212 @@ describe("website — export-tar unit", () => {
     assert.equal(readTar(Buffer.concat(chunks)).filter((f) => f.type === "0").length, 0);
   });
 });
+
+// ---- part 5: "Your agents": every agent that used this memory, however it signed in ----------
+
+describe("website — your agents (activity)", () => {
+  let startHttpServer, loadOAuthConfig, writeJsonAtomic;
+  before(async () => {
+    ({ startHttpServer } = await load("serve.js"));
+    ({ loadOAuthConfig } = await load("oauth-config.js"));
+    ({ writeJsonAtomic } = await load("jsonfile.js"));
+  });
+
+  const mcpPost = (base, token, body) => fetch(base + "/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`, connection: "close" },
+    body: JSON.stringify(body),
+  }).then(async (r) => { await r.text(); return r.status; });
+  const hello = (name) => ({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name, version: "1" } } });
+  const callTool = (name) => ({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: { content: "hello" } } });
+
+  async function startEnv(extra = {}) {
+    const dataDir = fs.mkdtempSync(path.join(root, "data-act-"));
+    cliIn(dataDir, "identity", "link", "--github-id", String(ALICE.id), "--uid", "alice");
+    const tokenOut = cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "alice-laptop");
+    const token = tokenFrom(tokenOut);
+    const tokenId = /Created token ([a-f0-9]{12})/.exec(tokenOut)[1];
+    const mock = await startMock();
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    mock.state.base = base;
+    const config = loadOAuthConfig({ publicUrl: base }, { AR_OAUTH_SIGNUP: "open", AR_OAUTH_GITHUB_CLIENT_ID: GH.id, AR_OAUTH_GITHUB_CLIENT_SECRET: GH.secret });
+    const logs = [];
+    const writes = [];
+    const server = await startHttpServer({
+      dataDir, port, host: "127.0.0.1", full: false, oauth: config, log: (l) => logs.push(l),
+      oauthTesting: { providerUrls: mock.urls, loginLimits: { perIp: 1000, global: 10000, windowMs: 600000 } },
+      activityTesting: { flushMs: 3_600_000, write: (f, d) => { writes.push(f); (extra.write ?? writeJsonAtomic)(f, d); } },
+    });
+    return {
+      base, dataDir, mock, token, tokenId, logs, writes, server,
+      async close() { server.closeAllConnections?.(); await new Promise((r) => server.close(r)); await mock.close(); },
+    };
+  }
+
+  it("a token client shows up with its self-reported name, 'token <label>' and last activity", async () => {
+    const env = await startEnv();
+    try {
+      assert.equal(await mcpPost(env.base, env.token, hello("Claude Code")), 200);
+      assert.equal(await mcpPost(env.base, env.token, callTool("remember")), 200);
+      const b = new Browser(env.base);
+      const dash = await signIn(b, env.mock, ALICE);
+      assert.match(dash.text, /1 agent shares this memory/);
+      assert.match(dash.text, /Claude Code/);
+      assert.match(dash.text, /token alice-laptop/);
+      assert.match(dash.text, /Last active <time[^>]*>just now<\/time>, last tool remember/);
+      assert.equal(grantIdsOf(dash.text).length, 0, "token rows are read only");
+    } finally { await env.close(); }
+  });
+
+  it("an OAuth client shows with its activity, can be disconnected, and then disappears", async () => {
+    const env = await startEnv();
+    try {
+      const bobAro = await mcpOAuthToken(env.base, env.mock, BOB, "Registered Bob App");
+      assert.equal(await mcpPost(env.base, bobAro, hello("Bob Cursor")), 200);
+      assert.equal(await mcpPost(env.base, bobAro, callTool("recall")), 200);
+      const b = new Browser(env.base);
+      const dash = await signIn(b, env.mock, BOB);
+      assert.match(dash.text, /Bob Cursor/);
+      assert.match(dash.text, /OAuth sign-in/);
+      assert.match(dash.text, /last tool recall/);
+      const ids = grantIdsOf(dash.text);
+      assert.equal(ids.length, 1);
+      const out = await b.post("/connect/disconnect", { grant: ids[0], csrf: csrfOf(dash.text) });
+      assert.equal(out.status, 303);
+      const after = await b.go("/connect");
+      assert.ok(!after.text.includes("Bob Cursor"), "a disconnected grant is not shown as connected");
+      assert.match(after.text, /0 agents share this memory/);
+    } finally { await env.close(); }
+  });
+
+  it("a grant that never made a request still appears: 'No activity yet'", async () => {
+    const env = await startEnv();
+    try {
+      await mcpOAuthToken(env.base, env.mock, BOB, "Quiet App");
+      const dash = await signIn(new Browser(env.base), env.mock, BOB);
+      assert.match(dash.text, /Quiet App/);
+      assert.match(dash.text, /No activity yet/);
+    } finally { await env.close(); }
+  });
+
+  it("a revoked token is not listed", async () => {
+    const env = await startEnv();
+    try {
+      await mcpPost(env.base, env.token, hello("Zed Agent"));
+      cliIn(env.dataDir, "token", "revoke", env.tokenId);
+      const dash = await signIn(new Browser(env.base), env.mock, ALICE);
+      assert.ok(!dash.text.includes("Zed Agent"));
+      assert.match(dash.text, /0 agents share this memory/);
+    } finally { await env.close(); }
+  });
+
+  it("user A's dashboard never shows user B's agents", async () => {
+    const env = await startEnv();
+    try {
+      const bobAro = await mcpOAuthToken(env.base, env.mock, BOB, "Bob Registered");
+      await mcpPost(env.base, bobAro, hello("Bob Cursor"));
+      await mcpPost(env.base, env.token, hello("Alice Claude Code"));
+      const a = await signIn(new Browser(env.base), env.mock, ALICE);
+      const bob = await signIn(new Browser(env.base), env.mock, BOB);
+      assert.match(a.text, /Alice Claude Code/);
+      assert.ok(!a.text.includes("Bob Cursor") && !a.text.includes("Bob Registered"));
+      assert.match(bob.text, /Bob Cursor/);
+      assert.ok(!bob.text.includes("Alice Claude Code") && !bob.text.includes("alice-laptop"));
+    } finally { await env.close(); }
+  });
+
+  it("a hostile client name is stripped of control/bidi/zero-width characters, capped, and escaped", async () => {
+    const env = await startEnv();
+    try {
+      const ch = (n) => String.fromCharCode(n);
+      const evil = `<script>alert(1)</script>${ch(0)}${ch(7)}${ch(0x202e)}${ch(0x200b)}"><img src=x onerror=1>` + "A".repeat(500);
+      await mcpPost(env.base, env.token, hello(evil));
+      const dash = await signIn(new Browser(env.base), env.mock, ALICE);
+      assert.ok(!dash.text.includes("<script>alert"), "no raw markup");
+      assert.ok(!dash.text.includes("<img src=x"));
+      assert.match(dash.text, /&lt;script&gt;alert/);
+      for (const bad of [0, 7, 0x202e, 0x200b]) assert.ok(!dash.text.includes(ch(bad)), `char ${bad} removed`);
+      assert.ok(!dash.text.includes("A".repeat(61)), "capped at 60 characters");
+      env.server.closeAllConnections?.();
+      await new Promise((r) => env.server.close(r));
+      const file = JSON.parse(fs.readFileSync(path.join(env.dataDir, "_server", "activity", "alice.json"), "utf-8"));
+      const [entry] = Object.values(file.entries);
+      assert.ok(Array.from(entry.client).length <= 60);
+    } finally { await env.close().catch(() => {}); }
+  });
+
+  it("activity is buffered: no write per request, one write per user at shutdown", async () => {
+    const env = await startEnv();
+    try {
+      await mcpPost(env.base, env.token, hello("Claude Code"));
+      for (let i = 0; i < 15; i++) await mcpPost(env.base, env.token, callTool("recall"));
+      assert.equal(env.writes.length, 0, "nothing written while requests are flowing");
+      env.server.closeAllConnections?.();
+      await new Promise((r) => env.server.close(r));
+      assert.equal(env.writes.length, 1, "flushed once on shutdown");
+      const file = JSON.parse(fs.readFileSync(env.writes[0], "utf-8"));
+      const [entry] = Object.values(file.entries);
+      assert.equal(entry.calls, 15);
+      assert.equal(entry.client, "Claude Code");
+    } finally { await env.mock.close(); }
+  });
+
+  it("a failed write does not fail the request, and is logged once", async () => {
+    const env = await startEnv({ write: () => { throw new Error("disk full"); } });
+    try {
+      assert.equal(await mcpPost(env.base, env.token, hello("Claude Code")), 200);
+      assert.equal(await mcpPost(env.base, env.token, callTool("recall")), 200);
+      env.server.closeAllConnections?.();
+      await new Promise((r) => env.server.close(r)); // flush attempts the failing write
+      assert.equal(env.logs.filter((l) => l.includes("agent activity not saved")).length, 1);
+    } finally { await env.mock.close(); }
+  });
+
+  it("the activity file is outside the tenant directory and not in the memory download", async () => {
+    const env = await startEnv();
+    try {
+      await mcpPost(env.base, env.token, hello("Claude Code"));
+      const b = new Browser(env.base);
+      const dash = await signIn(b, env.mock, ALICE);
+      const res = await b.raw("/connect/download", { method: "POST", body: { csrf: csrfOf(dash.text) } });
+      assert.equal(res.status, 200);
+      const names = readTar(Buffer.from(await res.arrayBuffer())).map((f) => f.name);
+      assert.ok(names.length > 0);
+      assert.ok(!names.some((n) => /activity|alice\.json/.test(n)), `download holds only memory: ${names.join(",")}`);
+      env.server.closeAllConnections?.();
+      await new Promise((r) => env.server.close(r));
+      const file = path.join(env.dataDir, "_server", "activity", "alice.json");
+      assert.ok(fs.existsSync(file));
+      assert.ok(path.relative(path.join(env.dataDir, "tenants", "alice"), file).startsWith(".."), "not inside the tenant dir");
+    } finally { await env.mock.close(); }
+  });
+});
+
+describe("website — your agents (real binary)", () => {
+  it("a static-token agent appears on the dashboard of the real server", async () => {
+    const dataDir = path.join(root, "data-act-bin");
+    cliIn(dataDir, "identity", "link", "--github-id", String(ALICE.id), "--uid", "alice");
+    const token = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "bin-token"));
+    const mock = await startMock();
+    const srv = await spawnServer((base) => {
+      mock.state.base = base;
+      return { AR_SERVER_DATA: dataDir, AR_PUBLIC_URL: base, AR_OAUTH_SIGNUP: "open", AR_TEST_PROVIDER_MOCK: mock.url, AR_OAUTH_GITHUB_CLIENT_ID: GH.id, AR_OAUTH_GITHUB_CLIENT_SECRET: GH.secret };
+    }, ["--import", PRELOAD]);
+    try {
+      const r = await fetch(srv.base + "/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`, connection: "close" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "Claude Code", version: "1" } } }),
+      });
+      await r.text();
+      assert.equal(r.status, 200);
+      const dash = await signIn(new Browser(srv.base), mock, ALICE);
+      assert.match(dash.text, /Claude Code/);
+      assert.match(dash.text, /token bin-token/);
+    } finally {
+      await srv.stop();
+      await mock.close();
+    }
+  });
+});

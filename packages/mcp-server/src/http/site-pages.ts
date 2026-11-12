@@ -429,16 +429,25 @@ export function messagePage(ctx: SiteCtx, title: string, message: string, back: 
     `<p><a class="btn alt" href="${esc(back.href)}">${esc(back.label)}</a></p></section>`, ctx, "none");
 }
 
-export interface GrantView { id: string; clientName: string; createdAt: string; lastUsedAt?: string }
-export interface TokenView { id: string; label: string; createdAt: string }
+/** One agent that is connected right now (live OAuth grant or live token). `grantId` set = it has a Disconnect button. */
+export interface AgentRow {
+  grantId?: string;
+  name: string;
+  signIn: string;
+  connectedAt: string;
+  lastSeen?: string;
+  lastTool?: string;
+  calls: number;
+}
 
 export interface DashboardView {
   account: string;
   uid: string;
   csrf: string;
   notice?: { kind: "ok" | "err"; text: string };
-  grants: GrantView[];
-  tokens: TokenView[];
+  agents: AgentRow[];
+  /** ms epoch, for "last active ... ago". */
+  now: number;
   usedBytes: number;
   /** 0 = no quota. */
   quotaBytes: number;
@@ -446,6 +455,15 @@ export interface DashboardView {
 }
 
 const day = (iso: string): string => `<time datetime="${esc(iso)}">${esc(iso.slice(0, 10))}</time>`;
+function ago(iso: string, now: number): string {
+  const s = Math.floor((now - Date.parse(iso)) / 1000);
+  if (!Number.isFinite(s) || s < 0) return iso.slice(0, 10);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 30 * 86400) return `${Math.floor(s / 86400)} d ago`;
+  return iso.slice(0, 10);
+}
 const hidden = (name: string, value: string): string => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
 const mb = (n: number): string => `${Math.round((n / (1024 * 1024)) * 10) / 10} MB`;
 
@@ -478,19 +496,17 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     `<div class="agentprompt"><h3>Or let your agent do it</h3><p class="step-note">Paste this into any agent. It runs the right command for itself and asks you to sign in.</p>` +
     cmd("prompt", hostedAgentPrompt(b)) + `</div></section>` +
 
-    `<section class="panel" aria-labelledby="h-agents"><h2 id="h-agents">Connected agents</h2>` +
-    `<p class="sub">Names are what each app calls itself; AgentRecall cannot verify them. Disconnect ends that sign-in at once.</p>` +
-    (v.grants.length === 0
+    `<section class="panel" aria-labelledby="h-agents"><h2 id="h-agents">Your agents</h2>` +
+    `<p class="sub">${esc(v.agents.length)} ${v.agents.length === 1 ? "agent shares" : "agents share"} this memory. Every agent that signed in or holds a token is listed, with its last activity. Names are what each app calls itself; AgentRecall cannot verify them. Disconnect ends an OAuth sign-in at once; to revoke a token, ask the server operator.</p>` +
+    (v.agents.length === 0
       ? `<p class="empty">No agent is connected yet. Add one above; it appears here after you sign in from it.</p>`
-      : `<ul class="rows">${v.grants.map((g) =>
-        `<li><div><div class="name">${esc(g.clientName)} <span class="meta">(self-reported name)</span></div>` +
-        `<div class="meta">Connected ${day(g.createdAt)}${g.lastUsedAt ? `, last used ${day(g.lastUsedAt)}` : ""}</div></div>` +
-        `<form method="post" action="/connect/disconnect">${hidden("grant", g.id)}${hidden("csrf", v.csrf)}` +
-        `<button type="submit" class="btn danger small" aria-label="Disconnect ${esc(g.clientName)}">Disconnect</button></form></li>`).join("")}</ul>`) +
-    (v.tokens.length > 0
-      ? `<h3>Tokens issued by the operator</h3><p class="step-note">Read only. To revoke one, ask the server operator.</p><ul class="rows">${v.tokens.map((t) =>
-        `<li><div><div class="name">${esc(t.label || "unlabelled token")}</div><div class="meta">id ${esc(t.id)}, created ${day(t.createdAt)}</div></div></li>`).join("")}</ul>`
-      : "") + `</section>` +
+      : `<ul class="rows">${v.agents.map((a) =>
+        `<li><div><div class="name">${esc(a.name)} <span class="meta">(self-reported name)</span></div>` +
+        `<div class="meta">${esc(a.signIn)}. Connected ${day(a.connectedAt)}. ${a.lastSeen ? `Last active <time datetime="${esc(a.lastSeen)}">${esc(ago(a.lastSeen, v.now))}</time>${a.lastTool ? `, last tool ${esc(a.lastTool)}` : ""}` : "No activity yet"}</div></div>` +
+        (a.grantId
+          ? `<form method="post" action="/connect/disconnect">${hidden("grant", a.grantId)}${hidden("csrf", v.csrf)}<button type="submit" class="btn danger small" aria-label="Disconnect ${esc(a.name)}">Disconnect</button></form>`
+          : "") + `</li>`).join("")}</ul>`) +
+    `</section>` +
 
     `<div class="pair"><section class="panel" aria-labelledby="h-store"><h2 id="h-store">Your memory</h2>` +
     `<p class="sub">Storage used${v.quotaBytes > 0 ? ` of ${esc(mb(v.quotaBytes))}` : ""}.</p>` +

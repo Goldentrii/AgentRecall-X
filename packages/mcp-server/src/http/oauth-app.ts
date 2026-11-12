@@ -24,6 +24,7 @@ import { REVIEW_PATHS, mountReview, sendReview } from "./review.js";
 import { reviewMessagePage, reviewSignInPage } from "./review-pages.js";
 import { WebSession, type WebPages } from "./web-session.js";
 import { mountSite } from "./site.js";
+import type { ActivityStore } from "./activity.js";
 import { connectSignInPage, messagePage, DEFAULT_PRIVACY_URL, type SiteCtx } from "./site-pages.js";
 
 export interface LoginLimits {
@@ -51,6 +52,8 @@ export interface OAuthOptions {
   maxPending?: number;
   /** Test seam: cap on live sign-in requests per client address. */
   maxPendingPerKey?: number;
+  /** Per-agent activity log (read by the dashboard). */
+  activity?: ActivityStore;
   /** Storage quota per user in bytes, shown on the dashboard; 0 or undefined = none shown. */
   quotaBytes?: number;
 }
@@ -76,6 +79,8 @@ export interface OAuthRuntime {
   handle(req: http.IncomingMessage, res: http.ServerResponse): void;
   /** aro_ access token → uid, or null. Throws TokenStoreUnavailableError if an operator file is unreadable. */
   resolveAccess(token: string): string | null;
+  /** Like resolveAccess, plus the id of the grant behind the token. */
+  resolveAccessGrant(token: string): { uid: string; grantId: string } | null;
   resourceMetadataUrl: string;
   /** What the website needs to know about this server. */
   site: SiteCtx;
@@ -251,7 +256,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   });
 
   mountSite(app, {
-    flow: review, store, config, dataDir: opts.dataDir, quotaBytes: opts.quotaBytes ?? 0, ctx: site, log, now, formOrigins: provider.formOrigins,
+    flow: review, store, config, dataDir: opts.dataDir, quotaBytes: opts.quotaBytes ?? 0, activity: opts.activity, ctx: site, log, now, formOrigins: provider.formOrigins,
     limitStart: (req) => siteStartIp.hit(ipKey(req.ip)),
   });
 
@@ -293,8 +298,11 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
       app(req, res);
     },
     resolveAccess(token: string): string | null {
+      return this.resolveAccessGrant(token)?.uid ?? null;
+    },
+    resolveAccessGrant(token: string): { uid: string; grantId: string } | null {
       const r = store.resolveAccess(token);
-      return r && r.resource === config.resourceUrl.href ? r.uid : null;
+      return r && r.resource === config.resourceUrl.href ? { uid: r.uid, grantId: r.grantId } : null;
     },
     resourceMetadataUrl,
     site,

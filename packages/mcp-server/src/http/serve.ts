@@ -17,7 +17,8 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { VERSION, withTenant, enableStrictTenantMode } from "agent-recall-core";
 import { buildServer } from "../build-server.js";
-import { resolveToken, TokenStoreUnavailableError } from "./tokens.js";
+import { resolveTokenRecord, TokenStoreUnavailableError } from "./tokens.js";
+import { ActivityStore, observe, type ActivityOptions } from "./activity.js";
 import { tenantRoot, HOSTED_DEFAULT_PROJECT } from "./tenant-paths.js";
 import { RateLimiter, UsageTracker, isWriteCall, quotaExceededResponse } from "./limits.js";
 import { createOAuth, type LoginLimits, type OAuthRuntime } from "./oauth-app.js";
@@ -45,6 +46,8 @@ export interface ServeOptions {
   log?: (line: string) => void;
   /** OAuth 2.1 sign-in with GitHub / Google. null/undefined → OAuth off, behaviour identical to v1. */
   oauth?: OAuthConfig | null;
+  /** Test seams for the per-agent activity log: clock, flush interval, file writer. */
+  activityTesting?: ActivityOptions;
   /** Test seams for OAuth only: clock, login rate limits, provider endpoints, fetch and its timeout. */
   oauthTesting?: { now?: () => number; loginLimits?: LoginLimits; providerUrls?: ProviderUrls; fetchImpl?: typeof fetch; providerTimeoutMs?: number; maxPending?: number };
 }
@@ -116,20 +119,30 @@ const OAUTH_401_INSTRUCTION =
   "Send header 'Authorization: Bearer <token>'. Use a static token starting with 'ar_' from the server operator, or sign in with OAuth: " +
   "an OAuth-capable MCP client finds the sign-in page via the WWW-Authenticate resource_metadata URL and opens it in the user's browser.";
 
-function authenticate(req: http.IncomingMessage, dataDir: string, oauth: OAuthRuntime | null): string {
+/** Who is calling: the tenant, and which credential (activity key "token:<id>" / "grant:<id>"). */
+function authenticate(req: http.IncomingMessage, dataDir: string, oauth: OAuthRuntime | null): { uid: string; key: string } {
   const header = req.headers["authorization"];
   const m = typeof header === "string" ? /^Bearer\s+(\S+)\s*$/i.exec(header) : null;
   // Static ar_ tokens first (unchanged), then OAuth-issued aro_ tokens when OAuth is on.
-  let uid = m ? resolveToken(dataDir, m[1]) : null;
-  if (!uid && m && oauth && m[1].startsWith("aro_")) uid = oauth.resolveAccess(m[1]);
-  if (!uid) {
+  const tok = m ? resolveTokenRecord(dataDir, m[1]) : null;
+  let who: { uid: string; key: string } | null = tok ? { uid: tok.uid, key: `token:${tok.id}` } : null;
+  if (!who && m && oauth && m[1].startsWith("aro_")) {
+    const g = oauth.resolveAccessGrant(m[1]);
+    if (g) who = { uid: g.uid, key: `grant:${g.grantId}` };
+  }
+  if (!who) {
     throw new HttpError(401, "unauthorized", "missing, malformed, unknown or revoked token",
       oauth ? OAUTH_401_INSTRUCTION : V1_401_INSTRUCTION);
   }
-  return uid;
+  return who;
 }
 
-export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
+export type RequestHandler = ((req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>) & {
+  /** Write buffered per-agent activity to disk now (shutdown path). Never throws. */
+  flushActivity(): void;
+};
+
+export function createRequestHandler(opts: ServeOptions): RequestHandler {
   const dataDir = path.resolve(opts.dataDir);
   const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
   const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
@@ -142,12 +155,13 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
     `AgentRecall storage quota reached (${formatMb(quotaBytes)} per user): this memory was NOT saved. ` +
     "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
-  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, ...opts.oauthTesting }) : null;
+  const activity = new ActivityStore(dataDir, { log, ...opts.activityTesting });
+  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, activity, ...opts.oauthTesting }) : null;
   const unauthorizedHeader = oauth
     ? `Bearer realm="agent-recall", resource_metadata="${oauth.resourceMetadataUrl}"`
     : 'Bearer realm="agent-recall"';
 
-  return async (req, res) => {
+  const handler = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const started = Date.now();
     const url = new URL(req.url ?? "/", "http://localhost");
     let uid = "-";
@@ -192,7 +206,8 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
         throw new HttpError(413, "payload_too_large", `body exceeds ${maxBody} bytes`, TOO_LARGE_INSTRUCTION);
       }
 
-      uid = authenticate(req, dataDir, oauth);
+      const who = authenticate(req, dataDir, oauth);
+      uid = who.uid;
       // Capacity before rate: a request refused as "busy" must not cost the user a token.
       if (inFlight >= maxInFlight) {
         res.setHeader("retry-after", "1");
@@ -214,6 +229,8 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
         sendJson(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
         return;
       }
+
+      activity.record(uid, who.key, observe(body)); // memory only; flushed in the background
 
       const root = tenantRoot(dataDir, uid);
       fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -253,12 +270,18 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       }
     }
   };
+  return Object.assign(handler, { flushActivity: () => activity.flush() });
 }
 
-export function startHttpServer(opts: ServeOptions): Promise<http.Server> {
+/** The HTTP server plus a way to write buffered activity now (cli.ts uses it before a forced exit). */
+export type HostedServer = http.Server & { flushActivity(): void };
+
+export function startHttpServer(opts: ServeOptions): Promise<HostedServer> {
   enableStrictTenantMode();
   const handler = createRequestHandler(opts);
-  const server = http.createServer((req, res) => void handler(req, res));
+  const server = Object.assign(http.createServer((req, res) => void handler(req, res)), { flushActivity: () => handler.flushActivity() });
+  // Graceful shutdown (cli.ts calls server.close on SIGTERM/SIGINT): write buffered activity before exit.
+  server.once("close", () => handler.flushActivity());
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, opts.host, () => resolve(server));
