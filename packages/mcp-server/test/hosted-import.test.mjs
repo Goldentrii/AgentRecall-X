@@ -132,7 +132,11 @@ class Browser {
   upload(fields, archive, opts = {}) {
     const b = "----arx" + randomBytes(8).toString("hex");
     const parts = [];
-    for (const [k, v] of Object.entries(fields)) if (v !== undefined) parts.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+    const all = { mode: "add", confirm: "", rules_seen: "1", rules: "1", ...fields };
+    for (const k of ["csrf", "mode", "confirm", "rules_seen", "rules"]) {
+      const v = all[k];
+      if (v !== undefined) parts.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+    }
     if (archive !== null) parts.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="archive"; filename="m.tar"\r\nContent-Type: application/x-tar\r\n\r\n`), archive, Buffer.from("\r\n"));
     parts.push(Buffer.from(`--${b}--\r\n`));
     return this.go("/connect/import", { ...opts, method: "POST", rawBody: Buffer.concat(parts), headers: { ...(opts.headers ?? {}), "content-type": `multipart/form-data; boundary=${b}` } });
@@ -203,7 +207,7 @@ before(async () => {
 });
 
 /** An in-process server with open sign-up. */
-async function startEnv({ quotaBytes, limits, hooks, perHour, clock } = {}) {
+async function startEnv({ quotaBytes, limits, hooks, perHour, clock, maxConcurrent, ipOf } = {}) {
   const dataDir = fs.mkdtempSync(path.join(root, "data-"));
   const mock = await startMock();
   const port = await freePort();
@@ -216,7 +220,7 @@ async function startEnv({ quotaBytes, limits, hooks, perHour, clock } = {}) {
     oauthTesting: {
       providerUrls: mock.urls, loginLimits: { perIp: 10000, global: 100000, windowMs: 600000 },
       ...(clock ? { now: () => clock.t } : {}),
-      importTesting: { limits, hooks, perHour },
+      importTesting: { limits, hooks, perHour, maxConcurrent, ipOf },
     },
   });
   const tenants = (uid) => path.join(dataDir, "tenants", uid);
@@ -315,7 +319,9 @@ describe("import — dashboard and instructions", () => {
     assert.match(html, /tar --format=ustar/);
     assert.match(html, /AGENT_RECALL_ROOT/);
     const f = html.slice(html.indexOf('action="/connect/import"'));
-    assert.ok(f.indexOf('name="csrf"') < f.indexOf('name="mode"') && f.indexOf('name="mode"') < f.indexOf('name="confirm"') && f.indexOf('name="confirm"') < f.indexOf('name="archive"'), "fields precede the file");
+    assert.ok(f.indexOf('name="csrf"') < f.indexOf('name="mode"') && f.indexOf('name="mode"') < f.indexOf('name="confirm"') && f.indexOf('name="confirm"') < f.indexOf('name="rules_seen"') && f.indexOf('name="rules_seen"') < f.indexOf('name="rules"') && f.indexOf('name="rules"') < f.indexOf('name="archive"'), "fields precede the file");
+    assert.match(html, /Also import always-follow rules \(corrections\)/);
+    assert.ok(!/name="rules" value="1" checked/.test(html), "the rules box is off by default");
     const csp = (await u.b.go("/connect")).headers.get("content-security-policy");
     assert.match(csp, /form-action 'self'/);
     assert.match(csp, /script-src 'sha256-/);
@@ -709,15 +715,15 @@ describe("import — hostile archives", () => {
 
 describe("import — disconnects, one at a time, rate limit", () => {
   /** Starts an upload and sends only its beginning; returns controls. */
-  function slowUpload(env, u, firstBytes) {
+  function slowUpload(env, u, firstBytes, extraHeaders = {}) {
     const b = "----slow" + randomBytes(4).toString("hex");
     const url = new URL("/connect/import", env.base);
     const req = http.request({ host: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: {
-      "content-type": `multipart/form-data; boundary=${b}`, cookie: u.b.cookieFor("/connect"), "sec-fetch-site": "same-origin", "transfer-encoding": "chunked", connection: "close",
+      "content-type": `multipart/form-data; boundary=${b}`, cookie: u.b.cookieFor("/connect"), "sec-fetch-site": "same-origin", "transfer-encoding": "chunked", connection: "close", ...extraHeaders,
     } });
     req.on("error", () => undefined);
     const resp = new Promise((resolve) => req.on("response", (res) => { const c = []; res.on("data", (d) => c.push(d)); res.on("end", () => resolve({ status: res.statusCode, text: Buffer.concat(c).toString() })); }));
-    req.write(`--${b}\r\nContent-Disposition: form-data; name="csrf"\r\n\r\n${u.csrf}\r\n--${b}\r\nContent-Disposition: form-data; name="archive"; filename="m.tar"\r\n\r\n`);
+    req.write(`--${b}\r\nContent-Disposition: form-data; name="csrf"\r\n\r\n${u.csrf}\r\n--${b}\r\nContent-Disposition: form-data; name="mode"\r\n\r\nadd\r\n--${b}\r\nContent-Disposition: form-data; name="confirm"\r\n\r\n\r\n--${b}\r\nContent-Disposition: form-data; name="rules_seen"\r\n\r\n1\r\n--${b}\r\nContent-Disposition: form-data; name="archive"; filename="m.tar"\r\n\r\n`);
     req.write(firstBytes);
     return { req, resp, finish(rest) { req.write(rest); req.end(`\r\n--${b}--\r\n`); } };
   }
@@ -777,5 +783,184 @@ describe("import — disconnects, one at a time, rate limit", () => {
       const other = await env.user(45);
       assert.equal((await other.b.upload({ csrf: other.csrf }, tarOf(GOOD))).status, 200, "another user is not limited");
     } finally { await env.close(); }
+  });
+});
+
+// ---- rules, slots, recovery, digests ---------------------------------------------------------
+
+const RULE_ARCHIVE = () => tarOf([
+  { name: "projects/main/journal/ok.md", data: "ok" },
+  { name: "projects/main/corrections/2026-01-01-r.json", data: JSON.stringify({ severity: "p0", rule: "r", active: true }) },
+  { name: "projects/main/corrections/_pending/x.json", data: "{}" },
+  { name: "projects/main/palace/behavior-policies.json", data: "{}" },
+  { name: "projects/main/personal/blind-spots.json", data: "{}" },
+  { name: "identity-card.md", data: "# me" },
+  { name: "projects/main/digest/index.json", data: "{}" },
+  { name: "projects/main/digest/digest-1-abcdef12.md", data: "x" },
+]);
+const RULE_FILES = ["identity-card.md", "projects/main/corrections/2026-01-01-r.json", "projects/main/corrections/_pending/x.json", "projects/main/palace/behavior-policies.json", "projects/main/personal/blind-spots.json"];
+
+describe("import — rules are opt-in, digests never", () => {
+  it("isRuleFile and classifyPath: the instruction-bearing files are marked, digests are refused", async () => {
+    const { classifyPath, isRuleFile } = await load("tar-import.js");
+    for (const p of RULE_FILES) assert.equal(classifyPath(p, false, undefined).rule, true, p);
+    assert.equal(classifyPath("projects/main/journal/a.md", false, undefined).rule, false);
+    assert.equal(classifyPath("projects/main/palace/rooms/x/a.md", false, undefined).rule, false);
+    assert.equal(isRuleFile(["projects", "main", "palace", "x", "behavior-policies.json"]), false);
+    for (const p of ["projects/main/digest/index.json", "projects/main/digest/digest-1-abcdef12.md", "projects/main/digest/a/b.md"]) assert.equal(classifyPath(p, false, undefined).ok, false, p);
+  });
+
+  it("with the box off, every rule file is skipped and counted; digests are refused; the rest imports", async () => {
+    const env = await startEnv();
+    try {
+      const u = await env.user(61);
+      const r = await u.b.upload({ csrf: u.csrf, rules: undefined }, RULE_ARCHIVE());
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(snapshot(env.tenants("gh-61")), ["projects/main/journal/ok.md"]);
+      assert.match(r.text, /<strong>5<\/strong> always-follow rules were not imported\. Import again with the box ticked to include them\./);
+      assert.match(r.text, /<strong>0<\/strong> always-follow corrections are now active/);
+    } finally { await env.close(); }
+  });
+
+  it("with the box ticked, the rule files come in and the active count is shown; digests are still refused", async () => {
+    const env = await startEnv();
+    try {
+      const u = await env.user(62);
+      const r = await u.b.upload({ csrf: u.csrf, rules: "1" }, RULE_ARCHIVE());
+      assert.equal(r.status, 200, r.text);
+      assert.deepEqual(snapshot(env.tenants("gh-62")), ["projects/main/journal/ok.md", ...RULE_FILES].sort());
+      assert.match(r.text, /<strong>1<\/strong> always-follow correction is now active/);
+      assert.ok(!/were not imported/.test(r.text));
+    } finally { await env.close(); }
+  });
+
+  it("mode, confirm and rules_seen must all arrive before the file: a missing one is a 400, nothing staged", async () => {
+    const env = await startEnv();
+    try {
+      const u = await env.user(63);
+      for (const missing of ["mode", "confirm", "rules_seen"]) {
+        const r = await u.b.upload({ csrf: u.csrf, [missing]: undefined }, tarOf(GOOD));
+        assert.equal(r.status, 400, missing);
+        assert.ok(!fs.existsSync(env.staging) && !fs.existsSync(env.tenants("gh-63")), missing);
+      }
+      assert.equal((await u.b.upload({ csrf: u.csrf, rules: "yes" }, tarOf(GOOD))).status, 400, "a bad rules value");
+      assert.equal((await u.b.upload({ csrf: u.csrf, mode: "merge" }, tarOf(GOOD))).status, 400, "a bad mode");
+    } finally { await env.close(); }
+  });
+});
+
+describe("import — slots cannot be hogged", () => {
+  const slow = (env, u, bytes, headers) => {
+    const b = "----s" + randomBytes(4).toString("hex");
+    const url = new URL("/connect/import", env.base);
+    const req = http.request({ host: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: { "content-type": `multipart/form-data; boundary=${b}`, cookie: u.b.cookieFor("/connect"), "sec-fetch-site": "same-origin", "transfer-encoding": "chunked", connection: "close", ...headers } });
+    req.on("error", () => undefined);
+    req.write(`--${b}\r\nContent-Disposition: form-data; name="csrf"\r\n\r\n${u.csrf}\r\n--${b}\r\nContent-Disposition: form-data; name="mode"\r\n\r\nadd\r\n--${b}\r\nContent-Disposition: form-data; name="confirm"\r\n\r\n\r\n--${b}\r\nContent-Disposition: form-data; name="rules_seen"\r\n\r\n1\r\n--${b}\r\nContent-Disposition: form-data; name="archive"; filename="m.tar"\r\n\r\n`);
+    req.write(bytes);
+    return req;
+  };
+
+  it("an upload under the minimum throughput is dropped, its staging removed, its slot freed", async () => {
+    const env = await startEnv({ limits: { minBytesPerSec: 1_000_000, windowMs: 300 }, maxConcurrent: 1 });
+    try {
+      const u = await env.user(71);
+      const req = slow(env, u, tarOf(GOOD).subarray(0, 600));
+      assert.ok(await until(() => fs.existsSync(env.staging) && fs.readdirSync(env.staging).length === 1));
+      assert.ok(await until(() => stagingEmpty(env), 3000), "dropped for being too slow");
+      assert.ok(env.logs.some((l) => l.includes("import aborted uid=gh-71 kind=408")));
+      req.destroy();
+      const r = await u.b.upload({ csrf: u.csrf }, tarOf(GOOD));
+      assert.equal(r.status, 200, "the slot is free again: " + r.text);
+    } finally { await env.close(); }
+  });
+
+  it("one import at a time per network address: another account from the same address is refused with 409", async () => {
+    const env = await startEnv();
+    try {
+      const a = await env.user(72);
+      const b = await env.user(73);
+      const req = slow(env, a, tarOf(GOOD).subarray(0, 600));
+      assert.ok(await until(() => fs.existsSync(env.staging) && fs.readdirSync(env.staging).length === 1));
+      const r = await b.b.upload({ csrf: b.csrf }, tarOf(GOOD));
+      assert.equal(r.status, 409, r.text);
+      assert.match(r.text, /network address/);
+      req.destroy();
+    } finally { await env.close(); }
+  });
+
+  it("when every server slot is taken the answer is 503 with Retry-After and its own message; 409 stays for the user's own second import", async () => {
+    const env = await startEnv({ maxConcurrent: 1, ipOf: (req) => String(req.headers["x-test-ip"] ?? "none") });
+    try {
+      const a = await env.user(74);
+      const b = await env.user(75);
+      const req = slow(env, a, tarOf(GOOD).subarray(0, 600), { "x-test-ip": "ip-a" });
+      assert.ok(await until(() => fs.existsSync(env.staging) && fs.readdirSync(env.staging).length === 1));
+      const full = await b.b.upload({ csrf: b.csrf }, tarOf(GOOD), { headers: { "x-test-ip": "ip-b" } });
+      assert.equal(full.status, 503, full.text);
+      assert.equal(full.headers.get("retry-after"), "60");
+      assert.match(full.text, /busy importing for other users, try again in a minute/);
+      assert.ok(!/Already importing/.test(full.text));
+      const own = await a.b.upload({ csrf: a.csrf }, tarOf(GOOD), { headers: { "x-test-ip": "ip-c" } });
+      assert.equal(own.status, 409);
+      assert.match(own.text, /your account/);
+      req.destroy();
+    } finally { await env.close(); }
+  });
+});
+
+describe("import — an interrupted replace is recovered", () => {
+  const iso = (ms) => new Date(ms).toISOString().replace(/[:.]/g, "-");
+  const put = (trash, name, content) => { fs.mkdirSync(path.join(trash, name, "projects", "main"), { recursive: true }); fs.writeFileSync(path.join(trash, name, "projects", "main", "a.md"), content); };
+
+  it("restoreOrphans puts the newest recent trash entry back when the tenant is missing or empty, and never otherwise", async () => {
+    const { restoreOrphans } = await load("import-memory.js");
+    const data = fs.mkdtempSync(path.join(root, "orphan-"));
+    const trash = path.join(data, "_server", "trash");
+    const now = Date.now();
+    const logs = [];
+    put(trash, `gh-9-${iso(now - 120_000)}`, "OLDER");
+    put(trash, `gh-9-${iso(now - 60_000)}`, "NEWEST");
+    put(trash, `gh-8-${iso(now - 60_000)}`, "EMPTYDIR");
+    put(trash, `gh-7-${iso(now - 60_000)}`, "TENANT-EXISTS");
+    put(trash, `gh-6-${iso(now - 3 * 3600_000)}`, "TOO-OLD-DELIBERATE");
+    fs.mkdirSync(path.join(data, "tenants", "gh-8"), { recursive: true });
+    fs.mkdirSync(path.join(data, "tenants", "gh-7", "projects"), { recursive: true });
+    fs.writeFileSync(path.join(data, "tenants", "gh-7", "projects", "keep.md"), "LIVE");
+    assert.equal(await restoreOrphans(data, now, (l) => logs.push(l)), 2);
+    const read = (uid) => fs.readFileSync(path.join(data, "tenants", uid, "projects", "main", "a.md"), "utf8");
+    assert.equal(read("gh-9"), "NEWEST");
+    assert.equal(read("gh-8"), "EMPTYDIR");
+    assert.ok(!fs.existsSync(path.join(data, "tenants", "gh-6")), "an old trash entry is a deliberate replace, never resurrected");
+    assert.equal(fs.readFileSync(path.join(data, "tenants", "gh-7", "projects", "keep.md"), "utf8"), "LIVE");
+    assert.ok(!fs.existsSync(path.join(data, "tenants", "gh-7", "projects", "main")), "a live tenant is untouched");
+    assert.ok(logs.some((l) => l.includes("uid=gh-9")) && logs.some((l) => l.includes("uid=gh-8")), "logged");
+    assert.equal(await restoreOrphans(data, now, () => {}), 0, "idempotent");
+  });
+
+  it("before an import for that account, its orphaned memory is restored first, then the import adds to it", async () => {
+    const env = await startEnv();
+    try {
+      const u = await env.user(81);
+      put(env.trash, `gh-81-${iso(Date.now() - 30_000)}`, "ORPHANED-DATA");
+      const r = await u.b.upload({ csrf: u.csrf }, tarOf(GOOD));
+      assert.equal(r.status, 200, r.text);
+      assert.equal(fs.readFileSync(path.join(env.tenants("gh-81"), "projects", "main", "a.md"), "utf8"), "ORPHANED-DATA");
+      assert.ok(fs.existsSync(path.join(env.tenants("gh-81"), "awareness.md")));
+      assert.ok(env.logs.some((l) => l.includes("import recovery: restored the memory of uid=gh-81")));
+    } finally { await env.close(); }
+  });
+
+  it("at server start every account with a recent orphan is restored", async () => {
+    const dataDir = fs.mkdtempSync(path.join(root, "data-"));
+    put(path.join(dataDir, "_server", "trash"), `gh-82-${iso(Date.now() - 10_000)}`, "BOOT-RESTORE");
+    const mock = await startMock();
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    mock.state.base = base;
+    const config = oauthMod.loadOAuthConfig({ publicUrl: base }, { AR_OAUTH_SIGNUP: "open", AR_OAUTH_GITHUB_CLIENT_ID: GH.id, AR_OAUTH_GITHUB_CLIENT_SECRET: GH.secret });
+    const server = await serverMod.startHttpServer({ dataDir, port, host: "127.0.0.1", full: false, oauth: config, log: () => {}, oauthTesting: { providerUrls: mock.urls } });
+    try {
+      assert.ok(await until(() => fs.existsSync(path.join(dataDir, "tenants", "gh-82", "projects", "main", "a.md"))), "restored at start");
+    } finally { server.closeAllConnections?.(); await new Promise((r) => server.close(r)); await mock.close(); }
   });
 });

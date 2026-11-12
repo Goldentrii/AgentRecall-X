@@ -148,7 +148,7 @@ export class TarReader {
 // ---- path policy ---------------------------------------------------------------
 
 export type PathVerdict =
-  | { ok: true; rel: string; segs: string[]; wrapper?: string }
+  | { ok: true; rel: string; segs: string[]; wrapper?: string; /** Loaded by agents as an always-follow instruction (see isRuleFile). */ rule?: boolean }
   | { ok: false; why: "path" | "type" };
 
 export const ROOT_FILES: readonly string[] = [
@@ -164,6 +164,20 @@ const WRAPPER_RE = /^agentrecall-[A-Za-z0-9_-]{1,64}$/;
 const RESERVED_RE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 // eslint-disable-next-line no-control-regex
 const BAD_CHARS_RE = /[\u0000-\u001f\u007f\\<>:"|?*]/;
+
+/**
+ * Files an agent loads as standing instructions at session start. They only come in when the user
+ * ticks "also import always-follow rules":
+ *  - projects/<slug>/corrections/**   active corrections (p0 = HARD RULES) and the _pending staging area
+ *  - projects/<slug>/palace/behavior-policies.json   IF-THEN behaviour policies, loaded as rules
+ *  - projects/<slug>/personal/**      the corrections-derived behavioural profile
+ *  - identity-card.md                 the owner identity card, loaded first at every session_start
+ */
+export function isRuleFile(segs: readonly string[]): boolean {
+  if (segs.length === 1) return segs[0] === "identity-card.md";
+  if (segs[0] !== "projects") return false;
+  return segs[2] === "corrections" || segs[2] === "personal" || (segs[2] === "palace" && segs.length === 4 && segs[3] === "behavior-policies.json");
+}
 
 /** Does a path segment stay safe on every common file system? */
 function segmentOk(s: string): boolean {
@@ -200,11 +214,12 @@ export function classifyPath(raw: string, isDir: boolean, wrapper: string | unde
   if (segs.length > MAX_DEPTH) return { ok: false, why: "path" };
   const rel = segs.join("/");
   const out = (ok: boolean): PathVerdict & { wrapperSeen?: string } =>
-    ok ? { ok: true, rel, segs, wrapper: w, wrapperSeen: w } : { ok: false, why: "type" };
+    ok ? { ok: true, rel, segs, wrapper: w, wrapperSeen: w, rule: isRuleFile(segs) } : { ok: false, why: "type" };
   if (segs.some((s) => s.startsWith("."))) return out(false);
   if (isDir) return out(segs[0] === "projects" && (segs.length === 1 || PROJECT_RE.test(segs[1])) || segs.length === 0);
   if (segs.length === 1) return out(ROOT_FILES.includes(segs[0]));
   if (segs[0] !== "projects" || segs.length < 3 || !PROJECT_RE.test(segs[1])) return out(false);
+  if (segs[2] === "digest") return out(false); // digests carry ids that are joined into paths when read: never imported
   const leaf = segs[segs.length - 1];
   const dot = leaf.lastIndexOf(".");
   return out(dot > 0 && ALLOWED_EXTENSIONS.includes(leaf.slice(dot).toLowerCase()));

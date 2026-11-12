@@ -334,6 +334,7 @@ export function connectMarkdown(b: string, hosted: boolean): string {
       `   - bash / zsh: \`${PACK_BASH}\``,
       `   - PowerShell: \`${PACK_POWERSHELL}\``,
       `   Result: ${PACK_NAME} in the home folder. Store root is $AGENT_RECALL_ROOT, else ~/.agent-recall.`,
+      `   Rules (corrections, behaviour policies, personal profile, identity card) are NOT imported unless the human ticks "Also import always-follow rules": they become active for all agents at once.`,
       `2. Tell the human to open ${b}/connect, find "Import memory", choose the file, pick "Add" (keeps everything already here, never overwrites) or "Replace" (type REPLACE; the old memory is kept 7 days, then deleted), and press Import.`,
       `3. The result page lists what was imported, skipped (already present) and refused. Then call \`session_start\` and report what it returned.`,
       ``,
@@ -589,6 +590,7 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     `<label class="opt"><input type="radio" name="mode" value="add" checked> <strong>Add</strong>: keep everything already here; only files that do not exist yet are added, nothing is overwritten.</label>` +
     `<label class="opt"><input type="radio" name="mode" value="replace"> <strong>Replace</strong>: the archive takes the place of your memory. What is here now is kept for 7 days, then deleted.</label>` +
     `<label class="opt" for="confirm">To use Replace, type <code>REPLACE</code>:</label><input type="text" id="confirm" name="confirm" autocomplete="off" maxlength="16">` +
+    `${hidden("rules_seen", "1")}<label class="opt"><input type="checkbox" name="rules" value="1"> Also import always-follow rules (corrections). <span class="small">Off by default: rules in an archive become active for all your agents at once.</span></label>` +
     `<label class="opt" for="archive">Memory archive (.tar)</label><input type="file" id="archive" name="archive" accept=".tar,application/x-tar" required>` +
     `<button type="submit" class="btn small">Import memory</button></form>` +
     `<p class="small">Limits: ${esc(mb(DEFAULT_IMPORT_LIMITS.maxFileBytes))} per file, ${esc(DEFAULT_IMPORT_LIMITS.maxEntries)} entries, and it must fit your storage. Your connected agents are not touched.</p></section>`,
@@ -605,7 +607,7 @@ export function importResultPage(ctx: SiteCtx, r: ImportReport): string {
     `<ul><li><strong>${esc(r.imported)}</strong> imported (${esc(mb(r.bytes))})${r.projects.length ? ` into ${r.projects.length} ${r.projects.length === 1 ? "project" : "projects"}: ${esc(r.projects.slice(0, 20).join(", "))}${r.projects.length > 20 ? ", …" : ""}` : ""}</li>` +
     li(r.skippedExisting, "left as they were (the file already existed here; nothing was overwritten)") +
     li(refused, `left out: ${[x.type && `${x.type} not part of a memory (config, telemetry, other file types)`, x.path && `${x.path} with an unsafe path`, x.size && `${x.size} too large`, x.special && `${x.special} links or special files`, x.duplicate && `${x.duplicate} duplicates or name clashes`].filter(Boolean).map(String).map(esc).join("; ")}`) +
-    `<li><strong>${esc(r.alwaysFollow)}</strong> always-follow ${r.alwaysFollow === 1 ? "correction is" : "corrections are"} now active for your agents.</li></ul>` +
+    `<li><strong>${esc(r.alwaysFollow)}</strong> always-follow ${r.alwaysFollow === 1 ? "correction is" : "corrections are"} now active for your agents.</li>${r.rulesSkipped > 0 ? `<li><strong>${esc(r.rulesSkipped)}</strong> always-follow ${r.rulesSkipped === 1 ? "rule was" : "rules were"} not imported. Import again with the box ticked to include them.</li>` : ""}</ul>` +
     (r.samples.length ? `<p class="small">Left out, for example: ${r.samples.map((p) => `<code>${esc(p)}</code>`).join(", ")}</p>` : "") +
     `<p><a class="btn" href="/connect">Back to your dashboard</a></p></section>`, ctx, "none");
 }

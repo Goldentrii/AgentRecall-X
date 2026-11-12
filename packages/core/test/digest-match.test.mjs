@@ -119,4 +119,18 @@ describe("Digest matching", () => {
       assert.ok(r.score >= 0 && r.score <= 1.0, `Score out of range: ${r.score}`);
     }
   });
+
+  it("an index entry whose id is not a digest id is skipped and never read as a path (no cross-tenant read)", async () => {
+    const dir = core.digestDir("novada-site");
+    const secret = path.join(TEST_ROOT, "SECRET.md");
+    fs.writeFileSync(secret, "TOP-SECRET-OF-ANOTHER-TENANT\n");
+    const idx = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf-8"));
+    const rel = path.relative(dir, path.join(TEST_ROOT, "SECRET")).split(path.sep).join("/");
+    idx.entries.push({ ...idx.entries[0], id: rel, title: "evil novada business logic proxy", keywords: ["novada", "business", "logic", "proxy"], scope: "novada business logic proxy", stale: false, updated: new Date().toISOString() });
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify(idx));
+    const results = core.findMatchingDigests("novada business logic proxy", "novada-site", { includeGlobal: false });
+    assert.ok(results.length > 0, "the valid digests still match");
+    assert.ok(!results.some((r) => r.id === rel), "the bad entry is skipped");
+    assert.ok(!JSON.stringify(results).includes("TOP-SECRET"), "its file was not read");
+  });
 });

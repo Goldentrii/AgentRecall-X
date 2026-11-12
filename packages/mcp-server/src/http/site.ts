@@ -29,7 +29,8 @@ import { tenantRoot } from "./tenant-paths.js";
 import { streamTenantTar, TarAbort } from "./export-tar.js";
 import { listTenantProposals, sendReview } from "./review.js";
 import { str, type WebSession, type WebResult } from "./web-session.js";
-import { receiveImport, ImportAbort, ImportGate, sweepTrash, sweepStaging, DEFAULT_IMPORT_LIMITS, HARD_IMPORT_CAP, RAW_SLACK, IMPORTS_PER_HOUR, type ImportHooks, type ImportLimits } from "./import-memory.js";
+import { ipKey } from "./oauth-app.js";
+import { receiveImport, ImportAbort, ImportGate, restoreOrphans, sweepTrash, sweepStaging, DEFAULT_IMPORT_LIMITS, HARD_IMPORT_CAP, RAW_SLACK, IMPORTS_PER_HOUR, type ImportHooks, type ImportLimits } from "./import-memory.js";
 import { boundaryOf } from "./multipart.js";
 import {
   importResultPage, type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
@@ -93,7 +94,7 @@ const USAGE_TTL_MS = 30_000;
 const DOWNLOAD_IDLE_MS = 60_000;
 
 /** Test seams for the import: smaller limits and hooks that run between a check and the next call. */
-export interface ImportTesting { limits?: Partial<ImportLimits>; hooks?: ImportHooks; perHour?: number }
+export interface ImportTesting { limits?: Partial<ImportLimits>; hooks?: ImportHooks; perHour?: number; maxConcurrent?: number; ipOf?: (req: express.Request) => string }
 
 export interface SiteRouteDeps {
   flow: WebSession;
@@ -270,12 +271,14 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
 
   // ---- import ------------------------------------------------------------------------
   const importLimits: ImportLimits = { ...DEFAULT_IMPORT_LIMITS, ...d.importTesting?.limits };
-  const gate = new ImportGate(d.now, d.importTesting?.perHour ?? IMPORTS_PER_HOUR);
+  const gate = new ImportGate(d.now, d.importTesting?.perHour ?? IMPORTS_PER_HOUR, d.importTesting?.maxConcurrent);
+  const ipOf = d.importTesting?.ipOf ?? ((req: express.Request): string => ipKey(req.ip));
   const maintain = (): void => {
     void sweepTrash(d.dataDir, d.now()).catch(() => undefined);
     void sweepStaging(d.dataDir, d.now()).catch(() => undefined);
   };
   maintain(); // at start: a crashed run's leftovers, and replaced memories older than 7 days
+  void restoreOrphans(d.dataDir, d.now(), d.log).catch(() => undefined); // and a replace that was cut short
 
   /** A refusal sent before (or while) the upload is read: close the connection, and swallow a bounded amount of what the client still sends so it sees the answer. */
   const refuseUpload = (req: express.Request, res: express.Response, status: number, title: string, msg: string): void => {
@@ -309,15 +312,18 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
       let report;
       try {
         report = await receiveImport(req, {
-          dataDir: d.dataDir, uid: s.uid, boundary, quotaBytes: d.quotaBytes, now: d.now, limits: importLimits, hooks: d.importTesting?.hooks, gate, log: d.log,
+          dataDir: d.dataDir, uid: s.uid, boundary, quotaBytes: d.quotaBytes, now: d.now, limits: importLimits, hooks: d.importTesting?.hooks, gate, ip: ipOf(req), log: d.log,
           check: (f) => {
             if (!flow.csrfOk(s, f.csrf)) throw new ImportAbort(403, "Refused", MSG_CSRF);
-            const mode = f.mode === undefined || f.mode === "add" ? "add" : f.mode === "replace" ? "replace" : null;
-            if (mode === null) throw new ImportAbort(400, "Not valid", MSG_BAD_INPUT);
+            // Every control of the form must have arrived before the file: nothing is defaulted silently.
+            const mode = f.mode === "add" ? "add" : f.mode === "replace" ? "replace" : null;
+            if (mode === null || f.confirm === undefined || f.rules_seen !== "1" || (f.rules !== undefined && f.rules !== "1")) {
+              throw new ImportAbort(400, "Not valid", MSG_BAD_INPUT);
+            }
             if (mode === "replace" && (f.confirm ?? "").trim() !== "REPLACE") {
               throw new ImportAbort(400, "Confirm replace", "To replace your memory, type the word REPLACE in the confirmation box. Nothing was changed.");
             }
-            return { ok: true, mode };
+            return { ok: true, mode, rules: f.rules === "1" };
           },
         });
       } catch (err) {
@@ -327,6 +333,7 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
         }
         if (err instanceof ImportAbort) {
           d.log(`[connect] import refused uid=${s.uid} status=${err.status}`);
+          if (err.retryAfter !== undefined) res.set("retry-after", String(err.retryAfter));
           return void refuseUpload(req, res, err.status, err.title, err.message);
         }
         d.log(`[connect] import failed uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"} code=${(err as NodeJS.ErrnoException)?.code ?? "-"}`);

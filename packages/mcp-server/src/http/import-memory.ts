@@ -22,6 +22,7 @@ import { randomBytes } from "node:crypto";
 import type * as http from "node:http";
 import { dirSize } from "./limits.js";
 import { tenantRoot } from "./tenant-paths.js";
+import { UID_RE } from "./tokens.js";
 import { MultipartParser, MultipartError } from "./multipart.js";
 import { TarReader, TarError, classifyPath, type TarEntry } from "./tar-import.js";
 
@@ -35,6 +36,9 @@ export interface ImportLimits {
   idleMs: number;
   /** The whole upload must finish within this. */
   totalMs: number;
+  /** Once the archive has started, it must average at least this many bytes per second over every window. */
+  minBytesPerSec: number;
+  windowMs: number;
 }
 
 export const DEFAULT_IMPORT_LIMITS: ImportLimits = {
@@ -42,6 +46,8 @@ export const DEFAULT_IMPORT_LIMITS: ImportLimits = {
   maxEntries: 50_000,
   idleMs: 30_000,
   totalMs: 15 * 60_000,
+  minBytesPerSec: 16 * 1024,
+  windowMs: 10_000,
 };
 /** No import may take in more than this, even with no quota configured. */
 export const HARD_IMPORT_CAP = 1024 ** 3;
@@ -58,7 +64,7 @@ const NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 
 /** A refusal the user should see: status, short title and a plain sentence. */
 export class ImportAbort extends Error {
-  constructor(public readonly status: number, public readonly title: string, message: string) {
+  constructor(public readonly status: number, public readonly title: string, message: string, public readonly retryAfter?: number) {
     super(message);
   }
 }
@@ -75,6 +81,8 @@ export interface ImportReport {
   imported: number;
   skippedExisting: number;
   refused: { path: number; type: number; size: number; special: number; duplicate: number };
+  /** Always-follow rule files left out because "also import rules" was not ticked. */
+  rulesSkipped: number;
   projects: string[];
   /** Active always-follow (p0) corrections the account has after the import. */
   alwaysFollow: number;
@@ -98,26 +106,34 @@ const blocks = (n: number): number => Math.max(1, Math.ceil(n / DISK_BLOCK)) * D
 
 export class ImportGate {
   private readonly active = new Set<string>();
+  private readonly ips = new Set<string>();
   /** At most this many imports run at once across all accounts (each holds a staging tree and bookkeeping in memory). */
   static readonly MAX_CONCURRENT = 4;
   private readonly times = new Map<string, number[]>();
-  constructor(private readonly now: () => number, private readonly perHour = IMPORTS_PER_HOUR) {}
+  constructor(private readonly now: () => number, private readonly perHour = IMPORTS_PER_HOUR, private readonly maxConcurrent = ImportGate.MAX_CONCURRENT) {}
 
-  /** null = granted (call release() later); otherwise why not. */
-  tryAcquire(uid: string): "busy" | "rate" | null {
-    if (this.active.has(uid) || this.active.size >= ImportGate.MAX_CONCURRENT) return "busy";
+  /**
+   * null = granted (call release() later); otherwise why not:
+   * busy = this account already has one running; rate = too many this hour; ip = another import from
+   * this address is running; full = the server's global slots are all taken (not the caller's fault).
+   */
+  tryAcquire(uid: string, ip: string): "busy" | "rate" | "ip" | "full" | null {
+    if (this.active.has(uid)) return "busy";
     const t = this.now();
     const recent = (this.times.get(uid) ?? []).filter((x) => t - x < 3600_000);
     if (recent.length >= this.perHour) { this.times.set(uid, recent); return "rate"; }
+    if (this.ips.has(ip)) return "ip";
+    if (this.active.size >= this.maxConcurrent) return "full";
     recent.push(t);
     if (this.times.size > 5000) {
       for (const [k, v] of this.times) if (v.every((x) => t - x >= 3600_000)) this.times.delete(k);
     }
     this.times.set(uid, recent);
     this.active.add(uid);
+    this.ips.add(ip);
     return null;
   }
-  release(uid: string): void { this.active.delete(uid); }
+  release(uid: string, ip: string): void { this.active.delete(uid); this.ips.delete(ip); }
   isBusy(uid: string): boolean { return this.active.has(uid); }
 }
 
@@ -160,6 +176,51 @@ export async function sweepStaging(dataDir: string, nowMs: number, maxAgeMs = ST
   return removed;
 }
 
+const TRASH_ENTRY_RE = /^(.+)-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(-late)?$/;
+/** A replace dies between its two renames within seconds; an older trash entry is a deliberate one (never resurrect it). */
+export const ORPHAN_MAX_AGE_MS = 3600_000;
+
+/**
+ * If a replace was cut short (the process died between moving the tenant to trash and moving the new tree
+ * in), the tenant is missing (or an agent request re-created it empty) while its data sits in trash. Put the
+ * newest recent trash entry back. Run at server start for every account, and before an import for its account.
+ */
+export async function restoreOrphans(dataDir: string, nowMs: number, log: (line: string) => void, only?: string): Promise<number> {
+  const { trash } = dirs(dataDir);
+  let names: string[];
+  try { names = await fs.promises.readdir(trash); } catch { return 0; }
+  const best = new Map<string, { name: string; at: number; late: boolean }>();
+  for (const n of names) {
+    const m = TRASH_ENTRY_RE.exec(n);
+    if (!m || !UID_RE.test(m[1]) || (only !== undefined && m[1] !== only)) continue;
+    const at = Date.UTC(+m[2], +m[3] - 1, +m[4], +m[5], +m[6], +m[7], +m[8]);
+    if (nowMs - at > ORPHAN_MAX_AGE_MS || at - nowMs > ORPHAN_MAX_AGE_MS) continue;
+    const cur = best.get(m[1]);
+    const late = m[9] !== undefined;
+    if (!cur || at > cur.at || (at === cur.at && cur.late && !late)) best.set(m[1], { name: n, at, late });
+  }
+  let restored = 0;
+  for (const [uid, b] of best) {
+    const root = tenantRoot(dataDir, uid);
+    try {
+      let missing = false;
+      try {
+        const st = await fs.promises.lstat(root);
+        missing = st.isDirectory() && (await fs.promises.readdir(root)).length === 0;
+        if (missing) await fs.promises.rmdir(root);
+      } catch (err) { if (code(err) === "ENOENT") missing = true; else throw err; }
+      if (!missing) continue;
+      await fs.promises.mkdir(path.dirname(root), { recursive: true, mode: 0o700 });
+      await fs.promises.rename(path.join(trash, b.name), root);
+      restored++;
+      log(`[connect] import recovery: restored the memory of uid=${uid} from trash (${b.name}); a replace had been interrupted`);
+    } catch (err) {
+      log(`[connect] import recovery failed uid=${uid} code=${code(err) ?? "-"}`);
+    }
+  }
+  return restored;
+}
+
 // ---- the staging session -------------------------------------------------------------
 
 interface Canon { actual: string; isFile: boolean }
@@ -168,6 +229,8 @@ export interface SessionOptions {
   dataDir: string;
   uid: string;
   mode: ImportMode;
+  /** Import the always-follow rule files too (isRuleFile). */
+  rules: boolean;
   /** Bytes (disk-block rounded) this import may add. */
   budgetBytes: number;
   limits: ImportLimits;
@@ -192,7 +255,7 @@ export class ImportSession {
   private cur: { fh: fs.promises.FileHandle; size: number; left: number } | null = null;
 
   constructor(private readonly o: SessionOptions) {
-    this.report = { mode: o.mode, imported: 0, skippedExisting: 0, refused: { path: 0, type: 0, size: 0, special: 0, duplicate: 0 }, projects: [], alwaysFollow: 0, bytes: 0, samples: [] };
+    this.report = { mode: o.mode, imported: 0, skippedExisting: 0, refused: { path: 0, type: 0, size: 0, special: 0, duplicate: 0 }, rulesSkipped: 0, projects: [], alwaysFollow: 0, bytes: 0, samples: [] };
     this.rawCap = o.budgetBytes + RAW_SLACK;
     this.tar = new TarReader({
       entry: (e) => this.onEntry(e),
@@ -210,6 +273,7 @@ export class ImportSession {
   }
 
   get stagingPath(): string { return this.stagingDir; }
+  get rawBytes(): number { return this.raw; }
 
   /** Feeds archive bytes. Throws ImportAbort / TarError / fs errors; the caller must cleanup(). */
   async feed(chunk: Buffer): Promise<void> {
@@ -240,6 +304,7 @@ export class ImportSession {
     if (e.kind === "dir") return false;
 
     const segs = v.segs;
+    if (v.rule && !this.o.rules) { this.report.rulesSkipped++; return false; }
     // Case-fold and file/directory collisions (the archive must also unpack on a case-insensitive disk).
     const folded = segs.map((s) => s.normalize("NFKC").toLowerCase());
     for (let i = 0; i < segs.length; i++) {
@@ -460,7 +525,7 @@ export async function countAlwaysFollow(root: string): Promise<number> {
 
 // ---- the upload driver ------------------------------------------------------------------
 
-export interface FieldCheck { ok: true; mode: ImportMode }
+export interface FieldCheck { ok: true; mode: ImportMode; rules: boolean }
 export interface ReceiveOptions {
   dataDir: string;
   uid: string;
@@ -470,12 +535,14 @@ export interface ReceiveOptions {
   limits: ImportLimits;
   hooks?: ImportHooks;
   gate: ImportGate;
+  /** Rate-limit key of the client address (one import at a time per address). */
+  ip: string;
   /** Called once, when the file part starts and BEFORE anything is staged. Throw ImportAbort to refuse. */
   check(fields: Readonly<Record<string, string>>): FieldCheck;
   log: (line: string) => void;
 }
 
-const FIELDS = new Set(["csrf", "mode", "confirm"]);
+const FIELDS = new Set(["csrf", "mode", "confirm", "rules_seen", "rules"]);
 const MAX_FIELD = 256;
 
 /**
@@ -490,6 +557,7 @@ export async function receiveImport(req: http.IncomingMessage, o: ReceiveOptions
   let field = null as { name: string; chunks: Buffer[]; len: number } | null;
   let sawArchive = false;
   let archiveDone = false;
+  let monitor: NodeJS.Timeout | undefined;
 
   const parser = new MultipartParser(o.boundary, {
     async start(part) {
@@ -498,17 +566,30 @@ export async function receiveImport(req: http.IncomingMessage, o: ReceiveOptions
         if (part.filename === undefined) throw new ImportAbort(400, "Not valid", "The archive must be sent as a file.");
         const verdict = o.check(fields); // CSRF, mode, confirmation: before a byte is staged
         sawArchive = true;
-        const denied = o.gate.tryAcquire(o.uid);
+        const denied = o.gate.tryAcquire(o.uid, o.ip);
         if (denied === "busy") throw new ImportAbort(409, "Already importing", "An import is already running for your account. Wait for it to finish, then try again.");
+        if (denied === "ip") throw new ImportAbort(409, "Already importing", "Another import from your network address is running. Wait for it to finish, then try again.");
+        if (denied === "full") throw new ImportAbort(503, "Server busy", "The server is busy importing for other users, try again in a minute.", 60);
         if (denied === "rate") throw new ImportAbort(429, "Slow down", `At most ${IMPORTS_PER_HOUR} imports per hour are allowed. Please try again later.`);
         acquired = true;
+        await restoreOrphans(o.dataDir, o.now(), o.log, o.uid); // a replace that died between its two renames
         const root = tenantRoot(o.dataDir, o.uid);
         const used = verdict.mode === "add" && fs.existsSync(root) ? await dirSize(root) : 0;
         const quota = o.quotaBytes > 0 ? o.quotaBytes : Infinity;
         const budget = Math.min(quota - used, HARD_IMPORT_CAP);
         if (!(budget > 0)) throw new ImportAbort(413, "Storage full", "Your storage is full, so nothing was imported. Free some space first, or use \"replace\".");
-        session = new ImportSession({ dataDir: o.dataDir, uid: o.uid, mode: verdict.mode, budgetBytes: budget, limits: o.limits, hooks: o.hooks, now: o.now });
+        session = new ImportSession({ dataDir: o.dataDir, uid: o.uid, mode: verdict.mode, rules: verdict.rules, budgetBytes: budget, limits: o.limits, hooks: o.hooks, now: o.now });
         await session.begin();
+        // From here on the archive must keep flowing: a trickle would hold a slot for everyone else.
+        const s = session;
+        let last = 0;
+        monitor = setInterval(() => {
+          const got = s.rawBytes - last;
+          last = s.rawBytes;
+          if (got < (o.limits.minBytesPerSec * o.limits.windowMs) / 1000) {
+            req.destroy(new ImportAbort(408, "Upload too slow", "The upload is too slow (it must average at least 16 KiB per second), so nothing was imported."));
+          }
+        }, o.limits.windowMs);
         return;
       }
       if (!FIELDS.has(part.name) || part.filename !== undefined || part.name in fields) throw new ImportAbort(400, "Not valid", "The form had unexpected fields.");
@@ -525,7 +606,7 @@ export async function receiveImport(req: http.IncomingMessage, o: ReceiveOptions
     },
     async end() {
       if (field) { fields[field.name] = Buffer.concat(field.chunks).toString("utf8"); field = null; return; }
-      if (session) { session.endOfArchive(); archiveDone = true; }
+      if (session) { if (monitor) clearInterval(monitor); session.endOfArchive(); archiveDone = true; }
     },
   });
 
@@ -554,7 +635,8 @@ export async function receiveImport(req: http.IncomingMessage, o: ReceiveOptions
     throw err;
   } finally {
     if (idle) clearTimeout(idle);
+    if (monitor) clearInterval(monitor);
     clearTimeout(total);
-    try { await session?.cleanup(); } finally { if (acquired) o.gate.release(o.uid); }
+    try { await session?.cleanup(); } finally { if (acquired) o.gate.release(o.uid, o.ip); }
   }
 }
