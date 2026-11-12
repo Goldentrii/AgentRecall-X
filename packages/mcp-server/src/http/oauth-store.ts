@@ -270,7 +270,7 @@ export class OAuthStore {
   }
 
   /** Access token → uid/client/resource, or null (unknown, expired, revoked, wrong audience). */
-  resolveAccess(token: string): { uid: string; clientId: string; resource: string; expiresAt: number } | null {
+  resolveAccess(token: string): { uid: string; grantId: string; clientId: string; resource: string; expiresAt: number } | null {
     if (!ACCESS_RE.test(token)) return null;
     const h = sha256Hex(token);
     const g = this.byAccess.get(h);
@@ -278,7 +278,7 @@ export class OAuthStore {
     const entry = g.access.find((a) => a.hash === h);
     if (!entry || entry.exp <= this.now()) return null;
     if (!UID_RE.test(g.uid)) return null;
-    return { uid: g.uid, clientId: g.client_id, resource: g.resource, expiresAt: entry.exp };
+    return { uid: g.uid, grantId: g.id, clientId: g.client_id, resource: g.resource, expiresAt: entry.exp };
   }
 
   /** The live (not revoked, not expired) grants of `uid`, newest first, for the owner's connections list. Never includes token material. */

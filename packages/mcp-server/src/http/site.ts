@@ -22,6 +22,7 @@ import express from "express";
 import type { OAuthConfig } from "./oauth-config.js";
 import type { OAuthStore } from "./oauth-store.js";
 import { listTokens, TokenStoreUnavailableError } from "./tokens.js";
+import type { ActivityStore } from "./activity.js";
 import { dirSize } from "./limits.js";
 import { tenantRoot } from "./tenant-paths.js";
 import { streamTenantTar, TarAbort } from "./export-tar.js";
@@ -29,7 +30,7 @@ import { listTenantProposals, sendReview } from "./review.js";
 import { str, type WebSession, type WebResult } from "./web-session.js";
 import {
   type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
-  localMarkdown, llmsTxt, dashboardPage, type DashboardView,
+  localMarkdown, llmsTxt, dashboardPage, type DashboardView, type AgentRow,
 } from "./site-pages.js";
 
 export interface StaticResponse { status: number; headers: Record<string, string>; body: string }
@@ -92,6 +93,8 @@ export interface SiteRouteDeps {
   store: OAuthStore;
   config: OAuthConfig;
   dataDir: string;
+  /** Per-agent activity log; absent = rows show "no activity yet". */
+  activity?: ActivityStore;
   /** Storage quota per user in bytes; 0 = none. */
   quotaBytes: number;
   ctx: SiteCtx;
@@ -148,13 +151,23 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
       const { s } = found;
       let view: DashboardView;
       try {
-        const tokens = listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at)
-          .map((t) => ({ id: t.id, label: t.label, createdAt: t.created_at }));
+        const seen = d.activity?.entriesOf(s.uid) ?? {};
+        // Only credentials that are live right now: a disconnected grant or revoked token never shows.
+        const rows: AgentRow[] = [
+          ...d.store.liveGrantsOf(s.uid).map((g): AgentRow => {
+            const a = seen[`grant:${g.id}`];
+            return { grantId: g.id, name: a && a.client !== "Unknown client" ? a.client : g.clientName, signIn: "OAuth sign-in", connectedAt: g.createdAt, lastSeen: a?.last_seen, lastTool: a?.last_tool, calls: a?.calls ?? 0 };
+          }),
+          ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t): AgentRow => {
+            const a = seen[`token:${t.id}`];
+            return { name: a?.client ?? "Unknown client", signIn: `token ${t.label || "(unlabelled)"}`, connectedAt: t.created_at, lastSeen: a?.last_seen, lastTool: a?.last_tool, calls: a?.calls ?? 0 };
+          }),
+        ].sort((x, y) => (Date.parse(y.lastSeen ?? "") || 0) - (Date.parse(x.lastSeen ?? "") || 0) || (Date.parse(y.connectedAt) || 0) - (Date.parse(x.connectedAt) || 0));
         const [usedBytes, proposals] = await Promise.all([storageUsed(s.uid), listTenantProposals(d.dataDir, s.uid)]);
         const flash = s.flash !== undefined ? NOTICES[s.flash] : undefined;
         view = {
           account: flow.accountLabel(s), uid: s.uid, csrf: s.csrf, notice: flash,
-          grants: d.store.liveGrantsOf(s.uid), tokens, usedBytes, quotaBytes: d.quotaBytes,
+          agents: rows, now: d.now(), usedBytes, quotaBytes: d.quotaBytes,
           pending: proposals.items.length + proposals.hidden + proposals.incomplete,
         };
       } catch (err) {

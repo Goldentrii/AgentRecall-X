@@ -122,19 +122,24 @@ export function createToken(dataDir: string, uid: string, label = ""): { token: 
   return { token, record };
 }
 
-/** Resolve a presented token to its uid, or null (malformed, unknown, revoked). */
-export function resolveToken(dataDir: string, token: string): string | null {
+/** Resolve a presented token to its uid and record id, or null (malformed, unknown, revoked). */
+export function resolveTokenRecord(dataDir: string, token: string): { uid: string; id: string } | null {
   if (!TOKEN_RE.test(token)) return null;
   const presented = Buffer.from(sha256Hex(token), "hex");
-  let uid: string | null = null;
+  let hit: TokenRecord | null = null;
   for (const rec of readFileCached(dataDir).tokens) {
     const stored = Buffer.from(rec.hash, "hex");
     // Compare every record (no early exit) in constant time per comparison.
     if (stored.length === presented.length && timingSafeEqual(stored, presented) && !rec.revoked_at) {
-      uid = rec.uid;
+      hit = rec;
     }
   }
-  return uid !== null && UID_RE.test(uid) ? uid : null;
+  return hit !== null && UID_RE.test(hit.uid) ? { uid: hit.uid, id: hit.id } : null;
+}
+
+/** Resolve a presented token to its uid, or null (malformed, unknown, revoked). */
+export function resolveToken(dataDir: string, token: string): string | null {
+  return resolveTokenRecord(dataDir, token)?.uid ?? null;
 }
 
 /** Records without hashes, for display. */
