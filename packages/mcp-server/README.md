@@ -16,10 +16,25 @@
 
 <p align="center">
   <a href="https://recall.aiakada.com/healthz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Frecall.aiakada.com%2Fhealthz&query=%24.version&label=hosted&prefix=v&suffix=%20live&color=2E9E6A&style=flat-square" alt="Hosted server status"></a>
-  <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=npm&color=18233F" alt="agent-recall-mcp on npm"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall-X/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Goldentrii/AgentRecall-X/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
-  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-18233F?style=flat-square" alt="MIT license"></a>
-  <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram community"></a>
+  <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
+  <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
+  <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
+  <a href="https://www.npmjs.com/package/agent-recall-cli"><img src="https://img.shields.io/npm/v/agent-recall-cli?style=flat-square&label=CLI&color=10B981" alt="CLI npm"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-X/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Goldentrii/AgentRecall-X/ci.yml?branch=main&style=flat-square&label=CI%20ubuntu%2Bwindows" alt="CI"></a>
+  <a href="https://github.com/Goldentrii/AgentRecall-X/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" alt="License"></a>
+  <a href="https://mcpvault.io/servers/agentrecall-x/health?utm_source=external_badge&amp;utm_medium=referral&amp;utm_campaign=mcp_health_report"><img src="https://mcpvault.io/badge/agentrecall-x.svg" alt="MCPVault: claimed"></a>
+  <br>
+  <img src="https://img.shields.io/badge/storage-local_markdown-blue?style=flat-square" alt="Local markdown">
+  <img src="https://img.shields.io/badge/fusion-RRF_k%3D60-8B5CF6?style=flat-square" alt="RRF k=60">
+  <img src="https://img.shields.io/badge/forgetting-e%5E(%E2%88%92t%2FS)-7C3AED?style=flat-square" alt="Forgetting curve">
+  <img src="https://img.shields.io/badge/every_constant-labelled-orange?style=flat-square" alt="Every constant labelled">
+</p>
+
+<p align="center">
+  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farstart-OPEN·START_HERE-22C55E?style=for-the-badge" alt="/arstart"></a>
+  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farsave-SAVE-FF6B6B?style=for-the-badge" alt="/arsave"></a>
+  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farrecall-SEARCH-4ECDC4?style=for-the-badge" alt="/arrecall"></a>
+  <a href="#the-session-loop"><img src="https://img.shields.io/badge/%2Farreflect-CONSOLIDATE-8B5CF6?style=for-the-badge" alt="/arreflect"></a>
 </p>
 
 <p align="center">
