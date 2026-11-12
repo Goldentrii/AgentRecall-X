@@ -156,7 +156,7 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
     "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
   const activity = new ActivityStore(dataDir, { log, ...opts.activityTesting });
-  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, activity, ...opts.oauthTesting }) : null;
+  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, activity, onTenantChanged: (u) => usage?.invalidate(u), ...opts.oauthTesting }) : null;
   const unauthorizedHeader = oauth
     ? `Bearer realm="agent-recall", resource_metadata="${oauth.resourceMetadataUrl}"`
     : 'Bearer realm="agent-recall"';

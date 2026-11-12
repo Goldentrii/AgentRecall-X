@@ -14,6 +14,8 @@
  */
 import { createHash } from "node:crypto";
 import { esc } from "./oauth-pages.js";
+import { ROOT_FILES } from "./tar-import.js";
+import { DEFAULT_IMPORT_LIMITS, type ImportReport } from "./import-memory.js";
 
 export const REPO_URL = "https://github.com/Goldentrii/AgentRecall-X";
 export const TELEGRAM_URL = "https://t.me/+ywZwoHrg3AM0NDVi";
@@ -148,6 +150,10 @@ pre{margin:0;background:var(--code);border:1px solid var(--line);border-radius:1
 code{font:.9em var(--mono);background:var(--code);padding:1px 6px;border-radius:5px}
 .who h1{font-size:clamp(1.8rem,4vw,2.6rem);margin-bottom:6px}
 .small{font-size:14px;color:var(--slate)}
+.imp label.opt{display:block;margin:8px 0}
+.imp input[type=text],.imp input[type=file]{display:block;margin:6px 0 16px;font:inherit;color:var(--ink);max-width:100%}
+.imp input[type=text]{padding:9px 12px;border:2px solid var(--line);border-radius:8px;background:var(--card)}
+.imp .notice{margin:14px 0}
 .msg{max-width:560px;margin:40px auto}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (max-width:820px){.hero,.signin{grid-template-columns:1fr;gap:28px}.doors,.pair{grid-template-columns:1fr}.steps{grid-template-columns:1fr}}
@@ -256,6 +262,42 @@ export function localAgentPrompt(): string {
   ].join("\n");
 }
 
+// ---- packing a local store ----------------------------------------------------------
+
+const ROOT_LIST = ROOT_FILES.join(" ");
+const PACK_NAME = "agent-recall-memory.tar";
+
+/** bash / zsh: only memory files (root files that exist + projects/**.{md,json,jsonl,txt}, no dotfiles), POSIX ustar. */
+export const PACK_BASH =
+  `cd "\${AGENT_RECALL_ROOT:-$HOME/.agent-recall}" && { ls -1 ${ROOT_LIST} 2>/dev/null; ` +
+  `find projects -type f \\( -iname '*.md' -o -iname '*.json' -o -iname '*.jsonl' -o -iname '*.txt' \\) -not -path '*/.*' 2>/dev/null; } ` +
+  `| tar --format=ustar -cf "$HOME/${PACK_NAME}" -T -`;
+
+/** PowerShell 5.1+/7 with the Windows system tar (bsdtar). */
+export const PACK_POWERSHELL = [
+  `$r = if ($env:AGENT_RECALL_ROOT) { $env:AGENT_RECALL_ROOT } else { Join-Path $HOME '.agent-recall' }`,
+  `Push-Location -LiteralPath $r`,
+  `$n = (Get-Location).ProviderPath.TrimEnd('\\').Length + 1`,
+  `$f = @(@(${ROOT_FILES.map((x) => `'${x}'`).join(",")}) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })`,
+  `$f += @(Get-ChildItem projects -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.md','.json','.jsonl','.txt' } | ForEach-Object { $_.FullName.Substring($n).Replace('\\','/') } | Where-Object { -not $_.Contains('/.') })`,
+  `$l = Join-Path $env:TEMP 'agent-recall-files.txt'`,
+  `[IO.File]::WriteAllLines($l, [string[]]$f)`,
+  `tar --format=ustar -cf (Join-Path $HOME '${PACK_NAME}') -T $l`,
+  `Pop-Location`,
+].join("; ");
+
+export function importAgentPrompt(b: string): string {
+  return [
+    `Pack my local AgentRecall memory into one .tar file so I can import it into my hosted AgentRecall account. You cannot upload it: I do that myself in my browser.`,
+    ``,
+    `- macOS / Linux / Git Bash (bash or zsh), run: ${PACK_BASH}`,
+    `- Windows PowerShell, run: ${PACK_POWERSHELL}`,
+    ``,
+    `This writes ${PACK_NAME} in my home folder. It holds only memory files (projects/**, awareness, insights, identity card), never config.json, telemetry, keys or logs. A missing optional file is fine.`,
+    `Then tell me the full path of the file and ask me to open ${b}/connect, find "Import memory", choose that file and press Import. Do not send the file anywhere else. Full instructions: ${b}/connect.md`,
+  ].join("\n");
+}
+
 export function connectMarkdown(b: string, hosted: boolean): string {
   return [
     `# Connect an agent to AgentRecall (hosted)`,
@@ -283,6 +325,22 @@ export function connectMarkdown(b: string, hosted: boolean): string {
     `- Corrections you propose with \`check\` wait for the human to approve them at ${b}/review. Tell them it is waiting.`,
     `- Loop: session_start first; remember for facts; check for corrections and before risky actions; session_end when done. Saying "noted" is not saving: only a tool call saves.`,
     ``,
+    ...(hosted ? [
+      `## Import a local memory`,
+      ``,
+      `Months of memory may already live in ~/.agent-recall on the human's computer. The human can bring it into this account. You cannot upload it: only the human, signed in in the browser, can (an agent token is refused on purpose, because imported corrections become always-followed rules).`,
+      ``,
+      `1. Pack it. Only memory files are included, in POSIX ustar (a missing optional file is fine):`,
+      `   - bash / zsh: \`${PACK_BASH}\``,
+      `   - PowerShell: \`${PACK_POWERSHELL}\``,
+      `   Result: ${PACK_NAME} in the home folder. Store root is $AGENT_RECALL_ROOT, else ~/.agent-recall.`,
+      `   Rules (corrections, behaviour policies, personal profile, identity card) are NOT imported unless the human ticks "Also import always-follow rules": they become active for all agents at once.`,
+      `2. Tell the human to open ${b}/connect, find "Import memory", choose the file, pick "Add" (keeps everything already here, never overwrites) or "Replace" (type REPLACE; the old memory is kept 7 days, then deleted), and press Import.`,
+      `3. The result page lists what was imported, skipped (already present) and refused. Then call \`session_start\` and report what it returned.`,
+      ``,
+      `Accepted: projects/<name>/** (.md .json .jsonl .txt) and the root files ${ROOT_FILES.join(", ")}. Never imported: config.json, telemetry, tmp, working-memory, logs, locks, vector indexes, dotfiles, links. Only import an archive the human made themselves.`,
+      ``,
+    ] : []),
     `Local install instead: ${b}/local.md`,
     ``,
   ].join("\n");
@@ -517,8 +575,41 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     `<section class="panel" aria-labelledby="h-rev"><h2 id="h-rev">Corrections</h2>` +
     `<p class="sub">Your agents can only propose an always-follow rule. Nothing becomes active until you approve it.</p>` +
     `<p>${v.pending === 0 ? "Nothing is waiting for your review." : `<strong>${esc(v.pending)}</strong> ${v.pending === 1 ? "correction is" : "corrections are"} waiting for your review.`}</p>` +
-    `<a class="btn${v.pending > 0 ? "" : " alt"} small" href="/review">Review corrections</a></section></div>`,
+    `<a class="btn${v.pending > 0 ? "" : " alt"} small" href="/review">Review corrections</a></section></div>` +
+
+    `<section class="panel imp" aria-labelledby="h-imp"><h2 id="h-imp">Import memory</h2>` +
+    `<p class="sub">Already have a memory on your own computer? Bring it here so every agent shares it. Pack it with one command, then upload the file.</p>` +
+    `<div class="notice err" role="note"><strong>Only import an archive you made yourself.</strong> Its rules become active for all your agents.</div>` +
+    `<h3>1. Pack your local memory</h3>` +
+    `<p class="step-note">Only memory files are packed (never config, keys, logs or telemetry). The store is <code>$AGENT_RECALL_ROOT</code>, else <code>~/.agent-recall</code>. Writes <code>${esc(PACK_NAME)}</code> in your home folder.</p>` +
+    `<h3>PowerShell (Windows)</h3>${cmd("i1", PACK_POWERSHELL)}` +
+    `<h3>bash / zsh (macOS, Linux)</h3>${cmd("i2", PACK_BASH)}` +
+    `<h3>Or let your agent pack it</h3><p class="step-note">It cannot upload for you; it tells you where the file is.</p>${cmd("i3", importAgentPrompt(b))}` +
+    `<h3>2. Upload it</h3>` +
+    `<form method="post" action="/connect/import" enctype="multipart/form-data">${hidden("csrf", v.csrf)}` +
+    `<label class="opt"><input type="radio" name="mode" value="add" checked> <strong>Add</strong>: keep everything already here; only files that do not exist yet are added, nothing is overwritten.</label>` +
+    `<label class="opt"><input type="radio" name="mode" value="replace"> <strong>Replace</strong>: the archive takes the place of your memory. What is here now is kept for 7 days, then deleted.</label>` +
+    `<label class="opt" for="confirm">To use Replace, type <code>REPLACE</code>:</label><input type="text" id="confirm" name="confirm" autocomplete="off" maxlength="16">` +
+    `${hidden("rules_seen", "1")}<label class="opt"><input type="checkbox" name="rules" value="1"> Also import always-follow rules (corrections). <span class="small">Off by default: rules in an archive become active for all your agents at once.</span></label>` +
+    `<label class="opt" for="archive">Memory archive (.tar)</label><input type="file" id="archive" name="archive" accept=".tar,application/x-tar" required>` +
+    `<button type="submit" class="btn small">Import memory</button></form>` +
+    `<p class="small">Limits: ${esc(mb(DEFAULT_IMPORT_LIMITS.maxFileBytes))} per file, ${esc(DEFAULT_IMPORT_LIMITS.maxEntries)} entries, and it must fit your storage. Your connected agents are not touched.</p></section>`,
     ctx, "connect");
+}
+
+export function importResultPage(ctx: SiteCtx, r: ImportReport): string {
+  const x = r.refused;
+  const refused = x.path + x.type + x.size + x.special + x.duplicate;
+  const li = (n: number, t: string): string => (n > 0 ? `<li>${esc(n)} ${t}</li>` : "");
+  return layout("Memory imported: AgentRecall",
+    `<section class="msg"><h1>Memory imported</h1>` +
+    `<div class="notice ok" role="status">${esc(r.imported)} ${r.imported === 1 ? "file was" : "files were"} ${r.mode === "replace" ? "imported. Your previous memory is kept for 7 days, then deleted." : "added."}</div>` +
+    `<ul><li><strong>${esc(r.imported)}</strong> imported (${esc(mb(r.bytes))})${r.projects.length ? ` into ${r.projects.length} ${r.projects.length === 1 ? "project" : "projects"}: ${esc(r.projects.slice(0, 20).join(", "))}${r.projects.length > 20 ? ", …" : ""}` : ""}</li>` +
+    li(r.skippedExisting, "left as they were (the file already existed here; nothing was overwritten)") +
+    li(refused, `left out: ${[x.type && `${x.type} not part of a memory (config, telemetry, other file types)`, x.path && `${x.path} with an unsafe path`, x.size && `${x.size} too large`, x.special && `${x.special} links or special files`, x.duplicate && `${x.duplicate} duplicates or name clashes`].filter(Boolean).map(String).map(esc).join("; ")}`) +
+    `<li><strong>${esc(r.alwaysFollow)}</strong> always-follow ${r.alwaysFollow === 1 ? "correction is" : "corrections are"} now active for your agents.</li>${r.rulesSkipped > 0 ? `<li><strong>${esc(r.rulesSkipped)}</strong> always-follow ${r.rulesSkipped === 1 ? "rule was" : "rules were"} not imported. Import again with the box ticked to include them.</li>` : ""}</ul>` +
+    (r.samples.length ? `<p class="small">Left out, for example: ${r.samples.map((p) => `<code>${esc(p)}</code>`).join(", ")}</p>` : "") +
+    `<p><a class="btn" href="/connect">Back to your dashboard</a></p></section>`, ctx, "none");
 }
 
 export function localPage(ctx: SiteCtx): string {

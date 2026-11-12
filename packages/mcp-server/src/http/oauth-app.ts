@@ -23,7 +23,7 @@ import { errorPage, pageHeaders } from "./oauth-pages.js";
 import { REVIEW_PATHS, mountReview, sendReview } from "./review.js";
 import { reviewMessagePage, reviewSignInPage } from "./review-pages.js";
 import { WebSession, type WebPages } from "./web-session.js";
-import { mountSite } from "./site.js";
+import { mountSite, type ImportTesting } from "./site.js";
 import type { ActivityStore } from "./activity.js";
 import { connectSignInPage, messagePage, DEFAULT_PRIVACY_URL, type SiteCtx } from "./site-pages.js";
 
@@ -56,6 +56,10 @@ export interface OAuthOptions {
   activity?: ActivityStore;
   /** Storage quota per user in bytes, shown on the dashboard; 0 or undefined = none shown. */
   quotaBytes?: number;
+  /** Called after a user's tenant directory was changed by the website (an import), so cached usage figures are dropped. */
+  onTenantChanged?: (uid: string) => void;
+  /** Test seams for the memory import: limits and hooks. */
+  importTesting?: ImportTesting;
 }
 
 /**
@@ -125,7 +129,7 @@ class WindowCounter {
 
 const EXACT_PATHS = new Set(["/register", "/authorize", "/authorize/start", "/token", "/revoke"]);
 /** The dashboard routes (site.ts). */
-const SITE_PATHS = new Set(["/connect", "/connect/start", "/connect/disconnect", "/connect/download", "/connect/logout"]);
+const SITE_PATHS = new Set(["/connect", "/connect/start", "/connect/disconnect", "/connect/download", "/connect/import", "/connect/logout"]);
 
 
 const FIFTEEN_MIN = 15 * 60 * 1000;
@@ -256,7 +260,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   });
 
   mountSite(app, {
-    flow: review, store, config, dataDir: opts.dataDir, quotaBytes: opts.quotaBytes ?? 0, activity: opts.activity, ctx: site, log, now, formOrigins: provider.formOrigins,
+    flow: review, store, config, dataDir: opts.dataDir, quotaBytes: opts.quotaBytes ?? 0, activity: opts.activity, ctx: site, log, now, onTenantChanged: opts.onTenantChanged, importTesting: opts.importTesting, formOrigins: provider.formOrigins,
     limitStart: (req) => siteStartIp.hit(ipKey(req.ip)),
   });
 
