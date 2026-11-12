@@ -47,6 +47,33 @@ agent ──HTTPS──▶ TLS proxy ──▶ agent-recall-server :8787   POST 
 
 To update, re-run `setup.sh` with a newer `AR_REF`. **Never run `docker compose down -v`**: `-v` deletes every user's memory and the TLS certificates. Optional settings go in `deploy/hosted/.env`: `AR_SERVER_QUOTA_MB` and `AR_SERVER_RATE_PER_MIN`. Data lives in the `agent-recall_ar-data` Docker volume; back it up, or turn on the host's automatic snapshots.
 
+### Restricted deploy key (let an agent deploy, nothing else)
+
+`deploy/hosted/remote.sh` is a forced command for one SSH key. Whoever holds that key, for example a coding agent on your laptop, can run exactly four requests and gets no shell:
+
+| Request | Does |
+|---|---|
+| `deploy <40-hex commit>` | `setup.sh` at that commit. The commit must be one of the last 30 commits of `main` (checked with GitHub's compare API; fails closed if GitHub is unreachable), so nothing unmerged reaches the server and nobody can roll it back to an old version. One deploy at a time; a second is refused while one runs. |
+| `status` | Deployed commit, container status, `/healthz` |
+| `logs [N]` | Last N server log lines (default 50, max 500) |
+| `usage` | Storage per user |
+
+Anything else (a login shell, `scp`, other commands, shell syntax) is refused.
+
+Set it up once:
+
+1. On the machine that will deploy, create a dedicated key: `ssh-keygen -t ed25519 -f ~/.ssh/agent_recall_deploy -N "" -C agent-recall-deploy`.
+2. On the server, install the script and bind the key's **public** half to it:
+   ```bash
+   SHA=<commit on main>
+   curl -fsSL "https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/$SHA/deploy/hosted/remote.sh" -o remote.sh
+   sudo install -m 755 remote.sh /usr/local/bin/agent-recall-remote
+   printf '\nrestrict,command="/usr/local/bin/agent-recall-remote" %s\n' "<contents of agent_recall_deploy.pub>" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+   ```
+3. Use it: `ssh -i ~/.ssh/agent_recall_deploy ubuntu@<server> status` (or `deploy <sha>`, `logs 100`, `usage`).
+
+The key has no passphrase so an agent can use it unattended; what it can do is limited to the four requests above. Since `deploy` runs the repo's own `setup.sh` with sudo, the real gate is that only reviewed code reaches `main` (protect the branch). To revoke, delete that line from `~/.ssh/authorized_keys`. The script's tests: `bash deploy/hosted/remote.test.sh` (Linux, needs `flock`). Re-run step 2's `install` line with a newer commit to update the script.
+
 ### Docker (single container, bring your own proxy)
 
 ```bash
