@@ -212,6 +212,18 @@ const WHY_SEPARATOR = "\n\nWhy: ";
 /** Owner gate — caps on a proposal, so the owner always reads ALL of what approving it activates. */
 export const PROPOSAL_RULE_MAX = 200;
 export const PROPOSAL_WHY_MAX = 600;
+/** applies_when becomes tags and context keys on activation, so it is capped as well: entries, and characters per entry. */
+export const PROPOSAL_WHEN_MAX_ITEMS = 8;
+export const PROPOSAL_WHEN_ITEM_MAX = 60;
+
+function overCaps(rule: string, why: string, appliesWhen: readonly string[]): string {
+  return [
+    rule.length > PROPOSAL_RULE_MAX ? `rule: longer than ${PROPOSAL_RULE_MAX} characters` : "",
+    why.length > PROPOSAL_WHY_MAX ? `why: longer than ${PROPOSAL_WHY_MAX} characters` : "",
+    appliesWhen.length > PROPOSAL_WHEN_MAX_ITEMS ? `applies_when: more than ${PROPOSAL_WHEN_MAX_ITEMS} entries` : "",
+    appliesWhen.some((w) => w.length > PROPOSAL_WHEN_ITEM_MAX) ? `applies_when: an entry longer than ${PROPOSAL_WHEN_ITEM_MAX} characters` : "",
+  ].filter(Boolean).join("; ");
+}
 
 /**
  * Owner gate — reduce agent-written proposal text to what a human reviewer can
@@ -247,6 +259,8 @@ export function readStagedProposal(row: PendingRecord): StagedProposal | null {
   const rule = row.context.slice(0, cut).trim();
   const why = row.context.slice(cut + WHY_SEPARATOR.length).trim();
   if (!rule || !why) return null;
+  // Over the caps (older code, or edited): the owner could not read all of it, so it is not approvable.
+  if (overCaps(rule, why, row.applies_when)) return null;
   const digest = proposalDigest(row.context, row.applies_when);
   // The stored digest AND the id must both name this exact content: the owner approves by id.
   if (row.digest !== digest || !proposalIdMatchesDigest(row.id, digest)) return null;
@@ -286,7 +300,13 @@ export async function confirmPendingCorrection(project: string, id: string): Pro
     return { ok: false, reason: "only the owner (operator) can confirm a correction; this is an agent channel" };
   }
   const slug = await resolveProject(project);
-  const row = (await listPendingCorrections(slug)).find((r) => r.id === id);
+  let rows: PendingRecord[];
+  try {
+    rows = await listPendingCorrections(slug, { strict: true });
+  } catch (err) {
+    return { ok: false, reason: `could not read the staged corrections: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const row = rows.find((r) => r.id === id);
   if (!row) return { ok: false, reason: `pending correction not found: ${id}` };
   const proposal = readStagedProposal(row);
   if (!proposal) {
@@ -413,10 +433,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         : hc;
       const validation = validateStructuredCorrection(proposed);
       const tooLong = gated && validation.ok
-        ? [
-            (proposed.rule?.length ?? 0) > PROPOSAL_RULE_MAX ? `rule: longer than ${PROPOSAL_RULE_MAX} characters` : "",
-            (proposed.why?.length ?? 0) > PROPOSAL_WHY_MAX ? `why: longer than ${PROPOSAL_WHY_MAX} characters` : "",
-          ].filter(Boolean).join("; ")
+        ? overCaps(proposed.rule ?? "", proposed.why ?? "", proposed.applies_when ?? [])
         : "";
       if (tooLong) {
         // Not staged: the owner must be able to read all of what they approve.
@@ -424,7 +441,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
         correctionPending = {
           status: "invalid_structured",
           reason: tooLong,
-          agent_instruction: `Shorten it and call check() again: rule at most ${PROPOSAL_RULE_MAX} characters, why at most ${PROPOSAL_WHY_MAX}. Nothing was staged.`,
+          agent_instruction: `Shorten it and call check() again: rule at most ${PROPOSAL_RULE_MAX} characters, why at most ${PROPOSAL_WHY_MAX}, applies_when at most ${PROPOSAL_WHEN_MAX_ITEMS} entries of at most ${PROPOSAL_WHEN_ITEM_MAX} characters. Nothing was staged.`,
         };
       } else if (!validation.ok) {
         // Incomplete structured form: rejected with a restructure instruction,

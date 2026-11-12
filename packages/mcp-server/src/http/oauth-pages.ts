@@ -44,9 +44,10 @@ button{margin-top:14px;width:100%;padding:11px;border:0;border-radius:8px;backgr
 .err{background:#fdecec;border:1px solid #f3b7b7;color:#8a1c1c;border-radius:8px;padding:10px 12px;font-size:14px;margin:12px 0}
 `;
 
-function shell(title: string, body: string): string {
+/** A whole page. `body` must already be escaped; `extraStyle` is a constant stylesheet, never user data. */
+export function shell(title: string, body: string, extraStyle = ""): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${STYLE}</style></head><body><main>${body}</main></body></html>`;
+    `<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${STYLE}${extraStyle}</style></head><body><main>${body}</main></body></html>`;
 }
 
 export interface SignInView {
