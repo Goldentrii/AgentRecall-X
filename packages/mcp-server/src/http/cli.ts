@@ -192,6 +192,7 @@ async function main(argv: string[]): Promise<void> {
       process.stderr.write(`agent-recall-server: ${signal} received, draining\n`);
       const force = setTimeout(() => {
         process.stderr.write("agent-recall-server: drain timeout, exiting\n");
+        server.flushActivity(); // never throws; keeps the last minute of agent activity
         process.exit(1);
       }, 8_000);
       force.unref();

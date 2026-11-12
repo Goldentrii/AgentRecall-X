@@ -46,9 +46,9 @@ export interface ServeOptions {
   log?: (line: string) => void;
   /** OAuth 2.1 sign-in with GitHub / Google. null/undefined → OAuth off, behaviour identical to v1. */
   oauth?: OAuthConfig | null;
-  /** Test seams for OAuth only: clock, login rate limits, provider endpoints, fetch and its timeout. */
   /** Test seams for the per-agent activity log: clock, flush interval, file writer. */
   activityTesting?: ActivityOptions;
+  /** Test seams for OAuth only: clock, login rate limits, provider endpoints, fetch and its timeout. */
   oauthTesting?: { now?: () => number; loginLimits?: LoginLimits; providerUrls?: ProviderUrls; fetchImpl?: typeof fetch; providerTimeoutMs?: number; maxPending?: number };
 }
 
@@ -273,10 +273,13 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
   return Object.assign(handler, { flushActivity: () => activity.flush() });
 }
 
-export function startHttpServer(opts: ServeOptions): Promise<http.Server> {
+/** The HTTP server plus a way to write buffered activity now (cli.ts uses it before a forced exit). */
+export type HostedServer = http.Server & { flushActivity(): void };
+
+export function startHttpServer(opts: ServeOptions): Promise<HostedServer> {
   enableStrictTenantMode();
   const handler = createRequestHandler(opts);
-  const server = http.createServer((req, res) => void handler(req, res));
+  const server = Object.assign(http.createServer((req, res) => void handler(req, res)), { flushActivity: () => handler.flushActivity() });
   // Graceful shutdown (cli.ts calls server.close on SIGTERM/SIGINT): write buffered activity before exit.
   server.once("close", () => handler.flushActivity());
   return new Promise((resolve, reject) => {

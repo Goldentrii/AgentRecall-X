@@ -99,12 +99,18 @@ export interface ActivityOptions {
   write?: (file: string, data: unknown) => void;
 }
 
-interface Slot { entries: Record<string, ActivityEntry>; dirty: boolean }
+/** onDisk: the file exists (loaded from it, or written by us); if it vanishes the operator deleted it on purpose. */
+interface Slot { entries: Record<string, ActivityEntry>; dirty: boolean; onDisk: boolean }
+
+const MAX_FILE_BYTES = 256 * 1024; // 50 entries are ~10 KB; anything bigger is not ours
+const FLUSH_BATCH = 200; // uids written per timer tick
+const MAX_BACKOFF_MS = 15 * 60_000;
 
 export class ActivityStore {
   private readonly slots = new Map<string, Slot>();
   private timer: NodeJS.Timeout | null = null;
   private warned = false;
+  private failures = 0;
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private readonly flushMs: number;
@@ -123,23 +129,39 @@ export class ActivityStore {
     return path.join(this.dataDir, "_server", "activity", `${uid}.json`);
   }
 
-  private slot(uid: string): Slot {
+  /** The user's slot, loaded once (one small read, size-capped). null = the file could not be read for a reason other than "absent/corrupt": do not touch it this round. */
+  private slot(uid: string): Slot | null {
     let s = this.slots.get(uid);
     if (s) return s;
     if (this.slots.size >= MAX_UIDS_IN_MEMORY) {
-      this.flush();
+      this.flush(true);
       for (const [k, v] of this.slots) if (!v.dirty) this.slots.delete(k);
+      if (this.slots.size >= MAX_UIDS_IN_MEMORY) {
+        const oldest = this.slots.keys().next().value; // Map keeps insertion order: the longest-resident slot
+        if (oldest !== undefined) this.slots.delete(oldest);
+      }
     }
     let entries: Record<string, ActivityEntry> = {};
-    try { entries = parseEntries(JSON.parse(fs.readFileSync(this.fileFor(uid), "utf-8"))); } catch { /* none yet, or unreadable: start empty */ }
-    s = { entries, dirty: false };
+    let onDisk = false;
+    const file = this.fileFor(uid);
+    try {
+      if (fs.statSync(file).size > MAX_FILE_BYTES) throw new SyntaxError("activity file too large");
+      entries = parseEntries(JSON.parse(fs.readFileSync(file, "utf-8")));
+      onDisk = true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== undefined && code !== "ENOENT") { this.complain(err); return null; } // EACCES, EIO, ...: leave the file alone
+      // ENOENT: none yet. Parse failure (no code): corrupt, start over.
+    }
+    s = { entries, dirty: false, onDisk };
     this.slots.set(uid, s);
     return s;
   }
 
   private schedule(): void {
     if (this.timer !== null) return;
-    this.timer = setTimeout(() => { this.timer = null; this.flush(); }, this.flushMs);
+    const wait = Math.min(MAX_BACKOFF_MS, this.flushMs * 2 ** Math.min(this.failures, 10)); // back off while writes fail
+    this.timer = setTimeout(() => { this.timer = null; this.flush(false); }, wait);
     this.timer.unref();
   }
 
@@ -148,6 +170,7 @@ export class ActivityStore {
     try {
       if (!UID_RE.test(uid) || !KEY_RE.test(key)) return;
       const s = this.slot(uid);
+      if (s === null) return;
       const at = new Date(this.now()).toISOString();
       const prev = s.entries[key];
       s.entries[key] = {
@@ -172,28 +195,41 @@ export class ActivityStore {
   /** A copy of this user's entries (callers sort and filter by live credential). Never throws. */
   entriesOf(uid: string): Record<string, ActivityEntry> {
     try {
-      return UID_RE.test(uid) ? structuredClone(this.slot(uid).entries) : {};
+      const s = UID_RE.test(uid) ? this.slot(uid) : null;
+      return s ? structuredClone(s.entries) : {};
     } catch (err) {
       this.complain(err);
       return {};
     }
   }
 
-  /** Write every dirty user. Called by the timer and on shutdown. Never throws. */
-  flush(): void {
+  /**
+   * Write dirty users. The timer writes at most FLUSH_BATCH per tick (the rest follow on the next tick);
+   * `all` (shutdown) writes everyone. A slot whose file an operator deleted is dropped, not recreated.
+   * Never throws.
+   */
+  flush(all = true): void {
     if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
+    let written = 0;
+    let more = false;
     let failed = false;
     for (const [uid, s] of this.slots) {
       if (!s.dirty) continue;
+      if (!all && written >= FLUSH_BATCH) { more = true; break; }
+      written++;
       try {
-        this.write(this.fileFor(uid), { version: 1, entries: s.entries });
+        const file = this.fileFor(uid);
+        if (s.onDisk && !fs.existsSync(file)) { this.slots.delete(uid); continue; } // deleted on purpose
+        this.write(file, { version: 1, entries: s.entries });
         s.dirty = false;
+        s.onDisk = true;
       } catch (err) {
         failed = true;
         this.complain(err);
       }
     }
-    if (failed) this.schedule(); // keep the data, try again later
+    this.failures = failed ? this.failures + 1 : 0;
+    if (failed || more) this.schedule(); // keep the data, try again (backed off when failing)
   }
 
   private complain(err: unknown): void {
