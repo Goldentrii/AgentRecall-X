@@ -225,7 +225,7 @@ export function renderSessionStart(result: SessionStartResult, opts: RenderSessi
   const preamble = opts.preamble ?? [];
   const tail: string[] = [];
   // P4 cross-surface adapter — hook-less host pointer; text layer only, omitted where hooks drive the lifecycle.
-  if (opts.hooklessTail) tail.push("", "No hooks on this host: call session_end before you stop, or this session is not saved.");
+  if (opts.hooklessTail) tail.push("", "No hooks here: call session_end before you stop.");
   // C4 A/B experiment marker (quiet trailing tag, not a banner).
   if (result.ab_arm && opts.abTag !== false) tail.push(`[ab:${result.ab_arm}]`);
 

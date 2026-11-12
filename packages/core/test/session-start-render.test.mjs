@@ -36,7 +36,7 @@ it("cards mode renders owner, header, hard rules and state (plus behaviour polic
   assert.ok(text.startsWith("⟦agentrecall:memory:") && close > 0 && text.slice(close).trimEnd().endsWith("⟧"), "fence first and last, no tail");
   const at = ["Owner (identity card v1)", "AgentRecall — p", "⛔ HARD RULES", "[P0] Never push.", "State (updated 2026-10-31"].map((s) => text.indexOf(s));
   assert.ok(at.every((x, i) => x > 0 && (i === 0 || x > at[i - 1])), JSON.stringify(at));
-  assert.doesNotMatch(text, /sessions: |Intention:|Trajectory:|💡|⏪|📓|No hooks on this host/);
+  assert.doesNotMatch(text, /sessions: |Intention:|Trajectory:|💡|⏪|📓|No hooks here/);
   const withRules = { ...CARDS, behavior_rules: [{ id: "r", name: "gate", when: "a release is requested", do: "ask first", created: "", hits: 1 }], pending_corrections: { count: 2, ids: ["a", "b"] } };
   assert.deepEqual(ids(withRules), ["owner", "header", "behavior_rules", "hard_rules", "state", "pending"]);
 });
@@ -71,7 +71,7 @@ it("byte cap: whole sections go lowest priority first; untouchable sections neve
   const tiny = renderSessionStart(FULL, { ...opts, maxBytes: 1 });
   for (const line of ["🔴 dream cron", "🩺 store-doctor", "⛔ HARD RULES (always follow, no exceptions):", "[P0] Never push, publish or version-bump without an explicit yes. [gate]", "[P1] Prefer modifying an existing module over a new one. [nudge]", "Owner (identity card v3)", "AgentRecall — alpha-platform", "… session_start payload cut; diagnostics and HARD RULES alone exceed 1 bytes"]) assert.ok(tiny.includes(line), `tiny cap lost: ${line}`);
   assert.doesNotMatch(tiny, /Languages: reply|State \(updated|Goal: Ship|⚠ Watch|Intention:|cut to 1 bytes/);
-  assert.ok(tiny.includes("No hooks on this host: call session_end"), "the unfenced tail is guidance, never cut");
+  assert.ok(tiny.includes("No hooks here: call session_end"), "the unfenced tail is guidance, never cut");
 });
 
 it("once only rank-0 sections remain, state lines go before the owner body, and the owner header never goes", () => {
@@ -103,7 +103,7 @@ it("preamble goes before the fence, extraLines inside it in full mode only, the 
   const text = renderSessionStart(FULL, { preamble: ["⚠️ AgentRecall: 1 hook failure (24h)"], extraLines: ["🔍 Pre-loaded semantic context:", "   [journal] x"], hooklessTail: true });
   assert.ok(text.startsWith("⚠️ AgentRecall: 1 hook failure (24h)\n⟦agentrecall:memory:"), text.slice(0, 120));
   const close = text.search(/⟦\/agentrecall:memory:[0-9a-f]{16}⟧/);
-  assert.ok(text.indexOf("🔍 Pre-loaded semantic context:") < close && text.indexOf("No hooks on this host: call session_end") > close && text.indexOf("[ab:on]") > close);
+  assert.ok(text.indexOf("🔍 Pre-loaded semantic context:") < close && text.indexOf("No hooks here: call session_end") > close && text.indexOf("[ab:on]") > close);
   assert.ok(!renderSessionStart(CARDS, { extraLines: ["🔍 Pre-loaded semantic context:"] }).includes("🔍"), "extra lines are a full-mode affordance");
   assert.equal((text.match(/⟦agentrecall:memory:[0-9a-f]{16}⟧/g) ?? []).length, 1, "exactly one fence");
   assert.ok(!renderSessionStart(FULL, { abTag: false }).includes("[ab:"), "hook-start opts out of the A/B tag it never printed");
