@@ -23,9 +23,11 @@
 </p>
 
 <p align="center">
-  <a href="#hosted-connect-your-agent"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
-  <a href="#local-install"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
+  <a href="https://recall.aiakada.com/connect"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
+  <a href="https://recall.aiakada.com/local"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
 </p>
+
+<p align="center"><a href="#hosted-connect-your-agent">Hosted setup in this README</a> · <a href="#local-install">Local install in this README</a></p>
 
 ## Hosted: connect your agent
 

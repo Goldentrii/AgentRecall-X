@@ -1,6 +1,6 @@
 # Privacy policy: hosted AgentRecall at recall.aiakada.com
 
-Last updated: 2026-11-11
+Last updated: 2026-11-12
 
 This policy covers the hosted AgentRecall service at `https://recall.aiakada.com` ("the service"). It does not cover AgentRecall installed on your own computer: that version keeps everything on your machine and sends nothing to us.
 
@@ -26,7 +26,12 @@ What we do **not** collect: your name, your email address, your GitHub or Google
 
 Your IP address is used to rate-limit requests. The server keeps it **in memory only, for at most 1 hour**, and does not write it to any file. The reverse proxy in front of the server may include it in its own error lines (for example a failed TLS connection); those rotate out with the other logs.
 
-During sign-in the browser gets one strictly necessary cookie (HttpOnly, valid for 10 minutes, only for the sign-in pages) that ties the sign-in to that browser. No other cookies are used.
+The website sets two kinds of strictly necessary cookies, both HttpOnly and SameSite=Lax (and Secure over https), and no others:
+
+- **Sign-in binding** (`ar_review_login_<id>`): valid for 10 minutes, sent only to the sign-in callback, ties a sign-in to the browser that started it.
+- **Site session** (`ar_site` for `/connect` and `ar_review` for `/review`, the same random value in both): created when you sign in on the website, valid for 30 minutes, then you sign in again. Each cookie is sent only to its own pages, never to the MCP endpoint. It lets you manage your connected agents, download your memory and review corrections. The session itself is kept in the server's memory only and disappears when you sign out or the server restarts.
+
+No analytics, advertising or tracking cookies are used, and the website loads no fonts, scripts or images from other sites.
 
 Your memory is **not end-to-end encrypted**. It is protected in transit (HTTPS) and on the server by access controls, but the operator could technically read it. The operator does not read users' memory, except where a user asks for help, or where it is strictly needed to keep the service secure (for example reviewing a correction proposal flagged for approval).
 
@@ -48,7 +53,7 @@ On one server operated by Amazon Web Services (AWS Lightsail) in **Frankfurt, Ge
 
 ## Your rights
 
-You can ask for access to your data, a copy in a portable format, correction, deletion, restriction or objection (GDPR Art. 15–21). Write to the contact above; we answer within one month. Deleting your account removes your memory space, your sign-in records and the link to your GitHub/Google account.
+You can ask for access to your data, a copy in a portable format, correction, deletion, restriction or objection (GDPR Art. 15–21). Write to the contact above; we answer within one month. **Download your memory yourself (data portability, Art. 20).** After signing in at `https://recall.aiakada.com/connect`, "Download my memory" gives you a .tar archive of everything stored in your memory space (plain markdown and JSON files), streamed straight from the server. You can also see there which apps are connected to your account and disconnect any of them. Deleting your account removes your memory space, your sign-in records and the link to your GitHub/Google account.
 
 You also have the right to complain to a data protection supervisory authority, for example the one in your EU country of residence.
 
