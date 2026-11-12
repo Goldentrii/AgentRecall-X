@@ -24,7 +24,7 @@ import type { OAuthStore } from "./oauth-store.js";
 import { listTokens, TokenStoreUnavailableError } from "./tokens.js";
 import { dirSize } from "./limits.js";
 import { tenantRoot } from "./tenant-paths.js";
-import { streamTenantTar } from "./export-tar.js";
+import { streamTenantTar, TarAbort } from "./export-tar.js";
 import { listTenantProposals, sendReview } from "./review.js";
 import { str, type WebSession, type WebResult } from "./web-session.js";
 import {
@@ -44,8 +44,11 @@ export function isStaticPath(pathname: string, hosted: boolean): boolean {
 
 export function renderStatic(pathname: string, ctx: SiteCtx): StaticResponse | null {
   const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-  const page = (html: string): StaticResponse => ({ status: 200, headers: siteHeaders({ noStore: false }), body: html });
-  const text = (body: string): StaticResponse => ({ status: 200, headers: { ...TEXT_HEADERS }, body });
+  // Pages that reflect the Host header must never be stored by a shared cache.
+  const fin = (r: StaticResponse): StaticResponse =>
+    ctx.baseFromHost ? { ...r, headers: { ...r.headers, "cache-control": "no-store", vary: "Host" } } : r;
+  const page = (html: string): StaticResponse => fin({ status: 200, headers: siteHeaders({ noStore: false }), body: html });
+  const text = (body: string): StaticResponse => fin({ status: 200, headers: { ...TEXT_HEADERS }, body });
   switch (p) {
     case "/": return page(homePage(ctx));
     case "/local": return page(localPage(ctx));
@@ -58,15 +61,8 @@ export function renderStatic(pathname: string, ctx: SiteCtx): StaticResponse | n
   }
 }
 
-/** Public base URL when OAuth is off: AR_PUBLIC_URL if it is a plain origin, else the Host header if it looks like a host. */
+/** Base URL when OAuth is off (so there is no configured public URL): the Host header if it looks like a host. */
 export function fallbackBase(req: http.IncomingMessage): string {
-  const env = process.env.AR_PUBLIC_URL?.trim();
-  if (env) {
-    try {
-      const u = new URL(env);
-      if ((u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password) return u.origin;
-    } catch { /* fall through */ }
-  }
   const host = req.headers.host;
   return typeof host === "string" && /^[A-Za-z0-9.\-]{1,253}(:\d{1,5})?$/.test(host) ? `http://${host}` : "http://localhost";
 }
@@ -88,6 +84,8 @@ const MSG_READ_FAILED = "Your account could not be read just now. Nothing was ch
 const MSG_BAD_INPUT = "That request was not valid. Reload the connect page and try again.";
 const GRANT_ID_RE = /^[a-f0-9]{12}$/;
 const USAGE_TTL_MS = 30_000;
+/** A client that stops reading for this long loses its download (and the per-account lock). */
+const DOWNLOAD_IDLE_MS = 60_000;
 
 export interface SiteRouteDeps {
   flow: WebSession;
@@ -235,11 +233,12 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
         "referrer-policy": "no-referrer",
         "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
       });
-      const stats = await streamTenantTar(root, top, res);
+      const stats = await streamTenantTar(root, top, res, { idleMs: DOWNLOAD_IDLE_MS });
       res.end();
       d.log(`[connect] download uid=${s.uid} files=${stats.files} bytes=${stats.bytes} skipped=${stats.skipped}`);
     } catch (err) {
-      d.log(`[connect] download aborted uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"}`);
+      // Client gone or stalled (TarAbort) or an unexpected failure: either way the response ends here, and the finally below frees the lock.
+      d.log(`[connect] download aborted uid=${s.uid} kind=${err instanceof TarAbort ? "client" : ((err as Error)?.name ?? "unknown")}`);
       res.destroy();
     } finally {
       downloading.delete(s.uid);

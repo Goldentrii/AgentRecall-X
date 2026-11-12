@@ -76,7 +76,7 @@ Codex opens the sign-in page itself. If you closed it, run `codex mcp login agen
 
 - 🔒 **Private, in the EU.** Your memory is visible only to your account and stored in Frankfurt. No ads, analytics or trackers. [Privacy policy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md)
 - 📏 **Limits.** 100 MB of memory and 120 requests per minute per user. Reads keep working when you are full.
-- ✋ **Corrections wait for approval.** An agent can only *propose* a correction here; it becomes a HARD RULE for your other agents once approved. There is no self-service approval page yet, so the operator approves on request. [How it works](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md#corrections-need-the-owner)
+- ✋ **Corrections wait for approval.** An agent can only *propose* a correction here; it becomes a HARD RULE for your other agents once approved. You approve or reject them yourself on the review page at `/review` (sign in with the same account); the operator does not have to read your memory. [How it works](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md#corrections-need-the-owner)
 - 🛠️ **Run your own.** The same server as a Compose + Caddy kit for one Ubuntu box: [docs/hosted-server.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md)
 
 ## For agents

@@ -162,7 +162,7 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
           res.setHeader("allow", "GET, HEAD");
           throw new HttpError(405, "method_not_allowed", `${req.method} not supported`, "This is a web page: read it with GET.");
         }
-        const site = renderStatic(url.pathname, oauth ? oauth.site : { base: fallbackBase(req), privacyUrl: DEFAULT_PRIVACY_URL, hosted: false });
+        const site = renderStatic(url.pathname, oauth ? oauth.site : { base: fallbackBase(req), privacyUrl: DEFAULT_PRIVACY_URL, hosted: false, baseFromHost: true });
         if (site) {
           res.writeHead(site.status, site.headers);
           res.end(req.method === "HEAD" ? undefined : site.body);

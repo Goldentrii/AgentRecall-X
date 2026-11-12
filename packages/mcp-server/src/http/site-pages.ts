@@ -25,6 +25,8 @@ export interface SiteCtx {
   privacyUrl: string;
   /** Is hosted sign-in configured (OAuth on)? */
   hosted: boolean;
+  /** The base URL was taken from the request's Host header (no configured public URL): pages must not be cached. */
+  baseFromHost?: boolean;
 }
 
 // ---- assets ---------------------------------------------------------------
