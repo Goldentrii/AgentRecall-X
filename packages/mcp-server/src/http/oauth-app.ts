@@ -7,6 +7,7 @@
  *   POST /register   GET|POST /authorize   POST /authorize/start   GET /authorize/callback/{github,google}
  *   POST /token   POST /revoke
  *   /review*   the owner approves or rejects their own staged corrections (review.ts)
+ *   /connect*  the signed-in dashboard: ID, connect an agent, disconnect, download (site.ts)
  */
 import type * as http from "node:http";
 import * as net from "node:net";
@@ -19,7 +20,11 @@ import { OAuthStore } from "./oauth-store.js";
 import { FederatedOAuthProvider, OAUTH_SCOPE } from "./oauth-provider.js";
 import { Federation, DEFAULT_PROVIDER_URLS, type ProviderUrls } from "./federation.js";
 import { errorPage, pageHeaders } from "./oauth-pages.js";
-import { ReviewFlow, REVIEW_PATHS, mountReview, sendReview } from "./review.js";
+import { REVIEW_PATHS, mountReview, sendReview } from "./review.js";
+import { reviewMessagePage, reviewSignInPage } from "./review-pages.js";
+import { WebSession, type WebPages } from "./web-session.js";
+import { mountSite } from "./site.js";
+import { connectSignInPage, messagePage, DEFAULT_PRIVACY_URL, type SiteCtx } from "./site-pages.js";
 
 export interface LoginLimits {
   /** /authorize/start and /authorize/callback hits per client IP per window (each route has its own bucket). */
@@ -46,6 +51,8 @@ export interface OAuthOptions {
   maxPending?: number;
   /** Test seam: cap on live sign-in requests per client address. */
   maxPendingPerKey?: number;
+  /** Storage quota per user in bytes, shown on the dashboard; 0 or undefined = none shown. */
+  quotaBytes?: number;
 }
 
 /**
@@ -70,6 +77,8 @@ export interface OAuthRuntime {
   /** aro_ access token → uid, or null. Throws TokenStoreUnavailableError if an operator file is unreadable. */
   resolveAccess(token: string): string | null;
   resourceMetadataUrl: string;
+  /** What the website needs to know about this server. */
+  site: SiteCtx;
 }
 
 /**
@@ -110,6 +119,8 @@ class WindowCounter {
 }
 
 const EXACT_PATHS = new Set(["/register", "/authorize", "/authorize/start", "/token", "/revoke"]);
+/** The dashboard routes (site.ts). */
+const SITE_PATHS = new Set(["/connect", "/connect/start", "/connect/disconnect", "/connect/download", "/connect/logout"]);
 
 
 const FIFTEEN_MIN = 15 * 60 * 1000;
@@ -128,8 +139,16 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     keyOf: (req) => ipKey(req.ip),
     federation,
   });
-  // The owner review page shares the provider callback URL; its sign-ins are told apart by state.
-  const review = new ReviewFlow({ config, dataDir: opts.dataDir, federation, log, now });
+  const site: SiteCtx = { base: config.publicUrl.origin, privacyUrl: config.privacyUrl?.href ?? DEFAULT_PRIVACY_URL, hosted: true };
+  const pages: WebPages = {
+    signIn: (surface, v) => (surface === "review" ? reviewSignInPage(v) : connectSignInPage(site, v)),
+    message: (surface, title, msg) => surface === "review"
+      ? reviewMessagePage(title, msg)
+      : messagePage(site, title, msg, surface === "connect" ? { href: "/connect", label: "Back to the connect page" } : { href: "/", label: "Back to AgentRecall" }),
+  };
+  // The review page and the /connect dashboard share one browser sign-in and session, and the provider callback URL (told apart by state).
+  const review = new WebSession({ config, dataDir: opts.dataDir, federation, log, now, pages });
+  const siteStartIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   const reviewStartIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   // Its own global budget, so review sign-ins (no client registration needed) cannot starve MCP sign-ins.
   const reviewCallbackGlobal = new WindowCounter(limits.global, limits.windowMs, now);
@@ -231,6 +250,11 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     limitStart: (req) => reviewStartIp.hit(ipKey(req.ip)),
   });
 
+  mountSite(app, {
+    flow: review, store, config, dataDir: opts.dataDir, quotaBytes: opts.quotaBytes ?? 0, ctx: site, log, now, formOrigins: provider.formOrigins,
+    limitStart: (req) => siteStartIp.hit(ipKey(req.ip)),
+  });
+
   app.use(
     mcpAuthRouter({
       provider,
@@ -263,7 +287,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   return {
     owns(pathname: string): boolean {
       const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-      return EXACT_PATHS.has(p) || REVIEW_PATHS.has(p) || pathname.startsWith("/.well-known/oauth-") || pathname.startsWith("/authorize/callback/");
+      return EXACT_PATHS.has(p) || REVIEW_PATHS.has(p) || SITE_PATHS.has(p) || pathname.startsWith("/connect/") || pathname.startsWith("/.well-known/oauth-") || pathname.startsWith("/authorize/callback/");
     },
     handle(req, res) {
       app(req, res);
@@ -273,5 +297,6 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
       return r && r.resource === config.resourceUrl.href ? r.uid : null;
     },
     resourceMetadataUrl,
+    site,
   };
 }

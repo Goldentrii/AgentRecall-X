@@ -23,6 +23,8 @@ import { RateLimiter, UsageTracker, isWriteCall, quotaExceededResponse } from ".
 import { createOAuth, type LoginLimits, type OAuthRuntime } from "./oauth-app.js";
 import type { OAuthConfig } from "./oauth-config.js";
 import type { ProviderUrls } from "./federation.js";
+import { isStaticPath, renderStatic, fallbackBase } from "./site.js";
+import { DEFAULT_PRIVACY_URL } from "./site-pages.js";
 
 export interface ServeOptions {
   /** Absolute data directory: tenants/ and _server/ live here. */
@@ -140,7 +142,7 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
     `AgentRecall storage quota reached (${formatMb(quotaBytes)} per user): this memory was NOT saved. ` +
     "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
-  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, ...opts.oauthTesting }) : null;
+  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, ...opts.oauthTesting }) : null;
   const unauthorizedHeader = oauth
     ? `Bearer realm="agent-recall", resource_metadata="${oauth.resourceMetadataUrl}"`
     : 'Bearer realm="agent-recall"';
@@ -154,6 +156,18 @@ export function createRequestHandler(opts: ServeOptions): (req: http.IncomingMes
       if (url.pathname === "/healthz" && req.method === "GET") {
         sendJson(res, 200, { ok: true, version: VERSION });
         return;
+      }
+      if (isStaticPath(url.pathname, oauth !== null)) {
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          res.setHeader("allow", "GET, HEAD");
+          throw new HttpError(405, "method_not_allowed", `${req.method} not supported`, "This is a web page: read it with GET.");
+        }
+        const site = renderStatic(url.pathname, oauth ? oauth.site : { base: fallbackBase(req), privacyUrl: DEFAULT_PRIVACY_URL, hosted: false, baseFromHost: true });
+        if (site) {
+          res.writeHead(site.status, site.headers);
+          res.end(req.method === "HEAD" ? undefined : site.body);
+          return;
+        }
       }
       if (oauth && oauth.owns(url.pathname)) {
         oauth.handle(req, res);

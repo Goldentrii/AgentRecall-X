@@ -38,9 +38,11 @@
 </p>
 
 <p align="center">
-  <a href="#hosted-connect-your-agent"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/door-hosted-dark.svg"><img src="assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
-  <a href="#local-install"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/door-local-dark.svg"><img src="assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
+  <a href="https://recall.aiakada.com/connect"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/door-hosted-dark.svg"><img src="assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
+  <a href="https://recall.aiakada.com/local"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/door-local-dark.svg"><img src="assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
 </p>
+
+<p align="center"><a href="#hosted-connect-your-agent">Hosted setup in this README</a> · <a href="#local-install">Local install in this README</a></p>
 
 ## Hosted: connect your agent
 
@@ -74,7 +76,7 @@ Codex opens the sign-in page itself. If you closed it, run `codex mcp login agen
 
 - 🔒 **Private, in the EU.** Your memory is visible only to your account and stored in Frankfurt. No ads, analytics or trackers. [Privacy policy](PRIVACY.md)
 - 📏 **Limits.** 100 MB of memory and 120 requests per minute per user. Reads keep working when you are full.
-- ✋ **Corrections wait for approval.** An agent can only *propose* a correction here; it becomes a HARD RULE for your other agents once approved. There is no self-service approval page yet, so the operator approves on request. [How it works](docs/hosted-server.md#corrections-need-the-owner)
+- ✋ **Corrections wait for approval.** An agent can only *propose* a correction here; it becomes a HARD RULE for your other agents once approved. You approve or reject them yourself on the review page at `/review` (sign in with the same account); the operator does not have to read your memory. [How it works](docs/hosted-server.md#corrections-need-the-owner)
 - 🛠️ **Run your own.** The same server as a Compose + Caddy kit for one Ubuntu box: [docs/hosted-server.md](docs/hosted-server.md)
 
 ## For agents

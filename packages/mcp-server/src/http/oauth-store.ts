@@ -281,6 +281,31 @@ export class OAuthStore {
     return { uid: g.uid, clientId: g.client_id, resource: g.resource, expiresAt: entry.exp };
   }
 
+  /** The live (not revoked, not expired) grants of `uid`, newest first, for the owner's connections list. Never includes token material. */
+  liveGrantsOf(uid: string): Array<{ id: string; clientName: string; createdAt: string; lastUsedAt?: string }> {
+    const t = this.now();
+    return this.grants
+      .filter((g) => g.uid === uid && this.live(g) && g.refresh.exp > t)
+      .sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0))
+      .map((g) => {
+        const c = this.clients.get(g.client_id);
+        return {
+          id: g.id,
+          clientName: c?.client_name ?? "unnamed app",
+          createdAt: g.created_at,
+          lastUsedAt: c?.last_used_at === undefined ? undefined : new Date(c.last_used_at).toISOString(),
+        };
+      });
+  }
+
+  /** The owner disconnects one of THEIR grants. A grant id that does not exist or belongs to another uid changes nothing. */
+  revokeGrantOf(uid: string, grantId: string): boolean {
+    const g = this.grants.find((x) => x.id === grantId && x.uid === uid);
+    if (!g || g.revoked_at) return false;
+    this.replaceGrant(g, { ...g, revoked_at: new Date(this.now()).toISOString() });
+    return true;
+  }
+
   /** Issue a new refresh + access token for `g`. `grace` = whether this rotation starts a new grace window. */
   private rotate(g: Grant, startGrace: boolean): RefreshResult {
     const t = this.now();

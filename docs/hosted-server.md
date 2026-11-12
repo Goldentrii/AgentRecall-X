@@ -252,6 +252,26 @@ With OAuth on, each user approves or rejects their own proposals at `<AR_PUBLIC_
 - **Shared parent domains:** the cookie is scoped to `Path=/review`, so it cannot use the `__Host-` prefix. Serve the server on a host whose sibling subdomains you trust, as for any cookie-based login.
 - **Logs:** `[review] signed in github=<id> uid=<uid>` and `[review] approve|reject uid=<uid> project=<p> result=<approved|merged|rejected|gone|failed|unavailable>`. Proposal text is never logged.
 
+## Website
+
+The same process serves a small website at `<AR_PUBLIC_URL>/`, so a person who opens the domain sees something other than JSON. Design is system fonts and inline SVG only, light and dark, no third-party requests (the privacy policy promises none).
+
+| Route | Needs a session | What |
+|---|---|---|
+| `/` | no | Home: the two doors, "Connect an agent" and "Run it locally" |
+| `/local` | no | Install prompt to paste to an agent, manual commands, what local means |
+| `/connect` | yes (sign-in when signed out) | Dashboard: your ID (`gh-<id>` / `gg-<sub>`), copyable connect commands for Claude Code, Codex, Cursor, claude.ai and other clients, a "paste this to your agent" prompt, connected agents with Disconnect, operator-issued tokens (read only), storage vs quota, pending corrections count (links to `/review`), "Download my memory", Sign out |
+| `/connect.md`, `/local.md`, `/llms.txt`, `/favicon.svg` | no | Plain text for agents (same instructions), the llms.txt index, the icon |
+
+- **OAuth off:** `/`, `/local`, `/connect.md`, `/local.md`, `/llms.txt` still work. `/connect` explains that hosted sign-in is not configured, and `/review` and the other signed-in routes do not exist. With OAuth off there is no configured public URL, so the commands use the request's `Host` header (shape-checked), and those pages are sent `Cache-Control: no-store` and `Vary: Host` so a shared cache never serves one host's URLs to another. With OAuth on, the pages use `AR_PUBLIC_URL` and are cacheable for 5 minutes.
+- **Sign-in:** the same as `/review` (one shared module, `web-session.ts`): GitHub/Google through the callback `/authorize/callback/<provider>`, so nothing new to register. `AR_OAUTH_SIGNUP=invite` is honoured: an account the operator has not linked gets the "not invited, send this id" page and no session. One sign-in opens both `/connect` and `/review`; sign-out on either ends both.
+- **Session:** cookies `ar_site` (`Path=/connect`) and `ar_review` (`Path=/review`) carry the same value; `HttpOnly; SameSite=Lax`, `Secure` on https, 30 minutes, in memory. Neither is ever sent to `/mcp` or the OAuth routes.
+- **Agents cannot use it:** any `/connect*` request with an `Authorization` header (`ar_` or `aro_`) gets 403, whatever else it carries. `/connect.md` and the other text files are public.
+- **Posts** (Disconnect, Download, Sign out): session + per-session CSRF token + `Sec-Fetch-Site: same-origin` / `Origin` check, capped at 120 per session per 10 minutes; sign-in starts are limited per IP like `/review`.
+- **Disconnect** revokes one grant of the signed-in account (its access and refresh tokens stop working at once). A grant id that is not the account's own, or does not exist, changes nothing. Names shown are what each app reported about itself and are labelled so.
+- **Download my memory:** `POST /connect/download` streams a ustar `.tar` of the account's tenant directory without buffering it. Only regular files are included; symlinks, devices and other special entries are skipped, and names that cannot be represented safely are skipped. Before entering a directory the exporter re-checks that it is still a real directory whose real path is inside the tenant root, files are opened with `O_NOFOLLOW` and their real path is re-checked after opening, so a directory swapped for a link while the export runs is not followed. This guarantee relies on `O_NOFOLLOW`, which is a Linux/POSIX feature and is what production runs; on Windows it is best-effort (and no path-based check can close a swap in the instant between a check and the next system call, which is why the tenant tree is written only by this server). One download at a time per account. A client that disconnects, errors or stops reading for 60 seconds ends the export: the file handle is closed and the account lock is released. The log line carries only the uid and counts.
+- **Headers on every page:** CSP `default-src 'none'; img-src 'self' data:; style-src 'sha256-…'; script-src 'sha256-…'; base-uri 'none'; form-action 'self'` (plus the provider origins on the sign-in form only) `; frame-ancestors 'none'`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and `Cache-Control: no-store` on signed-in and sign-in pages. The one inline script (the Copy buttons) and the one inline stylesheet are allowed by hash only; without JavaScript the commands stay selectable text.
+
 ## Operations
 
 - **Health:** `GET /healthz` returns `{ ok, version }`. The Docker image has a `HEALTHCHECK`.
