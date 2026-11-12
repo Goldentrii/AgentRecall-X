@@ -6,6 +6,7 @@
  *   /.well-known/oauth-protected-resource[/mcp], /.well-known/oauth-authorization-server
  *   POST /register   GET|POST /authorize   POST /authorize/start   GET /authorize/callback/{github,google}
  *   POST /token   POST /revoke
+ *   /review*   the owner approves or rejects their own staged corrections (review.ts)
  */
 import type * as http from "node:http";
 import * as net from "node:net";
@@ -18,6 +19,7 @@ import { OAuthStore } from "./oauth-store.js";
 import { FederatedOAuthProvider, OAUTH_SCOPE } from "./oauth-provider.js";
 import { Federation, DEFAULT_PROVIDER_URLS, type ProviderUrls } from "./federation.js";
 import { errorPage, pageHeaders } from "./oauth-pages.js";
+import { ReviewFlow, REVIEW_PATHS, mountReview, sendReview } from "./review.js";
 
 export interface LoginLimits {
   /** /authorize/start and /authorize/callback hits per client IP per window (each route has its own bucket). */
@@ -118,13 +120,19 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   const limits = opts.loginLimits ?? DEFAULT_LOGIN_LIMITS;
   assertNoReservedStaticUids(opts.dataDir);
   const store = new OAuthStore(opts.dataDir, now);
+  const federation = new Federation(config, opts.providerUrls ?? DEFAULT_PROVIDER_URLS, opts.fetchImpl, now, opts.providerTimeoutMs);
   const provider = new FederatedOAuthProvider({
     config, dataDir: opts.dataDir, store, log, now,
     maxPending: opts.maxPending,
     maxPendingPerKey: opts.maxPendingPerKey,
     keyOf: (req) => ipKey(req.ip),
-    federation: new Federation(config, opts.providerUrls ?? DEFAULT_PROVIDER_URLS, opts.fetchImpl, now, opts.providerTimeoutMs),
+    federation,
   });
+  // The owner review page shares the provider callback URL; its sign-ins are told apart by state.
+  const review = new ReviewFlow({ config, dataDir: opts.dataDir, federation, log, now });
+  const reviewStartIp = new WindowCounter(limits.perIp, limits.windowMs, now);
+  // Its own global budget, so review sign-ins (no client registration needed) cannot starve MCP sign-ins.
+  const reviewCallbackGlobal = new WindowCounter(limits.global, limits.windowMs, now);
   const startIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   const callbackIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   const startGlobal = new WindowCounter(limits.global, limits.windowMs, now);
@@ -198,6 +206,13 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     async (req, res, next) => {
       try {
         const q = req.query as Record<string, unknown>;
+        if (review.hasState(q.state)) {
+          const wait = reviewCallbackGlobal.hit("*");
+          if (wait > 0) return void tooMany(res, wait);
+          return void sendReview(res, await review.callback({
+            provider: String(req.params.provider), state: q.state, code: q.code, error: q.error, cookies: req.headers.cookie,
+          }), provider.formOrigins);
+        }
         if (provider.hasState(q.state)) {
           const wait = callbackGlobal.hit("*");
           if (wait > 0) return void tooMany(res, wait);
@@ -210,6 +225,11 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
       }
     },
   );
+
+  mountReview(app, {
+    flow: review, config, dataDir: opts.dataDir, log, formOrigins: provider.formOrigins,
+    limitStart: (req) => reviewStartIp.hit(ipKey(req.ip)),
+  });
 
   app.use(
     mcpAuthRouter({
@@ -243,7 +263,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
   return {
     owns(pathname: string): boolean {
       const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-      return EXACT_PATHS.has(p) || pathname.startsWith("/.well-known/oauth-") || pathname.startsWith("/authorize/callback/");
+      return EXACT_PATHS.has(p) || REVIEW_PATHS.has(p) || pathname.startsWith("/.well-known/oauth-") || pathname.startsWith("/authorize/callback/");
     },
     handle(req, res) {
       app(req, res);

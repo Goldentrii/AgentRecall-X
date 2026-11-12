@@ -188,13 +188,14 @@ function logPendingRejection(
 // Read / prune
 // ---------------------------------------------------------------------------
 
-function readPendingRaw(project: string): Array<{ file: string; record: PendingRecord }> {
+function readPendingRaw(project: string, strict = false): Array<{ file: string; record: PendingRecord }> {
   const dir = pendingDir(project);
   if (!fs.existsSync(dir)) return [];
   let files: string[];
   try {
     files = fs.readdirSync(dir);
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return [];
   }
   const out: Array<{ file: string; record: PendingRecord }> = [];
@@ -263,17 +264,21 @@ function prunePending(project: string, nowMs: number = Date.now()): void {
 
 /**
  * List staged rows, newest (last_seen) first. Runs the TTL/cap sweep first so
- * a reader never sees an expired row. Never throws.
+ * a reader never sees an expired row. Never throws, unless `strict`: then a lock
+ * or directory read failure is thrown instead of looking like an empty queue
+ * (the owner's review page must not say "nothing waiting" when it could not look).
  */
-export async function listPendingCorrections(project: string): Promise<PendingRecord[]> {
+export async function listPendingCorrections(project: string, opts: { strict?: boolean } = {}): Promise<PendingRecord[]> {
+  const run = () => withLock(`pending-${project}`, () => {
+    prunePending(project);
+    return readPendingRaw(project, opts.strict === true)
+      .map((e) => e.record)
+      .sort((a, b) =>
+        new Date(b.last_seen ?? b.ts).getTime() - new Date(a.last_seen ?? a.ts).getTime());
+  });
+  if (opts.strict === true) return run();
   try {
-    return await withLock(`pending-${project}`, () => {
-      prunePending(project);
-      return readPendingRaw(project)
-        .map((e) => e.record)
-        .sort((a, b) =>
-          new Date(b.last_seen ?? b.ts).getTime() - new Date(a.last_seen ?? a.ts).getTime());
-    });
+    return await run();
   } catch {
     return [];
   }

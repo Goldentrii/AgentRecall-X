@@ -218,11 +218,11 @@ Why: a correction is loaded by every agent of that user at `session_start`, and 
 
 - Every `human_correction` sent through `check` is staged, including the structured `{rule, why, applies_when}` form and `pending_id`. The tool answers `status: "staged"` and tells the agent it is waiting for the owner.
 - Staged text is not loaded anywhere: not in HARD RULES, `watch_for` or recall. `session_start` only shows a count ("N proposed corrections await the owner's confirmation").
-- Only the operator CLI activates one:
+- Only the owner activates one: the user themselves on the [review page](#the-review-page-owners-approve-their-own) (when OAuth is on), or the operator with the CLI:
 
 ```bash
 agent-recall-server corrections list                            # counts per user: ready / incomplete
-agent-recall-server corrections list --uid alice [--limit 20]   # that user's proposals in full: rule, why, applies_when
+agent-recall-server corrections list --uid alice [--limit 20]   # that user's proposals in full: rule, why, applies_when (as JSON)
 agent-recall-server corrections approve <id> --uid alice        # active from the next session_start
 agent-recall-server corrections reject  <id> --uid alice
 ```
@@ -232,15 +232,25 @@ agent-recall-server corrections reject  <id> --uid alice
 - **An id always means exactly the text `list` shows.** A `ready` row is printed in full (rule, why, applies_when) and never changes: re-submitting the same rule with any difference, even one symbol, creates a separate row with its own id. The id ends in a 128-bit digest of that content, a staged row is never overwritten, and `approve` refuses a row whose id or stored digest does not match its content. `approve` activates what that id showed, at the severity it showed.
 - Without `--uid`, `list` prints one line of counts per user and no rule text, so one user's proposals cannot bury another's. With `--uid` it prints up to `--limit` rows (default 20, max 200), ready proposals first, and says how many it left out.
 - Insights an agent saves through `session_end` are memory, not rules: they are shown only in the full-mode "Insights" list and never under HARD RULES, behaviour policies or `watch_for`. They are not gated.
-- Proposal text is reduced to visible characters before it is stored: control characters, newlines, zero-width and bidi characters and Unicode tag characters become a space. A rule over 200 characters or a why over 600 is refused, not truncated. `list` prints anything unexpected as an escape such as `\u{200b}`.
+- Proposal text is reduced to visible characters before it is stored: control characters, newlines, zero-width and bidi characters and Unicode tag characters become a space. A rule over 200 characters, a why over 600, or an `applies_when` with more than 8 entries or an entry over 60 characters is refused, not truncated (a staged row over these caps is shown as `incomplete` and cannot be approved). `list` prints anything unexpected as an escape such as `\u{200b}`.
 - `check`'s `delta` is not recorded on the hosted server, so it cannot feed `watch_for` or auto-promoted insights.
-- An agent can discard a partial capture (`resolution: "reject"`), logged in `corrections/_pending/_rejected.jsonl`. It cannot discard or replace a `ready` proposal; only `corrections reject` can.
+- An agent can discard a partial capture (`resolution: "reject"`), logged in `corrections/_pending/_rejected.jsonl`. It cannot discard or replace a `ready` proposal; only the owner can (review page or `corrections reject`).
 - A staged row expires 14 days after it was last submitted. At most 200 rows are kept per project; beyond that the oldest are dropped and logged.
 - Local (stdio) installs are unchanged: there the structured form activates directly.
 
 **What this does not cover.** The state card (`Goal`, `Next`, `Blockers`, `Pointers`) is written by agents through `session_end` and is loaded at every `session_start`. It is shown as state, not as a rule, but it is agent-written text every agent of that user reads. Treat a hosted user's token as able to write that card.
 
-There is no self-service approval yet: a user who is not the operator has to ask the operator. See [Not in v1](#not-in-v1).
+### The review page (owners approve their own)
+
+With OAuth on, each user approves or rejects their own proposals at `<AR_PUBLIC_URL>/review`, so the operator does not have to read anyone's memory. It is off when OAuth is not configured (the routes do not exist; the CLI keeps working either way).
+
+- **Sign-in:** "Continue with GitHub / Google", the same apps and the same callback URL as the MCP sign-in (`/authorize/callback/<provider>`), so there is nothing new to register. The account maps to its memory exactly as for MCP (operator link, else `gh-<id>` / `gg-<sub>`); with `AR_OAUTH_SIGNUP=invite` an account the operator has not linked gets no session. Static-token users without a linked GitHub/Google account keep using the CLI.
+- **Agents cannot use it.** An `ar_` or `aro_` token never opens it: the page only trusts its own browser session, created by a GitHub/Google sign-in, and refuses any request with an `Authorization` header. That is the point of the owner gate. Re-authentication is not forced (GitHub skips its prompt for an app the user already authorized), so a program that can drive the user's signed-in browser, including a browser-using agent on their machine, can approve, as the user could.
+- **What it shows:** only the signed-in account's `ready` proposals across all its projects, oldest first by when each was first proposed, so a re-submission cannot jump the queue (up to 100 at a time; the page says how many more are waiting), each in full: rule, why, applies_when, severity, project and id. Approving activates exactly that text: the id ends in the digest of it, and a row whose text or digest changed is not offered and cannot be approved. `incomplete` captures are only counted; they cannot be approved and expire after 14 days.
+- **Session:** cookie `ar_review` (`HttpOnly; SameSite=Lax; Path=/review`, `Secure` on https), 30 minutes, in memory (a restart signs everyone out). The account is re-checked on every request, so `identity unlink` ends a session at once. "Sign out" ends it immediately. The result of an approve or reject is shown once on the next page load (it is not in the URL, so a link cannot fake "Approved"). If the proposals cannot be read, the page says so (503) instead of "nothing is waiting".
+- **Protections:** every approve / reject / sign-out form carries a per-session CSRF token; a post whose `Sec-Fetch-Site` is not `same-origin`, or whose `Origin` is another site, is refused. `Origin: null` is accepted: with `Referrer-Policy: no-referrer` browsers send `null` on same-origin form posts, and the CSRF token still gates every change. Sign-in state is single use, expires after 10 minutes and is bound to the browser that started it (PKCE, and a nonce for Google). Pages have the same strict headers as the sign-in page (CSP `default-src 'none'`, no framing, no referrer, `no-store`) and every value on them is HTML-escaped. Sign-in starts are limited per IP like MCP sign-ins (10 per 10 minutes by default), and review sign-ins have their own per-IP and global buckets, so they cannot use up the budget MCP sign-ins need; approve/reject is capped at 120 per session per 10 minutes.
+- **Shared parent domains:** the cookie is scoped to `Path=/review`, so it cannot use the `__Host-` prefix. Serve the server on a host whose sibling subdomains you trust, as for any cookie-based login.
+- **Logs:** `[review] signed in github=<id> uid=<uid>` and `[review] approve|reject uid=<uid> project=<p> result=<approved|merged|rejected|gone|failed|unavailable>`. Proposal text is never logged.
 
 ## Operations
 
@@ -269,7 +279,7 @@ There is no self-service approval yet: a user who is not the operator has to ask
 
 ## Not in v1
 
-- A website for self-serve tokens, Client ID Metadata Documents, and a web page to list or revoke OAuth grants or to approve corrections (CLI only)
+- A website for self-serve tokens, Client ID Metadata Documents, and a web page to list or revoke OAuth grants (CLI only)
 - Per-tenant Supabase or encryption at rest
 - Per-user plans (different quotas or rates per user)
 - Stateful MCP sessions (each `session_end` currently records its own session card)

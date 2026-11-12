@@ -17,7 +17,8 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { VERSION, withTenant, enableStrictTenantMode } from "agent-recall-core";
 import { buildServer } from "../build-server.js";
-import { resolveToken, TokenStoreUnavailableError, UID_RE } from "./tokens.js";
+import { resolveToken, TokenStoreUnavailableError } from "./tokens.js";
+import { tenantRoot, HOSTED_DEFAULT_PROJECT } from "./tenant-paths.js";
 import { RateLimiter, UsageTracker, isWriteCall, quotaExceededResponse } from "./limits.js";
 import { createOAuth, type LoginLimits, type OAuthRuntime } from "./oauth-app.js";
 import type { OAuthConfig } from "./oauth-config.js";
@@ -46,8 +47,6 @@ export interface ServeOptions {
   oauthTesting?: { now?: () => number; loginLimits?: LoginLimits; providerUrls?: ProviderUrls; fetchImpl?: typeof fetch; providerTimeoutMs?: number; maxPending?: number };
 }
 
-/** The project slug a hosted tool call uses when the agent passes "auto". */
-export const HOSTED_DEFAULT_PROJECT = "main";
 const DEFAULT_MAX_BODY = 4 * 1024 * 1024;
 const DEFAULT_MAX_IN_FLIGHT = 64;
 export const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
@@ -108,14 +107,6 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
   });
 }
 
-export function tenantRoot(dataDir: string, uid: string): string {
-  if (!UID_RE.test(uid)) throw new Error("invalid uid");
-  const tenantsDir = path.resolve(dataDir, "tenants");
-  const root = path.resolve(tenantsDir, uid);
-  // Defence in depth: UID_RE already forbids separators and dots.
-  if (path.dirname(root) !== tenantsDir) throw new Error("tenant root escapes data dir");
-  return root;
-}
 
 const V1_401_INSTRUCTION =
   "Send header 'Authorization: Bearer <your AgentRecall token>'. Tokens start with 'ar_'. Ask the server operator for a token if you do not have one.";
