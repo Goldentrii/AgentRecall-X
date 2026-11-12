@@ -1,5 +1,8 @@
 [English](README.md) · **中文**
 
+> [!NOTE]
+> **新：托管版已上线。** 用 GitHub 登录 `https://recall.aiakada.com/mcp`，一个 URL 连接任何 MCP agent（Claude Code、Codex、Cursor、claude.ai），所有 agent 共享同一份记忆。接入命令见英文版 [Hosted: connect your agent](README.md#hosted-connect-your-agent)。本中文页仍是本地安装版的说明，正在更新中。
+
 <h1 align="center">AgentRecall</h1>
 
 <p align="center"><strong>纠正你的 agent 一次，下个会话它仍然记得——而且我们会测量它是否真的不再犯。</strong></p>

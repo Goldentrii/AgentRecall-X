@@ -1,0 +1,14 @@
+{
+  "name": "agent-recall-readme-assets",
+  "private": true,
+  "type": "module",
+  "description": "Generates the README SVGs in ../ (text is converted to outlines so GitHub renders the same type everywhere).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/bricolage-grotesque": "5.3.0",
+    "@fontsource/courier-prime": "5.3.0",
+    "opentype.js": "2.0.0"
+  }
+}
