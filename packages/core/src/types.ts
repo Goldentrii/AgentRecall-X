@@ -90,12 +90,33 @@ export interface TenantContext {
    * The operator CLI runs without it and is the only way to activate.
    */
   stageAgentCorrections?: boolean;
+  /**
+   * Where the owner approves staged corrections in a browser (the hosted server's
+   * /review page). Set by the server from its own config, never from a request.
+   * It is shown to agents so they can tell the user where to go.
+   */
+  reviewUrl?: string;
 }
 
 const _tenantScope = new AsyncLocalStorage<TenantContext>();
 let _strictTenantMode = false;
 const TENANT_SID_RE = /^[a-f0-9-]{6,64}$/;
 const TENANT_PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const REVIEW_URL_MAX = 200;
+
+/** A plain http(s) URL, printable ASCII only, no credentials: it is printed inside agent-facing text. */
+function assertReviewUrl(raw: string): string {
+  let u: URL | undefined;
+  try {
+    u = new URL(raw);
+  } catch {
+    u = undefined;
+  }
+  const ok = u !== undefined && (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password
+    && raw.length <= REVIEW_URL_MAX && /^[\x21-\x7e]+$/.test(raw);
+  if (!ok) throw new Error("withTenant: reviewUrl must be a plain http(s) URL of at most " + REVIEW_URL_MAX + " printable characters");
+  return raw;
+}
 
 /**
  * Run `fn` as tenant `ctx`. Validates the context: a malformed root/sid/project
@@ -106,8 +127,21 @@ export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
   if (!TENANT_SID_RE.test(ctx.sid)) throw new Error("withTenant: sid must match " + TENANT_SID_RE);
   if (!TENANT_PROJECT_RE.test(ctx.defaultProject)) throw new Error("withTenant: defaultProject must match " + TENANT_PROJECT_RE);
   // The owner gate never lifts by nesting: a scope opened inside an agent channel is one too.
-  const stage = ctx.stageAgentCorrections === true || _tenantScope.getStore()?.stageAgentCorrections === true;
-  return _tenantScope.run({ ...ctx, root: path.resolve(ctx.root), ...(stage ? { stageAgentCorrections: true } : {}) }, fn);
+  const outer = _tenantScope.getStore();
+  const stage = ctx.stageAgentCorrections === true || outer?.stageAgentCorrections === true;
+  // Like the gate, the review URL is inherited by a nested scope that does not set its own.
+  const reviewUrl = ctx.reviewUrl !== undefined ? assertReviewUrl(ctx.reviewUrl) : outer?.reviewUrl;
+  return _tenantScope.run({
+    ...ctx,
+    root: path.resolve(ctx.root),
+    ...(stage ? { stageAgentCorrections: true } : {}),
+    ...(reviewUrl !== undefined ? { reviewUrl } : {}),
+  }, fn);
+}
+
+/** The page where the owner approves staged corrections, when the server has one (see TenantContext.reviewUrl). */
+export function ownerReviewUrl(): string | undefined {
+  return _tenantScope.getStore()?.reviewUrl;
 }
 
 export function getTenantContext(): TenantContext | undefined {

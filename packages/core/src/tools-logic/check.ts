@@ -23,7 +23,7 @@ import {
 } from "../storage/pending.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
-import { agentCorrectionsStaged } from "../types.js";
+import { agentCorrectionsStaged, ownerReviewUrl } from "../types.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
@@ -495,7 +495,8 @@ export async function check(input: CheckInput): Promise<CheckResult> {
             status: "staged",
             agent_instruction:
               "The correction was STAGED for the owner's confirmation and is NOT active. On this server agents cannot " +
-              "activate corrections. Tell the user it is waiting for the owner to confirm; do not retry or re-submit it.",
+              "activate corrections. Tell the user it is waiting for the owner to confirm" +
+              (ownerReviewUrl() ? ` in the browser at ${ownerReviewUrl()}` : "") + "; do not retry or re-submit it.",
           };
         } else if (stageRes.rejected) {
           correctionPending = { status: "rejected_junk", reason: stageRes.reason };
