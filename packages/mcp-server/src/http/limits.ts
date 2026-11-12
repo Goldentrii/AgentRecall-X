@@ -119,6 +119,11 @@ export class UsageTracker {
     return (await this.usage(uid, root)) >= this.quotaBytes;
   }
 
+  /** Forget the cached figure: the tenant directory changed outside the MCP path (an import). */
+  invalidate(uid: string): void {
+    this.cache.delete(uid);
+  }
+
   /** Count an accepted write's size until the next real scan. */
   add(uid: string, bytes: number): void {
     const hit = this.cache.get(uid);

@@ -10,6 +10,7 @@
  *   POST /connect/start      → GitHub / Google
  *   POST /connect/disconnect {grant, csrf}  revoke one of THIS account's connections
  *   POST /connect/download   {csrf}         stream this account's memory as a .tar
+ *   POST /connect/import     multipart {csrf, mode, confirm, archive}  take a local memory (.tar) in (see import-memory.ts)
  *   POST /connect/logout     {csrf}
  *
  * Every /connect* request that carries an Authorization header is refused: a token
@@ -28,8 +29,10 @@ import { tenantRoot } from "./tenant-paths.js";
 import { streamTenantTar, TarAbort } from "./export-tar.js";
 import { listTenantProposals, sendReview } from "./review.js";
 import { str, type WebSession, type WebResult } from "./web-session.js";
+import { receiveImport, ImportAbort, ImportGate, sweepTrash, sweepStaging, DEFAULT_IMPORT_LIMITS, HARD_IMPORT_CAP, RAW_SLACK, IMPORTS_PER_HOUR, type ImportHooks, type ImportLimits } from "./import-memory.js";
+import { boundaryOf } from "./multipart.js";
 import {
-  type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
+  importResultPage, type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
   localMarkdown, llmsTxt, dashboardPage, type DashboardView, type AgentRow,
 } from "./site-pages.js";
 
@@ -83,10 +86,14 @@ const MSG_SIGNED_OUT = "You are not signed in, or your session has ended. Sign i
 const MSG_TOO_MANY = "Too many requests. Please wait a few minutes and try again.";
 const MSG_READ_FAILED = "Your account could not be read just now. Nothing was changed; please reload in a moment.";
 const MSG_BAD_INPUT = "That request was not valid. Reload the connect page and try again.";
+const MSG_IMPORT_FAILED = "The import failed. Your existing memory was not overwritten. Please try again; if it keeps failing, ask the server operator.";
 const GRANT_ID_RE = /^[a-f0-9]{12}$/;
 const USAGE_TTL_MS = 30_000;
 /** A client that stops reading for this long loses its download (and the per-account lock). */
 const DOWNLOAD_IDLE_MS = 60_000;
+
+/** Test seams for the import: smaller limits and hooks that run between a check and the next call. */
+export interface ImportTesting { limits?: Partial<ImportLimits>; hooks?: ImportHooks; perHour?: number }
 
 export interface SiteRouteDeps {
   flow: WebSession;
@@ -101,6 +108,9 @@ export interface SiteRouteDeps {
   log: (line: string) => void;
   now: () => number;
   formOrigins: string[];
+  /** Called after the website changed a user's tenant directory (an import). */
+  onTenantChanged?: (uid: string) => void;
+  importTesting?: ImportTesting;
   /** Rate limit for POST /connect/start: seconds to wait, or 0. */
   limitStart: (req: express.Request) => number;
 }
@@ -258,4 +268,78 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
     }
   }));
 
+  // ---- import ------------------------------------------------------------------------
+  const importLimits: ImportLimits = { ...DEFAULT_IMPORT_LIMITS, ...d.importTesting?.limits };
+  const gate = new ImportGate(d.now, d.importTesting?.perHour ?? IMPORTS_PER_HOUR);
+  const maintain = (): void => {
+    void sweepTrash(d.dataDir, d.now()).catch(() => undefined);
+    void sweepStaging(d.dataDir, d.now()).catch(() => undefined);
+  };
+  maintain(); // at start: a crashed run's leftovers, and replaced memories older than 7 days
+
+  /** A refusal sent before (or while) the upload is read: close the connection, and swallow a bounded amount of what the client still sends so it sees the answer. */
+  const refuseUpload = (req: express.Request, res: express.Response, status: number, title: string, msg: string): void => {
+    res.set("connection", "close");
+    message(res, status, title, msg);
+    let seen = 0;
+    const stop = setTimeout(() => req.destroy(), 10_000);
+    req.on("data", (c: Buffer) => { seen += c.length; if (seen > 64 * 1024 * 1024) req.destroy(); });
+    req.on("close", () => clearTimeout(stop));
+    req.on("error", () => undefined);
+    req.resume();
+  };
+
+  app.post("/connect/import", sameOrigin, async (req, res, next) => {
+    try {
+      // Session first, then the budget, then the declared size: all before a byte of the body is read.
+      const found = flow.session(req.headers.cookie);
+      if (!found) return void refuseUpload(req, res, 401, "Signed out", MSG_SIGNED_OUT);
+      const { s } = found;
+      if (!flow.spendAction(s)) {
+        res.set("retry-after", "60");
+        return void refuseUpload(req, res, 429, "Slow down", MSG_TOO_MANY);
+      }
+      const boundary = boundaryOf(req.headers["content-type"]);
+      if (boundary === null) return void refuseUpload(req, res, 400, "Not valid", MSG_BAD_INPUT);
+      const cap = Math.min(d.quotaBytes > 0 ? d.quotaBytes : HARD_IMPORT_CAP, HARD_IMPORT_CAP) + RAW_SLACK;
+      if (Number(req.headers["content-length"] ?? 0) > cap) {
+        return void refuseUpload(req, res, 413, "Archive too large", "This archive is larger than your memory can take. Pack only the memory files with the command on the connect page.");
+      }
+      const started = d.now();
+      let report;
+      try {
+        report = await receiveImport(req, {
+          dataDir: d.dataDir, uid: s.uid, boundary, quotaBytes: d.quotaBytes, now: d.now, limits: importLimits, hooks: d.importTesting?.hooks, gate, log: d.log,
+          check: (f) => {
+            if (!flow.csrfOk(s, f.csrf)) throw new ImportAbort(403, "Refused", MSG_CSRF);
+            const mode = f.mode === undefined || f.mode === "add" ? "add" : f.mode === "replace" ? "replace" : null;
+            if (mode === null) throw new ImportAbort(400, "Not valid", MSG_BAD_INPUT);
+            if (mode === "replace" && (f.confirm ?? "").trim() !== "REPLACE") {
+              throw new ImportAbort(400, "Confirm replace", "To replace your memory, type the word REPLACE in the confirmation box. Nothing was changed.");
+            }
+            return { ok: true, mode };
+          },
+        });
+      } catch (err) {
+        if (!req.socket || req.socket.destroyed || res.destroyed) {
+          d.log(`[connect] import aborted uid=${s.uid} kind=${err instanceof ImportAbort ? err.status : "client"}`);
+          return;
+        }
+        if (err instanceof ImportAbort) {
+          d.log(`[connect] import refused uid=${s.uid} status=${err.status}`);
+          return void refuseUpload(req, res, err.status, err.title, err.message);
+        }
+        d.log(`[connect] import failed uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"} code=${(err as NodeJS.ErrnoException)?.code ?? "-"}`);
+        return void refuseUpload(req, res, 500, "Import failed", MSG_IMPORT_FAILED);
+      }
+      usage.delete(s.uid);
+      d.onTenantChanged?.(s.uid);
+      maintain();
+      const r = report.refused;
+      d.log(`[connect] import uid=${s.uid} mode=${report.mode} imported=${report.imported} existing=${report.skippedExisting} refused=${r.path + r.type + r.size + r.special + r.duplicate} bytes=${report.bytes} ms=${d.now() - started}`);
+      send(res, { kind: "page", status: 200, html: importResultPage(ctx, report), cookies: [], signIn: false, surface: "connect" });
+    } catch (err) {
+      next(err);
+    }
+  });
 }
