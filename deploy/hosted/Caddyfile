@@ -7,3 +7,21 @@
 	header -Server
 	reverse_proxy server:8787
 }
+
+# Optional alias names (an old domain, or www), set with domain-switch.sh as
+# AR_DOMAIN_ALIAS="old.example.com, www.example.com". The agent endpoint is
+# proxied, not redirected: a client may drop its Authorization header when it
+# follows a redirect to another host. Every other path goes to the primary.
+# While no alias is set, compose passes a plain-http placeholder name that never
+# matches a request and never asks for a certificate.
+{$AR_DOMAIN_ALIAS} {
+	encode zstd gzip
+	header -Server
+	@agent path /mcp /mcp/* /healthz
+	handle @agent {
+		reverse_proxy server:8787
+	}
+	handle {
+		redir https://{$AR_DOMAIN}{uri} 308
+	}
+}
