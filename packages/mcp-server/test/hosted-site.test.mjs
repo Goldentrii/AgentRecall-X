@@ -265,7 +265,7 @@ describe("website — real agent-recall-server binary", () => {
     assert.match(r.text, /href="https:\/\/github\.com\/Goldentrii\/AgentRecall-X"/);
     assert.match(r.text, /href="https:\/\/example\.com\/privacy"/, "the operator's privacy URL");
     assert.match(r.text, /href="https:\/\/t\.me\/\+ywZwoHrg3AM0NDVi"/);
-    assert.match(r.text, /<svg[^>]*role="img"/, "the hero art is inline");
+    assert.match(r.text, /<canvas id="stage" aria-hidden="true">/, "the hero is the film canvas");
     assert.match(r.text, /<title>[^<]*AgentRecall/);
   });
 
