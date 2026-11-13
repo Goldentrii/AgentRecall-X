@@ -15,7 +15,8 @@
 #     same time (GitHub allows one callback per app). The script prints the exact URL.
 # Effects to expect: everyone who signed in with GitHub/Google signs in once more
 # (their grants are bound to the old address); static tokens are untouched.
-# Rollback: the previous settings are kept in .env.before-domain-switch (mode 600).
+# Rollback: every run keeps the settings it replaced in its own file,
+# .env.before-domain-switch.<UTC time> (mode 600), and prints the command to restore it.
 set -euo pipefail
 
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
@@ -90,7 +91,12 @@ read -rp "Type the new primary domain to confirm: " confirm || true
 
 tmp="$(mktemp ./.env.XXXXXX)"   # same directory (so mv is an atomic rename), mode 600, removed on exit
 trap 'rm -f "$tmp"' EXIT
-grep -v -E '^(AR_DOMAIN|AR_DOMAIN_ALIAS|AR_PUBLIC_URL)=' .env > "$tmp" || true
+# grep exits 1 when it selects no line (fine) and 2 on a read error (stop: never
+# replace .env with a partial copy).
+grep -v -E '^(AR_DOMAIN|AR_DOMAIN_ALIAS|AR_PUBLIC_URL)=' .env > "$tmp" || [[ $? -eq 1 ]] || die "could not read .env; nothing was changed"
+want="$(grep -c -v -E '^(AR_DOMAIN|AR_DOMAIN_ALIAS|AR_PUBLIC_URL)=' .env || true)"
+kept="$(grep -c '' "$tmp" || true)"
+[[ "$kept" -eq "$want" ]] || die "the copy of .env is incomplete ($kept of $want lines); nothing was changed"
 # Never glue the new lines onto a last line that lacks its newline.
 if [[ -s "$tmp" && -n "$(tail -c1 "$tmp")" ]]; then echo >> "$tmp"; fi
 printf 'AR_DOMAIN=%s\n' "$primary" >> "$tmp"
@@ -100,16 +106,21 @@ if (( ${#aliases[@]} )); then
 fi
 if (( oauth_on )); then printf 'AR_PUBLIC_URL=https://%s\n' "$primary" >> "$tmp"; fi
 chmod 600 "$tmp"
-cp -p .env .env.before-domain-switch
-chmod 600 .env.before-domain-switch
+# One backup per run, never overwritten: a second run must not replace the copy
+# of the original settings.
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup=".env.before-domain-switch.$stamp"
+n=1; while [[ -e "$backup" ]]; do n=$((n+1)); backup=".env.before-domain-switch.$stamp-$n"; done
+cp -p .env "$backup"
+chmod 600 "$backup"
 mv -f "$tmp" .env
-echo "saved to $(pwd)/.env (previous settings: .env.before-domain-switch)"
+echo "saved to $(pwd)/.env (previous settings: $backup)"
 
 rollback() {
   cat <<EOF
 
 To go back to the previous settings:
-  cd $(pwd) && sudo cp -p .env.before-domain-switch .env && sudo docker compose up -d
+  cd $(pwd) && sudo cp -p $backup .env && sudo docker compose up -d
 (and restore the old OAuth callback URL if you changed it)
 EOF
 }

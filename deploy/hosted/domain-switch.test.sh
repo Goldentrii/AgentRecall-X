@@ -74,13 +74,19 @@ if [[ $code -eq 0 ]] && has "AR_DOMAIN=new.example.com" && has "AR_PUBLIC_URL=ht
 probe="$work/mode-probe"; : > "$probe"; chmod 600 "$probe"
 if [[ "$(stat -c %a "$probe")" == 600 ]]; then modes=1; else modes=0; echo "note: this filesystem ignores chmod; mode checks skipped"; fi
 if (( modes )); then [[ "$(stat -c %a "$dir/.env")" == 600 ]] && ok || bad ".env stays mode 600" "$(stat -c %a "$dir/.env")"; fi
-grep -qxF "AR_DOMAIN=old.example.com" "$dir/.env.before-domain-switch" 2>/dev/null && ok || bad "backup holds the old .env"
-if (( modes )); then [[ "$(stat -c %a "$dir/.env.before-domain-switch" 2>/dev/null)" == 600 ]] && ok || bad "backup is mode 600"; fi
+bk=("$dir"/.env.before-domain-switch.*)
+[[ ${#bk[@]} -eq 1 ]] && grep -qxF "AR_DOMAIN=old.example.com" "${bk[0]}" 2>/dev/null && ok || bad "backup holds the old .env" "${bk[*]}"
+if (( modes )); then [[ "$(stat -c %a "${bk[0]}" 2>/dev/null)" == 600 ]] && ok || bad "backup is mode 600"; fi
 grep -q "stub-docker compose up -d" "$work/docker.log" && ok || bad "stack restarted" "$(cat "$work/docker.log")"
 [[ "$out" == *"https://new.example.com/authorize/callback/github"* ]] && ok || bad "prints the GitHub callback to register" "$out"
 [[ "$out" == *"sign in again"* ]] && ok || bad "warns that sign-ins are reset" "$out"
 [[ "$out" != *"0123456789abcdef0123456789abcdef01234567"* ]] && ok || bad "never prints the client secret" "$out"
-[[ "$out" == *".env.before-domain-switch"* ]] && ok || bad "prints how to roll back" "$out"
+[[ "$out" == *"cp -p ${bk[0]##*/} .env"* ]] && ok || bad "prints how to roll back to this run's backup" "$out"
+
+# 1b. a second run (same second) keeps the first backup: the original settings are never overwritten
+run "newer.example.com" newer.example.com new.example.com -- AR_TEST_REDIRECT=https://newer.example.com/connect
+bk2=("$dir"/.env.before-domain-switch.*)
+if [[ $code -eq 0 && ${#bk2[@]} -eq 2 ]] && grep -qxF "AR_DOMAIN=old.example.com" "${bk[0]}" && grep -lqxF "AR_DOMAIN=new.example.com" "${bk2[@]}"; then ok; else bad "second run keeps both backups" "${bk2[*]} :: $out"; fi
 
 # 2. OAuth off: AR_PUBLIC_URL is not invented
 fresh "$PLAIN"
@@ -104,7 +110,7 @@ refuse() { # NAME REGEX ANSWER ARGS... [-- VAR=VALUE ...]
   local name="$1" re="$2"; shift 2
   fresh "$OAUTH"; local before; before="$(cat "$dir/.env")"
   run "$@"
-  if [[ $code -ne 0 && "$out" =~ $re && "$(cat "$dir/.env")" == "$before" && ! -s "$work/docker.log" && ! -e "$dir/.env.before-domain-switch" ]]; then ok
+  if [[ $code -ne 0 && "$out" =~ $re && "$(cat "$dir/.env")" == "$before" && ! -s "$work/docker.log" && -z "$(compgen -G "$dir/.env.before-domain-switch.*")" && -z "$(compgen -G "$dir/.env.??????")" ]]; then ok
   else bad "refuse: $name (exit $code)" "$out"; fi
 }
 refuse "not root"                 "sudo"                  "new.example.com" new.example.com -- AR_TEST_NOT_ROOT=1
@@ -131,7 +137,19 @@ run "new.example.com" new.example.com -- "AR_TEST_DNS_WRONG=new.example.com" AR_
 # the new domain never comes up: exit non-zero, .env switched, rollback printed
 fresh "$OAUTH"
 run "new.example.com" new.example.com old.example.com -- "AR_TEST_DOWN=new.example.com"
-if [[ $code -ne 0 && "$out" == *"cp -p .env.before-domain-switch .env"* ]] && has "AR_DOMAIN=new.example.com"; then ok; else bad "health failure prints the rollback" "$out"; fi
+if [[ $code -ne 0 && "$out" == *"cp -p .env.before-domain-switch."*" .env"* ]] && has "AR_DOMAIN=new.example.com"; then ok; else bad "health failure prints the rollback" "$out"; fi
+
+# other keys that merely start with AR_DOMAIN survive, and duplicate keys collapse to one
+fresh $'AR_DOMAIN=old.example.com\nAR_DOMAIN_FOO=keep\nAR_DOMAIN=dup.example.com\n'
+run "new.example.com" new.example.com
+if [[ $code -eq 0 ]] && has "AR_DOMAIN_FOO=keep" && [[ "$(grep -c '^AR_DOMAIN=' "$dir/.env")" == 1 ]]; then ok; else bad "prefix keys kept, duplicates collapsed" "$(cat "$dir/.env")"; fi
+
+# the restart fails: non-zero, and the rollback for this run is printed
+fresh "$OAUTH"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$work/bin/docker"
+run "new.example.com" new.example.com
+printf '#!/usr/bin/env bash\necho "stub-docker $*" >> "%s/docker.log"\n' "$work" > "$work/bin/docker"
+[[ $code -ne 0 && "$out" == *"restart failed"* && "$out" == *"cp -p .env.before-domain-switch."* ]] && ok || bad "restart failure prints the rollback" "$out"
 
 # an alias that does not redirect pages to the primary is reported
 fresh "$OAUTH"

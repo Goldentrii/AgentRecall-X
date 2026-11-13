@@ -5,10 +5,10 @@
 # primary; with no alias set, another host name is not served.
 # Needs Docker and curl. Uses *.localhost names, for which Caddy issues its own local
 # certificates, so nothing leaves the machine.
-#   bash deploy/hosted/caddy.test.sh
+#   bash deploy/hosted/caddy.test.sh      (AR_TEST_REQUIRE_DOCKER=1 fails where Docker is missing; CI sets it)
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then echo "SKIP: Docker is not running"; exit 0; fi
+if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then echo "SKIP: Docker is not running"; exit "${AR_TEST_REQUIRE_DOCKER:-0}"; fi
 IMG="$(grep -m1 -E '^\s*image: caddy:' "$here/compose.yaml" | awk '{print $2}')"
 [[ "$IMG" == caddy:*@sha256:* ]] || { echo "FAIL: could not read the pinned caddy image from compose.yaml"; exit 1; }
 net="ar-caddy-test-$$"; up="ar-caddy-up-$$"; cad="ar-caddy-$$"
@@ -29,8 +29,9 @@ finish() { printf '%s passed, %s failed\n' "$pass" "$fail"; (( fail == 0 )); exi
 start() { # PRIMARY ALIAS_VALUE
   docker rm -f "$cad" >/dev/null 2>&1
   # 443 is published on a random loopback port; requests go there with --resolve.
-  docker run -d --name "$cad" --network "$net" -p 127.0.0.1::443 -e AR_DOMAIN="$1" -e AR_DOMAIN_ALIAS="$2"     -v "$cfg:/etc/caddy/Caddyfile:ro" "$IMG" >/dev/null || return 1
+  docker run -d --name "$cad" --network "$net" -p 127.0.0.1::443 -p 127.0.0.1::80 -e AR_DOMAIN="$1" -e AR_DOMAIN_ALIAS="$2"     -v "$cfg:/etc/caddy/Caddyfile:ro" "$IMG" >/dev/null || return 1
   port="$(docker port "$cad" 443/tcp | head -1 | sed 's/.*://')"
+  port80="$(docker port "$cad" 80/tcp | head -1 | sed 's/.*://')"
   local i
   for i in $(seq 1 60); do
     if curl -fsSk --max-time 3 --resolve "$1:$port:127.0.0.1" "https://$1:$port/healthz" >/dev/null 2>&1; then return 0; fi
@@ -51,6 +52,8 @@ get() {
   printf '%s %s | %s
 ' "$code" "$loc" "$body"
 }
+# plain HOST PATH -> "<status> <location>" over plain HTTP (port 80)
+plain() { curl -s --max-time 5 --resolve "$1:$port80:127.0.0.1" -o /dev/null -w '%{http_code} %{redirect_url}' "http://$1:$port80$2" 2>&1; }
 expect() { # NAME HOST PATH GLOB
   local r; r="$(get "$2" "$3")"
   # shellcheck disable=SC2053
@@ -69,12 +72,17 @@ expect "alias redirects OAuth discovery"       old.localhost         /.well-know
 expect "alias redirects the sign-in callback"  old.localhost         /authorize/callback/github "308 *"
 expect "alias does not proxy a look-alike path" old.localhost        /mcpx     "308 *"
 
+r="$(plain old.localhost '/mcp?a=1')"
+if [[ "$r" == "308 https://old.localhost/mcp?a=1" ]]; then ok; else bad "plain HTTP on an alias upgrades to HTTPS on the same name" "$r"; fi
+
 # No alias set: the placeholder compose passes. Caddy must start, serve the
 # primary, not serve another name, and not ask for a certificate for the placeholder.
 start primary.localhost "http://alias-unset.invalid" || { bad "caddy starts with the placeholder"; finish; }
 expect "primary works with no alias"           primary.localhost     /mcp      "200 *path=/mcp*"
 r="$(get old.localhost /mcp)"
 if [[ "$r" != "200 "* ]]; then ok; else bad "an unset alias name is not served" "$r"; fi
+r="$(plain primary.localhost /connect)"
+if [[ "$r" == "308 https://primary.localhost/connect" ]]; then ok; else bad "plain HTTP on the primary still upgrades with the placeholder set" "$r"; fi
 n="$(docker logs "$cad" 2>&1 | grep -c "alias-unset.invalid" || true)"
 if [[ "$n" == 0 ]]; then ok; else bad "nothing is attempted for the placeholder name" "$n log lines mention it"; fi
 
