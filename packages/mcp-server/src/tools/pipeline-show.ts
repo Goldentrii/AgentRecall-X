@@ -1,14 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { pipelineShow, fenceMemory } from "agent-recall-core";
-import { READ } from "./annotations.js";
+import { ADD } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool(
     "pipeline_show",
     {
       title: "Show Project Pipeline / Narrative Spine",
-      annotations: READ,
+      annotations: ADD,
       description:
         "Render the project's narrative spine on demand — phase count, day span, sessions, " +
         "corrections, and a chronological view of all phases (closed + abandoned + active) with goal, " +

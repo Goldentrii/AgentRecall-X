@@ -3,21 +3,39 @@
  *
  * A tool without annotations is treated by a client as the worst case
  * (destructive, open-world write), and directories such as the Claude
- * connectors directory reject it. Three honest classes cover the surface:
+ * connectors directory reject it. Three classes cover the surface:
  *
- *   READ       reads the memory store and writes nothing.
- *   ADD        writes, but only adds: nothing the user saved is replaced.
+ *   READ       writes nothing at all through its own handler.
+ *   ADD        writes, but nothing the user saved is replaced or dropped.
  *   OVERWRITE  writes, and can replace or drop what an earlier call saved.
  *
- * A tool is READ only when it writes nothing at all. session_start and recall
- * look like reads, but both write: session_start records which corrections
- * were surfaced and a lifecycle event, and recall takes a `feedback` argument
- * that changes later ranking. They are ADD until those writes move elsewhere.
- * session_end is OVERWRITE because it rewrites the project state card; digest
- * is OVERWRITE because of its `invalidate` action.
+ * No tool is READ today, and that is deliberate: a tool is READ only when it
+ * writes nothing, bookkeeping included.
+ *   - session_start records which corrections were surfaced, rule hit counts
+ *     and a lifecycle event.
+ *   - recall bumps access counts and salience on every call, and its
+ *     `feedback` argument changes later ranking.
+ *   - pipeline_list / pipeline_current / pipeline_show write no memory, but
+ *     resolving the project can record which working directory maps to it.
+ * These are ADD until those writes move out of the call path.
  *
- * openWorldHint is false everywhere: every tool works on the caller's own
- * memory store and reaches no third party on the caller's behalf.
+ * OVERWRITE:
+ *   - session_end rewrites the project state card.
+ *   - remember can route an insight into the capped awareness set, where a
+ *     new entry displaces the weakest one and the capped archive drops its
+ *     oldest.
+ *   - digest prunes old digests on `store` and marks them stale on
+ *     `invalidate`.
+ * Size-capped telemetry logs (alignment, feedback) rotate under ADD tools;
+ * that is not counted, because no saved memory is lost.
+ *
+ * openWorldHint is false: every tool works on the caller's own memory store.
+ * The owner of a local install can opt in to Supabase sync or a remote
+ * embedding provider; both are off by default and disabled on the hosted
+ * server, and neither acts on anything outside that owner's own store.
+ *
+ * In stdio mode the ambient-capture wrapper also notes each call in working
+ * memory. That is server plumbing around the handler, not the tool's effect.
  */
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 

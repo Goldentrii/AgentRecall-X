@@ -8,7 +8,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../dist/build-server.js";
 
-const READ = { readOnlyHint: true, openWorldHint: false };
 const ADD = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const OVERWRITE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
@@ -16,15 +15,15 @@ const OVERWRITE = { readOnlyHint: false, destructiveHint: true, openWorldHint: f
 const EXPECTED = {
   session_start: ADD,
   session_end: OVERWRITE,
-  remember: ADD,
+  remember: OVERWRITE,
   recall: ADD,
   check: ADD,
   check_action: ADD,
   pipeline_open: ADD,
   pipeline_close: ADD,
-  pipeline_list: READ,
-  pipeline_current: READ,
-  pipeline_show: READ,
+  pipeline_list: ADD,
+  pipeline_current: ADD,
+  pipeline_show: ADD,
   register_rule: ADD,
   digest: OVERWRITE,
 };
@@ -46,6 +45,9 @@ for (const [label, opts, count] of [
   ["default", { full: false, extras: false }, 5],
   ["--full", { full: true, extras: false }, 6],
   ["AR_EXTRAS=1 --full", { full: true, extras: true }, 13],
+  // The two wrappers that sit around registerTool must pass annotations through.
+  ["hosted (path redaction on)", { full: false, extras: false, redactPaths: true }, 5],
+  ["stdio (ambient capture on)", { full: true, extras: true, ambientCapture: true }, 13],
 ]) {
   test(`${label} surface: every tool is annotated as expected`, async () => {
     const tools = await listTools(opts);

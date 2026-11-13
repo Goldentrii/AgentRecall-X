@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { smartRemember } from "agent-recall-core";
-import { ADD } from "./annotations.js";
+import { OVERWRITE } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool("remember", {
     title: "Remember",
-    annotations: ADD,
+    annotations: OVERWRITE,
     description: "[MID-SESSION WRITE — single fact/decision; saying it is not saving it] Use when the user asks to remember, store, note, or save a specific decision, fact, or insight.",
     inputSchema: {
       content: z.string().describe("What to remember."),

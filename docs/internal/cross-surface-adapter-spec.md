@@ -121,7 +121,7 @@ Triggers: save, checkpoint, retain, remember this, don't forget, 记住这个.
 ### `brief` tool (new, read-only, deterministic, **--full only**)
 `brief(project?)` → ≤200 tokens, modeled on `check_action` + `sessionStartLite` (no LLM): identity line, active phase, top corrections/`watch_for`, the 3-rule lifecycle, the trigger vocab, and a tier-conditional "no hooks on this host — YOU must call session_end" line. **Not** in the default 5-tool surface (Automaticity Law). `session_start`'s return adds one pointer line: *"Hook-less host? call `brief()` once for lifecycle rules."*
 
-### ToolAnnotations (zero-config, SDK-native, currently unused)
+### ToolAnnotations (zero-config, SDK-native; shipped 2026-11, see `packages/mcp-server/src/tools/annotations.ts`, which supersedes the note below)
 `readOnlyHint` on `brief` only (as-built: `recall` writes feedback-log, `check` writes decision-trail — neither is read-only). `idempotentHint` on `session_start` was removed (recordPolicyLoad increments `rule.hits` on every call — not idempotent). *(Caveat: clients that don't expose hints ignore them — reinforcement, not load-bearing.)*
 
 ### Falsifiability (MCP-reliability required_fix)

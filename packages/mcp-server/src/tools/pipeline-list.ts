@@ -1,14 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { pipelineList, fenceMemory } from "agent-recall-core";
-import { READ } from "./annotations.js";
+import { ADD } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool(
     "pipeline_list",
     {
       title: "List Project Pipeline Phases",
-      annotations: READ,
+      annotations: ADD,
       description:
         "List all project phases (milestones) in order — the project's narrative spine. " +
         "Returns order, phase name, status, opened/closed timestamps, and synthesis (when closed).",
