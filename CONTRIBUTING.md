@@ -82,6 +82,8 @@ If your change is substantial enough to warrant a version bump, add a row to the
 
 This is the canonical changelog.
 
+A version bump must also move `packages/mcp-server/server.json` (the file published to the official MCP Registry) to the same version; `server-json-drift.test.mjs` fails otherwise.
+
 ## PR Checklist
 
 - [ ] `npm run build` passes
