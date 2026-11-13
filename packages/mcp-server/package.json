@@ -14,7 +14,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && node -e \"for (const f of ['dist/index.js','dist/http/cli.js']) require('fs').chmodSync(f, 0o755)\"",
+    "build": "tsc && node scripts/copy-site-assets.mjs && node -e \"for (const f of ['dist/index.js','dist/http/cli.js']) require('fs').chmodSync(f, 0o755)\"",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

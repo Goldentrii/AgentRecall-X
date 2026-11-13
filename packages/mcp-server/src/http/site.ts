@@ -2,7 +2,7 @@
  * site.ts — the routes of the hosted website.
  *
  * Public, no session, GET/HEAD only (served by serve.ts, with or without OAuth):
- *   /  /local  /connect.md  /local.md  /llms.txt  /favicon.svg
+ *   /  /local  /connect.md  /local.md  /llms.txt  /favicon.svg  /film/<plate>.jpg (see film.ts)
  *   /connect   (OAuth off: explains that hosted sign-in is not set up)
  *
  * Signed-in (Express, only when OAuth is configured; same session as /review):
@@ -32,22 +32,27 @@ import { str, type WebSession, type WebResult } from "./web-session.js";
 import { ipKey } from "./oauth-app.js";
 import { receiveImport, ImportAbort, ImportGate, restoreOrphans, sweepTrash, sweepStaging, DEFAULT_IMPORT_LIMITS, HARD_IMPORT_CAP, RAW_SLACK, IMPORTS_PER_HOUR, type ImportHooks, type ImportLimits } from "./import-memory.js";
 import { boundaryOf } from "./multipart.js";
+import { FILM, filmPage, plateHeaders, type Film } from "./film.js";
 import {
   importResultPage, type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
   localMarkdown, llmsTxt, dashboardPage, type DashboardView, type AgentRow,
 } from "./site-pages.js";
 
-export interface StaticResponse { status: number; headers: Record<string, string>; body: string }
+export interface StaticResponse { status: number; headers: Record<string, string>; body: string | Buffer }
 
 export const STATIC_PATHS: ReadonlySet<string> = new Set(["/", "/local", "/connect.md", "/local.md", "/llms.txt", "/favicon.svg"]);
 
 /** Is this path one the site serves without a session? (`/connect` is added by the caller when OAuth is off.) */
 export function isStaticPath(pathname: string, hosted: boolean): boolean {
   const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
-  return STATIC_PATHS.has(p) || (!hosted && p === "/connect");
+  return STATIC_PATHS.has(p) || (!hosted && p === "/connect") || (FILM !== null && FILM.plates.has(pathname));
 }
 
-export function renderStatic(pathname: string, ctx: SiteCtx): StaticResponse | null {
+/** `film`: the loaded home page film, or null to serve the classic home page (tests pass null). */
+export function renderStatic(pathname: string, ctx: SiteCtx, film: Film | null = FILM): StaticResponse | null {
+  // Plates are exact paths (no trailing-slash folding) and never reflect the Host header.
+  const plate = film?.plates.get(pathname);
+  if (plate) return { status: 200, headers: plateHeaders(plate.length), body: plate };
   const p = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
   // Pages that reflect the Host header must never be stored by a shared cache.
   const fin = (r: StaticResponse): StaticResponse =>
@@ -55,7 +60,9 @@ export function renderStatic(pathname: string, ctx: SiteCtx): StaticResponse | n
   const page = (html: string): StaticResponse => fin({ status: 200, headers: siteHeaders({ noStore: false }), body: html });
   const text = (body: string): StaticResponse => fin({ status: 200, headers: { ...TEXT_HEADERS }, body });
   switch (p) {
-    case "/": return page(homePage(ctx));
+    case "/": return film
+      ? fin({ status: 200, headers: siteHeaders({ noStore: false, hashes: { style: film.styleHash, script: film.scriptHash } }), body: filmPage(film, ctx) })
+      : page(homePage(ctx));
     case "/local": return page(localPage(ctx));
     case "/connect": return ctx.hosted ? null : page(connectUnavailablePage(ctx));
     case "/connect.md": return text(connectMarkdown(ctx.base, ctx.hosted));

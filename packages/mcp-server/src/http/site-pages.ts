@@ -168,12 +168,12 @@ export const STYLE_HASH = sha(CSS);
 export const SCRIPT_HASH = sha(SCRIPT);
 
 /** Headers for every site page. `formOrigins`: provider origins, only for a page whose sign-in form redirects to them. */
-export function siteHeaders(opts: { formOrigins?: readonly string[]; noStore?: boolean } = {}): Record<string, string> {
+export function siteHeaders(opts: { formOrigins?: readonly string[]; noStore?: boolean; hashes?: { style: string; script: string } } = {}): Record<string, string> {
   const extra = (opts.formOrigins ?? []).filter((o) => /^https?:\/\/[A-Za-z0-9.\-:[\]]+$/.test(o));
   return {
     "content-type": "text/html; charset=utf-8",
     "content-security-policy":
-      `default-src 'none'; img-src 'self' data:; style-src ${STYLE_HASH}; script-src ${SCRIPT_HASH}; base-uri 'none'; ` +
+      `default-src 'none'; img-src 'self' data:; style-src ${opts.hashes?.style ?? STYLE_HASH}; script-src ${opts.hashes?.script ?? SCRIPT_HASH}; base-uri 'none'; ` +
       `form-action 'self'${extra.length ? " " + extra.join(" ") : ""}; frame-ancestors 'none'`,
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
