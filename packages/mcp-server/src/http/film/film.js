@@ -29,7 +29,7 @@ precision highp float;
 in vec2 v; out vec4 o;
 uniform sampler2D H, M0, MW, M2, M3;
 uniform vec2 res, mouse;
-uniform float p, time;
+uniform float p, time, calm;
 
 float hash(vec2 x){ return fract(sin(dot(x, vec2(12.9898, 78.233))) * 43758.5453); }
 float bump(float c, float w, float x){ return exp(-pow((x - c) / w, 2.0)); }
@@ -90,7 +90,7 @@ void main(){
   float a = res.x / res.y;
   vec2 c = vec2((v.x - 0.5) * a, v.y - 0.5);
   float j1 = bump(0.375, 0.030, p), j2 = bump(0.625, 0.030, p);
-  float rush = clamp(j1 + j2, 0.0, 1.0);
+  float rush = clamp(j1 + j2, 0.0, 1.0) * (1.0 - calm);   // calm = prefers-reduced-motion
 
   // the jump: the camera is thrown at the gap, the frame smears, the world lands rebuilt
   float push = 1.0 + 0.05 * p + rush * 0.9;
@@ -111,7 +111,7 @@ void main(){
   float rays = pow(abs(sin(ang * 36.0 + hash(vec2(floor(ang * 36.0), 3.0)) * 6.28 + time * 1.5)), 16.0);
   vec3 warm = vec3(1.0, 0.82, 0.62), cold = vec3(0.62, 0.92, 1.0);
   col += mix(warm, cold, smoothstep(-0.3, 0.3, c.x)) * rays * rush * rush * smoothstep(0.08, 0.8, r) * 0.55;
-  col = mix(col, vec3(1.0, 0.98, 0.95), pow(rush, 5.0) * (1.0 - 0.55 * smoothstep(0.0, 0.9, r)));
+  col = mix(col, vec3(1.0, 0.98, 0.95), 0.7 * pow(rush, 5.0) * (1.0 - 0.55 * smoothstep(0.0, 0.9, r)));
 
   // air: drifting motes, a cool floor of mist, vignette, grain
   vec2 g = c * 34.0 + vec2(time * 0.05, time * 0.11);
@@ -129,7 +129,12 @@ function loadImage(src) {
 }
 
 function updateCopy(p) {
-  for (const b of beats) b.classList.toggle("on", p >= +b.dataset.from && p < +b.dataset.to);
+  for (const b of beats) {
+    const on = p >= +b.dataset.from && p < +b.dataset.to;
+    b.classList.toggle("on", on);
+    // An off-screen caption is still read by a screen reader, but its links must not take focus unseen.
+    for (const a of b.querySelectorAll("a")) a.tabIndex = on ? 0 : -1;
+  }
   // Matches the captions: session 2 until that beat ends, 50 by the time "Session 50" appears.
   const session = p < 0.36 ? 1 : p < 0.58 ? 2 : Math.round(2 + 48 * smooth(0.58, 0.66, p));
   sessionEl.textContent = "SESSION " + String(session).padStart(2, "0");
@@ -144,11 +149,12 @@ async function start() {
     const max = track.offsetHeight - innerHeight;
     target = max > 0 ? clamp01(scrollY / max) : 0;
   };
-  addEventListener("scroll", readScroll, { passive: true });
+  let running = false;
+  addEventListener("scroll", () => { readScroll(); if (!running) updateCopy(target); }, { passive: true });
   readScroll();
   updateCopy(target);          // the first beat must be readable before the first frame
 
-  const gl = canvas.getContext("webgl2", { antialias: false, powerPreference: "high-performance" });
+  const gl = canvas.getContext("webgl2", { antialias: false });
   if (!gl) {
     // No WebGL: the copy still tells the story over the CSS background.
     root.classList.add("nogl");
@@ -187,12 +193,16 @@ async function start() {
     gl.uniform1i(u(name), unit);
   });
 
-  let p = target, mx = 0, my = 0, tmx = 0, tmy = 0, dirty = true;
+  readScroll();
+  let p = target, mx = 0, my = 0, tmx = 0, tmy = 0, dirty = true, snapped = false;
+  // The browser may restore the scroll position after this point: jump there once, do not play through.
+  addEventListener("scroll", () => { if (!snapped && performance.now() < 1500) p = target; snapped = true; }, { passive: true, once: true });
   addEventListener("pointermove", (e) => { tmx = e.clientX / innerWidth - 0.5; tmy = 0.5 - e.clientY / innerHeight; }, { passive: true });
   const resize = () => {
     const dpr = Math.min(devicePixelRatio || 1, innerWidth < 700 ? 1 : 1.5);
     canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
     gl.viewport(0, 0, canvas.width, canvas.height);
+    readScroll();
     dirty = true;
   };
   addEventListener("resize", resize);
@@ -204,10 +214,12 @@ async function start() {
     const moved = Math.abs(np - p) > 0.00005 || Math.abs(nmx - mx) > 0.0002 || Math.abs(nmy - my) > 0.0002;
     p = np; mx = nmx; my = nmy;
     // Motes, pulses and grain move on their own, so keep drawing while the page is visible.
-    if ((moved || dirty || !reduced) && !document.hidden) {
+    const covered = scrollY > track.offsetHeight;          // the page below the film has scrolled over it
+    if ((moved || dirty || !reduced) && !document.hidden && !covered) {
       gl.uniform2f(u("res"), canvas.width, canvas.height);
       gl.uniform2f(u("mouse"), mx, my);
       gl.uniform1f(u("p"), p);
+      gl.uniform1f(u("calm"), reduced ? 1 : 0);
       gl.uniform1f(u("time"), reduced ? 0 : t / 1000);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       updateCopy(p);
@@ -215,6 +227,8 @@ async function start() {
     }
     requestAnimationFrame(frame);
   };
+  canvas.addEventListener("webglcontextlost", () => root.classList.add("nogl"));
+  running = true;
   requestAnimationFrame(frame);
 }
 

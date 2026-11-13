@@ -55,8 +55,9 @@ h2{font-size:clamp(28px,3.8vw,50px)}
 .film .meter{display:flex;gap:22px;position:fixed;top:64px;right:32px;z-index:3;font:12px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.14em;color:#a9bccf}
 .film .hint{display:block;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:3;font:11px/1 ui-monospace,Consolas,monospace;letter-spacing:.3em;text-transform:uppercase;color:#7f93a8;transition:opacity .4s ease}
 .film .hint.off{opacity:0}
-.film .beat{position:fixed;left:50%;bottom:9vh;width:min(760px,88vw);max-width:none;margin:0;padding:0;transform:translate(-50%,16px);z-index:2;opacity:0;visibility:hidden;transition:opacity .45s ease,transform .45s ease,visibility 0s linear .45s;text-shadow:0 2px 26px rgba(0,0,0,.9)}
-.film .beat.on{opacity:1;visibility:visible;transform:translate(-50%,0);transition:opacity .45s ease,transform .45s ease,visibility 0s}
+/* Off-screen captions are transparent, not hidden: a screen reader still reads the whole story in order. */
+.film .beat{position:fixed;left:50%;bottom:9vh;width:min(760px,88vw);max-width:none;margin:0;padding:0;transform:translate(-50%,16px);z-index:2;opacity:0;pointer-events:none;transition:opacity .45s ease,transform .45s ease;text-shadow:0 2px 26px rgba(0,0,0,.9)}
+.film .beat.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
 
 @media (max-width:760px){
   .doors,.steps{grid-template-columns:1fr}

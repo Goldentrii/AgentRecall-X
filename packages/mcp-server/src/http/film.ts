@@ -52,6 +52,8 @@ export function loadFilm(dir: string): Film | null {
 }
 
 export const FILM: Film | null = loadFilm(fileURLToPath(new URL("./film", import.meta.url)));
+// A build without the assets still serves a home page, but the operator must be able to see why it is the old one.
+if (!FILM) process.stderr.write("[site] home page film assets missing or invalid in dist/http/film; serving the classic home page\n");
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");

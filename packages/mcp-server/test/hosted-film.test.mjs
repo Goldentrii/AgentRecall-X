@@ -126,3 +126,27 @@ describe("home page film", () => {
     assert.equal([...html.matchAll(/<script>/g)].length, 1);
   });
 });
+
+describe("home page film — accessibility and motion", () => {
+  const html = renderStatic("/", ctx).body;
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
+
+  it("captions are never removed from the accessibility tree", () => {
+    assert.ok(!/visibility:\s*hidden|display:\s*none[^}]*\}\s*\.film \.beat|\.beat[^{]*\{[^}]*display:\s*none/.test(css));
+    assert.ok(!/\binert\b|aria-hidden/.test(script), "the script hides nothing from assistive technology");
+    assert.match(script, /tabIndex = on \? 0 : -1/, "links in an off-screen caption leave the Tab order");
+  });
+
+  it("reduced motion removes the jump, and the flash never reaches full white", () => {
+    assert.match(script, /prefers-reduced-motion: reduce/);
+    assert.match(script, /\* \(1\.0 - calm\)/, "rush is zero when calm is set");
+    assert.match(script, /uniform1f\(u\("calm"\), reduced \? 1 : 0\)/);
+    assert.match(script, /0\.7 \* pow\(rush, 5\.0\)/, "flash capped below white");
+  });
+
+  it("nothing is drawn while hidden or covered, and no discrete GPU is requested", () => {
+    assert.match(script, /!document\.hidden && !covered/);
+    assert.ok(!/high-performance/.test(script));
+  });
+});
