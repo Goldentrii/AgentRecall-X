@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { sessionEnd } from "agent-recall-core";
+import { OVERWRITE } from "./annotations.js";
 
 const TEXT_FIELD = z.string().min(1).max(8192);
 
@@ -43,6 +44,7 @@ export function register(server: McpServer): void {
     "session_end",
     {
       title: "End Session",
+      annotations: OVERWRITE,
       description:
         "[ON SAVE/EXIT — YOU must call this; nothing auto-saves] Use when the user asks to save, checkpoint, summarize, end, retain, or persist the current session. " +
         "Optionally pass close_phase / open_phase to update the project pipeline narrative spine in the same call.",

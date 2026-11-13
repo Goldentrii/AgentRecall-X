@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { pipelineOpen, fenceMemory } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 const PHASE_NAME = z
   .string()
@@ -15,6 +16,7 @@ export function register(server: McpServer): void {
     "pipeline_open",
     {
       title: "Open Project Pipeline Phase",
+      annotations: ADD,
       description:
         "Open a new project phase (milestone) in the project's narrative spine. " +
         "Each phase captures Goal → What was hard → How solved → Synthesis. " +

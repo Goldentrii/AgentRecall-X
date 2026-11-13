@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { smartRecall, fenceMemory, type SmartRecallResultItem } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 /** Truncate to n chars with ellipsis */
 function trunc(s: string, n: number): string {
@@ -29,6 +30,7 @@ function formatResults(items: SmartRecallResultItem[]): string {
 export function register(server: McpServer): void {
   server.registerTool("recall", {
     title: "Recall",
+    annotations: ADD,
     description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions.",
     inputSchema: {
       query: z.string().describe("What to search for."),
