@@ -137,3 +137,19 @@ jobs:
             exit 1
           fi
           echo "All matrix lanes green."
+
+  # The hosted deploy kit is shell that runs as root on the production box and
+  # rewrites its .env. These tests need no server: two use stubs, one runs the
+  # pinned Caddy image in Docker (present on ubuntu-latest).
+  deploy-kit:
+    name: deploy-kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: remote.sh (deploy key forced command)
+        run: bash deploy/hosted/remote.test.sh
+      - name: domain-switch.sh
+        run: bash deploy/hosted/domain-switch.test.sh
+      - name: Caddyfile (real Caddy)
+        run: AR_TEST_REQUIRE_DOCKER=1 bash deploy/hosted/caddy.test.sh

@@ -74,6 +74,27 @@ Set it up once:
 
 The key has no passphrase so an agent can use it unattended; what it can do is limited to the four requests above. Since `deploy` runs the repo's own `setup.sh` with sudo, the real gate is that only reviewed code reaches `main` (protect the branch). To revoke, delete that line from `~/.ssh/authorized_keys`. The script's tests: `bash deploy/hosted/remote.test.sh` (Linux, needs `flock`). Re-run step 2's `install` line with a newer commit to update the script.
 
+### Change the domain, keep the old one working
+
+```bash
+sudo bash /opt/agent-recall/deploy/hosted/domain-switch.sh new.example.com old.example.com www.new.example.com
+```
+
+The first name becomes the primary (`AR_DOMAIN`, and `AR_PUBLIC_URL` when sign-in is on). The others (at most 4) are aliases, stored as `AR_DOMAIN_ALIAS`: on an alias, `/mcp` and `/healthz` are proxied, so agents configured with the old address and a static token keep working, and every other path redirects to the primary. `/mcp` is proxied on purpose: a client may drop its `Authorization` header when it follows a redirect to another host.
+
+The script checks that every name's DNS A record points at the box, shows what will change, asks you to type the new domain, keeps the previous settings in `.env.before-domain-switch.<UTC time>` (mode 600, one file per run, never overwritten), restarts the stack and checks the primary and each alias. It prints the rollback command.
+
+What changes for users:
+
+- Static tokens keep working on the primary and on every alias.
+- Everyone who signed in with GitHub or Google signs in once more, at the new address. Grants are bound to the address they were issued for, and a refresh does not move them.
+- Sign-in does not work through an alias. Change the address in the agent's config to the primary.
+- A GitHub OAuth app has one callback URL: change it to `https://<new domain>/authorize/callback/github` at the same moment. The script prints the exact URL before it asks you to confirm.
+
+Keep the old name's DNS record pointing at the box for as long as it is an alias: Caddy needs it to renew that name's certificate. Run the script again without the old name to drop it. The restricted deploy key cannot run this script or change these settings. Deploying a commit from before alias support existed drops the aliases without an error (its Caddyfile ignores `AR_DOMAIN_ALIAS`), so do not roll back past that commit while an alias is in use.
+
+Tests: `bash deploy/hosted/domain-switch.test.sh` (stubs, no server) and `bash deploy/hosted/caddy.test.sh` (real Caddy in Docker).
+
 ### Docker (single container, bring your own proxy)
 
 ```bash

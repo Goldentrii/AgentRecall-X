@@ -60,6 +60,8 @@ services:
         condition: service_healthy
     environment:
       AR_DOMAIN: ${AR_DOMAIN:?set AR_DOMAIN in deploy/hosted/.env}
+      # Extra names that keep answering /mcp and redirect everything else (see Caddyfile; set by domain-switch.sh).
+      AR_DOMAIN_ALIAS: ${AR_DOMAIN_ALIAS:-http://alias-unset.invalid}
     ports:
       - "80:80"
       - "443:443"
