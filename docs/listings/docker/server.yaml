@@ -1,0 +1,26 @@
+# Docker MCP Registry entry (remote). NOT SUBMITTED. Copy to servers/agent-recall/ in a fork
+# of https://github.com/docker/mcp-registry together with tools.json and readme.md, then run
+#   task validate -- --name agent-recall
+#   task build -- --tools agent-recall
+# Format taken from docker/mcp-registry CONTRIBUTING.md (remote examples, fetched 2026-11-14).
+# UNVERIFIED: whether the validator accepts a remote server that does its own OAuth
+# (dynamic client registration) without an `oauth:` block; the examples only show
+# Docker-provider OAuth. UNVERIFIED: the allowed `category` values (no list is published).
+name: agent-recall
+type: remote
+dynamic:
+  tools: true
+meta:
+  category: productivity
+  tags:
+    - memory
+    - corrections
+    - agents
+    - remote
+about:
+  title: AgentRecall
+  description: Narrows the Intelligent Distance between you and your agents - a correction made to one agent is remembered by every agent, and measured
+  icon: https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/brand/icon-400.png
+remote:
+  transport_type: streamable-http
+  url: https://agentrecallx.com/mcp

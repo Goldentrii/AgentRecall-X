@@ -1,0 +1,11 @@
+{
+  "name": "agent-recall",
+  "description": "Narrows the Intelligent Distance between you and your agents: a correction made to one agent is remembered by every agent, and measured. Connects the free hosted AgentRecall MCP server.",
+  "version": "3.5.3",
+  "author": { "name": "Tong Wu" },
+  "homepage": "https://agentrecallx.com",
+  "repository": "https://github.com/Goldentrii/AgentRecall-X",
+  "license": "MIT",
+  "keywords": ["mcp", "agent-memory", "corrections", "claude-code", "codex", "cursor"],
+  "logo": "assets/brand/icon-512.png"
+}

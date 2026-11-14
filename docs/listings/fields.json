@@ -1,0 +1,20 @@
+{
+  "_comment": "Single source for the paste-ready listing text. The drift test checks every length limit here and that each submissions/*.md that quotes these fields quotes them verbatim.",
+  "name": "AgentRecall",
+  "oneLiner100": "A correction made to one agent is remembered by every agent, and measured.",
+  "oneLiner200": "AgentRecall narrows the Intelligent Distance between you and your AI agents: a correction made to one agent is remembered by every agent you use, and measured. Free hosted server, GitHub sign-in.",
+  "description": "AgentRecall narrows the Intelligent Distance between a person and their agents. Every time you correct an agent (\"don't force-push\", \"always run the tests first\"), that correction normally dies with the session. AgentRecall keeps it, hands it to every other agent you use at the start of their next session, and measures whether the agents then heed it.\n\nWhat the five tools do:\n- session_start loads your rules, your corrections and the project state before the agent acts.\n- check records a correction you made, and before a risky action (push, deploy, delete) checks it against the corrections you already made.\n- remember saves one fact or decision you ask the agent to keep.\n- recall searches everything saved so far.\n- session_end saves the session summary and the project state.\n\nOne account, one memory, any MCP client: Claude, Claude Code, Codex, Cursor, Cline. Corrections an agent proposes on the hosted server wait for your approval before they become rules. Sign in with GitHub; no API key. Free. Memory is private to you and stored in the EU.\n\nAgentRecall stores only what you or your agent explicitly save. It does not read Claude's own memory or chat history. You can download your memory at any time and ask for it to be deleted.",
+  "categories": ["Productivity", "Developer tools", "AI agents"],
+  "hostedUrl": "https://agentrecallx.com/mcp",
+  "websiteUrl": "https://agentrecallx.com",
+  "docsUrl": "https://agentrecallx.com/connect.md",
+  "privacyUrl": "https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md",
+  "repoUrl": "https://github.com/Goldentrii/AgentRecall-X",
+  "examplePrompts": [
+    "Connect AgentRecall, then load my project context with session_start and tell me my current HARD RULES.",
+    "I just told you not to force-push to main. Record that as a correction so every agent I use follows it.",
+    "Remember that this project deploys from the release branch only.",
+    "Before you push this branch, check the action against the corrections I have made.",
+    "Recall what we decided last week about the database migration, then save today's progress with session_end."
+  ]
+}
