@@ -95,6 +95,17 @@ Keep the old name's DNS record pointing at the box for as long as it is an alias
 
 Tests: `bash deploy/hosted/domain-switch.test.sh` (stubs, no server) and `bash deploy/hosted/caddy.test.sh` (real Caddy in Docker).
 
+### After a deploy
+
+Run the smoke check from any machine with Node 18+ (no install, no dependencies). It only reads, plus one unauthenticated `POST /mcp` that must be refused:
+
+```bash
+node deploy/hosted/smoke.mjs --base https://agentrecallx.com --expect-version 3.5.3
+node deploy/hosted/smoke.mjs --base https://agentrecallx.com --alias https://recall.aiakada.com   # also checks the alias
+```
+
+One `PASS` or `FAIL` line per check, with the evidence; exit 1 on any `FAIL`. It checks `/healthz` (and the version, with `--expect-version`), every public page and film plate (status and content type), that `/connect` answers without a session, that the CSP of `/` allows exactly the sha256 of the page's one inline style and one inline script, the security headers (HSTS, `nosniff`, `frame-ancestors`), that `POST /mcp` without credentials is a 401 pointing at the OAuth metadata, the two `/.well-known/oauth-*` documents, and with `--alias` that `/healthz` and `/mcp` are proxied while every other path 308-redirects to the primary. `node --test deploy/hosted/smoke.test.mjs` proves each check against a fake server; CI runs it in the `deploy-kit` job.
+
 ### Docker (single container, bring your own proxy)
 
 ```bash
