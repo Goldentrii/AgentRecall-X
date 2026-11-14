@@ -9,6 +9,8 @@
  * to the redirect that follows the form POST.
  */
 
+import { SITE_TOKENS } from "./site-theme.js";
+
 export function esc(v: unknown): string {
   return String(v ?? "")
     // eslint-disable-next-line no-control-regex
@@ -35,19 +37,35 @@ export function pageHeaders(formActionOrigins: readonly string[] = []): Record<s
   };
 }
 
-const STYLE = `
-body{font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;background:#f6f7f9;color:#14171a;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
-main{background:#fff;border:1px solid #dde1e6;border-radius:12px;padding:28px;max-width:400px;width:calc(100% - 32px)}
-h1{font-size:20px;margin:0 0 4px}p{margin:8px 0;color:#444}.who{background:#f0f2f5;border-radius:8px;padding:10px 12px;font-size:14px}
-button{margin-top:14px;width:100%;padding:11px;border:0;border-radius:8px;background:#14171a;color:#fff;font:inherit;font-weight:600;cursor:pointer}
-.dest{font-size:17px;margin:12px 0 4px;color:#14171a}.warn{background:#fff6e0;border:1px solid #f0d28a;border-radius:8px;padding:8px 12px;font-size:14px;color:#6b4a00}.note{font-size:14px}
-.err{background:#fdecec;border:1px solid #f3b7b7;color:#8a1c1c;border-radius:8px;padding:10px 12px;font-size:14px;margin:12px 0}
+const STYLE = SITE_TOKENS + `
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans)}
+a{color:var(--cyan);text-underline-offset:3px}
+:focus-visible{outline:3px solid var(--cyan);outline-offset:3px;border-radius:6px}
+.page{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:28px 16px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}
+.mark{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 14px var(--gold)}
+main{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--gold);border-radius:16px;padding:30px 28px;max-width:440px;width:100%}
+h1{font:500 clamp(26px,5vw,32px)/1.12 var(--serif);letter-spacing:-.01em;margin:0 0 8px}
+p{margin:10px 0;color:var(--muted)}
+strong{color:var(--ink)}
+.dest{font-size:17px;margin:14px 0 6px;color:var(--muted)}.dest strong{color:var(--cyan);font:600 16px var(--mono);overflow-wrap:anywhere}
+.who{background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14.5px;color:var(--muted);margin:12px 0}.who em{color:var(--dim)}
+.note{font-size:14px;color:var(--dim)}
+.warn{background:var(--warn-bg);border:1px solid var(--warn-line);border-left-width:4px;border-radius:10px;padding:10px 14px;font-size:14.5px;color:var(--warn-ink)}
+.err{background:var(--err-bg);border:1px solid var(--err-line);border-left-width:4px;color:var(--err-ink);border-radius:10px;padding:10px 14px;font-size:14.5px;margin:14px 0}
+button{display:block;margin-top:12px;width:100%;padding:14px 22px;border:1px solid var(--gold);border-radius:999px;background:var(--gold);color:var(--bg);font:600 16px/1 var(--sans);cursor:pointer}
+button:hover{filter:brightness(1.08)}
+button.secondary,button.reject{background:transparent;color:var(--ink);border-color:rgba(255,255,255,.4)}
+button.secondary:hover,button.reject:hover{border-color:var(--ink);filter:none}
+@media (max-width:520px){main{padding:24px 20px}}
 `;
 
 /** A whole page. `body` must already be escaped; `extraStyle` is a constant stylesheet, never user data. */
 export function shell(title: string, body: string, extraStyle = ""): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${STYLE}${extraStyle}</style></head><body><main>${body}</main></body></html>`;
+    `<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${STYLE}${extraStyle}</style></head><body><div class="page"><div class="brand"><span class="mark"></span>AgentRecall</div><main>${body}</main></div></body></html>`;
 }
 
 export interface SignInView {

@@ -54,16 +54,16 @@ export function noticeKey(v: unknown): string | undefined {
 
 const REVIEW_STYLE = `
 main{max-width:760px}
-.p{border:1px solid #dde1e6;border-radius:10px;padding:14px 16px;margin:14px 0}
-.meta{font-size:13px;color:#5b6570;margin:0 0 6px}
-.rule{font-size:16px;font-weight:600;color:#14171a;white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0}
+.p{background:var(--sunk);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+.meta{font-size:13px;color:var(--dim);margin:0 0 6px}
+.rule{font-size:17px;font-weight:600;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0}
 .why{white-space:pre-wrap;overflow-wrap:anywhere}
-.when{font-size:14px}.when code{background:#f0f2f5;border-radius:4px;padding:1px 5px;margin-right:4px;white-space:pre-wrap;overflow-wrap:anywhere}
-.id{font:12px ui-monospace,Consolas,monospace;color:#5b6570;overflow-wrap:anywhere}
+.when{font-size:14px}.when code{background:var(--bg);border:1px solid var(--line);color:var(--cyan);font:13px var(--mono);border-radius:6px;padding:1px 6px;margin-right:4px;white-space:pre-wrap;overflow-wrap:anywhere}
+.id{font:12px var(--mono);color:var(--dim);overflow-wrap:anywhere}
 .acts{display:flex;gap:10px}.acts form{flex:1}
-button.reject,button.secondary{background:#fff;color:#14171a;border:1px solid #c4cad1}
-.ok{background:#e9f7ef;border:1px solid #a6dcbc;color:#14532d;border-radius:8px;padding:10px 12px;font-size:14px;margin:12px 0}
-.bar{display:flex;justify-content:space-between;align-items:center;gap:12px}.bar form{width:auto}.bar button{margin:0;width:auto;padding:7px 12px}
+.ok{background:var(--ok-bg);border:1px solid var(--ok-line);border-left-width:4px;color:var(--ok-ink);border-radius:10px;padding:10px 14px;font-size:14.5px;margin:14px 0}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px}.bar form{width:auto}.bar button{margin:0;width:auto;padding:9px 16px;font-size:14px;white-space:nowrap}
+@media (max-width:520px){.acts{flex-direction:column;gap:0}}
 `;
 
 const hidden = (name: string, value: string): string => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
