@@ -21,6 +21,11 @@ after(() => { for (const d of tmp) fs.rmSync(d, { recursive: true, force: true }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const queue = (root, op) => withRoot(root, () => withDeferredBookkeeping(() => { void bookkeep(op); }));
 const never = () => new Promise(() => {});
+// The per-op timeout timer is unref'd (bookkeeping must never keep a process alive), so while a test awaits a
+// flush whose op never settles nothing else may hold the event loop open: Node then ends the file with
+// "Promise resolution is still pending". This ref'd handle keeps the loop alive for the file's duration.
+const keepAlive = setInterval(() => {}, 60_000);
+after(() => clearInterval(keepAlive));
 
 const origErr = console.error;
 let logged;
