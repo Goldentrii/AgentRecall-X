@@ -1,7 +1,7 @@
 {
   "name": "agent-recall-cli",
   "version": "3.5.3",
-  "description": "CLI for AgentRecall memory system",
+  "description": "AgentRecall CLI: corrections, rules and session context shared by all your agents",
   "type": "module",
   "bin": {
     "ar": "dist/index.js"
