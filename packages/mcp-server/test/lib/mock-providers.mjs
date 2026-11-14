@@ -17,7 +17,7 @@ export const GG = { id: "gg-client-id.apps.example", secret: "gg-client-secret" 
 export const jwt = (claims) => `${b64url(Buffer.from('{"alg":"RS256"}'))}.${b64url(Buffer.from(JSON.stringify(claims)))}.sig`;
 
 /** Mock GitHub + Google endpoints. Set `state.base` to the server's public URL (redirect_uri is checked against it). */
-export async function startMock() {
+export async function startMock({ port = 0 } = {}) {
   const state = { codes: new Map(), calls: [], ghUserMode: "ok", ggTokenMode: "ok", base: "" };
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -54,7 +54,7 @@ export async function startMock() {
       send(404, { error: "nope" });
     });
   });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  await new Promise((r) => server.listen(port, "127.0.0.1", r));
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
     state, url,
