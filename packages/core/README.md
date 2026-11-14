@@ -15,6 +15,15 @@
 </p>
 
 <p align="center">
+  <a href="https://agentrecallx.com"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/site-home.jpg" alt="The AgentRecall home page at agentrecallx.com: a gold tree and a cyan tower with the headline 'Two kinds of intelligence', and the Connect an agent and Run it locally buttons." width="100%"></a>
+</p>
+
+<p align="center">
+  <strong>Try it now: <a href="https://agentrecallx.com">agentrecallx.com</a></strong> Connect any MCP agent with one URL, sign in with GitHub, free.<br>
+  For agents: instructions at <a href="https://agentrecallx.com/connect.md">https://agentrecallx.com/connect.md</a>.
+</p>
+
+<p align="center">
   <a href="https://agentrecallx.com/healthz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fagentrecallx.com%2Fhealthz&query=%24.version&label=hosted&prefix=v&suffix=%20live&color=2E9E6A&style=flat-square" alt="Hosted server status"></a>
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
