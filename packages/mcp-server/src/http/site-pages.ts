@@ -357,7 +357,7 @@ export function privacyPage(ctx: SiteCtx, policyHtml: string): string {
 /** /privacy when the shipped policy text could not be loaded: say so, never show partial text. */
 export function privacyUnavailablePage(ctx: SiteCtx): string {
   return layout("Privacy policy: AgentRecall", `<div class="panel msg"><h1>Privacy policy unavailable</h1>` +
-    `<p>This server could not load its privacy policy text just now. The same policy is on GitHub: <a href="${esc(DEFAULT_PRIVACY_URL)}" rel="noopener">PRIVACY.md</a>.</p></div>`, ctx, "privacy");
+    `<p>This server could not load its privacy policy text just now. The same policy is on GitHub: <a href="${esc(DEFAULT_PRIVACY_URL)}" rel="noopener">PRIVACY.md</a>.</p></div>`, ctx, "none");
 }
 
 /** /support: the contact address is the one PRIVACY.md names (passed in, never typed here). */
@@ -368,7 +368,6 @@ export function supportPage(ctx: SiteCtx, contact: string | null): string {
     `<p>Please do not put personal data in public issues. Data requests are answered within one month, as the <a href="/privacy">privacy policy</a> says.</p></section>`;
   return layout("Support: AgentRecall", `<div class="support"><h1>Support</h1>` +
     `<p class="lede">AgentRecall is a free, early-stage project run by one person. Support is best effort: there is no support team and no guaranteed response time.</p>` +
-    `<div class="notice plain">Expect a reply within about a week. Sometimes it is faster, sometimes slower.</div>` +
     mail +
     `<section class="panel"><h2>Bugs and questions</h2><p>Open an issue on <a href="${ISSUES_URL}" rel="noopener">GitHub</a>. Issues are public, so they also help the next person with the same problem.</p></section>` +
     `<section class="panel"><h2>Community</h2><p>Talk to other users in the <a href="${TELEGRAM_URL}" rel="noopener">Telegram group</a>.</p></section></div>`,

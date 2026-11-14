@@ -101,6 +101,13 @@ describe("GET /privacy", () => {
     assert.equal(gone.headers["cache-control"], "no-store");
     assert.match(gone.body, /unavailable/);
     assert.ok(!gone.body.includes("Data controller"));
+    assert.match(gone.body, /<meta name="robots" content="noindex/, "a fallback page is never indexed");
+  });
+
+  it("support promises no response time the owner has not confirmed", () => {
+    const s = renderStatic("/support", ctx).body;
+    assert.match(s, /no guaranteed response time/);
+    assert.ok(!/within about a week/.test(s));
   });
 });
 
