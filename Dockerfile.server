@@ -19,6 +19,7 @@ COPY packages/cli/package*.json ./packages/cli/
 RUN npm ci --no-audit --no-fund
 COPY packages/core ./packages/core
 COPY packages/mcp-server ./packages/mcp-server
+COPY PRIVACY.md ./PRIVACY.md
 RUN npm run build -w packages/core && npm run build -w packages/mcp-server \
  && npm prune --omit=dev
 
