@@ -45,6 +45,7 @@ import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { projectSubPath } from "./paths.js";
+import { toCredentialRef, credentialKeyOf, type CredentialRef } from "../types.js";
 import { withLock } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
 import {
@@ -99,6 +100,12 @@ export interface PendingRecord {
   reason: string;      // why this is pending, not active
   /** Owner gate rows only: proposalDigest(context, applies_when), fixed for the life of the row. */
   digest?: string;
+  /**
+   * Hosted server: the credential (an opaque id, never a token) of the agent that first
+   * proposed this row. Carried onto the active correction when the owner approves it. Absent on
+   * rows from before the field existed and on rows not written by a hosted agent request.
+   */
+  authored_by?: CredentialRef;
   provenance: { source: string; mode: "told" | "observed" };
 }
 
@@ -116,6 +123,8 @@ export interface StagePendingInput {
   source?: string;
   /** Severity decided by the caller; default classifies rule + text. */
   severity?: "p0" | "p1";
+  /** Credential id ("token:<id>") of the proposing agent (see PendingRecord.authored_by). A malformed value is dropped. */
+  authoredBy?: string;
 }
 
 export interface StagePendingResult {
@@ -381,8 +390,12 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         const entryComplete = entry.record.channel === "check_structured_unconfirmed";
         if (complete && entryComplete && entry.record.digest !== digest) continue; // different content: separate row
         if (complete && !entryComplete) { retire.push(entry); continue; }
+        // Two credentials proposing the same rule: neither is its single author any more.
+        const { authored_by: first, ...rest } = entry.record;
+        const sameAuthor = credentialKeyOf(first) === credentialKeyOf(toCredentialRef(input.authoredBy));
         const merged: PendingRecord = {
-          ...entry.record,
+          ...rest,
+          ...(first && sameAuthor ? { authored_by: first } : {}),
           seen_count: (entry.record.seen_count ?? 1) + 1,
           last_seen: nowISO,
         };
@@ -427,6 +440,7 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         severity: input.severity ?? detectSeverity(`${ruleRaw} ${contextRaw}`),
         ...(appliesWhen ? { applies_when: appliesWhen } : {}),
         ...(digest ? { digest } : {}),
+        ...(toCredentialRef(input.authoredBy) ? { authored_by: toCredentialRef(input.authoredBy) } : {}),
         reason: input.reason,
         provenance: { source: input.source ?? input.channel, mode: "told" },
       };

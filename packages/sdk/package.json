@@ -1,7 +1,7 @@
 {
   "name": "agent-recall-sdk",
   "version": "3.5.3",
-  "description": "SDK for AgentRecall — persistent, compounding memory for AI agents",
+  "description": "AgentRecall SDK: teach one agent, and every agent you connect starts from what it learned",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
