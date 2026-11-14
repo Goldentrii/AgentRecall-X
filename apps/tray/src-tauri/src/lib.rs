@@ -7,6 +7,8 @@ use redact::redact;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -18,11 +20,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const KEYRING_SERVICE: &str = "AgentRecall Tray";
 const KEYRING_USER: &str = "oauth-tokens";
-const CONNECT_MD_FALLBACK: (&str, &str, &str) = (
-    "claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp",
-    "codex mcp add agent-recall --url https://agentrecallx.com/mcp\ncodex mcp login agent-recall",
-    "{ \"mcpServers\": { \"agent-recall\": { \"url\": \"https://agentrecallx.com/mcp\" } } }",
-);
+const MAX_TOOL_BODY: usize = 1024 * 1024;
+const MAX_SMALL_BODY: usize = 64 * 1024;
+const FALLBACK_CLAUDE: &str = "claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp";
+const FALLBACK_CODEX: &str = "codex mcp add agent-recall --url https://agentrecallx.com/mcp\ncodex mcp login agent-recall";
+const FALLBACK_CURSOR: &str = "{ \"mcpServers\": { \"agent-recall\": { \"url\": \"https://agentrecallx.com/mcp\" } } }";
 
 // ---------- state ----------
 
@@ -30,6 +32,56 @@ pub struct AppState {
     http: reqwest::Client,
     refresh_lock: tokio::sync::Mutex<()>,
     cancel: tokio::sync::Notify,
+    /// Bumped on every sign-out (including forced ones). Held together with the cache lock.
+    generation: AtomicU64,
+    cache_lock: Mutex<()>,
+    data_dir: OnceLock<PathBuf>,
+}
+
+impl AppState {
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.cache_lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn gen(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// Every sign-out path (button, tray, refresh rejected, second 401, failed token save) ends here:
+    /// bump the generation, delete the tokens and the cache under one lock.
+    fn sign_out_local(&self) {
+        let _g = self.lock_cache();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        delete_tokens();
+        if let Some(d) = self.data_dir.get() {
+            cache::clear(d);
+        }
+    }
+
+    fn cache_read(&self) -> cache::Cache {
+        let _g = self.lock_cache();
+        match self.data_dir.get() {
+            Some(d) => cache::read(d),
+            None => cache::Cache::default(),
+        }
+    }
+
+    /// Write the cache only if no sign-out happened since `started_gen` and tokens still exist.
+    fn cache_update(&self, started_gen: u64, f: impl FnOnce(&mut cache::Cache)) {
+        let _g = self.lock_cache();
+        if !may_write_cache(self.gen(), started_gen, load_tokens().is_some()) {
+            return;
+        }
+        if let Some(d) = self.data_dir.get() {
+            let mut c = cache::read(d);
+            f(&mut c);
+            let _ = cache::write(d, &c);
+        }
+    }
+}
+
+fn may_write_cache(current_gen: u64, started_gen: u64, signed_in: bool) -> bool {
+    current_gen == started_gen && signed_in
 }
 
 // ---------- token storage (OS credential store only) ----------
@@ -52,9 +104,21 @@ fn load_tokens() -> Option<Tokens> {
     serde_json::from_str(&s).ok()
 }
 
+fn tokens_blob(t: &Tokens) -> Result<String, String> {
+    serde_json::to_string(t).map_err(|e| e.to_string())
+}
+
 fn save_tokens(t: &Tokens) -> Result<(), String> {
-    let s = serde_json::to_string(t).map_err(|e| e.to_string())?;
+    let s = tokens_blob(t)?;
     entry()?.set_password(&s).map_err(|e| redact(&e.to_string()))
+}
+
+/// Save with one retry. Used after refresh-token rotation, where the old refresh token is already dead.
+fn save_tokens_retry(t: &Tokens) -> Result<(), String> {
+    save_tokens(t).or_else(|_| {
+        std::thread::sleep(Duration::from_millis(250));
+        save_tokens(t)
+    })
 }
 
 fn delete_tokens() {
@@ -69,10 +133,12 @@ fn delete_tokens() {
 enum ApiErr {
     /// could not reach the server
     Network(String),
-    /// not signed in, or the server rejected our tokens
+    /// not signed in, or the server rejected our access token and refresh
     Auth,
-    /// the server answered with an error
+    /// the server answered with an error (retryable, tokens kept)
     Server(String),
+    /// the token endpoint said invalid_grant
+    Rejected,
 }
 
 impl ApiErr {
@@ -80,6 +146,7 @@ impl ApiErr {
         match self {
             ApiErr::Network(m) | ApiErr::Server(m) => redact(m),
             ApiErr::Auth => "Signed out. Sign in again.".into(),
+            ApiErr::Rejected => "The server rejected the sign-in. Please try again.".into(),
         }
     }
 }
@@ -89,8 +156,39 @@ fn net_err(e: reqwest::Error) -> ApiErr {
     ApiErr::Network(redact(&e.without_url().to_string()))
 }
 
-fn data_dir(app: &AppHandle) -> PathBuf {
-    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentrecall-tray"))
+fn too_large() -> ApiErr {
+    ApiErr::Server("The server reply was too large and was ignored.".into())
+}
+
+// ---------- bounded bodies ----------
+
+/// Append `chunk` unless that would pass `max`. Returns false when over the cap.
+fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> bool {
+    if buf.len().saturating_add(chunk.len()) > max {
+        return false;
+    }
+    buf.extend_from_slice(chunk);
+    true
+}
+
+async fn read_limited(mut resp: reqwest::Response, max: usize) -> Result<Vec<u8>, ApiErr> {
+    if resp.content_length().map_or(false, |l| l > max as u64) {
+        return Err(too_large());
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(net_err)? {
+        if !append_capped(&mut buf, &chunk, max) {
+            return Err(too_large());
+        }
+    }
+    Ok(buf)
+}
+
+fn is_invalid_grant(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|e| e == "invalid_grant"))
+        .unwrap_or(false)
 }
 
 // ---------- URL allowlist ----------
@@ -124,16 +222,19 @@ struct TokenResp {
     expires_in: Option<u64>,
 }
 
+/// `resource` is sent exactly as the server's provider expects it (oauth-provider.ts compares the URL href
+/// to https://agentrecallx.com/mcp). Only an `invalid_grant` body is treated as a rejected grant.
 async fn token_request(http: &reqwest::Client, endpoint: &str, form: &[(&str, &str)]) -> Result<TokenResp, ApiErr> {
     let resp = http.post(endpoint).form(form).send().await.map_err(net_err)?;
     let status = resp.status();
+    let body = read_limited(resp, MAX_SMALL_BODY).await?;
     if status.is_success() {
-        return resp.json::<TokenResp>().await.map_err(|e| ApiErr::Server(format!("bad token reply: {}", e.without_url())));
+        return serde_json::from_slice::<TokenResp>(&body).map_err(|_| ApiErr::Server("The token reply was not understood.".into()));
     }
-    if status.as_u16() == 400 || status.as_u16() == 401 {
-        return Err(ApiErr::Auth);
+    if is_invalid_grant(&body) {
+        return Err(ApiErr::Rejected);
     }
-    Err(ApiErr::Server(format!("token endpoint answered {status}")))
+    Err(ApiErr::Server(format!("The server could not renew your sign-in right now ({status}). Try again in a moment.")))
 }
 
 async fn refresh(state: &AppState, old: &Tokens) -> Result<Tokens, ApiErr> {
@@ -158,20 +259,29 @@ async fn refresh(state: &AppState, old: &Tokens) -> Result<Tokens, ApiErr> {
                 exp: cache::now() + t.expires_in.unwrap_or(3600),
                 client_id: old.client_id.clone(),
             };
-            save_tokens(&new).map_err(ApiErr::Server)?;
+            if save_tokens_retry(&new).is_err() {
+                // The server already rotated the refresh token; the stored one is dead. Do not limp on.
+                state.sign_out_local();
+                return Err(ApiErr::Server(
+                    "Your sign-in was renewed but could not be saved to Windows Credential Manager, so you have been signed out. Sign in again.".into(),
+                ));
+            }
             Ok(new)
         }
-        Err(ApiErr::Auth) => {
-            delete_tokens();
+        Err(ApiErr::Rejected) => {
+            state.sign_out_local();
             Err(ApiErr::Auth)
         }
-        Err(e) => Err(e),
+        Err(e) => Err(e), // network / 5xx / other 4xx: keep the tokens, retryable
     }
 }
 
 // ---------- MCP call ----------
 
-async fn post_tool(state: &AppState, access: &str, tool: &str, args: serde_json::Value) -> Result<(u16, String), ApiErr> {
+/// The hosted endpoint is stateless (serve.ts: sessionIdGenerator undefined, enableJsonResponse), so tools/call
+/// works without an initialize. SDK 1.29 requires `Accept: application/json, text/event-stream` and treats a
+/// missing MCP-Protocol-Version header as the default version.
+async fn post_tool(state: &AppState, access: &str, tool: &str, args: serde_json::Value) -> Result<(u16, Vec<u8>), ApiErr> {
     let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args}});
     let resp = state
         .http
@@ -183,8 +293,8 @@ async fn post_tool(state: &AppState, access: &str, tool: &str, args: serde_json:
         .await
         .map_err(net_err)?;
     let status = resp.status().as_u16();
-    let text = resp.text().await.map_err(net_err)?;
-    Ok((status, text))
+    let bytes = read_limited(resp, MAX_TOOL_BODY).await?;
+    Ok((status, bytes))
 }
 
 async fn call_tool(state: &AppState, tool: &str, args: serde_json::Value) -> Result<String, ApiErr> {
@@ -197,14 +307,15 @@ async fn call_tool(state: &AppState, tool: &str, args: serde_json::Value) -> Res
         tokens = refresh(state, &tokens).await?;
         (status, body) = post_tool(state, &tokens.access, tool, args).await?;
         if status == 401 {
-            delete_tokens();
+            state.sign_out_local();
             return Err(ApiErr::Auth);
         }
     }
     if !(200..300).contains(&status) {
         return Err(ApiErr::Server(format!("server answered {status}")));
     }
-    let msg = mcp::parse_rpc_body(&body, 1).map_err(ApiErr::Server)?;
+    let text = String::from_utf8_lossy(&body).to_string();
+    let msg = mcp::parse_rpc_body(&text, 1).map_err(ApiErr::Server)?;
     mcp::tool_text(&msg).map_err(ApiErr::Server)
 }
 
@@ -218,16 +329,26 @@ struct Status {
     checked_at: u64,
 }
 
+fn health_url() -> String {
+    // Testing hook: compiled only into debug builds or builds with the `test-hooks` feature.
+    #[cfg(any(debug_assertions, feature = "test-hooks"))]
+    {
+        if let Ok(v) = std::env::var("AGENTRECALL_TRAY_TEST_HEALTH_URL") {
+            return v;
+        }
+    }
+    format!("{}/healthz", oauth::BASE)
+}
+
 #[tauri::command]
 async fn status(state: State<'_, AppState>) -> Result<Status, String> {
     let signed_in = load_tokens().is_some();
-    // AGENTRECALL_TRAY_TEST_HEALTH_URL (testing only) overrides the health-check URL, e.g. to simulate an unreachable server.
-    let health = std::env::var("AGENTRECALL_TRAY_TEST_HEALTH_URL").unwrap_or_else(|_| format!("{}/healthz", oauth::BASE));
-    let r = state.http.get(health).timeout(Duration::from_secs(5)).send().await;
+    let r = state.http.get(health_url()).timeout(Duration::from_secs(5)).send().await;
     let (online, version) = match r {
         Ok(resp) if resp.status().is_success() => {
-            let v: Option<serde_json::Value> = resp.json().await.ok();
-            let version = v.as_ref().and_then(|v| v.get("version")).and_then(|v| v.as_str()).map(str::to_string);
+            let body = read_limited(resp, MAX_SMALL_BODY).await.unwrap_or_default();
+            let v: Option<serde_json::Value> = serde_json::from_slice(&body).ok();
+            let version = v.as_ref().and_then(|v| v.get("version")).and_then(|v| v.as_str()).map(|s| cache::truncate_bytes(s, 32));
             (v.as_ref().and_then(|v| v.get("ok")).and_then(|v| v.as_bool()).unwrap_or(false), version)
         }
         _ => (false, None),
@@ -246,26 +367,29 @@ struct MemoryView {
 }
 
 #[tauri::command]
-async fn memory(app: AppHandle, state: State<'_, AppState>) -> Result<MemoryView, String> {
+async fn memory(state: State<'_, AppState>) -> Result<MemoryView, String> {
     if load_tokens().is_none() {
         return Ok(MemoryView { signed_in: false, text: None, pending: None, offline: false, as_of: None, error: None });
     }
-    let dir = data_dir(&app);
-    match call_tool(&state, "session_start", json!({"project":"auto","mode":"cards"})).await {
+    let started = state.gen();
+    // `project` is omitted: on the hosted server it defaults to "auto", which detectProject() resolves to the
+    // tenant's default project ("main", tenant-paths.ts) regardless of what a client sends.
+    match call_tool(&state, "session_start", json!({"mode":"cards"})).await {
         Ok(text) => {
+            let text = cache::truncate_bytes(&text, cache::MAX_MEMORY_BYTES);
             let pending = mcp::pending_count(&text);
-            let mut c = cache::read(&dir);
             let now = cache::now();
-            c.memory = Some(cache::MemoryCache { text: text.clone(), pending, saved_at: now });
-            let _ = cache::write(&dir, &c);
+            let t = text.clone();
+            state.cache_update(started, move |c| c.memory = Some(cache::MemoryCache { text: t, pending, saved_at: now }));
             Ok(MemoryView { signed_in: true, text: Some(text), pending, offline: false, as_of: Some(now), error: None })
         }
         Err(ApiErr::Auth) => Ok(MemoryView { signed_in: false, text: None, pending: None, offline: false, as_of: None, error: Some(ApiErr::Auth.message()) }),
         Err(e) => {
             let offline = matches!(e, ApiErr::Network(_));
-            let c = cache::read(&dir).memory;
+            // never show cached text for an account that has since signed out
+            let c = if load_tokens().is_some() { state.cache_read().memory } else { None };
             Ok(MemoryView {
-                signed_in: true,
+                signed_in: load_tokens().is_some(),
                 text: c.as_ref().map(|m| m.text.clone()),
                 pending: c.as_ref().and_then(|m| m.pending),
                 offline,
@@ -285,8 +409,8 @@ async fn remember(state: State<'_, AppState>, content: String) -> Result<String,
     if content.chars().count() > 8000 {
         return Err("Too long (8000 characters max).".into());
     }
-    let text = call_tool(&state, "remember", json!({"content": content, "project": "auto"})).await.map_err(|e| e.message())?;
-    Ok(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Saved.").to_string())
+    let text = call_tool(&state, "remember", json!({"content": content})).await.map_err(|e| e.message())?;
+    Ok(cache::truncate_bytes(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Saved."), 300))
 }
 
 #[derive(Serialize)]
@@ -299,7 +423,7 @@ struct RecallView {
 }
 
 #[tauri::command]
-async fn recall(app: AppHandle, state: State<'_, AppState>, query: String) -> Result<RecallView, String> {
+async fn recall(state: State<'_, AppState>, query: String) -> Result<RecallView, String> {
     let query = query.trim().to_string();
     if query.is_empty() {
         return Err("Type something to search for.".into());
@@ -307,20 +431,20 @@ async fn recall(app: AppHandle, state: State<'_, AppState>, query: String) -> Re
     if query.chars().count() > 500 {
         return Err("Query too long (500 characters max).".into());
     }
-    let dir = data_dir(&app);
-    match call_tool(&state, "recall", json!({"query": query, "project": "auto", "limit": 10})).await {
+    let started = state.gen();
+    match call_tool(&state, "recall", json!({"query": query, "limit": 10})).await {
         Ok(text) => {
-            let results = mcp::recall_items(&text);
+            let results: Vec<String> = mcp::recall_items(&text).into_iter().map(|r| cache::truncate_bytes(&r, cache::MAX_RESULT_BYTES)).collect();
             let now = cache::now();
-            let mut c = cache::read(&dir);
-            c.recall = Some(cache::RecallCache { query: query.clone(), results: results.clone(), saved_at: now });
-            let _ = cache::write(&dir, &c);
+            let (q, r) = (query.clone(), results.clone());
+            state.cache_update(started, move |c| c.recall = Some(cache::RecallCache { query: q, results: r, saved_at: now }));
             Ok(RecallView { query, results, offline: false, as_of: Some(now), error: None })
         }
         Err(ApiErr::Auth) => Err(ApiErr::Auth.message()),
         Err(e) => {
             let offline = matches!(e, ApiErr::Network(_));
-            match cache::read(&dir).recall {
+            let cached = if load_tokens().is_some() { state.cache_read().recall } else { None };
+            match cached {
                 Some(c) => Ok(RecallView { query: c.query, results: c.results, offline, as_of: Some(c.saved_at), error: Some(e.message()) }),
                 None => Err(e.message()),
             }
@@ -328,12 +452,28 @@ async fn recall(app: AppHandle, state: State<'_, AppState>, query: String) -> Re
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 struct ConnectCommands {
     claude: String,
     codex: String,
     cursor: String,
     from_server: bool,
+}
+
+/// connect.md is untrusted text that ends up on the clipboard: keep a command only if it passes the strict
+/// shape check; otherwise use the built-in one.
+fn validated_commands(parsed: (Option<String>, Option<String>, Option<String>)) -> ConnectCommands {
+    let (c, x, u) = parsed;
+    let c = c.filter(|s| mcp::is_safe_claude(s));
+    let x = x.filter(|s| mcp::is_safe_codex(s));
+    let u = u.filter(|s| mcp::is_safe_cursor(s));
+    let from_server = c.is_some() && x.is_some() && u.is_some();
+    ConnectCommands {
+        claude: c.unwrap_or_else(|| FALLBACK_CLAUDE.into()),
+        codex: x.unwrap_or_else(|| FALLBACK_CODEX.into()),
+        cursor: u.unwrap_or_else(|| FALLBACK_CURSOR.into()),
+        from_server,
+    }
 }
 
 #[tauri::command]
@@ -343,17 +483,11 @@ async fn connect_commands(state: State<'_, AppState>) -> Result<ConnectCommands,
         if !r.status().is_success() {
             return None;
         }
-        r.text().await.ok()
+        let b = read_limited(r, MAX_SMALL_BODY).await.ok()?;
+        String::from_utf8(b).ok()
     }
     .await;
-    let (c, x, u) = fetched.as_deref().map(mcp::parse_connect_md).unwrap_or((None, None, None));
-    let from_server = c.is_some() && x.is_some() && u.is_some();
-    Ok(ConnectCommands {
-        claude: c.unwrap_or_else(|| CONNECT_MD_FALLBACK.0.into()),
-        codex: x.unwrap_or_else(|| CONNECT_MD_FALLBACK.1.into()),
-        cursor: u.unwrap_or_else(|| CONNECT_MD_FALLBACK.2.into()),
-        from_server,
-    })
+    Ok(validated_commands(fetched.as_deref().map(mcp::parse_connect_md).unwrap_or((None, None, None))))
 }
 
 #[tauri::command]
@@ -362,8 +496,7 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 fn do_sign_out(app: &AppHandle) {
-    delete_tokens();
-    cache::clear(&data_dir(app));
+    app.state::<AppState>().sign_out_local();
     let _ = app.emit("signed-out", ());
 }
 
@@ -378,15 +511,14 @@ fn cancel_sign_in(state: State<'_, AppState>) {
 }
 
 async fn discover(http: &reqwest::Client) -> Result<(String, String, String), String> {
-    let v: serde_json::Value = http
+    let resp = http
         .get(format!("{}/.well-known/oauth-authorization-server", oauth::BASE))
         .timeout(Duration::from_secs(8))
         .send()
         .await
-        .map_err(|e| redact(&e.without_url().to_string()))?
-        .json()
-        .await
         .map_err(|e| redact(&e.without_url().to_string()))?;
+    let body = read_limited(resp, MAX_SMALL_BODY).await.map_err(|e| e.message())?;
+    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "server metadata was not understood".to_string())?;
     let get = |k: &str| -> Result<String, String> {
         let s = v.get(k).and_then(|x| x.as_str()).ok_or_else(|| format!("server metadata lacks {k}"))?;
         if !s.starts_with(&format!("{}/", oauth::BASE)) {
@@ -397,7 +529,20 @@ async fn discover(http: &reqwest::Client) -> Result<(String, String, String), St
     Ok((get("authorization_endpoint")?, get("token_endpoint")?, get("registration_endpoint")?))
 }
 
+fn page(msg: &str) -> String {
+    let safe = msg.replace('&', "&amp;").replace('<', "&lt;");
+    format!("<!doctype html><meta charset=utf-8><title>AgentRecall</title><body style=\"background:#04060a;color:#eef1f6;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0\"><p>{safe}</p></body>")
+}
+
+fn http_reply(status: &str, msg: &str) -> String {
+    let p = page(msg);
+    format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: {}\r\n\r\n{p}", p.len())
+}
+
+/// Wrong path or wrong/missing state: answer and keep listening, so a stray local request cannot abort a
+/// sign-in that is in progress. Only the real callback (our state) ends the wait.
 async fn wait_for_callback(listener: tokio::net::TcpListener, expected_state: &str) -> Result<String, String> {
+    use oauth::CallbackAction as A;
     loop {
         let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 8192];
@@ -406,46 +551,35 @@ async fn wait_for_callback(listener: tokio::net::TcpListener, expected_state: &s
             _ => continue, // speculative/empty connection
         };
         let req = String::from_utf8_lossy(&buf[..n]).to_string();
-        let Some(cb) = oauth::parse_callback(&req) else {
-            let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").await;
-            continue;
-        };
-        let reply = |msg: &str| {
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: {}\r\n\r\n{}",
-                page(msg).len(),
-                page(msg)
-            )
-        };
-        if !oauth::state_matches(expected_state, cb.state.as_deref()) {
-            let _ = sock.write_all(reply("Sign-in failed: state mismatch. Close this tab and try again.").as_bytes()).await;
-            return Err("sign-in aborted: state did not match".into());
-        }
-        if let Some(e) = cb.error {
-            let _ = sock.write_all(reply("Sign-in was not completed. You can close this tab.").as_bytes()).await;
-            return Err(format!("sign-in refused: {}", redact(&e)));
-        }
-        match cb.code {
-            Some(code) => {
-                let _ = sock.write_all(reply("Signed in. You can close this tab and return to AgentRecall.").as_bytes()).await;
+        match oauth::classify_callback(expected_state, &req) {
+            A::NotCallback => {
+                let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").await;
+            }
+            A::WrongState => {
+                let _ = sock.write_all(http_reply("400 Bad Request", "This sign-in link does not belong to the current sign-in. Use the tab opened by AgentRecall.").as_bytes()).await;
+            }
+            A::ProviderError(e) => {
+                let _ = sock.write_all(http_reply("200 OK", "Sign-in was not completed. You can close this tab.").as_bytes()).await;
+                return Err(format!("Sign-in was not completed ({}).", redact(&cache::truncate_bytes(&e, 60))));
+            }
+            A::NoCode => {
+                let _ = sock.write_all(http_reply("200 OK", "Sign-in failed: no code returned.").as_bytes()).await;
+                return Err("Sign-in failed: the server returned no code.".into());
+            }
+            A::Code(code) => {
+                let _ = sock.write_all(http_reply("200 OK", "Signed in. You can close this tab and return to AgentRecall.").as_bytes()).await;
                 let _ = sock.shutdown().await;
                 return Ok(code);
-            }
-            None => {
-                let _ = sock.write_all(reply("Sign-in failed: no code returned.").as_bytes()).await;
-                return Err("sign-in returned no code".into());
             }
         }
     }
 }
 
-fn page(msg: &str) -> String {
-    let safe = msg.replace('&', "&amp;").replace('<', "&lt;");
-    format!("<!doctype html><meta charset=utf-8><title>AgentRecall</title><body style=\"background:#04060a;color:#eef1f6;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0\"><p>{safe}</p></body>")
-}
-
 #[tauri::command]
 async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // a Cancel click with no sign-in running leaves a permit behind; drop it
+    let _ = tokio::time::timeout(Duration::ZERO, state.cancel.notified()).await;
+
     let (authorize, token_ep, register_ep) = discover(&state.http).await.map_err(|e| format!("Cannot reach the server: {e}"))?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -465,10 +599,12 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             .send()
             .await
             .map_err(|e| redact(&e.without_url().to_string()))?;
-        if !r.status().is_success() {
-            return Err(format!("Registration refused ({}).", r.status()));
+        let status = r.status();
+        let body = read_limited(r, MAX_SMALL_BODY).await.map_err(|e| e.message())?;
+        if !status.is_success() {
+            return Err(format!("Registration refused ({status})."));
         }
-        r.json().await.map_err(|e| redact(&e.without_url().to_string()))?
+        serde_json::from_slice(&body).map_err(|_| "registration reply was not understood".to_string())?
     };
     let client_id = reg.get("client_id").and_then(|v| v.as_str()).ok_or("registration returned no client_id")?.to_string();
 
@@ -497,14 +633,17 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
         ],
     )
     .await
-    .map_err(|e| e.message())?;
+    .map_err(|e| match e {
+        ApiErr::Rejected | ApiErr::Auth => "Sign-in failed: the server rejected the sign-in code. Please try again.".to_string(),
+        other => format!("Sign-in failed: {}", other.message()),
+    })?;
     let tokens = Tokens {
         access: t.access_token,
-        refresh: t.refresh_token.ok_or("server issued no refresh token")?,
+        refresh: t.refresh_token.ok_or("Sign-in failed: the server issued no refresh token.")?,
         exp: cache::now() + t.expires_in.unwrap_or(3600),
         client_id,
     };
-    save_tokens(&tokens)?;
+    save_tokens_retry(&tokens).map_err(|_| "Sign-in failed: could not save your sign-in to Windows Credential Manager.".to_string())?;
     Ok(())
 }
 
@@ -537,9 +676,18 @@ pub fn run() {
         .expect("http client");
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState { http, refresh_lock: tokio::sync::Mutex::new(()), cancel: tokio::sync::Notify::new() })
+        .manage(AppState {
+            http,
+            refresh_lock: tokio::sync::Mutex::new(()),
+            cancel: tokio::sync::Notify::new(),
+            generation: AtomicU64::new(0),
+            cache_lock: Mutex::new(()),
+            data_dir: OnceLock::new(),
+        })
         .invoke_handler(tauri::generate_handler![status, memory, remember, recall, connect_commands, open_url, sign_out, sign_in, cancel_sign_in])
         .setup(|app| {
+            let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentrecall-tray"));
+            let _ = app.state::<AppState>().data_dir.set(dir);
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let signout = MenuItem::with_id(app, "signout", "Sign out", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -598,7 +746,73 @@ mod tests {
     }
 
     #[test]
+    fn rejected_code_message_does_not_say_signed_out() {
+        assert!(!ApiErr::Rejected.message().contains("Signed out"));
+    }
+
+    #[test]
     fn callback_page_escapes_html() {
         assert!(!page("<script>").contains("<script>"));
+    }
+
+    /// Token shapes from oauth-store.ts: `aro_` / `arr_` + base64url(32 bytes) = 4 + 43 chars (ACCESS_RE /
+    /// REFRESH_RE), client_id is a UUID. The Credential Manager blob limit is 2560 bytes (1280 UTF-16 units).
+    #[test]
+    fn token_blob_fits_credential_manager() {
+        let t = Tokens {
+            access: format!("aro_{}", "A".repeat(43)),
+            refresh: format!("arr_{}", "B".repeat(43)),
+            exp: 1_794_617_287,
+            client_id: "ded729a0-fb20-4c0c-8d27-34b02a9ab4c6".into(),
+        };
+        let blob = tokens_blob(&t).unwrap();
+        assert!(blob.encode_utf16().count() < 400, "blob is {} units", blob.encode_utf16().count());
+        assert!(blob.encode_utf16().count() < 1200);
+    }
+
+    #[test]
+    fn only_invalid_grant_counts_as_rejected() {
+        assert!(is_invalid_grant(br#"{"error":"invalid_grant","error_description":"x"}"#));
+        assert!(!is_invalid_grant(br#"{"error":"invalid_target"}"#));
+        assert!(!is_invalid_grant(br#"{"error":"temporarily_unavailable"}"#));
+        assert!(!is_invalid_grant(b"<html>502 Bad Gateway</html>"));
+        assert!(!is_invalid_grant(b""));
+    }
+
+    #[test]
+    fn body_cap() {
+        let mut b = Vec::new();
+        assert!(append_capped(&mut b, &[0u8; 60], 100));
+        assert!(append_capped(&mut b, &[0u8; 40], 100));
+        assert!(!append_capped(&mut b, &[0u8; 1], 100));
+        assert_eq!(b.len(), 100);
+    }
+
+    #[test]
+    fn cache_write_guard() {
+        assert!(may_write_cache(3, 3, true));
+        assert!(!may_write_cache(4, 3, true)); // signed out meanwhile
+        assert!(!may_write_cache(3, 3, false)); // tokens gone
+    }
+
+    #[test]
+    fn hostile_connect_commands_fall_back() {
+        let good = (
+            Some("claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp".to_string()),
+            Some("codex mcp add agent-recall --url https://agentrecallx.com/mcp\ncodex mcp login agent-recall".to_string()),
+            Some(FALLBACK_CURSOR.to_string()),
+        );
+        assert!(validated_commands(good).from_server);
+        let evil = (
+            Some("claude mcp add x https://agentrecallx.com/mcp; calc".to_string()),
+            Some("powershell -c calc".to_string()),
+            Some("{\"mcpServers\":{\"a\":{\"command\":\"calc\"}}}".to_string()),
+        );
+        let v = validated_commands(evil);
+        assert!(!v.from_server);
+        assert_eq!(v.claude, FALLBACK_CLAUDE);
+        assert_eq!(v.codex, FALLBACK_CODEX);
+        assert_eq!(v.cursor, FALLBACK_CURSOR);
+        assert!(validated_commands((None, None, None)).codex == FALLBACK_CODEX);
     }
 }

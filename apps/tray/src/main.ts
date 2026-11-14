@@ -1,11 +1,10 @@
 // AgentRecall tray UI. No framework. All server text is rendered with textContent, never innerHTML.
 // The webview never sees a token: every network call is a Rust command.
 
-interface TauriGlobal {
-  core: { invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> };
-  event: { listen(name: string, cb: () => void): Promise<unknown> };
-}
-const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+const inApp = "__TAURI_INTERNALS__" in window;
 
 interface Status { online: boolean; version: string | null; signed_in: boolean; checked_at: number }
 interface MemoryView { signed_in: boolean; text: string | null; pending: number | null; offline: boolean; as_of: number | null; error: string | null }
@@ -15,8 +14,8 @@ interface ConnectCommands { claude: string; codex: string; cursor: string; from_
 const BASE = "https://agentrecallx.com";
 
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!tauri) return Promise.reject("Not running inside the app.");
-  return tauri.core.invoke<T>(cmd, args).catch((e: unknown) => Promise.reject(typeof e === "string" ? e : "Something went wrong."));
+  if (!inApp) return Promise.reject("Not running inside the app.");
+  return tauriInvoke<T>(cmd, args).catch((e: unknown) => Promise.reject(typeof e === "string" ? e : "Something went wrong."));
 }
 
 type Child = Node | string | null | undefined;
@@ -269,7 +268,7 @@ async function boot(): Promise<void> {
   await refreshStatus();
   render();
   if (state.status?.signed_in) void loadMemory();
-  if (tauri) void tauri.event.listen("signed-out", () => { lastMemory = null; lastRecall = null; void refreshStatus().then(render); });
+  if (inApp) void listen("signed-out", () => { lastMemory = null; lastRecall = null; void refreshStatus().then(render); });
 }
 
 void boot();

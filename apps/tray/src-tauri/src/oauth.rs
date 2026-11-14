@@ -60,6 +60,33 @@ pub fn parse_callback(request: &str) -> Option<Callback> {
     Some(cb)
 }
 
+#[derive(Debug, PartialEq)]
+pub enum CallbackAction {
+    /// not our callback (other path/method): answer 404 and keep listening
+    NotCallback,
+    /// callback with a wrong or missing state: answer and keep listening
+    WrongState,
+    /// the provider reported an error for our state: sign-in is over
+    ProviderError(String),
+    /// our state, no code: sign-in is over
+    NoCode,
+    Code(String),
+}
+
+pub fn classify_callback(expected_state: &str, request: &str) -> CallbackAction {
+    let Some(cb) = parse_callback(request) else { return CallbackAction::NotCallback };
+    if !state_matches(expected_state, cb.state.as_deref()) {
+        return CallbackAction::WrongState;
+    }
+    if let Some(e) = cb.error {
+        return CallbackAction::ProviderError(e);
+    }
+    match cb.code {
+        Some(c) if !c.is_empty() => CallbackAction::Code(c),
+        _ => CallbackAction::NoCode,
+    }
+}
+
 pub fn authorize_url(endpoint: &str, client_id: &str, redirect: &str, challenge: &str, state: &str) -> Result<String, String> {
     let mut u = url::Url::parse(endpoint).map_err(|e| e.to_string())?;
     u.query_pairs_mut()
@@ -114,6 +141,21 @@ mod tests {
         assert_eq!(err.error.as_deref(), Some("access_denied"));
         assert!(parse_callback("GET /other?code=1 HTTP/1.1").is_none());
         assert!(parse_callback("POST /callback HTTP/1.1").is_none());
+    }
+
+    #[test]
+    fn callback_classification_keeps_listening_on_bad_requests() {
+        let ok = "GET /callback?code=C&state=S HTTP/1.1";
+        assert_eq!(classify_callback("S", ok), CallbackAction::Code("C".into()));
+        assert_eq!(classify_callback("S", "GET /callback?code=C&state=EVIL HTTP/1.1"), CallbackAction::WrongState);
+        assert_eq!(classify_callback("S", "GET /callback?code=C HTTP/1.1"), CallbackAction::WrongState);
+        assert_eq!(classify_callback("S", "GET /favicon.ico HTTP/1.1"), CallbackAction::NotCallback);
+        assert_eq!(classify_callback("S", "POST /callback?state=S HTTP/1.1"), CallbackAction::NotCallback);
+        assert_eq!(
+            classify_callback("S", "GET /callback?error=access_denied&state=S HTTP/1.1"),
+            CallbackAction::ProviderError("access_denied".into())
+        );
+        assert_eq!(classify_callback("S", "GET /callback?state=S HTTP/1.1"), CallbackAction::NoCode);
     }
 
     #[test]

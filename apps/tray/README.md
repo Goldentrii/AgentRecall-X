@@ -48,17 +48,21 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ### Testing offline start
 
-Set `AGENTRECALL_TRAY_TEST_HEALTH_URL` (for example `http://127.0.0.1:9/healthz`) before starting the exe to point only the health check at a dead address. The window must still open and show "Offline".
+The release exe has no test hooks. To simulate an unreachable server, build with `--features custom-protocol,test-hooks` (the Docker steps above, with a separate `CARGO_TARGET_DIR`), then set `AGENTRECALL_TRAY_TEST_HEALTH_URL=http://127.0.0.1:9/healthz` before starting that exe. It redirects only the health check. The window must still open and show "Offline". Debug builds honour the variable too; release builds without `test-hooks` ignore it.
 
 ## Where things live
 
-- Tokens: Windows Credential Manager, entry `oauth-tokens` under `AgentRecall Tray`. Never in a file, never logged, never sent to the webview. All log and error text passes through a redactor.
-- Cache: `%APPDATA%\com.agentrecall.tray\cache.json` in the app data dir. **The cache holds your memory text** (the last Memory view and the last recall results) in plain JSON so it can be shown offline. Sign out deletes it. Delete the file by hand at any time.
-- The webview makes no network calls (CSP `default-src 'self'`); Rust makes every HTTP call. Opening URLs from the app is limited to https://agentrecallx.com and https://github.com.
+- Tokens: Windows Credential Manager, entry `oauth-tokens` under `AgentRecall Tray`, one JSON blob of about 250 characters (two 47-character tokens, expiry, client id), far below the Credential Manager limit. Never in a file, never logged, never sent to the webview (`withGlobalTauri` is off; the webview only has event-listen permission). All log and error text passes through a redactor.
+- Cache: `%APPDATA%\com.agentrecall.tray\cache.json`. **The cache holds your memory text** (the last Memory view and the last recall results) in plain JSON so it can be shown offline. It is capped (64 KiB memory text, 20 results of 2 KiB, 256 KiB file) and guarded by a lock.
+- What sign out clears: the credential-store entry and the cache file. This happens on every sign-out path: the Sign out button, the tray menu, the server rejecting the refresh token, a second 401, and a failed save of rotated tokens. A request that was in flight during sign-out cannot write the cache afterwards.
+- The webview makes no network calls (CSP `default-src 'self'`); Rust makes every HTTP call, and every response body is size-capped (1 MiB tool results, 64 KiB everything else). Opening URLs from the app is limited to https://agentrecallx.com and https://github.com.
 
 ## Security notes
 
-- The loopback listener binds 127.0.0.1 on a random port, checks `state`, takes the first valid `/callback` request and then closes. Stray non-callback connections get a 404 and are ignored; sign-in times out after 5 minutes.
+- The loopback listener binds 127.0.0.1 on a random port. A request with the wrong path or wrong `state` gets an answer and the listener keeps waiting; only the real callback (our `state`) ends it. Sign-in times out after 5 minutes.
+- Only an `invalid_grant` reply from the token endpoint signs you out. Any other error keeps your tokens and shows a retryable message. If the renewed tokens cannot be saved, the app tells you and signs you out rather than carrying on with a dead refresh token.
+- Connect commands copied to the clipboard come from connect.md, which is treated as untrusted. A command is used only if it matches a strict shape: `claude mcp add ...` or `codex mcp add ...` (plus optionally `codex mcp login <name>`), made only of letters, digits, space and `- _ . / : =`, and containing `https://agentrecallx.com/mcp`; the Cursor snippet must be JSON with exactly one `mcpServers` entry whose only key is that URL. Anything else is replaced by a built-in command.
+- The pending-review button appears only for the server's exact line (hourglass, then `N proposed correction(s) await(s) the owner's confirmation`) at the start of a line.
 - Server text is rendered with `textContent`, never `innerHTML`.
 - Sign out removes tokens from this machine. To revoke the grant on the server too, use "Open my dashboard" and disconnect the app there.
 

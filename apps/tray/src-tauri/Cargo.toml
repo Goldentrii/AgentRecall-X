@@ -34,3 +34,5 @@ panic = "abort"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+# Testing hooks (offline simulation env var). NEVER enabled in the release build.
+test-hooks = []
