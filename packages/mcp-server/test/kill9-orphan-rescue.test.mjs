@@ -38,7 +38,7 @@ function isolatedRoot() {
 
 /**
  * H1 fix (Train C review, 2026-08-12 wave) — server #1 below ("the victim")
- * must actually run C-1 ambient capture so its `recall` tool calls populate
+ * must actually run C-1 ambient capture so its write-tool calls (read-only tools are not captured) populate
  * working memory for the rescue to find. The new `isHookOwnedHost()` gate
  * (host-profile.ts) skips installing C-1 on a hook-owned host; naively
  * spreading `...process.env` leaks THIS test process's OWN Claude Code
@@ -125,8 +125,8 @@ describe("kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only ses
       clientInfo: { name: "kill9-e2e-victim", version: "1.0.0" },
     });
     rpc1.notify("notifications/initialized", {});
-    await rpc1.send("tools/call", { name: "recall", arguments: { query: "starting investigation of the KILL9_E2E_UNIQUE_TERM issue" } });
-    await rpc1.send("tools/call", { name: "recall", arguments: { query: "found the root cause for KILL9_E2E_UNIQUE_TERM, writing the fix now" } });
+    await rpc1.send("tools/call", { name: "remember", arguments: { content: "starting investigation of the KILL9_E2E_UNIQUE_TERM issue" } });
+    await rpc1.send("tools/call", { name: "remember", arguments: { content: "found the root cause for KILL9_E2E_UNIQUE_TERM, writing the fix now" } });
 
     // Confirm WM was actually captured before we kill the process.
     const wmDir = path.join(root, "working-memory");
@@ -186,7 +186,7 @@ describe("kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only ses
       const sessionDir = path.join(unclaimedDir, sid);
       if (!fs.statSync(sessionDir).isDirectory()) continue;
       for (const f of fs.readdirSync(sessionDir)) {
-        if (!f.endsWith(".md")) continue;
+        if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
         const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
         if (body.includes("KILL9_E2E_UNIQUE_TERM")) rescuedCard = { slug: "_unclaimed", file: f, body };
       }

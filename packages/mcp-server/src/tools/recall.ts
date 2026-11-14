@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { smartRecall, fenceMemory, type SmartRecallResultItem } from "agent-recall-core";
-import { ADD } from "./annotations.js";
+import { READ } from "./annotations.js";
 
 /** Truncate to n chars with ellipsis */
 function trunc(s: string, n: number): string {
@@ -30,8 +30,8 @@ function formatResults(items: SmartRecallResultItem[]): string {
 export function register(server: McpServer): void {
   server.registerTool("recall", {
     title: "Recall",
-    annotations: ADD,
-    description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions.",
+    annotations: READ,
+    description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions. Read-only: the call leaves the memory store byte-identical (disclosed exceptions: the hosted server's per-credential activity record). Usage counters and any feedback ratings are queued and recorded after the call: before the next write tool (waits at most ~1.5 s), by a 30 s background flush, or when the stdio server's stdin closes or it receives SIGTERM/SIGINT. A crash (kill -9, power loss) before then loses them.",
     inputSchema: {
       query: z.string().describe("What to search for."),
       project: z.string().default("auto"),
@@ -42,6 +42,7 @@ export function register(server: McpServer): void {
         useful: z.boolean().describe("Was this result useful? true=boost, false=penalize in future recalls."),
       })).optional().describe(
         "Rate previous recall results to improve future ranking. " +
+        "Applied AFTER this call (queued; flushed before the next write tool, by the 30 s background flush, or on stdin close or SIGTERM/SIGINT): it never changes this call's results, and a crash (kill -9, power loss) before the next flush loses it. " +
         "Pass {id, useful:true} for each result you actually used; {id, useful:false} for noise."
       ),
       since: z.string().optional().describe('ISO date ("2026-05-01") or relative duration ("7d"). Filters journal results.'),

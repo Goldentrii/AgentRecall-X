@@ -25,7 +25,7 @@
  * can never silently write tenants into the operator's home).
  */
 import * as path from "node:path";
-import { VERSION, listPendingCorrections, confirmPendingCorrection, resolvePendingCorrection, readStagedProposal } from "agent-recall-core";
+import { VERSION, flushAllBookkeeping, listPendingCorrections, confirmPendingCorrection, resolvePendingCorrection, readStagedProposal } from "agent-recall-core";
 import * as fs from "node:fs";
 import { tenantRoot, tenantProjects, asOwner, PROJECT_RE, HOSTED_DEFAULT_PROJECT } from "./tenant-paths.js";
 import { startHttpServer, DEFAULT_QUOTA_BYTES, DEFAULT_RATE_PER_MIN, formatMb } from "./serve.js";
@@ -193,10 +193,11 @@ async function main(argv: string[]): Promise<void> {
       const force = setTimeout(() => {
         process.stderr.write("agent-recall-server: drain timeout, exiting\n");
         server.flushActivity(); // never throws; keeps the last minute of agent activity
-        process.exit(1);
+        process.exit(1); // queued read bookkeeping (counters, telemetry) is best effort and may be lost here
       }, 8_000);
       force.unref();
-      server.close(() => process.exit(0));
+      // Apply each tenant's queued read bookkeeping (flushAllBookkeeping never throws) before exiting.
+      server.close(() => { void flushAllBookkeeping().finally(() => process.exit(0)); });
       server.closeIdleConnections();
     };
     process.on("SIGTERM", () => shutdown("SIGTERM"));
