@@ -133,10 +133,12 @@ function forgetPendingCwd(slug: string, normalized: string): void {
 export function addCwdToAllowlist(slug: string, cwdPath: string): void {
   if (!cwdPath || !path.isAbsolute(cwdPath)) return;
   const normalized = normalizePath(cwdPath);
-  forgetPendingCwd(slug, normalized);
   const current = readCwdAllowlist(slug);
   // Case-folded dedupe (win32): two spellings of one directory are one entry.
-  if (current.paths.some((p) => pathCompareKey(p) === pathCompareKey(normalized))) return;
+  if (current.paths.some((p) => pathCompareKey(p) === pathCompareKey(normalized))) {
+    forgetPendingCwd(slug, normalized); // already persisted: nothing left pending
+    return;
+  }
   const next: CwdAllowlist = { paths: [...current.paths, normalized].sort() };
   const dir = palaceDir(slug);
   ensureDir(dir);
@@ -145,6 +147,8 @@ export function addCwdToAllowlist(slug: string, cwdPath: string): void {
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, target);
+  // Only after the entry is on disk: a throw above leaves it pending for the next flush.
+  forgetPendingCwd(slug, normalized);
 }
 
 /**

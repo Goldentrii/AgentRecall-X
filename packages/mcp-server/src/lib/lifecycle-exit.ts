@@ -22,6 +22,7 @@
  */
 
 import { getSessionId, distillSessionToCard, isHookOwnedHost, flushAllBookkeeping } from "agent-recall-core";
+import { PRE_WRITE_FLUSH_MS, settleWithin } from "./bookkeeping.js";
 
 /** Hard ceiling on how long this handler may delay process exit (design doc C-3 guard). */
 const EXIT_TIMEOUT_MS = 2000;
@@ -45,7 +46,7 @@ async function runOnce(): Promise<void> {
 
   try {
     // Queued read bookkeeping (including the working-memory notes of read-only calls) lands first, so the distill sees it.
-    await flushAllBookkeeping();
+    await settleWithin(flushAllBookkeeping(), PRE_WRITE_FLUSH_MS);
     // Reuses the SAME WM→card mechanism C-2's orphan-rescue sweep uses
     // (distillOneSession, storage/working-memory.ts) for THIS process's own,
     // still-fresh session id — no age gate, because this fires precisely
@@ -82,10 +83,40 @@ async function runOnce(): Promise<void> {
  * and never calls `process.exit(0)` on a host that did not ask for that.
  */
 export function installLifecycleExitHandlers(): void {
-  if (isHookOwnedHost()) return;
+  if (isHookOwnedHost()) {
+    installFlushOnlyHandlers();
+    return;
+  }
 
   process.stdin.on("end", runOnce);
   process.stdin.on("close", runOnce);
   process.on("SIGTERM", runOnce);
   process.on("SIGINT", runOnce);
+}
+
+/**
+ * Hook-owned host (Claude Code with hooks): hook-end owns distillation, so none happens here, and this process
+ * never calls process.exit(0) on its own. But the queued read bookkeeping (counters, lifecycle telemetry, recall
+ * ratings) belongs to THIS process and nothing else will flush it, so it is flushed (bounded) on stdin end/close
+ * and on SIGTERM/SIGINT. A signal is then re-raised with the handler removed, so the process still dies of the
+ * signal exactly as it would have without a handler; stdin close just lets the process exit naturally.
+ */
+let flushOnlyRun: Promise<void> | undefined;
+/** One bounded flush shared by every trigger: a SIGTERM arriving after stdin closed waits for the SAME flush. */
+function flushOnce(): Promise<void> {
+  flushOnlyRun ??= settleWithin(flushAllBookkeeping(), PRE_WRITE_FLUSH_MS);
+  return flushOnlyRun;
+}
+
+function installFlushOnlyHandlers(): void {
+  process.stdin.on("end", () => { void flushOnce(); });
+  process.stdin.on("close", () => { void flushOnce(); });
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    const handler = (): void => {
+      process.removeListener(sig, handler);
+      // If the flush hangs, the bounded wait still ends and the signal is re-raised.
+      void flushOnce().finally(() => { process.kill(process.pid, sig); });
+    };
+    process.on(sig, handler);
+  }
 }

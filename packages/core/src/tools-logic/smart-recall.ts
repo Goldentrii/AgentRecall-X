@@ -1089,7 +1089,11 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     feedbackLog = mergeFeedback(readFeedbackLog(), feedback, query); // this call ranks with it either way
     if (inReadScope()) {
       // Inside a read the rating is queued (ranking input), applied by the next write or flush.
-      void bookkeep({ apply: async () => { await processFeedback(feedback, query); } });
+      // A skipped persist must count as failed (logged by the flush), not as applied.
+      void bookkeep({ apply: async () => {
+        const r = await processFeedback(feedback, query);
+        if (r.persistenceSkipped) throw new Error("recall feedback was not persisted");
+      } });
     } else {
       feedbackPersist = processFeedback(feedback, query).catch((err: unknown) => {
         console.error(

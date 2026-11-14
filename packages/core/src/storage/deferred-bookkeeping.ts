@@ -9,10 +9,13 @@
  * Inside withDeferredBookkeeping() every such write goes through bookkeep(), which does not run it. It queues
  * it, per store root (so per tenant on the hosted server, never mixed), and the queue is applied later:
  *   1. before the next WRITE tool call on that store (flushBookkeeping), so the write sees current counters;
- *   2. by a periodic background flush (flushAllBookkeeping on an unref-ed timer);
- *   3. at shutdown (the servers call flushAllBookkeeping).
- * Best effort by design: a read never waits on the queue, never fails because of it, and a crash before a
- * flush loses at most counters and telemetry (each one re-derivable or advisory), never memory.
+ *   2. by a periodic background flush (flushAllBookkeeping on an unref-ed timer, every 30 s);
+ *   3. at graceful shutdown: the stdio server flushes (bounded, about 1.5 s) when stdin ends or closes and on
+ *      SIGTERM/SIGINT, on every host including hook-owned ones; the HTTP server flushes while draining.
+ * Best effort by design: a read never waits on the queue, never fails because of it, and a crash (kill -9,
+ * power loss) before the next flush loses the queued counters, telemetry and recall ratings (each one
+ * re-derivable or advisory), never memory. A write tool waits at most about 1.5 s for the queue
+ * (mcp-server lib/bookkeeping.ts); a slower flush keeps running in the background.
  *
  * Outside withDeferredBookkeeping() (the CLI, the SDK, every write tool) bookkeep() just runs the operation
  * now and returns its result, so those paths behave exactly as before.
@@ -41,11 +44,17 @@ const FLUSH_INTERVAL_MS = 30_000;
 
 interface Entry { op: BookkeepingOp; times: number }
 interface Queue {
-  /** The scope the ops were queued under: applied under exactly this tenant/root, never another. */
+  /**
+   * The scope of the FIRST op queued for this root; every later op for the root is applied under it.
+   * Invariant: an op's apply() may depend on the root (and tenant storage binding) only, never on per-call
+   * state such as the session id or credential. No current op reads those inside apply().
+   */
   scope: { tenant?: TenantContext; root: string };
   entries: Map<string, Entry>;
   /** Serializes flushes of this store. */
   flushing: Promise<unknown>;
+  /** Flushes queued or running on this store. */
+  busy: number;
 }
 
 const deferring = new AsyncLocalStorage<true>();
@@ -88,7 +97,7 @@ export function bookkeep(op: BookkeepingOp): void | Promise<void> {
       dropped += queues.get(oldest)!.entries.size;
       queues.delete(oldest);
     }
-    q = { scope, entries: new Map(), flushing: Promise.resolve() };
+    q = { scope, entries: new Map(), flushing: Promise.resolve(), busy: 0 };
     queues.set(scope.root, q);
   }
   const key = op.key ?? `#${seq++}`;
@@ -126,9 +135,14 @@ async function flushQueue(q: Queue): Promise<FlushResult> {
       }
     }
   };
+  q.busy++;
   const next = q.flushing.then(run, run);
   q.flushing = next;
-  await next;
+  try {
+    await next;
+  } finally {
+    q.busy--;
+  }
   return result;
 }
 
@@ -150,7 +164,9 @@ export async function flushAllBookkeeping(): Promise<FlushResult> {
     total.applied += r.applied;
     total.failed += r.failed;
   }
-  for (const [root, q] of queues) if (q.entries.size === 0) queues.delete(root);
+  // Only idle queues: one with a flush in flight (or ops added meanwhile) must stay, or a new queue for the
+  // same root could interleave with the running flush.
+  for (const [root, q] of queues) if (q.entries.size === 0 && !q.busy) queues.delete(root);
   return total;
 }
 

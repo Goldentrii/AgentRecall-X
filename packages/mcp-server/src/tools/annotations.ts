@@ -14,15 +14,20 @@
  *     (correction "retrieved" outcomes, rule hit counts, room access counts and
  *     salience, recall `feedback`, lifecycle telemetry, crash-rescue sweeps,
  *     palace scaffolding, the cwd allowlist, the lexical index cache) is queued
- *     by core's bookkeep() and applied by the next write tool call, a periodic
- *     flush, or shutdown (lib/bookkeeping.ts). The call itself leaves the store
- *     byte-identical.
+ *     by core's bookkeep() and applied at exactly these flush points
+ *     (lib/bookkeeping.ts, lib/lifecycle-exit.ts): before the next write tool
+ *     call (which waits at most 1.5 s; a slower flush continues in the
+ *     background), by the 30 s background flush, when the stdio server's stdin
+ *     ends or closes or it gets SIGTERM/SIGINT (every stdio host, hook-owned
+ *     included; bounded to 1.5 s), and while the HTTP server drains. The call
+ *     itself leaves the store byte-identical, apart from the exceptions
+ *     disclosed below (AR_AB_ENABLED, the hosted activity record).
  *   - Deferred, not dropped: usage counters (retrieved_count, last_retrieved,
  *     rule hits, room access_count and salience) and recall `feedback`
  *     ratings are applied after the call, so repeated reads can change what a
  *     LATER call ranks; nothing a call returns depends on its own bookkeeping.
- *     Deferred writes are best effort: a crash inside the flush window (30 s)
- *     loses them.
+ *     Deferred writes are best effort: a crash (kill -9, power loss) before the
+ *     next flush loses the queued counters, telemetry and ratings.
  *   - Still written during the call, outside the read-only claim: on the
  *     hosted server the per-credential activity record (http/activity.ts:
  *     buffered in memory, flushed to the server's own _server/ directory; it
