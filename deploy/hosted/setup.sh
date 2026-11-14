@@ -92,7 +92,8 @@ if sudo grep -q '^AR_DOMAIN=' "$env_file"; then
 else
   echo "AR_DOMAIN=$AR_DOMAIN" | sudo tee -a "$env_file" >/dev/null
 fi
-sudo docker compose up -d --build --remove-orphans
+AR_CADDYFILE_SHA="$(sha256sum Caddyfile | cut -d' ' -f1)"; export AR_CADDYFILE_SHA  # compose.yaml label: recreates Caddy when the Caddyfile changed
+sudo env AR_CADDYFILE_SHA="$AR_CADDYFILE_SHA" docker compose up -d --build --remove-orphans
 
 say "7/7 health (waits up to 10 min for the HTTPS certificate)"
 for _ in $(seq 1 120); do

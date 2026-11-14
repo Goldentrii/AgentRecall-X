@@ -55,6 +55,12 @@ services:
     # Pinned by digest (Caddy 2.11.9); bump deliberately.
     image: caddy:2.11.9@sha256:ce773ec7a742ce15ee6bf2bb5f65882b9e2a4487b10733e6f1484f86e6b5d8bc
     restart: unless-stopped
+    # The Caddyfile is a single-file bind mount: compose never notices an edit to it, and
+    # a replaced file leaves the container on the old inode. setup.sh and domain-switch.sh
+    # export the file's sha256; being part of the definition, a change recreates Caddy
+    # (and nothing else does).
+    labels:
+      ar.caddyfile-sha: ${AR_CADDYFILE_SHA:-unset}
     depends_on:
       server:
         condition: service_healthy

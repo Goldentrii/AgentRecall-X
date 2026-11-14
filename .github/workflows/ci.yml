@@ -153,5 +153,7 @@ jobs:
         run: bash deploy/hosted/domain-switch.test.sh
       - name: smoke.mjs (post-deploy check, against a fake server)
         run: node --test deploy/hosted/smoke.test.mjs
+      - name: compose label (Caddyfile change recreates Caddy)
+        run: AR_TEST_REQUIRE_DOCKER=1 bash deploy/hosted/compose-label.test.sh
       - name: Caddyfile (real Caddy)
         run: AR_TEST_REQUIRE_DOCKER=1 bash deploy/hosted/caddy.test.sh
