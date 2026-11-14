@@ -530,14 +530,15 @@ function trialCard(t: TrialState): string {
       ? (t.waiting
         ? `<div class="meta">Your rule is waiting for your approval. <a href="/review">Approve it there</a>; nothing is active until you do.</div>`
         : `<div class="meta">You have a rule your agents follow.</div>`)
-      : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${cmd("trial-rule", TRIAL_RULE_SAY)}`);
-  const s3 = step(3, "Ask a second agent", t.degraded ? unknown
+      : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : ""}${cmd("trial-rule", TRIAL_RULE_SAY)}`);
+  const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
+  const s3 = step(3, "A second agent connected after your rule went live", t.degraded ? unknown
     : t.done[2]
-      ? `<div class="meta">A second agent has been active since the rule went live.</div>`
-      : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cmd("trial-ask", TRIAL_ASK_SAY)}`);
-  const names = ["connect an agent", "teach it one rule", "ask a second agent"];
+      ? `<div class="meta">Two of your agents have been active since your rule went live. A new sign-in of the same agent also counts as a second one.</div>`
+      : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`);
+  const names = ["connect an agent", "teach it one rule", "connect a second agent"];
   const status = t.next === null
-    ? `<div class="notice ok" role="status">It works: a rule you taught one agent reached another.</div>`
+    ? `<div class="notice ok" role="status">Two of your agents have been active since your rule went live: each one loads it at session start.</div>`
     : t.degraded && t.next > 1
       ? `<p class="sub">Some steps could not be checked just now.</p>`
       : `<p class="sub">Next: ${names[t.next - 1]}.</p>`;

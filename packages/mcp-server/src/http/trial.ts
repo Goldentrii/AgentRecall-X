@@ -4,45 +4,59 @@
  *
  *   1. Connect an agent   a live credential of this account has recorded activity (activity.ts)
  *   2. Teach it one rule  the account has a rule: one waiting for approval, or an active one
- *   3. Ask a second agent a credential other than the author has been active since a rule went active
+ *   3. A second agent     two distinct credentials have been active since the newest active rule went live
  *
  * What the stores can and cannot tell (so the card never claims more):
  *  - Step 2 counts READY proposals (the ones /review can approve) and active corrections. A partial
  *    capture that cannot be approved is not a rule the user can see, so it does not count.
  *  - Neither a staged row nor an active correction records WHICH credential wrote it (the staging
- *    provenance is a per-request session id), so "a different credential than the author" cannot be
- *    read exactly. The signal used can never be a false positive: since the rule went active (the
- *    owner's approval, from the promotion log), either a credential FIRST appeared after that
- *    moment (it cannot be the author: the proposal existed before approval), or at least two
- *    credentials were active after it (so at least one is not the author). A second agent that was
- *    connected earlier and stays quiet while the author keeps working reads as "not yet".
- *  - Activity keeps first/last seen per credential, not a history, so "after" is judged by those.
- *  - A rule that is active with no promotion record (imported, or written before staging existed)
- *    is dated by its file's modification time, which can only be later than the truth (never a
- *    false positive).
+ *    provenance is a per-request session id), and a re-authorised agent gets a new credential. So
+ *    authorship cannot be proven and step 3 claims only what the records show: two distinct
+ *    credentials with tool calls, last active after the newest active rule went live. A new
+ *    credential of the author can be one of the two; the card words it accordingly.
+ *  - "Active" is activity: any tool call, not proof the rule was read. `calls` is a lifetime count
+ *    and last_seen the last request, so "a call after the rule" is judged by both, not exactly.
+ *  - A rule's go-live time is its promotion row (the owner's approval, matched by correction id) when
+ *    one exists, else its file's modification time (imported rules; only ever later than the truth).
+ *    The card uses the LATEST such time over the rules that are still active, so a retracted or
+ *    replaced rule never sets it.
  *
- * Reads are bounded: at most MAX_PROJECTS projects, the MAX_FILES newest correction files of each
- * (file names start with the date), files over MAX_FILE_BYTES skipped, the tail of the promotion
- * log only. Everything is scoped to one uid via tenantRoot and nothing is created. A failure to
- * read the rules throws from readRuleSignals; the dashboard shows the card degraded, not a 500.
+ * Bounded reads. Worst case per scan (cached 10 s per account, see RuleScanCache): at most
+ * MAX_DIR_ENTRIES (64) project-directory entries, then per project (at most MAX_PROJECTS = 8):
+ * at most MAX_DIR_ENTRIES_FILES (500) directory entries listed, MAX_FILES (20) correction files
+ * lstat-ed and read at 64 KB each, and one log lstat plus a 64 KB tail read. That is about
+ * 8 x (500 + 21 lstat, 21 x 64 KB) = about 11 MB and about 4,400 cheap directory/stat calls. When a cap
+ * cuts the scan the result says `capped`, and the card says rules were "not found among your most
+ * recent rules" instead of claiming there are none. Symlinks and non-regular files are never read.
+ * Everything is scoped to one uid via tenantRoot; nothing is created. A failure to read throws from
+ * scanRules; the dashboard shows the card degraded, not a 500.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tenantRoot, tenantProjects } from "./tenant-paths.js";
+import { tenantRoot } from "./tenant-paths.js";
 
-export const MAX_PROJECTS = 20;
-export const MAX_FILES = 100;
+export const MAX_PROJECTS = 8;
+export const MAX_FILES = 20;
+const MAX_DIR_ENTRIES = 64;
+const MAX_DIR_ENTRIES_FILES = 500;
 const MAX_FILE_BYTES = 64 * 1024;
 const LOG_TAIL_BYTES = 64 * 1024;
+const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const SCAN_TTL_MS = 10_000;
+const CACHE_MAX = 1000;
 
-export interface TrialCredential { firstSeen?: string; lastSeen?: string }
-export interface RuleSignals {
-  /** Proposals waiting for the owner that /review can approve. */
-  ready: number;
+export interface TrialCredential { firstSeen?: string; lastSeen?: string; calls?: number }
+export interface RuleScan {
   /** Active corrections found (bounded scan). */
   active: number;
-  /** ms epoch the earliest counted rule went active; undefined when unknown. */
+  /** ms epoch the NEWEST still-active rule went live; undefined when none or unknown. */
   activatedAt?: number;
+  /** A cap cut the scan: rules may exist that were not looked at. */
+  capped: boolean;
+}
+export interface RuleSignals extends RuleScan {
+  /** Proposals waiting for the owner that /review can approve. */
+  ready: number;
 }
 export interface TrialState {
   done: [boolean, boolean, boolean];
@@ -53,6 +67,8 @@ export interface TrialState {
   waiting: boolean;
   /** Rules could not be read: steps 2 and 3 are unknown, not "not done". */
   degraded: boolean;
+  /** A cap cut the scan (see RuleScan). */
+  capped: boolean;
 }
 
 const ms = (iso: string | undefined): number => (iso === undefined ? NaN : Date.parse(iso));
@@ -64,8 +80,7 @@ export function computeTrial(credentials: readonly TrialCredential[], rules: Rul
   let s3 = false;
   if (rules !== null && rules.active > 0 && rules.activatedAt !== undefined && Number.isFinite(rules.activatedAt)) {
     const t = rules.activatedAt;
-    const after = credentials.filter((c) => ms(c.lastSeen) > t);
-    s3 = after.some((c) => ms(c.firstSeen) > t) || after.length >= 2;
+    s3 = credentials.filter((c) => ms(c.lastSeen) > t && (c.calls ?? 0) > 0).length >= 2;
   }
   const done: [boolean, boolean, boolean] = [s1, s2, s3];
   const first = done.indexOf(false);
@@ -75,72 +90,123 @@ export function computeTrial(credentials: readonly TrialCredential[], rules: Rul
     next: first < 0 ? null : ((first + 1) as 1 | 2 | 3),
     waiting: rules !== null && rules.ready > 0 && rules.active === 0,
     degraded: rules === null,
+    capped: rules?.capped === true,
   };
 }
 
-function isActive(r: unknown): boolean {
+interface Entry { name: string; file: boolean; dir: boolean }
+
+/** Up to `cap` entries of a directory without reading the rest (opendir, not readdir). null = absent. Symlinks are neither file nor dir. */
+function listDir(dir: string, cap: number): { entries: Entry[]; more: boolean } | null {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    throw err;
+  }
+  if (st.isSymbolicLink()) return null; // never followed
+  if (!st.isDirectory()) throw new Error("not a directory"); // the store is unreadable: degrade, do not say "none"
+  const d = fs.opendirSync(dir);
+  try {
+    const entries: Entry[] = [];
+    for (let e = d.readSync(); e !== null; e = d.readSync()) {
+      if (entries.length >= cap) return { entries, more: true };
+      entries.push({ name: e.name, file: e.isFile(), dir: e.isDirectory() });
+    }
+    return { entries, more: false };
+  } finally {
+    d.closeSync();
+  }
+}
+
+function isActive(r: unknown): r is { id?: unknown; rule: string } {
   const o = r as { active?: unknown; retracted_at?: unknown; superseded_by?: unknown; rule?: unknown } | null;
   return o !== null && typeof o === "object" && typeof o.rule === "string" && o.active !== false && !o.retracted_at && !o.superseded_by;
 }
 
-/** Earliest `promoted` timestamp in the tail of a project's promotion log, or undefined. */
-function earliestPromotion(file: string): number | undefined {
-  let fd: number | undefined;
+/** correction id -> latest `promoted` timestamp in the tail of a project's promotion log. Only a regular file is opened. */
+function promotions(file: string): Map<string, number> {
+  const out = new Map<string, number>();
+  let st: fs.Stats;
   try {
-    fd = fs.openSync(file, "r");
-    const size = fs.fstatSync(fd).size;
-    const len = Math.min(size, LOG_TAIL_BYTES);
+    st = fs.lstatSync(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return out;
+    throw err;
+  }
+  if (!st.isFile()) return out;
+  const fd = fs.openSync(file, "r");
+  try {
+    const len = Math.min(st.size, LOG_TAIL_BYTES);
     const buf = Buffer.alloc(len);
-    fs.readSync(fd, buf, 0, len, size - len);
-    let best: number | undefined;
+    fs.readSync(fd, buf, 0, len, st.size - len);
     for (const line of buf.toString("utf-8").split("\n")) {
       try {
-        const row = JSON.parse(line) as { ts?: unknown; action?: unknown };
+        const row = JSON.parse(line) as { ts?: unknown; action?: unknown; correction_id?: unknown };
         const t = typeof row.ts === "string" ? Date.parse(row.ts) : NaN;
-        if (row.action === "promoted" && Number.isFinite(t) && (best === undefined || t < best)) best = t;
+        if (row.action === "promoted" && typeof row.correction_id === "string" && Number.isFinite(t) && t > (out.get(row.correction_id) ?? -Infinity)) out.set(row.correction_id, t);
       } catch { /* a cut first line or a bad line */ }
     }
-    return best;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw err;
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    fs.closeSync(fd);
   }
+  return out;
 }
 
 /**
- * This account's active corrections (bounded) and when the first went active. Throws on an
+ * This account's active corrections (bounded) and when the newest went live. Throws on an
  * unreadable store (e.g. a corrections path that is not a directory); the caller degrades the
  * card. A missing tenant or corrections directory is simply "none". Never creates anything.
  */
-export function readRuleSignals(dataDir: string, uid: string, ready: number): RuleSignals {
+export function scanRules(dataDir: string, uid: string): RuleScan {
   const root = tenantRoot(dataDir, uid);
+  let capped = false;
   let active = 0;
-  let promoted: number | undefined;
-  let oldestFile: number | undefined;
-  for (const project of tenantProjects(root).slice(0, MAX_PROJECTS)) {
+  let newest: number | undefined;
+  const projects = listDir(path.join(root, "projects"), MAX_DIR_ENTRIES);
+  if (projects === null) return { active: 0, capped: false };
+  const names = projects.entries.filter((e) => e.dir && PROJECT_NAME_RE.test(e.name)).map((e) => e.name).sort();
+  if (projects.more || names.length > MAX_PROJECTS) capped = true;
+  for (const project of names.slice(0, MAX_PROJECTS)) {
     const dir = path.join(root, "projects", project, "corrections");
-    let names: string[];
-    try {
-      names = fs.readdirSync(dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") continue;
-      throw err;
-    }
-    const files = names.filter((f) => f.endsWith(".json") && !f.startsWith("_")).sort().reverse().slice(0, MAX_FILES);
-    for (const f of files) {
+    const listing = listDir(dir, MAX_DIR_ENTRIES_FILES);
+    if (listing === null) continue;
+    if (listing.more) capped = true;
+    const files = listing.entries.filter((e) => e.file && e.name.endsWith(".json") && !e.name.startsWith("_")).map((e) => e.name).sort().reverse();
+    if (files.length > MAX_FILES) capped = true;
+    const promoted = promotions(path.join(dir, "_pending", "_resolved.jsonl"));
+    for (const f of files.slice(0, MAX_FILES)) {
       const p = path.join(dir, f);
       try {
-        const st = fs.statSync(p);
-        if (!st.isFile() || st.size > MAX_FILE_BYTES) continue;
-        if (!isActive(JSON.parse(fs.readFileSync(p, "utf-8")))) continue;
+        const st = fs.lstatSync(p);
+        if (!st.isFile() || st.size > MAX_FILE_BYTES) continue; // symlink, directory, oversized: not read
+        const rec = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
+        if (!isActive(rec)) continue;
         active++;
-        if (oldestFile === undefined || st.mtimeMs < oldestFile) oldestFile = st.mtimeMs;
+        const t = (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs;
+        if (newest === undefined || t > newest) newest = t;
       } catch { /* a malformed correction file is skipped, as readCorrections does */ }
     }
-    const t = earliestPromotion(path.join(dir, "_pending", "_resolved.jsonl"));
-    if (t !== undefined && (promoted === undefined || t < promoted)) promoted = t;
   }
-  return { ready, active, activatedAt: active > 0 ? promoted ?? oldestFile : undefined };
+  return { active, activatedAt: active > 0 ? newest : undefined, capped };
+}
+
+/** Per-account cache of scanRules for SCAN_TTL_MS. Bounded; expired entries are dropped when it fills. Only successes are kept. */
+export class RuleScanCache {
+  private readonly hits = new Map<string, { at: number; scan: RuleScan }>();
+  constructor(private readonly now: () => number, private readonly ttlMs = SCAN_TTL_MS) {}
+
+  get(dataDir: string, uid: string): RuleScan {
+    const t = this.now();
+    const hit = this.hits.get(uid);
+    if (hit && t - hit.at < this.ttlMs) return hit.scan;
+    if (this.hits.size >= CACHE_MAX) {
+      for (const [k, v] of this.hits) if (t - v.at >= this.ttlMs) this.hits.delete(k);
+      if (this.hits.size >= CACHE_MAX) this.hits.clear();
+    }
+    const scan = scanRules(dataDir, uid);
+    this.hits.set(uid, { at: t, scan });
+    return scan;
+  }
 }

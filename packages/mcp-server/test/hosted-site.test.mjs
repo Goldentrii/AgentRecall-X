@@ -870,16 +870,28 @@ describe("website — your agents (real binary)", () => {
 // ---- the guided trial card ("See it work") ---------------------------------------
 
 describe("website: guided trial card", () => {
-  let startHttpServer, loadOAuthConfig, env, alice, bob, tokA, tokB;
+  let startHttpServer, loadOAuthConfig, env, alice, bob, tokA, tokB, tokBob;
+  let skew = 0; // the server clock runs ahead by this much, so the 10 s per-account scan cache can be expired on demand
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const RULE = "Always answer me in one short paragraph.";
   const trialOf = (html) => /<section class="panel trial"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
   const countOf = (html) => Number(/data-trial-count="(\d)"/.exec(trialOf(html))?.[1] ?? -1);
   const doneSteps = (html) => [...trialOf(html).matchAll(/data-step="(\d)" data-done="true"/g)].map((m) => Number(m[1]));
+  /** The dashboard text; the scan cache is expired first so each look sees the current disk. */
+  const view = async (b) => { skew += 11_000; return (await b.go("/connect")).text; };
   const agent = async (base, token) => {
     const c = new Client({ name: "trial-agent", version: "0.0.0" });
     await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${token}`, Connection: "close" } } }));
     return c;
+  };
+  const propose = (c, rule) => c.callTool({ name: "check", arguments: { goal: "record the rule", human_correction: { rule, why: "The owner said so in chat just now.", applies_when: ["answers", "style"] } } });
+  const unesc = (x) => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const approveAll = async (b) => {
+    const page = await b.go("/review");
+    for (const m of page.text.matchAll(/<form method="post" action="\/review\/approve">([\s\S]*?)<\/form>/g)) {
+      const r = await b.post("/review/approve", { id: unesc(/name="id" value="([^"]+)"/.exec(m[1])[1]), project: "main", csrf: csrfOf(page.text) });
+      assert.equal(r.status, 303);
+    }
   };
 
   before(async () => {
@@ -889,6 +901,8 @@ describe("website: guided trial card", () => {
     cliIn(dataDir, "identity", "link", "--github-id", String(ALICE.id), "--uid", "alice");
     tokA = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "first"));
     tokB = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "second"));
+    cliIn(dataDir, "identity", "link", "--github-id", "909", "--uid", "bobby");
+    tokBob = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "bobby", "--label", "bobs"));
     const mock = await startMock();
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
@@ -896,7 +910,7 @@ describe("website: guided trial card", () => {
     const config = loadOAuthConfig({ publicUrl: base }, { AR_OAUTH_SIGNUP: "open", AR_OAUTH_GITHUB_CLIENT_ID: GH.id, AR_OAUTH_GITHUB_CLIENT_SECRET: GH.secret });
     const server = await startHttpServer({
       dataDir, port, host: "127.0.0.1", full: false, oauth: config, log: () => {},
-      oauthTesting: { providerUrls: mock.urls, loginLimits: { perIp: 1000, global: 10000, windowMs: 600000 } },
+      oauthTesting: { now: () => Date.now() + skew, providerUrls: mock.urls, loginLimits: { perIp: 1000, global: 10000, windowMs: 600000 } },
       activityTesting: { flushMs: 3_600_000 },
     });
     env = { dataDir, base, mock, server };
@@ -912,7 +926,7 @@ describe("website: guided trial card", () => {
   });
 
   it("a fresh account is at 0 of 3, with step 1 next and the two copyable sentences", async () => {
-    const html = (await alice.go("/connect")).text;
+    const html = await view(alice);
     assert.equal(countOf(html), 0);
     assert.deepEqual(doneSteps(html), []);
     assert.match(trialOf(html), /See it work/);
@@ -924,7 +938,7 @@ describe("website: guided trial card", () => {
   it("after one agent has made a request, step 1 is done (1 of 3)", async () => {
     const a = await agent(env.base, tokA);
     await a.callTool({ name: "session_start", arguments: {} });
-    const html = (await alice.go("/connect")).text;
+    const html = await view(alice);
     assert.equal(countOf(html), 1);
     assert.deepEqual(doneSteps(html), [1]);
     await a.close();
@@ -932,41 +946,60 @@ describe("website: guided trial card", () => {
 
   it("a staged rule completes step 2, says it is waiting for approval and links /review", async () => {
     const a = await agent(env.base, tokA);
-    await a.callTool({ name: "check", arguments: { goal: "record the rule", human_correction: { rule: RULE, why: "The owner said so in chat just now.", applies_when: ["answers", "style"] } } });
+    await propose(a, RULE);
     await a.close();
-    const html = (await alice.go("/connect")).text;
+    const html = await view(alice);
     assert.equal(countOf(html), 2);
     assert.deepEqual(doneSteps(html), [1, 2]);
     assert.match(trialOf(html), /waiting for (your )?approval/i);
     assert.match(trialOf(html), /href="\/review"/);
-    assert.ok(!/It works:/.test(html));
+    assert.ok(!/Two of your agents/.test(html));
   });
 
-  it("an approved rule plus activity of a second credential after it is 3 of 3", async () => {
-    const page = await alice.go("/review");
-    const m = /<form method="post" action="\/review\/approve">([\s\S]*?)<\/form>/.exec(page.text)[1];
-    const unesc = (x) => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-    const r = await alice.post("/review/approve", { id: unesc(/name="id" value="([^"]+)"/.exec(m)[1]), project: "main", csrf: csrfOf(page.text) });
-    assert.equal(r.status, 303);
-    let html = (await alice.go("/connect")).text;
-    assert.equal(countOf(html), 2, "approved but no second agent has asked yet");
+  it("step 3 needs TWO distinct credentials active after the rule went live; one re-issued credential is not enough", async () => {
+    await approveAll(alice);
+    let html = await view(alice);
+    assert.equal(countOf(html), 2, "approved but nobody has been active since");
     assert.ok(!/waiting for (your )?approval/i.test(trialOf(html)));
-    assert.match(trialOf(html), /Next: ask a second agent/i);
+    assert.match(trialOf(html), /Next: connect a second agent/i);
+    assert.match(trialOf(html), /A second agent connected after your rule went live/);
     await sleep(40);
+    // The author signs in again with a new credential: one credential after the rule is not two.
+    const tokC = tokenFrom(cliIn(env.dataDir, "token", "create", "--uid", "alice", "--label", "reissued"));
+    const c = await agent(env.base, tokC);
+    await c.callTool({ name: "session_start", arguments: {} });
+    await c.close();
+    html = await view(alice);
+    assert.equal(countOf(html), 2, "one credential active after the rule: step 3 not done");
+    assert.ok(!doneSteps(html).includes(3));
     const b = await agent(env.base, tokB);
     await b.callTool({ name: "recall", arguments: { query: "rules" } });
     await b.close();
-    html = (await alice.go("/connect")).text;
+    html = await view(alice);
     assert.equal(countOf(html), 3);
     assert.deepEqual(doneSteps(html), [1, 2, 3]);
-    assert.match(html, /It works: a rule you taught one agent reached another\./);
+    assert.match(html, /Two of your agents have been active since your rule went live: each one loads it at session start\./);
+    assert.ok(!/It works/.test(html), "no claim that the rule was read");
   });
 
-  it("tenant isolation: another account never sees this progress", async () => {
-    const html = (await bob.go("/connect")).text;
-    assert.equal(countOf(html), 0);
-    assert.ok(!/It works:/.test(html));
-    assert.ok(!/token first|token second/.test(html));
+  it("tenant isolation: both accounts have their own rule and agents, and neither page shows the other's state", async () => {
+    const a = await agent(env.base, tokBob);
+    await a.callTool({ name: "session_start", arguments: {} });
+    await propose(a, "Never reply to me in French without asking.");
+    await a.close();
+    const bobHtml = await view(bob);
+    const aliceHtml = await view(alice);
+    assert.equal(countOf(bobHtml), 2, "bob: his agent and his waiting rule, nothing of alice's");
+    assert.deepEqual(doneSteps(bobHtml), [1, 2]);
+    assert.match(trialOf(bobHtml), /waiting for (your )?approval/i);
+    assert.ok(!/Two of your agents/.test(bobHtml));
+    assert.ok(!/token (first|second|reissued)/.test(bobHtml));
+    assert.equal(countOf(aliceHtml), 3, "alice is unchanged by bob's activity");
+    assert.ok(!/waiting for (your )?approval/i.test(trialOf(aliceHtml)), "bob's staged rule is not alice's");
+    assert.ok(!/token bobs/.test(aliceHtml));
+    await approveAll(bob);
+    assert.equal(countOf(await view(bob)), 2, "bob has one agent only: step 3 not done");
+    assert.equal(countOf(await view(alice)), 3);
   });
 
   it("a request with an Authorization header still gets 403 on /connect", async () => {
@@ -976,19 +1009,133 @@ describe("website: guided trial card", () => {
   });
 
   it("an unreadable corrections store degrades the card, the dashboard still renders", async () => {
-    const dir = path.join(env.dataDir, "tenants", "gh-909", "projects", "main");
+    const c = new Browser(env.base);
+    await signIn(c, env.mock, { id: 910 });
+    const dir = path.join(env.dataDir, "tenants", "gh-910", "projects", "main");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "corrections"), "not a directory");
-    const r = await bob.go("/connect");
-    assert.equal(r.status, 200);
-    assert.match(trialOf(r.text), /could not be checked/i);
-    assert.match(r.text, /Your agents/);
+    const html = await view(c);
+    assert.match(trialOf(html), /could not be checked/i);
+    assert.match(html, /Your agents/);
   });
 
   it("the card adds no inline style attribute and keeps one inline style and script", async () => {
-    const html = (await alice.go("/connect")).text;
+    const html = await view(alice);
     assert.ok(!/\sstyle="/i.test(html));
     assert.equal((html.match(/<style>/g) ?? []).length, 1);
     assert.equal((html.match(/<script>/g) ?? []).length, 1);
+  });
+});
+
+describe("website: guided trial (rules scan and state, unit)", () => {
+  let T, dataDir, n = 0;
+  before(async () => { T = await load("trial.js"); dataDir = fs.mkdtempSync(path.join(root, "data-trial-unit-")); });
+
+  const DAY = 86_400_000;
+  const MON = Date.parse("2026-03-02T09:00:00Z");
+  const FRI = Date.parse("2026-03-06T09:00:00Z");
+  /** A fresh tenant "unit-N" with a corrections dir for project `proj`; returns helpers. */
+  function tenant(proj = "main") {
+    const uid = `unit-${++n}`;
+    const cdir = path.join(dataDir, "tenants", uid, "projects", proj, "corrections");
+    fs.mkdirSync(path.join(cdir, "_pending"), { recursive: true });
+    return {
+      uid, cdir,
+      rule(file, rec, mtime) {
+        const p = path.join(cdir, file);
+        fs.writeFileSync(p, JSON.stringify({ rule: "Do the thing.", ...rec }));
+        if (mtime !== undefined) fs.utimesSync(p, mtime / 1000, mtime / 1000);
+        return p;
+      },
+      promoted(rows) { fs.writeFileSync(path.join(cdir, "_pending", "_resolved.jsonl"), rows.map(([id, ts]) => JSON.stringify({ ts: new Date(ts).toISOString(), action: "promoted", correction_id: id })).join("\n") + "\n"); },
+      scan() { return T.scanRules(dataDir, uid); },
+    };
+  }
+
+  it("a retracted rule never sets the time: only promotion rows of still-active rules count, the latest wins", () => {
+    const t = tenant();
+    t.rule("2026-03-02-a.json", { id: "2026-03-02-a", active: false, retracted_at: "2026-03-03T00:00:00Z" }, MON);
+    t.rule("2026-03-06-b.json", { id: "2026-03-06-b" }, FRI + DAY);
+    t.promoted([["2026-03-02-a", MON], ["2026-03-06-b", FRI]]);
+    const s = t.scan();
+    assert.equal(s.active, 1);
+    assert.equal(s.activatedAt, FRI, "B went live Friday, not Monday");
+    const both = tenant();
+    both.rule("2026-03-02-a.json", { id: "2026-03-02-a" }, MON);
+    both.rule("2026-03-06-b.json", { id: "2026-03-06-b" }, FRI);
+    both.promoted([["2026-03-02-a", MON], ["2026-03-06-b", FRI]]);
+    assert.equal(both.scan().activatedAt, FRI, "with two active rules, the newest go-live");
+  });
+
+  it("an imported rule with no promotion row is dated by its file's modification time", () => {
+    const t = tenant();
+    t.rule("2026-03-02-imp.json", { id: "2026-03-02-imp" }, MON);
+    const s = t.scan();
+    assert.equal(s.active, 1);
+    assert.ok(Math.abs(s.activatedAt - MON) < 2000, `mtime used: ${s.activatedAt}`);
+  });
+
+  it("symlinks, a directory named x.json and an oversized file are never counted or followed", (tc) => {
+    const t = tenant();
+    t.rule("2026-03-01-ok.json", { id: "ok" }, MON);
+    fs.mkdirSync(path.join(t.cdir, "x.json"));
+    t.rule("2026-03-03-big.json", { id: "big", pad: "x".repeat(70 * 1024) });
+    const outside = path.join(dataDir, `outside-${n}.json`);
+    fs.writeFileSync(outside, JSON.stringify({ rule: "Outside rule.", id: "out" }));
+    let linked = true;
+    try { fs.symlinkSync(outside, path.join(t.cdir, "2026-03-04-link.json")); } catch { linked = false; tc.diagnostic("file symlinks not permitted here; the other cases still run"); }
+    assert.equal(t.scan().active, 1, linked ? "only the regular, small file" : "only the regular, small file (no symlink created)");
+    // The promotion log as a link is not opened either: the rule falls back to its mtime.
+    const u = tenant();
+    u.rule("2026-03-01-ok.json", { id: "ok" }, MON);
+    const real = path.join(dataDir, `log-${n}.jsonl`);
+    fs.writeFileSync(real, JSON.stringify({ ts: new Date(FRI).toISOString(), action: "promoted", correction_id: "ok" }) + "\n");
+    let logLinked = true;
+    try { fs.symlinkSync(real, path.join(u.cdir, "_pending", "_resolved.jsonl")); } catch { logLinked = false; }
+    if (logLinked) assert.ok(Math.abs(u.scan().activatedAt - MON) < 2000, "a linked log is ignored");
+  });
+
+  it("a cut scan says so: more than 20 rule files, or more than 8 projects", () => {
+    const t = tenant();
+    for (let i = 10; i < 35; i++) t.rule(`2026-03-${i}-r.json`, { id: `r${i}` });
+    const s = t.scan();
+    assert.equal(s.active, 20, "the 20 newest");
+    assert.equal(s.capped, true);
+    const m = tenant();
+    for (let i = 0; i < 9; i++) fs.mkdirSync(path.join(dataDir, "tenants", m.uid, "projects", `p${i}`, "corrections"), { recursive: true });
+    assert.equal(m.scan().capped, true);
+    assert.equal(tenant().scan().capped, false);
+  });
+
+  it("a missing tenant scans as none; a corrections path that is a file throws (the page degrades)", () => {
+    assert.deepEqual(T.scanRules(dataDir, "nobody-here"), { active: 0, capped: false });
+    const t = tenant();
+    fs.rmSync(t.cdir, { recursive: true });
+    fs.writeFileSync(t.cdir, "x");
+    assert.throws(() => t.scan());
+  });
+
+  it("computeTrial: two distinct credentials with calls after the rule; fewer, or no calls, is not enough", () => {
+    const rules = { ready: 0, active: 1, activatedAt: 1_000_000, capped: false };
+    const at = (ms) => new Date(ms).toISOString();
+    const cred = (last, calls = 3, first = 1) => ({ firstSeen: at(first), lastSeen: at(last), calls });
+    assert.equal(T.computeTrial([cred(500_000), cred(2_000_000)], rules).done[2], false, "one before, one after");
+    assert.equal(T.computeTrial([cred(2_000_000, 3, 1_500_000)], rules).done[2], false, "a single new credential");
+    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], rules).done[2], true);
+    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000, 0)], rules).done[2], false, "no tool call recorded");
+    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], { ...rules, active: 0 }).done[2], false, "no active rule");
+    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], null).degraded, true);
+  });
+
+  it("the scan cache serves one read per account per 10 s and re-reads after", () => {
+    const t = tenant();
+    let now = 0;
+    const cache = new T.RuleScanCache(() => now);
+    assert.equal(cache.get(dataDir, t.uid).active, 0);
+    t.rule("2026-03-01-ok.json", { id: "ok" });
+    now = 9_000;
+    assert.equal(cache.get(dataDir, t.uid).active, 0, "still cached");
+    now = 10_001;
+    assert.equal(cache.get(dataDir, t.uid).active, 1, "expired, re-read");
   });
 });

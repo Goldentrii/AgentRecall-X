@@ -22,7 +22,7 @@ import type * as http from "node:http";
 import express from "express";
 import type { OAuthConfig } from "./oauth-config.js";
 import type { OAuthStore } from "./oauth-store.js";
-import { computeTrial, readRuleSignals, type RuleSignals, type TrialCredential } from "./trial.js";
+import { computeTrial, RuleScanCache, type RuleSignals, type TrialCredential } from "./trial.js";
 import { listTokens, TokenStoreUnavailableError } from "./tokens.js";
 import type { ActivityStore } from "./activity.js";
 import { dirSize } from "./limits.js";
@@ -134,6 +134,7 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
   const field = (req: express.Request, k: string): unknown => ((req.body ?? {}) as Record<string, unknown>)[k];
   const usage = new Map<string, { bytes: number; at: number }>();
   const downloading = new Set<string>();
+  const ruleScans = new RuleScanCache(d.now);
 
   // Owner only: an agent's bearer token never gets in, whatever else the request carries.
   app.use("/connect", (req, res, next) => {
@@ -186,14 +187,14 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
         const ready = proposals.items.length + proposals.hidden;
         let rules: RuleSignals | null = null;
         try {
-          rules = readRuleSignals(d.dataDir, s.uid, ready);
+          rules = { ready, ...ruleScans.get(d.dataDir, s.uid) };
         } catch (err) {
           d.log(`[connect] trial rules unreadable uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"}`); // the card degrades; the page renders
         }
         const creds: TrialCredential[] = [
           ...d.store.liveGrantsOf(s.uid).map((g) => seen[`grant:${g.id}`]),
           ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t) => seen[`token:${t.id}`]),
-        ].filter((a): a is NonNullable<typeof a> => a !== undefined).map((a) => ({ firstSeen: a.first_seen, lastSeen: a.last_seen }));
+        ].filter((a): a is NonNullable<typeof a> => a !== undefined).map((a) => ({ firstSeen: a.first_seen, lastSeen: a.last_seen, calls: a.calls }));
         const trial = computeTrial(creds, rules);
         const flash = s.flash !== undefined ? NOTICES[s.flash] : undefined;
         view = {
