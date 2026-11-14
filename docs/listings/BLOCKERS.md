@@ -24,5 +24,5 @@ Status (2026-11-14, updated with each PR that closes an item):
 - Items 3 and 4: `/support` and `/privacy` are on the site (PR #76). `/privacy` renders PRIVACY.md itself; `/support` names the same contact address, GitHub issues and the Telegram group, with no promised reply time.
 - Item 8: the two ChatGPT callbacks from OpenAI's Apps SDK auth doc are allowlisted (PR #76). The per-connector `callback_id` format is not documented, so the allowlist accepts one path segment of `[A-Za-z0-9_-]`; confirm it against a real connector.
 - Item 2: a draft is in `docs/legal/TERMS-draft.md` with `[OWNER]` decisions; no `/terms` route until the owner signs off. This is the last page ChatGPT needs; Claude does not need it.
-- Item 7: in review on branch `feat/read-only-tools`.
+- Item 7: `session_start` and `recall` are `readOnlyHint: true` (PR #80, live since 2026-11-14). Their bookkeeping is applied after the call; the disclosed exceptions are in `packages/mcp-server/src/tools/annotations.ts`. Not yet observed in a real Claude connector: check that those two tools no longer ask for confirmation.
 - Items 1, 5, 6, 9, 10, 11: open.
