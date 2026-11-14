@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { inflateSync } from "node:zlib";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.LISTINGS_ROOT ?? join(here, "..");
@@ -139,5 +140,53 @@ test("every submission file that quotes a field quotes it verbatim", () => {
         assert.ok(t.includes(fields[key]), `${f}: ${key} is not verbatim`);
       }
     }
+  }
+});
+
+test("descriptions: server.json is the source; fields.json, plugin.json, docker, llms-install follow it", () => {
+  assert.equal(fields.oneLiner100, serverJson.description);
+  assert.ok(json(".cursor-plugin/plugin.json").description.startsWith(serverJson.description));
+  assert.ok(text("docs/listings/docker/server.yaml").includes(serverJson.description.replace(/\.$/, "")));
+  assert.match(text("llms-install.md"), /closes the Intelligent Distance[^\n]*reaches every connected agent/);
+  // Old wording must not survive anywhere in the listing material.
+  const files = [...walk(p("docs/listings")), p("llms-install.md"), p("smithery.yaml"), p(".cursor-plugin/plugin.json")];
+  for (const f of files) {
+    const t = readFileSync(f, "utf8");
+    assert.doesNotMatch(t, /narrows the Intelligent Distance|remembered by every agent|Correction-first memory/i, f);
+  }
+});
+
+test("package descriptions on main carry the positioning (the four npm packages)", () => {
+  for (const pkg of ["core", "mcp-server", "sdk", "cli"]) {
+    const d = json("packages", pkg, "package.json").description;
+    assert.doesNotMatch(d, /memory palace/i, pkg);
+  }
+});
+
+test("icons use the site gold #F5C451 at the centre", () => {
+  // Decode with node:zlib: 8-bit RGB(A) non-interlaced PNG, filters undone for one scanline.
+  for (const n of [400, 512]) {
+    const b = readFileSync(p(`assets/brand/icon-${n}.png`));
+    const w = b.readUInt32BE(16), colour = b[25], bpp = colour === 6 ? 4 : 3;
+    assert.equal(b[24], 8);
+    let off = 8, idat = [];
+    while (off < b.length) {
+      const len = b.readUInt32BE(off), type = b.subarray(off + 4, off + 8).toString("latin1");
+      if (type === "IDAT") idat.push(b.subarray(off + 8, off + 8 + len));
+      off += 12 + len;
+    }
+    const raw = inflateSync(Buffer.concat(idat)), stride = 1 + w * bpp, h = w;
+    const rows = [];
+    for (let y = 0; y < h; y++) {
+      const f = raw[y * stride], line = Buffer.from(raw.subarray(y * stride + 1, (y + 1) * stride)), prev = rows[y - 1] ?? Buffer.alloc(line.length);
+      for (let i = 0; i < line.length; i++) {
+        const a = i >= bpp ? line[i - bpp] : 0, up = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+        const pr = f === 1 ? a : f === 2 ? up : f === 3 ? (a + up) >> 1 : f === 4 ? (() => { const pp = a + up - c, pa = Math.abs(pp - a), pb = Math.abs(pp - up), pc = Math.abs(pp - c); return pa <= pb && pa <= pc ? a : pb <= pc ? up : c; })() : 0;
+        line[i] = (line[i] + pr) & 255;
+      }
+      rows.push(line);
+    }
+    const px = rows[h >> 1].subarray((w >> 1) * bpp, (w >> 1) * bpp + 3);
+    assert.deepEqual([...px], [0xf5, 0xc4, 0x51], `icon-${n} centre`);
   }
 });

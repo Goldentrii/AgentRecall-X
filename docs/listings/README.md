@@ -2,7 +2,7 @@
 
 Prepared 2026-11-14. Nothing here has been submitted. Every "state" below was checked today by fetching the directory itself; where a fetch failed the cell says UNVERIFIED and what was tried. The owner submits; paste-ready values are in `submissions/`, the single source for the text is `fields.json`.
 
-Positioning for every listing: AgentRecall narrows the Intelligent Distance between a person and their agents: a correction made to one agent is remembered by every agent and measured. It is never described as plain memory storage.
+Positioning for every listing: AgentRecall closes the Intelligent Distance between a person and their agents: a correction you give one agent reaches every connected agent. It is never described as plain memory storage.
 
 ## Ranked by value for effort
 
@@ -29,7 +29,7 @@ Positioning for every listing: AgentRecall narrows the Intelligent Distance betw
 | 19 | Zed extensions | Skip. Zed docs: it plans to deprecate MCP server extensions in favour of the official MCP registry; remote servers are added in the UI | Inherits from row 1 | Nothing | 0 | Extension needs Rust code; not worth it |
 | 20 | Continue | No hub/marketplace publishing process found in the docs (UNVERIFIED: `hub.continue.dev` does not resolve). Users paste an `mcpServers` block | Docs only | Optionally add a Continue snippet to `/connect.md` | 10 min | None |
 | 21 | Claude plugin directory | Not listed. The connectors docs say local servers can only be distributed through a plugin (`claude.com/docs/plugins/submit.md`, not fetched: UNVERIFIED) | Plugin submission | Out of scope for this pass | n/a | Needs a plugin package |
-| 22 | npm discoverability (`agent-recall-mcp`, `-cli`, `-sdk`, `-core`) | Published 3.5.2; the `agent-recall-mcp` description is "Memory Palace MCP server for AI agents", which contradicts the positioning | `description` + `keywords` in package.json, README | Change description at the next release | 5 min | Needs a release (version bump needs owner yes) |
+| 22 | npm discoverability (`agent-recall-mcp`, `-cli`, `-sdk`, `-core`) | Published 3.5.2 with the old description ("Memory Palace MCP server for AI agents"); the four package descriptions already carry the positioning on main (PR #69) and ship with the next release | `description` + `keywords` in package.json (done on main), README | Change description at the next release | 5 min | Needs a release (version bump needs owner yes) |
 
 Rows 12 to 22 are not worth a dedicated submission: they inherit from row 1 or have no open door.
 

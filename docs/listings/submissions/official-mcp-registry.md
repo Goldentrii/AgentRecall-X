@@ -9,10 +9,8 @@ State 2026-11-14 (fetched `/v0/servers?search=agent-recall`): `io.github.Goldent
 ## Values (already in `packages/mcp-server/server.json`, schema `2025-12-11`)
 
 - name: `io.github.Goldentrii/agent-recall` (must equal `mcpName` in package.json: checked by test)
-- description (max 100 chars, rule from the registry quickstart): "Correction-first memory for AI agents. Run it locally or connect any MCP agent to the hosted server."
+- description (max 100 chars, rule from the registry quickstart): "Closes the Intelligent Distance: a correction you give one agent reaches every connected agent." (95 chars; same text as `oneLiner100` in `fields.json`, pinned by the drift test)
 - remotes: `streamable-http` `https://agentrecallx.com/mcp`
-
-Optional, your call: the description above says "memory"; a description that names the product idea is "A correction made to one agent is remembered by every agent, and measured." (74 chars). If you change it, edit `server.json` and run the existing drift test.
 
 ## Command
 

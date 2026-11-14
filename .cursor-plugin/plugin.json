@@ -1,6 +1,6 @@
 {
   "name": "agent-recall",
-  "description": "Narrows the Intelligent Distance between you and your agents: a correction made to one agent is remembered by every agent, and measured. Connects the free hosted AgentRecall MCP server.",
+  "description": "Closes the Intelligent Distance: a correction you give one agent reaches every connected agent. Connects the free hosted AgentRecall MCP server.",
   "version": "3.5.3",
   "author": { "name": "Tong Wu" },
   "homepage": "https://agentrecallx.com",

@@ -5,7 +5,7 @@ NOT ready. This file holds the drafts so the owner can close the gaps in `../BLO
 ## Fields
 
 - Name: AgentRecall
-- Short description: A correction made to one agent is remembered by every agent, and measured.
+- Short description: Closes the Intelligent Distance: a correction you give one agent reaches every connected agent.
 - Description: `description` in `../fields.json`
 - MCP URL: https://agentrecallx.com/mcp
 - websiteURL: https://agentrecallx.com

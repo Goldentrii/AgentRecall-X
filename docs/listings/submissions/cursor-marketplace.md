@@ -20,7 +20,7 @@ Checklist from the plugin reference, state:
 1. Merge this branch to main (the plugin and icon must be on the default branch).
 2. Open https://cursor.com/marketplace/publish and give the repo URL https://github.com/Goldentrii/AgentRecall-X. Field names of that form were not visible without signing in (UNVERIFIED); use:
    - Name: AgentRecall
-   - Description (200): AgentRecall narrows the Intelligent Distance between you and your AI agents: a correction made to one agent is remembered by every agent you use, and measured. Free hosted server, GitHub sign-in.
+   - Description (200): AgentRecall closes the Intelligent Distance between you and your AI agents: a correction you give one agent reaches every agent you connect. Free hosted server, GitHub sign-in.
 
 ## After
 

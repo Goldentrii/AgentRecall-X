@@ -12,7 +12,7 @@ URL: https://github.com/cline/mcp-marketplace/issues/new?template=mcp-server-sub
 
 - GitHub Repo URL: https://github.com/Goldentrii/AgentRecall-X
 - Logo: upload `assets/brand/icon-400.png` (400x400 PNG)
-- Reason for addition: A correction you make to one agent is remembered by every agent you use, and measured. It narrows the Intelligent Distance between a person and their agents. Hosted (free, GitHub sign-in, `https://agentrecallx.com/mcp`) or local and offline (`npx -y agent-recall-mcp`), 5 tools, MIT. Install steps for Cline are in `llms-install.md` at the repo root.
+- Reason for addition: It closes the Intelligent Distance between a person and their agents: a correction you give one agent reaches every agent you connect. Hosted (free, GitHub sign-in, `https://agentrecallx.com/mcp`) or local and offline (`npx -y agent-recall-mcp`), 5 tools, MIT. Install steps for Cline are in `llms-install.md` at the repo root.
 - Tested with Cline: tick only after your own run.
 
 ## After

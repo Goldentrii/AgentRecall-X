@@ -19,3 +19,9 @@ Checked 2026-11-14 against the directories' own docs and the live site. Claude: 
 Not blocking (checked): the server is HTTPS Streamable HTTP with OAuth 2.1, dynamic client registration and PKCE; every tool has a `title` and hints; tool names are well under 64 characters; there is no catch-all request tool; the product is not a financial or media-generation tool.
 
 Recommended order: 4, 3, 2 (one small PR, three pages), 1, then 7 (biggest effect on Claude users), then submit Claude. Do 6, 8, 5 only if you want ChatGPT.
+
+Status as of main e84d63f (2026-11-14): nothing above is resolved on main yet. Main changed the descriptions, the site look and the sign-in page styling, and turned HSTS on; none of those is an item here (HSTS is not a blocker; the restyled sign-in pages do not close item 10, which is about the hand-off, not the look).
+
+In progress, not merged:
+- Items 3 and 4 (`/support`, `/privacy`): being added on branch `feat/legal-pages`, PR to follow.
+- Item 7 (read-only tools): being done on branch `feat/read-only-tools`.

@@ -1,6 +1,6 @@
 # Install AgentRecall (instructions for Cline)
 
-AgentRecall narrows the Intelligent Distance between a person and their agents: a correction made to one agent is remembered by every agent and measured. It is an MCP server with 5 tools: `session_start`, `session_end`, `remember`, `recall`, `check`.
+AgentRecall closes the Intelligent Distance between a person and their agents: a correction you give one agent reaches every connected agent. It is an MCP server with 5 tools: `session_start`, `session_end`, `remember`, `recall`, `check`.
 
 Pick ONE option. Do not install both: they would hold two separate memories.
 

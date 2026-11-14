@@ -19,7 +19,7 @@ meta:
     - remote
 about:
   title: AgentRecall
-  description: Narrows the Intelligent Distance between you and your agents - a correction made to one agent is remembered by every agent, and measured
+  description: Closes the Intelligent Distance: a correction you give one agent reaches every connected agent
   icon: https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/brand/icon-400.png
 remote:
   transport_type: streamable-http

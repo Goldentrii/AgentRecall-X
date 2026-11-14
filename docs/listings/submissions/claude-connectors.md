@@ -10,7 +10,7 @@ Step 1 Connection: `https://agentrecallx.com/mcp`
 
 Step 3 Listing:
 - Name (max 100): AgentRecall
-- One-liner (max 200): AgentRecall narrows the Intelligent Distance between you and your AI agents: a correction made to one agent is remembered by every agent you use, and measured. Free hosted server, GitHub sign-in.
+- One-liner (max 200): AgentRecall closes the Intelligent Distance between you and your AI agents: a correction you give one agent reaches every agent you connect. Free hosted server, GitHub sign-in.
 - Description (max 2000): paste `description` from `../fields.json` (1246 chars).
 - Categories (1 to 5): Productivity, Developer tools, AI agents. UNVERIFIED: the portal's category list was not visible without signing in; pick the closest names.
 - Documentation URL: https://agentrecallx.com/connect.md

@@ -6,7 +6,7 @@ State 2026-11-14: UNVERIFIED whether listed (the site search could not be fetche
 
 - Server Name: AgentRecall
 - Category: Memory
-- Short Description: A correction made to one agent is remembered by every agent, and measured.
+- Short Description: Closes the Intelligent Distance: a correction you give one agent reaches every connected agent.
 - Repository, Website or Documentation link: https://github.com/Goldentrii/AgentRecall-X
 - Official MCP Registry Name (optional): io.github.Goldentrii/agent-recall
 - Supports remote connections: tick

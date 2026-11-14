@@ -10,7 +10,7 @@ Method: https://mcp.so/submit. Fields seen: Repository URL (required), Name, pro
 - Repository URL: https://github.com/Goldentrii/AgentRecall-X
 - Name: AgentRecall
 - Remote endpoint: https://agentrecallx.com/mcp
-- Short description: A correction made to one agent is remembered by every agent, and measured.
+- Short description: Closes the Intelligent Distance: a correction you give one agent reaches every connected agent.
 - Config snippet: `claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp`
 
 ## After

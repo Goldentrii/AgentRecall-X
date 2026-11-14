@@ -4,8 +4,8 @@
 # Nothing publishes from this file any more. It is kept valid and truthful in case a
 # directory still reads it. The schema page could not be fetched (404): UNVERIFIED.
 #
-# AgentRecall narrows the Intelligent Distance between a person and their agents: a
-# correction made to one agent is remembered by every agent and measured.
+# AgentRecall closes the Intelligent Distance between a person and their agents: a
+# correction you give one agent reaches every connected agent.
 # stdio transport, no required config. Supabase credentials are optional; without them
 # the server runs in local-file-only mode. Hosted option: https://agentrecallx.com/mcp
 
