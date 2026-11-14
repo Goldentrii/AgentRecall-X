@@ -13,12 +13,8 @@ const hintEl = document.querySelector(".hint");
 const track = document.getElementById("track");
 const root = document.documentElement;
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const MESH_U = 420, MESH_W = 14;   // 6.3k vertices
 const PLATES = ["human", "m0", "wrong", "m2", "m3"];
-// Optional background variant, chosen once from the address: ?bg=a (Mobius ribbon) or ?bg=b (intertwined field).
-// Anything else, including no parameter, is 0: the original look, untouched.
-const bgParam = new URLSearchParams(location.search).get("bg");
-const BG = bgParam === "a" ? 1 : bgParam === "b" ? 2 : 0;
-
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 /** Half the gap between the two worlds, in screen heights. Mirrors sep() in the shader. */
@@ -34,7 +30,6 @@ in vec2 v; out vec4 o;
 uniform sampler2D H, M0, MW, M2, M3;
 uniform vec2 res, mouse;
 uniform float p, time, calm;
-uniform int bg;
 
 float hash(vec2 x){ return fract(sin(dot(x, vec2(12.9898, 78.233))) * 43758.5453); }
 float bump(float c, float w, float x){ return exp(-pow((x - c) / w, 2.0)); }
@@ -94,68 +89,57 @@ vec3 scene(vec2 c, float a){
   return col;
 }
 
-// ---- optional cosmic backgrounds (only reached when bg is 1 or 2) ----
+// ---- the galaxy behind the worlds ----
 const vec3 CYAN = vec3(0.45, 0.95, 1.0);
-// a sparse star layer; each layer drifts at its own depth with scroll and pointer
-vec3 stars(vec2 c, float fi){
-  float sc = 16.0 + 24.0 * fi;
-  vec2 g = c * sc + vec2(p * (2.0 + 3.5 * fi), -p * (1.0 + fi)) + mouse * (2.0 + 3.0 * fi) + fi * 17.3;
+float noise(vec2 x){
+  vec2 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + 1.0), f.x), f.y);
+}
+float fbm(vec2 x){
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++){ s += a * noise(x); x = x * 2.03 + 11.7; a *= 0.5; }
+  return s;
+}
+// one depth layer of stars: nearer layers are larger, sparser, and fly outward faster as p grows
+vec3 starLayer(vec2 c, float fi){
+  vec2 q = c * (1.0 + p * (0.10 + 0.45 * fi)) + mouse * (0.01 + 0.03 * fi) + vec2(0.0, -0.02 * p * fi);
+  float sc = 46.0 - 14.0 * fi;
+  vec2 g = q * sc + fi * 17.3;
   vec2 id = floor(g);
   float h = hash(id);
   vec2 jit = (vec2(hash(id + 3.1), hash(id + 7.7)) - 0.5) * 0.6;
-  float st = step(0.94, h) * pow(smoothstep(0.34, 0.0, length(fract(g) - 0.5 - jit)), 2.0);
-  float tw = 0.65 + 0.35 * sin(time * (0.5 + h * 2.0) + h * 40.0);
-  vec3 tint = mix(vec3(0.75, 0.88, 1.0), vec3(1.0, 0.86, 0.62), fract(h * 9.0));
-  return tint * st * tw * (0.30 + 0.22 * fi);
+  float r = length(fract(g) - 0.5 - jit);
+  float st = step(0.90 + 0.04 * fi, h) * smoothstep(0.30 + 0.06 * fi, 0.0, r);
+  float tw = 0.7 + 0.3 * sin(time * (0.5 + h * 2.0) + h * 40.0);
+  vec3 tint = mix(vec3(0.72, 0.88, 1.0), vec3(1.0, 0.86, 0.60), fract(h * 9.0));
+  return tint * st * st * tw * (0.45 + 0.35 * fi);
 }
-// bg 1: one band of light with a half twist, laid along a tilted ellipse behind the plates
-vec3 ribbon(vec2 c, float fit, float sp){
-  vec2 q = c - vec2(0.0, 0.10);
-  q = vec2(0.995 * q.x - 0.0998 * q.y, 0.0998 * q.x + 0.995 * q.y);
-  vec2 e = vec2(sp + 0.07 * fit, 0.25 * fit);          // the loop's ends sit behind the two plates
-  vec2 ec = q / e;
-  float re = length(ec);
-  float th = atan(ec.y, -ec.x);
-  float tw = 0.5 * (th + 1.5708 + 0.9 * sin(time * 0.15));   // half a turn over the whole loop; the pinch sways near the top
-  float cf = abs(cos(tw));                              // how much of the band's face we see
-  float d = abs((re - 1.0) * length(q) / max(re, 0.001));
-  float hw = 0.085 * fit * max(cf, 0.05);
-  float face = smoothstep(hw + 0.005, hw - 0.002, d) * (0.07 + 0.16 * cf);
-  float edge = 0.0030 / (abs(d - hw) + 0.0035) * (0.30 + 0.70 * cf);
-  float core = 0.0020 / (d + 0.0035) * (1.0 - cf) * (1.0 - cf);
-  float halo = 0.010 / (d + 0.045);
-  vec3 tone = mix(GOLD, CYAN, smoothstep(-0.35, 0.35, ec.x));
-  vec3 o = tone * (face + edge * 0.55 + core * 0.9 + halo * 0.10);
-  // faint dust around the two ends, gold left and cyan right
-  o += GOLD * 0.028 * smoothstep(0.85, 0.0, length(c - vec2(-sp, 0.08)));
-  o += CYAN * 0.028 * smoothstep(0.85, 0.0, length(c - vec2( sp, 0.08)));
-  return o + stars(c, 0.0) * 0.8;
+// a bright technological star: crisp core and a small four-point flare
+vec3 flare(vec2 c, vec2 at, float size, vec3 tint){
+  vec2 d = c - at;
+  float r = length(d);
+  float cross = 0.0012 / (abs(d.x) + 0.0016) * smoothstep(size, 0.0, abs(d.y)) + 0.0012 / (abs(d.y) + 0.0016) * smoothstep(size, 0.0, abs(d.x));
+  return tint * (0.0016 / (r * r + 0.00006) * 0.025 + cross * 0.55);
 }
-// bg 2: deep stars, plus gold and cyan flow lines that braid like a helix; the weave tightens with p
-vec3 field(vec2 c, float fit, float sp){
-  vec3 o = stars(c, 0.0) + stars(c, 1.0) + stars(c, 2.0);
-  float prog = smoothstep(0.0, 0.95, p);
-  float k = 5.5 + 7.5 * prog;
-  float amp = (0.17 - 0.08 * prog) * fit;
-  float env = exp(-c.x * c.x / (0.30 + 0.5 * sp));
-  float wg = mix(1.0, 0.22, smoothstep(-0.5, 0.8, c.x));
-  float wc = mix(0.22, 1.0, smoothstep(-0.8, 0.5, c.x));
-  for (int i = 0; i < 3; i++){
-    float fi = float(i) - 1.0;
-    float off = fi * (0.065 - 0.035 * prog) * fit;
-    float ph = k * c.x + fi * 0.8 - time * 0.25;
-    float sg = sin(ph), sc = sin(ph + 3.14159);
-    float cg = cos(ph);
-    float yg = 0.10 + off + amp * env * sg;
-    float yc = 0.10 + off + amp * env * sc;
-    float slope = amp * env * k * cg;
-    float nrm = inversesqrt(1.0 + slope * slope);
-    float dg = abs(c.y - yg) * nrm, dc = abs(c.y - yc) * nrm;
-    // over and under: each strand dims where it passes behind the other
-    o += GOLD * (0.0014 / (dg + 0.0018)) * wg * (0.45 + 0.55 * cg) * 0.55;
-    o += CYAN * (0.0014 / (dc + 0.0018)) * wc * (0.45 - 0.55 * cg) * 0.55;
-    o += vec3(1.0, 0.95, 0.85) * (0.0016 / (dg + 0.004)) * (0.0016 / (dc + 0.004)) * env * 0.9;
-  }
+float link(vec2 c, vec2 a, vec2 b){
+  vec2 ab = b - a;
+  float h = clamp(dot(c - a, ab) / dot(ab, ab), 0.0, 1.0);
+  return 0.00035 / (length(c - a - ab * h) + 0.0007);
+}
+vec3 galaxy(vec2 c){
+  vec3 o = starLayer(c, 0.0) + starLayer(c, 1.0) + starLayer(c, 2.0);
+  // the galactic band: dust with lanes, gold toward the human side, cyan toward the machine
+  float th = 0.42 + 0.02 * sin(time * 0.05);
+  vec2 bq = vec2(c.x * cos(th) + c.y * sin(th), c.y * cos(th) - c.x * sin(th));
+  float lane = exp(-pow((bq.y - 0.04 + 0.05 * sin(bq.x * 2.3)) / 0.20, 2.0));
+  float cloud = fbm(bq * 3.2 + vec2(0.0, p * 0.6) + mouse * 0.2);
+  float dust = lane * smoothstep(0.30, 0.85, cloud) * (0.4 + 0.6 * fbm(bq * 7.0 - time * 0.01));
+  o += mix(GOLD * 0.9, CYAN, smoothstep(-0.45, 0.45, c.x)) * dust * 0.65;
+  vec2 pr = mouse * 0.02 + vec2(0.0, -0.03) * p;
+  vec2 s0 = vec2(-0.62, 0.30) + pr, s1 = vec2(-0.21, 0.40) + pr * 1.4, s2 = vec2(0.26, 0.33) + pr * 1.2, s3 = vec2(0.66, 0.22) + pr, s4 = vec2(0.02, -0.10) + pr * 0.6;
+  o += flare(c, s0, 0.07, vec3(1.0, 0.88, 0.62)) + flare(c, s1, 0.05, vec3(1.0)) + flare(c, s2, 0.09, vec3(0.7, 0.95, 1.0))
+     + flare(c, s3, 0.06, vec3(0.7, 0.95, 1.0)) + flare(c, s4, 0.04, vec3(1.0, 0.9, 0.75));
+  o += vec3(0.8, 0.9, 1.0) * (link(c, s0, s1) + link(c, s1, s2) + link(c, s2, s3)) * 0.5;
   return o;
 }
 
@@ -186,15 +170,9 @@ void main(){
   col += mix(warm, cold, smoothstep(-0.3, 0.3, c.x)) * rays * rush * rush * smoothstep(0.08, 0.8, r) * 0.55;
   col = mix(col, vec3(1.0, 0.98, 0.95), 0.7 * pow(rush, 5.0) * (1.0 - 0.55 * smoothstep(0.0, 0.9, r)));
 
-  if (bg == 1 || bg == 2) {
-    float fit = min(1.0, a / 1.75);
-    vec3 b = vec3(0.0);
-    if (bg == 1) b = ribbon(cz, fit, sep(p) * fit);
-    if (bg == 2) b = field(cz, fit, sep(p) * fit);
-    // nothing bright behind the header or the caption block; the plates always sit in front
-    b *= smoothstep(0.48, 0.36, c.y) * smoothstep(-0.15, 0.0, c.y);
-    col += b * (1.0 - clamp(dot(col, vec3(0.33)) * 2.5, 0.0, 1.0));
-  }
+  // the galaxy: nothing bright behind the header or the caption block; the plates always sit in front
+  vec3 b = galaxy(cz) * smoothstep(0.48, 0.36, c.y) * smoothstep(-0.15, 0.0, c.y);
+  col += b * (1.0 - clamp(dot(col, vec3(0.33)) * 2.5, 0.0, 1.0));
 
   // air: drifting motes, a cool floor of mist, vignette, grain
   vec2 g = c * 34.0 + vec2(time * 0.05, time * 0.11);
@@ -205,6 +183,86 @@ void main(){
   col += (hash(v * res + time * 60.0) - 0.5) * 0.03;
   col *= 1.0 - 0.55 * smoothstep(-0.12, -0.5, c.y) * (1.0 - pow(rush, 5.0));   // scrim under the copy
   o = vec4(pow(max(col, 0.0), vec3(0.94)), 1.0);
+}`;
+
+const MESH_VERT = `#version 300 es
+// The Mobius strip as a triangle mesh in screen-height units (y up, x scaled by aspect).
+in vec2 uv;                       // u: around the loop 0..2pi, w: across the band -1..1
+uniform vec2 res, mouse;
+uniform float p, time, spread;
+out vec3 pos; out vec3 nrm; out vec2 st; out float presence; out float grade;
+const float TILT = 0.62, DEPTH = 1.7, TWISTS = 0.5;
+float sep(float q){
+  return 0.50 - 0.13 * smoothstep(0.33, 0.42, q) - 0.10 * smoothstep(0.58, 0.67, q) - 0.05 * smoothstep(0.80, 0.95, q);
+}
+float bump(float c, float w, float x){ return exp(-pow((x - c) / w, 2.0)); }
+vec3 strip(float u, float w, vec2 axes, float halfWidth, float sway){
+  vec2 rim = vec2(cos(u), sin(u));
+  vec2 outward = normalize(vec2(rim.x / axes.x, rim.y / axes.y));
+  float t = u * TWISTS;
+  vec3 q = vec3(rim * axes, 0.0) + w * halfWidth * vec3(outward * cos(t), sin(t));
+  float cs = cos(TILT), sn = sin(TILT);
+  q = vec3(q.x, q.y * cs - q.z * sn, q.y * sn + q.z * cs);              // lean the loop back: the top comes toward us
+  float cy = cos(sway), sy = sin(sway);
+  return vec3(q.x * cy + q.z * sy, q.y, q.z * cy - q.x * sy);           // slow turn about the vertical axis
+}
+void main(){
+  float a = res.x / res.y;
+  float fit = min(1.0, a / 1.75);
+  float size = fit * (1.0 + 0.5 * (1.0 - fit));                          // narrow screens: a tighter gap, but not a tiny loop
+  vec2 axes = vec2(sep(p) * fit + 0.09 * size, 0.26 * size);            // the loop's ends sit behind the two plates
+  float halfWidth = 0.16 * size * spread;
+  float sway = 0.30 * sin(time * 0.17) + mouse.x * 0.25;
+  float e = 0.004;
+  vec3 q = strip(uv.x, uv.y, axes, halfWidth, sway);
+  nrm = normalize(cross(strip(uv.x + e, uv.y, axes, halfWidth, sway) - strip(uv.x - e, uv.y, axes, halfWidth, sway),
+                        strip(uv.x, uv.y + e, axes, halfWidth, sway) - strip(uv.x, uv.y - e, axes, halfWidth, sway)));
+  pos = q; st = uv;
+  float rush = clamp(bump(0.375, 0.030, p) + bump(0.625, 0.030, p), 0.0, 1.0);
+  float beam = 0.5 * bump(0.38, 0.10, p);                               // the strip yields to the correction beam
+  float hairline = 0.35 * smoothstep(0.84, 0.97, p);                    // and to the hairline at the end
+  presence = (1.0 - rush) * (1.0 - beam) * (1.0 - hairline);
+  float push = 1.0 + 0.05 * p + rush * 0.9;
+  vec2 c = (q.xy * DEPTH / (DEPTH - q.z) + vec2(0.0, 0.10) + mouse * vec2(0.01, 0.006)) * push;
+  grade = 1.0 - 0.5 * smoothstep(0.45, 1.05, length(c));                // the same vignette as the film grade
+  gl_Position = vec4(c.x * 2.0 / a, c.y * 2.0, 0.0, 1.0);
+}`;
+
+const MESH_FRAG = `#version 300 es
+precision highp float;
+in vec3 pos; in vec3 nrm; in vec2 st; in float presence; in float grade;
+uniform float time, spread;
+out vec4 o;
+const vec3 GOLD = vec3(0.961, 0.769, 0.318), CYAN = vec3(0.45, 0.95, 1.0);
+void main(){
+  vec3 V = vec3(0.0, 0.0, 1.0);
+  vec3 N = normalize(nrm);
+  if (dot(N, V) < 0.0) N = -N;                                   // light both faces of the one surface
+  vec3 L = normalize(vec3(-0.55, 0.65, 0.55));
+  float lit = max(dot(N, L), 0.0);
+  float spec = pow(max(dot(N, normalize(L + V)), 0.0), 32.0);
+  float rim = pow(1.0 - abs(dot(N, V)), 3.0);
+  float across = abs(st.y);
+  vec3 tone = mix(GOLD, CYAN * 1.35, smoothstep(-0.30, 0.30, pos.x));   // cyan carries gold's weight
+  float depth = mix(0.28, 1.0, smoothstep(-0.2, 0.2, pos.z));    // the far half sits behind and dimmer
+  vec3 col;
+  if (spread > 1.0) {
+    col = tone * 0.035 * (1.0 - across) * (0.4 + lit);            // a soft halo around the strip
+  } else {
+    float flow = st.y * 6.5 + 0.5 * sin(st.x * 5.0 + time * 0.4);
+    float lines = pow(abs(cos(flow * 3.14159)), 10.0);
+    float thread = mix(0.25, lines, 1.0 - smoothstep(0.30, 0.70, fwidth(flow)));   // threads packed below a pixel average out: no moire
+    float pulse = pow(0.5 + 0.5 * sin(st.x * 9.0 - time * 1.1), 10.0);
+    float edge = smoothstep(0.80, 1.0, across);
+    col = tone * (0.03 + 1.25 * lit * lit) * (0.40 + 0.60 * thread)
+        + tone * pulse * thread * 0.8
+        + mix(tone, vec3(1.0), 0.65) * spec * (0.9 + 1.6 * edge)
+        + tone * rim * (0.5 + 1.4 * edge)
+        + mix(tone, vec3(1.0), 0.5) * edge * 0.18 * (0.4 + lit);
+  }
+  float y = pos.y + 0.10;
+  float keep = smoothstep(0.48, 0.36, y) * smoothstep(-0.15, 0.0, y);  // clear of the header and the caption scrim
+  o = vec4(col * depth * keep * presence * grade * 1.25, 1.0);
 }`;
 
 function loadImage(src) {
@@ -250,18 +308,42 @@ async function start() {
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
+  const link = (vert, frag) => {
+    const program = gl.createProgram();
+    gl.attachShader(program, sh(gl.VERTEX_SHADER, vert));
+    gl.attachShader(program, sh(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    return program;
+  };
+  const prog = link(VERT, FRAG);
+  const meshProg = link(MESH_VERT, MESH_FRAG);
+  const u = (n) => gl.getUniformLocation(prog, n);
+  const um = (n) => gl.getUniformLocation(meshProg, n);
+  gl.useProgram(prog);                       // the plate samplers below belong to the main program
+
+  const quadVao = gl.createVertexArray();
+  gl.bindVertexArray(quadVao);
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, "a");
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  const u = (n) => gl.getUniformLocation(prog, n);
+  gl.enableVertexAttribArray(gl.getAttribLocation(prog, "a"));
+  gl.vertexAttribPointer(gl.getAttribLocation(prog, "a"), 2, gl.FLOAT, false, 0, 0);
+
+  // The Mobius strip: a (u, w) grid, u around the loop, w across the band.
+  const meshVao = gl.createVertexArray();
+  gl.bindVertexArray(meshVao);
+  const grid = [], tris = [];
+  for (let i = 0; i <= MESH_U; i++) for (let j = 0; j <= MESH_W; j++) grid.push((i / MESH_U) * 2 * Math.PI, (j / MESH_W) * 2 - 1);
+  for (let i = 0; i < MESH_U; i++) for (let j = 0; j < MESH_W; j++) {
+    const k = i * (MESH_W + 1) + j, m = k + MESH_W + 1;
+    tris.push(k, m, k + 1, k + 1, m, m + 1);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(gl.getAttribLocation(meshProg, "uv"));
+  gl.vertexAttribPointer(gl.getAttribLocation(meshProg, "uv"), 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(tris), gl.STATIC_DRAW);
 
   const images = await Promise.all(PLATES.map((n) => loadImage("/film/" + n + ".jpg")));
   ["H", "M0", "MW", "M2", "M3"].forEach((name, unit) => {
@@ -298,14 +380,30 @@ async function start() {
     p = np; mx = nmx; my = nmy;
     // Motes, pulses and grain move on their own, so keep drawing while the page is visible.
     const covered = scrollY > track.offsetHeight;          // the page below the film has scrolled over it
+    const clock = reduced ? 0 : t / 1000;
     if ((moved || dirty || !reduced) && !document.hidden && !covered) {
+      gl.useProgram(prog);
+      gl.bindVertexArray(quadVao);
       gl.uniform2f(u("res"), canvas.width, canvas.height);
       gl.uniform2f(u("mouse"), mx, my);
       gl.uniform1f(u("p"), p);
       gl.uniform1f(u("calm"), reduced ? 1 : 0);
-      gl.uniform1i(u("bg"), BG);
-      gl.uniform1f(u("time"), reduced ? 0 : t / 1000);
+      gl.uniform1f(u("time"), clock);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      // the strip is laid over the finished frame with a screen blend: it yields to whatever is already bright
+      gl.useProgram(meshProg);
+      gl.bindVertexArray(meshVao);
+      gl.uniform2f(um("res"), canvas.width, canvas.height);
+      gl.uniform2f(um("mouse"), mx, my);
+      gl.uniform1f(um("p"), p);
+      gl.uniform1f(um("time"), clock);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE_MINUS_DST_COLOR, gl.ONE);
+      for (const spread of [2.6, 1]) {
+        gl.uniform1f(um("spread"), spread);
+        gl.drawElements(gl.TRIANGLES, MESH_U * MESH_W * 6, gl.UNSIGNED_SHORT, 0);
+      }
+      gl.disable(gl.BLEND);
       updateCopy(p);
       dirty = false;
     }

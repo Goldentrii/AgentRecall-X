@@ -210,24 +210,13 @@ describe("home page film — line endings", () => {
   });
 });
 
-describe("home page film — background variants", () => {
+describe("home page film — the Mobius galaxy background", () => {
   const html = renderStatic("/", ctx).body;
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   const script = scripts[0][1];
 
-  it("the script reads ?bg= once and accepts only a or b; anything else is the default 0", () => {
-    assert.equal([...script.matchAll(/location\.search/g)].length, 1, "one read of the query string");
-    assert.equal([...script.matchAll(/\.get\("bg"\)/g)].length, 1);
-    assert.match(script, /const BG = bgParam === "a" \? 1 : bgParam === "b" \? 2 : 0;/);
-    assert.match(script, /uniform1i\(u\("bg"\), BG\)/);
-  });
-
-  it("the shader gates every variant on uniform bg, so the default path never enables one", () => {
-    assert.match(script, /uniform int bg;/);
-    const uses = [...script.matchAll(/\bbg\b\s*(==|!=)\s*(\d)/g)].map((m) => m[0]);
-    assert.ok(uses.length >= 2, "both variants are gated");
-    assert.ok(uses.every((x) => /==\s*[12]$/.test(x)), `only 1 and 2 enable a variant: ${uses}`);
-    assert.ok(!/bg\s*==\s*0/.test(script));
+  it("no background parameter is read: the Mobius galaxy is the only background", () => {
+    assert.ok(!/location\.search|URLSearchParams|"bg"|\bbg\b/.test(script));
   });
 
   it("the page still has exactly one inline script and one inline style, hashes matching", () => {
@@ -238,7 +227,8 @@ describe("home page film — background variants", () => {
     assert.ok(csp.includes(`script-src ${hash(scripts[0][1])}`));
   });
 
-  it("static variants under reduced motion: time is fixed", () => {
-    assert.match(script, /uniform1f\(u\("time"\), reduced \? 0 : t \/ 1000\)/);
+  it("under reduced motion the clock is fixed for the whole background", () => {
+    assert.match(script, /const clock = reduced \? 0 : t \/ 1000;/);
+    assert.equal([...script.matchAll(/uniform1f\(u(m?)\("time"\), clock\)/g)].length, 2, "both programs read the fixed clock");
   });
 });
