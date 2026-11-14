@@ -20,8 +20,9 @@ Not blocking (checked): the server is HTTPS Streamable HTTP with OAuth 2.1, dyna
 
 Recommended order: 4, 3, 2 (one small PR, three pages), 1, then 7 (biggest effect on Claude users), then submit Claude. Do 6, 8, 5 only if you want ChatGPT.
 
-Status as of main e84d63f (2026-11-14): nothing above is resolved on main yet. Main changed the descriptions, the site look and the sign-in page styling, and turned HSTS on; none of those is an item here (HSTS is not a blocker; the restyled sign-in pages do not close item 10, which is about the hand-off, not the look).
-
-In progress, not merged:
-- Items 3 and 4 (`/support`, `/privacy`): being added on branch `feat/legal-pages`, PR to follow.
-- Item 7 (read-only tools): being done on branch `feat/read-only-tools`.
+Status (2026-11-14, updated with each PR that closes an item):
+- Items 3 and 4: `/support` and `/privacy` are on the site (PR #76). `/privacy` renders PRIVACY.md itself; `/support` names the same contact address, GitHub issues and the Telegram group, with no promised reply time.
+- Item 8: the two ChatGPT callbacks from OpenAI's Apps SDK auth doc are allowlisted (PR #76). The per-connector `callback_id` format is not documented, so the allowlist accepts one path segment of `[A-Za-z0-9_-]`; confirm it against a real connector.
+- Item 2: a draft is in `docs/legal/TERMS-draft.md` with `[OWNER]` decisions; no `/terms` route until the owner signs off. This is the last page ChatGPT needs; Claude does not need it.
+- Item 7: in review on branch `feat/read-only-tools`.
+- Items 1, 5, 6, 9, 10, 11: open.
