@@ -47,7 +47,7 @@ cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol -
 cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol,test-hooks --no-run        # CARGO_TARGET_DIR=/cache/target-hooks
 ```
 
-Each prints the path of its `agent_recall_tray_lib-*.exe`; copy it out with `docker cp` (for example to `release/tests.exe` and `release/tests-testhooks.exe`) and run it on Windows. Last recorded run: release build 32 passed, test-hooks build 37 passed, 0 failed.
+Each prints the path of its `agent_recall_tray_lib-*.exe`; copy it out with `docker cp` (for example to `release/tests.exe` and `release/tests-testhooks.exe`) and run it on Windows. Last recorded run (2026-11-14): release build 37 passed, test-hooks build 42 passed, 0 failed.
 
 ### UI parser tests
 
