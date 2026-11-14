@@ -3,12 +3,12 @@
  * SERVER RECORDS of one account (never from anything a client says).
  *
  *   1. Connect an agent   a live credential of this account has recorded activity (activity.ts)
- *   2. Teach it one rule  the account has a rule: one waiting for approval, or an active one
+ *   2. Teach it one rule  the account has an ACTIVE rule (one only waiting for approval is not done, not counted)
  *   3. A second agent     a credential that did not teach the rule has made a tool call since it went live
  *
  * What the stores can and cannot tell (so the card never claims more):
- *  - Step 2 counts READY proposals (the ones /review can approve) and active corrections. A partial
- *    capture that cannot be approved is not a rule the user can see, so it does not count.
+ *  - Step 2 counts active corrections only. READY proposals (the ones /review can approve) are reported as
+ *    `waiting` so the card can ask the owner to approve; they are not a rule yet.
  *  - A rule proposed through the hosted server records `authored_by`: the credential id activity.ts
  *    keys its rows by (never a token), stamped on the staged proposal and carried onto the active
  *    correction when the owner approves it. A proposal or rule restated by a second credential
@@ -79,7 +79,7 @@ export interface TrialState {
   count: number;
   /** The first step not done (1..3), or null when all are. */
   next: 1 | 2 | 3 | null;
-  /** A ready proposal is waiting and nothing is active yet. */
+  /** A ready proposal is waiting and nothing is active yet: step 2 is the owner's approval. */
   waiting: boolean;
   /** Rules could not be read: steps 2 and 3 are unknown, not "not done". */
   degraded: boolean;
@@ -93,7 +93,8 @@ const sameRule = (rule: string): string => rule.toLowerCase().replace(/\s+/g, " 
 /** Pure: the trial state from the account's credentials and rule signals (null = rules unreadable). */
 export function computeTrial(credentials: readonly TrialCredential[], rules: RuleSignals | null): TrialState {
   const s1 = credentials.some((c) => Number.isFinite(ms(c.lastSeen)));
-  const s2 = rules !== null && rules.ready + rules.rules.length > 0;
+  // A proposal that only waits is not a rule: nothing is active until the owner approves it.
+  const s2 = rules !== null && rules.rules.length > 0;
   const calledAfter = (r: ActiveRule): TrialCredential[] => credentials.filter((c) => ms(c.lastCall) > r.at);
   const proven = rules !== null && rules.rules.some((r) => r.authors.length > 0 && calledAfter(r).some((c) => !r.authors.includes(c.key)));
   const s3 = proven || (rules !== null && rules.rules.some((r) => r.authors.length === 0 && calledAfter(r).length >= 2));

@@ -874,12 +874,17 @@ describe("website: guided trial card", () => {
   let skew = 0; // the server clock runs ahead by this much, so the 10 s per-account scan cache can be expired on demand
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const RULE = "Always answer me in one short paragraph.";
-  const STRONG = "It works: a rule you taught one agent reached another.";
+  const STRONG = "A second agent has been active since your rule went live.";
   const trialOf = (html) => /<section class="panel trial"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
   const countOf = (html) => Number(/data-trial-count="(\d)"/.exec(trialOf(html))?.[1] ?? -1);
   const doneSteps = (html) => [...trialOf(html).matchAll(/data-step="(\d)" data-done="true"/g)].map((m) => Number(m[1]));
   /** The dashboard text; the scan cache is expired first so each look sees the current disk. */
-  const view = async (b) => { skew += 11_000; return (await b.go("/connect")).text; };
+  const view = async (b) => {
+    skew += 11_000;
+    const text = (await b.go("/connect")).text;
+    assert.ok(!/credential/i.test(/<section class="panel trial"[\s\S]*?<\/section>/.exec(text)?.[0] ?? ""), "the card never says credential");
+    return text;
+  };
   const agent = async (base, token) => {
     const c = new Client({ name: "trial-agent", version: "0.0.0" });
     await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${token}`, Connection: "close" } } }));
@@ -932,8 +937,12 @@ describe("website: guided trial card", () => {
     assert.deepEqual(doneSteps(html), []);
     assert.match(trialOf(html), /See it work/);
     assert.ok(trialOf(html).includes("Remember this rule: always answer me in one short paragraph."));
-    assert.ok(trialOf(html).includes("What rules do I have?"));
+    assert.ok(!trialOf(html).includes("What rules do I have?"), "step 3 prompt is not offered before a rule is active");
     assert.match(trialOf(html), /Next: connect an agent/i);
+    assert.match(trialOf(html), /<a class="btn[^"]*" href="#h-connect">/, "step 1 links the connect section");
+    assert.ok(!/do anything once/.test(trialOf(html)));
+    assert.match(trialOf(html), /ask it anything once, so the server sees it/);
+    assert.match(trialOf(html), /It takes about three minutes/);
   });
 
   it("after one agent has made a request, step 1 is done (1 of 3)", async () => {
@@ -945,16 +954,21 @@ describe("website: guided trial card", () => {
     await a.close();
   });
 
-  it("a staged rule completes step 2, says it is waiting for approval and links /review", async () => {
+  it("a rule only waiting for approval is NOT step 2 done: it is an action with a review button", async () => {
     const a = await agent(env.base, tokA);
     await propose(a, RULE);
     await a.close();
     const html = await view(alice);
-    assert.equal(countOf(html), 2);
-    assert.deepEqual(doneSteps(html), [1, 2]);
-    assert.match(trialOf(html), /waiting for (your )?approval/i);
-    assert.match(trialOf(html), /href="\/review"/);
-    assert.ok(!/Two credentials of yours/.test(html));
+    const t = trialOf(html);
+    assert.equal(countOf(html), 1, "a waiting rule is not counted");
+    assert.deepEqual(doneSteps(html), [1]);
+    assert.ok(!/Done: Teach/.test(t) && !/2 of 3/.test(t));
+    assert.match(t, /Approve your rule/);
+    assert.match(t, /<a class="btn[^"]*" href="\/review">Review and approve your rule<\/a>/);
+    assert.match(t, /Next: approve your rule/);
+    assert.match(t, /nothing is active until you approve/i);
+    assert.ok(!t.includes("What rules do I have?"), "the step 3 prompt is not offered while the rule only waits");
+    assert.ok(!/Two credentials of yours|Two sign-ins/.test(html));
   });
 
   it("step 3 needs a credential other than the author's, active after the rule went live", async () => {
@@ -963,7 +977,9 @@ describe("website: guided trial card", () => {
     assert.equal(countOf(html), 2, "approved but nobody has been active since");
     assert.ok(!/waiting for (your )?approval/i.test(trialOf(html)));
     assert.match(trialOf(html), /Next: use a second agent/i);
-    assert.match(trialOf(html), /A second agent active after your rule went live/);
+    assert.match(trialOf(html), /Use a second agent/);
+    assert.ok(trialOf(html).includes("What rules do I have?"), "offered once the rule is active");
+    assert.ok(!/Review and approve your rule/.test(trialOf(html)));
     await sleep(40);
     // The author alone, however active, proves nothing.
     const a = await agent(env.base, tokA);
@@ -981,7 +997,10 @@ describe("website: guided trial card", () => {
     assert.deepEqual(doneSteps(html), [1, 2, 3]);
     assert.ok(trialOf(html).includes(STRONG));
     const notice = /<div class="notice ok"[\s\S]*?<\/div>/.exec(trialOf(html))?.[0] ?? "";
-    assert.match(notice, /new sign-in of the same agent counts as another credential/i, "the caveat sits in the banner itself");
+    assert.match(notice, /new sign-in of the same agent counts too/i, "the caveat sits in the banner itself");
+    assert.ok(!/loads|reads? it at session start|reached another/i.test(notice), "no claim beyond the records");
+    assert.ok(!/It takes about three minutes/.test(trialOf(html)), "hidden at 3 of 3");
+    assert.equal((trialOf(html).match(/new sign-in of the same agent/gi) ?? []).length, 1, "the caveat is said once");
   });
 
   it("tenant isolation: both accounts have their own rule and agents, and neither page shows the other's state", async () => {
@@ -991,13 +1010,13 @@ describe("website: guided trial card", () => {
     await a.close();
     const bobHtml = await view(bob);
     const aliceHtml = await view(alice);
-    assert.equal(countOf(bobHtml), 2, "bob: his agent and his waiting rule, nothing of alice's");
-    assert.deepEqual(doneSteps(bobHtml), [1, 2]);
-    assert.match(trialOf(bobHtml), /waiting for (your )?approval/i);
-    assert.ok(!/Two credentials of yours/.test(bobHtml));
+    assert.equal(countOf(bobHtml), 1, "bob: his agent; his rule only waits, nothing of alice's");
+    assert.deepEqual(doneSteps(bobHtml), [1]);
+    assert.match(trialOf(bobHtml), /Approve your rule/);
+    assert.ok(!/Two credentials of yours|Two sign-ins/.test(bobHtml));
     assert.ok(!/token (first|second|reissued)/.test(bobHtml));
     assert.equal(countOf(aliceHtml), 3, "alice is unchanged by bob's activity");
-    assert.ok(!/waiting for (your )?approval/i.test(trialOf(aliceHtml)), "bob's staged rule is not alice's");
+    assert.ok(!/Approve your rule/.test(trialOf(aliceHtml)), "bob's staged rule is not alice's");
     assert.ok(!/token bobs/.test(aliceHtml));
     await approveAll(bob);
     assert.equal(countOf(await view(bob)), 2, "bob has one agent only: step 3 not done");
@@ -1145,7 +1164,7 @@ describe("website: guided trial card", () => {
       for (const t of [t1, t2]) { const c = await agent(env.base, t.token); await c.callTool({ name: "session_start", arguments: {} }); await c.close(); }
       const html = await view(x.b);
       assert.deepEqual(doneSteps(html), [1, 2, 3]);
-      assert.match(html, /Two credentials of yours have been active since your rule went live\./);
+      assert.match(trialOf(html), /<div class="notice plain"[^>]*>Two sign-ins of yours have been active since your rule went live\.<\/div>/);
       assert.ok(!html.includes(STRONG));
       assert.ok(!/loads it at session start/.test(html), "a legacy rule is not claimed to be loaded");
     });
@@ -1160,7 +1179,7 @@ describe("website: guided trial card", () => {
       const row = JSON.parse(fs.readFileSync(file, "utf-8"));
       delete row.authored_by; // a row written before the field existed
       fs.writeFileSync(file, JSON.stringify(row));
-      assert.match(await view(x.b), /waiting for (your )?approval/i);
+      assert.match(await view(x.b), /Approve your rule/);
       await approveAll(x.b);
       assert.ok(!("authored_by" in JSON.parse(fs.readFileSync(activeFile(x.dir), "utf-8"))));
       assert.deepEqual(doneSteps(await view(x.b)), [1, 2]);
@@ -1309,6 +1328,14 @@ describe("website: guided trial (rules scan and state, unit)", () => {
   const cred = (key, last, lastCall = last) => ({ key, lastSeen: at(last), ...(lastCall !== null ? { lastCall: at(lastCall) } : {}) });
   const A = "token:aaaaaaaaaaaa", B = "token:bbbbbbbbbbbb", C = "grant:cccccccccccc";
   const rulesOf = (...rules) => ({ ready: 0, rules, capped: false });
+
+  it("computeTrial: a waiting proposal is not step 2 and not counted; waiting stays true", () => {
+    const t = T.computeTrial([cred(A, 2_000_000)], { ready: 1, rules: [], capped: false });
+    assert.deepEqual(t.done, [true, false, false]);
+    assert.equal(t.count, 1);
+    assert.equal(t.next, 2);
+    assert.equal(t.waiting, true);
+  });
 
   it("computeTrial: a rule with a recorded author is proven by ANOTHER credential active after it went live", () => {
     const r = rulesOf({ at: 1_000_000, authors: [A] });
