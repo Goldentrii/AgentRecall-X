@@ -14,16 +14,16 @@ All four packages 3.5.3 in lockstep. This is a large release under a patch numbe
 
 ### Upgrade notes — read before upgrading
 
-- **`session_start` returns less by default.** The default is now `mode: "cards"`: the owner card, HARD RULES (P0 corrections and behaviour policies), the project state card and a one-line pending-review count. Insights, rooms, recent activity, `watch_for` and continuity are no longer loaded unless you ask for them. To get the previous output: pass `mode: "full"` (MCP), `{ mode: "full" }` (SDK), or set `AGENT_RECALL_SESSION_START_MODE=full` (hooks). `verbose: true` still returns full JSON.
+- **`session_start` returns less by default.** The default is now `mode: "cards"`: the owner card, HARD RULES (P0 corrections and behaviour policies), the project state card and a one-line pending-review count. Insights, rooms, recent activity, `watch_for` and continuity are no longer loaded unless you ask for them. To get the previous output: pass `mode: "full"` on each MCP call (or `verbose: true` for full JSON), `{ mode: "full" }` in the SDK, or set `AGENT_RECALL_SESSION_START_MODE=full` for `ar hook-start`. That variable does not affect the MCP tool: there is no setting that restores the old MCP default, the mode is chosen per call.
 - **SDK callers: `sessionStart()` changed shape by default.** `insights`, `active_rooms`, `cross_project`, `recent_captures` and `watch_for` are `[]`, and `resume`, `pipeline` and `alignment` are `null`, unless `{ mode: "full" }` is passed. Nothing throws: code that reads those fields silently gets nothing. `fencedText` is now the rendered text, not a fenced JSON dump.
 - **`ar hook-start` prints a different format** (see Changed). Anything that matched the old `Project:` / `🚨 P0 rules` / `💡 Awareness insights` / `🏛️ Palace rooms` markers must be updated.
-- **Rendered `session_start` text is capped at 16,384 bytes** in every mode (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive the cap.
+- **Rendered `session_start` text is capped at 16,384 bytes** in cards and full mode (lite is already at most 500 tokens) (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive the cap.
 - No tool, command, flag, export or environment variable was removed or renamed. The on-disk store needs no migration, and a downgrade to 3.5.2 reads everything it read before.
 - `agent-recall-mcp` is larger: it now also contains the hosted server (`agent-recall-server` bin, the `express` dependency, and about 470 KB of website images). The stdio entry point does not load any of it.
 
 ### Hosted server (new)
 
-One hosted AgentRecall that any MCP agent connects to with one URL: `https://agentrecallx.com/mcp`. Free, sign-up open to any GitHub account. Self-hosting: `docs/hosted-server.md`.
+One hosted AgentRecall that any MCP agent connects to with one URL: `https://agentrecallx.com/mcp`. On agentrecallx.com it is free and sign-up is open to any GitHub account; a self-hosted server is invite-only unless its operator sets `AR_OAUTH_SIGNUP=open`. Self-hosting: `docs/hosted-server.md`.
 
 - **`agent-recall-server`**: Streamable HTTP MCP server with one isolated memory per user, static tokens and OAuth 2.1 sign-in with GitHub or Google (dynamic client registration, PKCE), per-user storage quota and rate limit (#49, #50).
 - **Website**: home page, `/connect` dashboard with your ID and copyable connect commands, `/local`, and plain-text instructions for agents at `/connect.md`, `/local.md` and `/llms.txt`. Strict CSP, no third-party requests (#57). The home page is a scroll-driven film about Intelligent Distance (#64).

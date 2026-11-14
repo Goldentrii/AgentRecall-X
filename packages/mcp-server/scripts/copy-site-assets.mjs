@@ -6,4 +6,4 @@ import { fileURLToPath } from "node:url";
 const from = fileURLToPath(new URL("../src/http/film", import.meta.url));
 const to = fileURLToPath(new URL("../dist/http/film", import.meta.url));
 rmSync(to, { recursive: true, force: true });
-cpSync(from, to, { recursive: true });
+cpSync(from, to, { recursive: true, filter: (src) => !src.endsWith(".gitattributes") });
