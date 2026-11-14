@@ -251,7 +251,7 @@ describe("C-1 + C-3 pipeline — an ambient-captured gist survives into a sessio
         const journalDir = path.join(projectsDir, slug, "journal");
         if (!fs.existsSync(journalDir)) continue;
         for (const f of fs.readdirSync(journalDir)) {
-          if (!f.endsWith(".md")) continue;
+          if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
           const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
           if (body.includes("PIPELINE_UNIQUE_TERM_XYZ")) found = true;
         }
@@ -264,7 +264,7 @@ describe("C-1 + C-3 pipeline — an ambient-captured gist survives into a sessio
         const sessionDir = path.join(unclaimedDir, sid);
         if (!fs.statSync(sessionDir).isDirectory()) continue;
         for (const f of fs.readdirSync(sessionDir)) {
-          if (!f.endsWith(".md")) continue;
+          if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
           const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
           if (body.includes("PIPELINE_UNIQUE_TERM_XYZ")) found = true;
         }

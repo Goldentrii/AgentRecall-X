@@ -186,7 +186,7 @@ describe("kill -9 e2e round trip — orphan-rescue sweep reaches an MCP-only ses
       const sessionDir = path.join(unclaimedDir, sid);
       if (!fs.statSync(sessionDir).isDirectory()) continue;
       for (const f of fs.readdirSync(sessionDir)) {
-        if (!f.endsWith(".md")) continue;
+        if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
         const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
         if (body.includes("KILL9_E2E_UNIQUE_TERM")) rescuedCard = { slug: "_unclaimed", file: f, body };
       }

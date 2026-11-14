@@ -67,7 +67,7 @@ function findCardFor(root, uniqueTerm) {
       const journalDir = path.join(projectsDir, slug, "journal");
       if (!fs.existsSync(journalDir)) continue;
       for (const f of fs.readdirSync(journalDir)) {
-        if (!f.endsWith(".md")) continue;
+        if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
         const body = fs.readFileSync(path.join(journalDir, f), "utf-8");
         if (body.includes(uniqueTerm)) return { slug, file: f, body };
       }
@@ -86,7 +86,7 @@ function findCardFor(root, uniqueTerm) {
       const sessionDir = path.join(unclaimedDir, sid);
       if (!fs.statSync(sessionDir).isDirectory()) continue;
       for (const f of fs.readdirSync(sessionDir)) {
-        if (!f.endsWith(".md")) continue;
+        if (!f.endsWith(".md") || !f.includes("--card--")) continue; // a distilled card, not a remember() journal entry
         const body = fs.readFileSync(path.join(sessionDir, f), "utf-8");
         if (body.includes(uniqueTerm)) return { slug: "_unclaimed", file: f, body };
       }
@@ -166,7 +166,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
       return;
     }
     const root = isolatedRoot();
-    const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "SIGTERM_UNIQUE_TERM_ABC" });
+    const { child } = await spawnServerAndCallOneTool(root, "remember", { content: "SIGTERM_UNIQUE_TERM_ABC" });
 
     const start = Date.now();
     const exitPromise = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal, ms: Date.now() - start })));
@@ -194,7 +194,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
       return;
     }
     const root = isolatedRoot();
-    const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "SIGINT_UNIQUE_TERM_DEF" });
+    const { child } = await spawnServerAndCallOneTool(root, "remember", { content: "SIGINT_UNIQUE_TERM_DEF" });
 
     const start = Date.now();
     const exitPromise = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal, ms: Date.now() - start })));
@@ -217,7 +217,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
       return;
     }
     const root = isolatedRoot();
-    const { child } = await spawnServerAndCallOneTool(root, "recall", { query: "IDEMPOTENT_SIGNAL_UNIQUE_TERM" });
+    const { child } = await spawnServerAndCallOneTool(root, "remember", { content: "IDEMPOTENT_SIGNAL_UNIQUE_TERM" });
 
     const exitPromise = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
     child.kill("SIGTERM");
@@ -243,7 +243,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
         const journalDir = path.join(projectsDir, slug, "journal");
         if (!fs.existsSync(journalDir)) continue;
         for (const f of fs.readdirSync(journalDir)) {
-          if (f.endsWith(".md") && fs.readFileSync(path.join(journalDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
+          if (f.endsWith(".md") && f.includes("--card--") && fs.readFileSync(path.join(journalDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
             cardCount++;
           }
         }
@@ -256,7 +256,7 @@ describe("C-3 graceful-exit handlers — SIGTERM/SIGINT distill working memory i
         const sessionDir = path.join(unclaimedDir, sid);
         if (!fs.statSync(sessionDir).isDirectory()) continue;
         for (const f of fs.readdirSync(sessionDir)) {
-          if (f.endsWith(".md") && fs.readFileSync(path.join(sessionDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
+          if (f.endsWith(".md") && f.includes("--card--") && fs.readFileSync(path.join(sessionDir, f), "utf-8").includes("IDEMPOTENT_SIGNAL_UNIQUE_TERM")) {
             cardCount++;
           }
         }
