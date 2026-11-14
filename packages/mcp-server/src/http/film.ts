@@ -80,7 +80,7 @@ const BEATS: readonly Beat[] = [
     p: "The gap is not a fault in either side. A correction made in one chat is gone by the next session, or the next agent." },
   { from: "0.29", to: "0.355", kicker: "You correct it", h: "One correction crosses the gap.",
     p: "A correction you approve becomes a rule, with its reason and where it applies." },
-  { from: "0.40", to: "0.58", kicker: "Session 2", h: "It is remembered. By every agent.",
+  { from: "0.40", to: "0.58", kicker: "Session 2", h: "It is remembered. By every connected agent.",
     p: "Claude Code, Codex, Cursor, claude.ai: each one starts from what you taught the last one." },
   { from: "0.66", to: "0.80", kicker: "Session 50", h: "Each time it matters, it is measured.",
     p: "Heeded, or repeated. A rule that keeps failing gets rewritten. Each outcome narrows the distance." },

@@ -187,3 +187,25 @@ describe("home page film — calls to action and gold", () => {
     assert.ok(!/automatically (becomes|saved|applied)/i.test(html));
   });
 });
+
+describe("home page film — line endings", () => {
+  it("a CRLF checkout hashes exactly the text it inlines (the browser hashes after newline normalisation)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-film-crlf-"));
+    try {
+      const src = path.join(here, "..", "dist", "http", "film");
+      for (const f of fs.readdirSync(src)) fs.copyFileSync(path.join(src, f), path.join(tmp, f));
+      for (const f of ["film.css", "film.js"]) {
+        const lf = fs.readFileSync(path.join(tmp, f), "utf8").replace(/\r\n/g, "\n");
+        fs.writeFileSync(path.join(tmp, f), lf.replace(/\n/g, "\r\n"));
+      }
+      const film = loadFilm(tmp);
+      assert.ok(film);
+      assert.ok(!film.css.includes("\r") && !film.script.includes("\r"), "inlined text carries no CR");
+      assert.equal(film.styleHash, hash(film.css));
+      assert.equal(film.scriptHash, hash(film.script));
+      assert.equal(film.styleHash, FILM.styleHash, "same hash as the LF build");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

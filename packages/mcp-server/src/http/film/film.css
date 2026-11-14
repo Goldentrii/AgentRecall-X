@@ -58,7 +58,7 @@ h2{font-size:clamp(28px,3.8vw,50px)}
 .film.nogl #stage{background:radial-gradient(ellipse at 30% 40%,#4a3608 0,transparent 45%),radial-gradient(ellipse at 70% 40%,#083a44 0,transparent 45%),#04060a}
 .film .top{position:fixed;top:0;left:0;right:0}
 .film #track{position:relative;height:450vh}
-.film .meter{display:flex;gap:22px;position:fixed;top:64px;right:32px;z-index:3;font:12px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.14em;color:#a9bccf}
+.film .meter{display:flex;gap:22px;position:fixed;top:76px;right:32px;z-index:3;font:12px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.14em;color:#a9bccf}
 .film .hint{display:block;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:3;font:11px/1 ui-monospace,Consolas,monospace;letter-spacing:.3em;text-transform:uppercase;color:#7f93a8;transition:opacity .4s ease}
 .film .hint.off{opacity:0}
 .skipfilm{display:none}
@@ -72,7 +72,7 @@ h2{font-size:clamp(28px,3.8vw,50px)}
 @media (max-width:760px){
   .doors,.steps{grid-template-columns:1fr}
   .top{padding:16px}
-  .film .meter{right:16px;top:104px;gap:12px;font-size:10px}
+  .film .meter{right:16px;top:116px;gap:12px;font-size:10px}
   .top nav{gap:8px}
   .top nav a.btn.sm{padding:7px 12px;font-size:13px}
   .film .skipfilm{right:16px;bottom:14px;font-size:10px}
