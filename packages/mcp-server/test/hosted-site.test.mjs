@@ -232,7 +232,7 @@ describe("website — real agent-recall-server binary", () => {
 
   it("every page carries a strict CSP whose hashes match the inline style and script", async () => {
     const b = new Browser(srv.base);
-    for (const p of ["/", "/local", "/connect"]) {
+    for (const p of ["/", "/local", "/connect", "/privacy", "/support"]) {
       const r = await b.go(p);
       assert.equal(r.status, 200, p);
       const csp = r.headers.get("content-security-policy");
@@ -265,7 +265,7 @@ describe("website — real agent-recall-server binary", () => {
     assert.match(r.text, /<a class="btn" href="\/connect">Connect an agent<\/a>/);
     assert.match(r.text, /href="\/local"/);
     assert.match(r.text, /href="https:\/\/github\.com\/Goldentrii\/AgentRecall-X"/);
-    assert.match(r.text, /href="https:\/\/example\.com\/privacy"/, "the operator's privacy URL");
+    assert.match(r.text, /<a href="\/privacy">Privacy<\/a><a href="\/support">Support<\/a>/, "the site's own policy and support pages");
     assert.match(r.text, /href="https:\/\/t\.me\/\+ywZwoHrg3AM0NDVi"/);
     assert.match(r.text, /<canvas id="stage" aria-hidden="true">/, "the hero is the film canvas");
     assert.match(r.text, /<title>[^<]*AgentRecall/);
@@ -497,11 +497,11 @@ describe("website — real agent-recall-server binary", () => {
   it("nothing is sent to a third party: no tracker, font or CDN host appears in any page", async () => {
     const b = new Browser(srv.base);
     const hosts = new Set();
-    for (const p of ["/", "/local", "/connect"]) {
+    for (const p of ["/", "/local", "/connect", "/privacy", "/support"]) {
       const html = (await b.go(p)).text;
       for (const m of html.matchAll(/(?:href|src|action)="(https?:\/\/[^"/]+)/g)) hosts.add(m[1]);
     }
-    assert.deepEqual([...hosts].sort(), ["https://example.com", "https://github.com", "https://t.me"]);
+    assert.deepEqual([...hosts].sort(), ["https://github.com", "https://t.me"]);
   });
 });
 

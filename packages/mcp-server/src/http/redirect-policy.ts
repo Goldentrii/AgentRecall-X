@@ -5,6 +5,7 @@
  * user's memory token, so only these are allowed:
  *   - loopback (RFC 8252): http://127.0.0.1:*, http://localhost:*, http://[::1]:*
  *   - https://claude.ai/api/mcp/auth_callback and https://claude.com/api/mcp/auth_callback
+ *   - ChatGPT's two MCP OAuth callbacks (see CHATGPT below)
  *   - operator-listed prefixes (AR_OAUTH_REDIRECT_ALLOW)
  * Never allowed, whatever the allow-list says: fragments, userinfo, whitespace/
  * control chars/backslashes, javascript:/data:/file:/blob:/vbscript: schemes.
@@ -14,7 +15,14 @@ const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const FIXED = new Set([
   "https://claude.ai/api/mcp/auth_callback",
   "https://claude.com/api/mcp/auth_callback",
+  // CHATGPT: the stable callback. OpenAI, Apps SDK "Authentication" (https://developers.openai.com/apps-sdk/build/auth):
+  // "https://chatgpt.com/connector_platform_oauth_redirect" is used by servers that return `iss` on every authorization response
+  // (and by servers published before callback-ID redirects).
+  "https://chatgpt.com/connector_platform_oauth_redirect",
 ]);
+// CHATGPT: the per-connector callback, same doc: "https://chatgpt.com/connector/oauth/{callback_id}". The id is only shown
+// on the connector's management page, so it is matched as one path segment (no query, no further path).
+const CHATGPT_CALLBACK_ID = /^\/connector\/oauth\/[A-Za-z0-9_-]{1,128}$/;
 const FORBIDDEN_SCHEMES = new Set(["javascript:", "data:", "file:", "blob:", "vbscript:", "about:"]);
 // eslint-disable-next-line no-control-regex
 const BAD_CHARS = /[\s\u0000-\u001f\u007f\\]/;
@@ -59,6 +67,7 @@ export function isAllowedRedirect(uri: unknown, extraPrefixes: readonly string[]
 
   if (u.protocol === "http:" && LOOPBACK.has(u.hostname)) return true;
   if (u.protocol === "https:" && u.search === "" && FIXED.has(`${u.origin}${u.pathname}`)) return true;
+  if (u.protocol === "https:" && u.origin === "https://chatgpt.com" && u.search === "" && CHATGPT_CALLBACK_ID.test(u.pathname)) return true;
   // Prefixes are matched against the NORMALIZED URL, and encoded/dot-segment paths are refused outright.
   if (hasPathTricks(uri)) return false;
   return [...DEFAULT_REDIRECT_PREFIXES, ...extraPrefixes].some((p) => {
