@@ -12,6 +12,15 @@
 <p align="center">为 AI agent 打造的本地优先记忆，围绕纠正账本与可审计的数学构建。MCP · SDK · CLI · Skill。</p>
 
 <p align="center">
+  <a href="https://agentrecallx.com"><img src="assets/readme/site-home.jpg" alt="AgentRecall 首页 agentrecallx.com：金色的树与青色的塔，标题 Two kinds of intelligence，以及 Connect an agent 和 Run it locally 两个按钮。" width="100%"></a>
+</p>
+
+<p align="center">
+  <strong>马上试用：<a href="https://agentrecallx.com">agentrecallx.com</a></strong> 一个 URL 连接任何 MCP agent，用 GitHub 登录，免费。<br>
+  给 agent：连接说明见 <a href="https://agentrecallx.com/connect.md">https://agentrecallx.com/connect.md</a>。
+</p>
+
+<p align="center">
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
