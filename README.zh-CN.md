@@ -1,7 +1,9 @@
 [English](README.md) · **中文**
 
 > [!NOTE]
-> **新：托管版已上线。** 用 GitHub 登录 `https://recall.aiakada.com/mcp`，一个 URL 连接任何 MCP agent（Claude Code、Codex、Cursor、claude.ai），所有 agent 共享同一份记忆。接入命令见英文版 [Hosted: connect your agent](README.md#hosted-connect-your-agent)。本中文页仍是本地安装版的说明，正在更新中。
+> **AgentRecall 不是记忆仓库。** 人靠直觉和零散片段思考，agent 靠 token 和字面指令工作，两者之间的鸿沟是结构性的，我们称之为**智能间距（Intelligent Distance）**。AgentRecall 让它可见（动手前先对齐理解）、可测量（每次纠正都是一次测量，之后记录是被遵守还是又犯了）、可缩短（对一个 agent 的纠正，所有 agent 在下次会话开始时都会加载）。详见 [Intelligent Distance Protocol](docs/intelligent-distance-protocol.md)。
+>
+> **新：托管版已上线。** 用 GitHub 登录 `https://agentrecallx.com/mcp`，一个 URL 连接任何 MCP agent（Claude Code、Codex、Cursor、claude.ai），所有 agent 共享同一份记忆。接入命令见英文版 [Hosted: connect your agent](README.md#hosted-connect-your-agent)。本中文页仍是本地安装版的说明，正在更新中。
 
 <h1 align="center">AgentRecall</h1>
 

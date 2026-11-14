@@ -21,7 +21,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://recall.aiakada.com/mcp"
+      "url": "https://agentrecallx.com/mcp"
     }
   ]
 }

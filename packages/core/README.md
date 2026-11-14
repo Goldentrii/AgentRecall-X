@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://recall.aiakada.com/healthz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Frecall.aiakada.com%2Fhealthz&query=%24.version&label=hosted&prefix=v&suffix=%20live&color=2E9E6A&style=flat-square" alt="Hosted server status"></a>
+  <a href="https://agentrecallx.com/healthz"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fagentrecallx.com%2Fhealthz&query=%24.version&label=hosted&prefix=v&suffix=%20live&color=2E9E6A&style=flat-square" alt="Hosted server status"></a>
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>
   <a href="https://www.npmjs.com/package/agent-recall-mcp"><img src="https://img.shields.io/npm/v/agent-recall-mcp?style=flat-square&label=MCP&color=5D34F2" alt="MCP npm"></a>
   <a href="https://www.npmjs.com/package/agent-recall-sdk"><img src="https://img.shields.io/npm/v/agent-recall-sdk?style=flat-square&label=SDK&color=0EA5E9" alt="SDK npm"></a>
@@ -38,20 +38,20 @@
 </p>
 
 <p align="center">
-  <a href="https://recall.aiakada.com/connect"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at recall.aiakada.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
-  <a href="https://recall.aiakada.com/local"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
+  <a href="https://agentrecallx.com/connect"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-hosted-light.svg" width="400" alt="Hosted: sign in with GitHub at agentrecallx.com. One URL for any MCP agent, ready in about a minute. Connect an agent."></picture></a>
+  <a href="https://agentrecallx.com/local"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-dark.svg"><img src="https://raw.githubusercontent.com/Goldentrii/AgentRecall-X/main/assets/readme/door-local-light.svg" width="400" alt="Local: fully offline on your own machine with plain markdown. The MCP server installs with one npx command; optional hooks automate the loop. Install locally."></picture></a>
 </p>
 
 <p align="center"><a href="#hosted-connect-your-agent">Hosted setup in this README</a> · <a href="#local-install">Local install in this README</a></p>
 
 ## Hosted: connect your agent
 
-One server URL for every agent: **`https://recall.aiakada.com/mcp`**. Add it, sign in with GitHub when the browser opens, and every agent you connect shares the same memory. Sign-up is open to any GitHub account and free.
+One server URL for every agent: **`https://agentrecallx.com/mcp`**. Add it, sign in with GitHub when the browser opens, and every agent you connect shares the same memory. Sign-up is open to any GitHub account and free.
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user --transport http agent-recall https://recall.aiakada.com/mcp
+claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp
 ```
 
 Then type `/mcp` inside Claude Code, pick `agent-recall` and choose **Authenticate**.
@@ -59,7 +59,7 @@ Then type `/mcp` inside Claude Code, pick `agent-recall` and choose **Authentica
 **Codex**
 
 ```bash
-codex mcp add agent-recall --url https://recall.aiakada.com/mcp
+codex mcp add agent-recall --url https://agentrecallx.com/mcp
 ```
 
 Codex opens the sign-in page itself. If you closed it, run `codex mcp login agent-recall`.
@@ -67,10 +67,10 @@ Codex opens the sign-in page itself. If you closed it, run `codex mcp login agen
 **Cursor**: add this to `~/.cursor/mcp.json`, then sign in when Cursor prompts you (Settings → MCP shows the server's status).
 
 ```json
-{ "mcpServers": { "agent-recall": { "url": "https://recall.aiakada.com/mcp" } } }
+{ "mcpServers": { "agent-recall": { "url": "https://agentrecallx.com/mcp" } } }
 ```
 
-**claude.ai**: Settings → Connectors → **Add custom connector**, and paste the URL `https://recall.aiakada.com/mcp` (on plans where custom connectors are available).
+**claude.ai**: Settings → Connectors → **Add custom connector**, and paste the URL `https://agentrecallx.com/mcp` (on plans where custom connectors are available).
 
 **Any other MCP client** that supports Streamable HTTP with OAuth: give it the URL and nothing else. It finds the sign-in from the server's `401` response.
 
@@ -103,7 +103,7 @@ past context would help     → recall(query)               safe any time
 
 > *"I connected AgentRecall. When you correct me, I save it as a rule, and at the start of every session, in any agent you use, I load those rules before I act, so you shouldn't have to say the same thing twice. Say 'save' anytime and I'll checkpoint."*
 
-Local install: the memory is plain markdown in `~/.agent-recall/` and nothing leaves the machine. Hosted: it lives in your private space on recall.aiakada.com ([privacy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md)).
+Local install: the memory is plain markdown in `~/.agent-recall/` and nothing leaves the machine. Hosted: it lives in your private space on agentrecallx.com ([privacy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md)).
 
 </details>
 
@@ -193,6 +193,18 @@ ar bootstrap --import       # import what it found (secrets are skipped)
 </p>
 
 ## Why AgentRecall
+
+**The problem is not memory. It is distance.** You think in intuition, fragments and things you never say out loud. An agent works in tokens and literal instructions. That gap is structural: a bigger context window does not close it, and neither does a longer chat log. We call it **Intelligent Distance**.
+
+AgentRecall does not pretend the gap goes away. It does three things with it:
+
+- **Makes it visible.** Before a risky step the agent states what it thinks you want (`check`), so a misunderstanding surfaces before the work is done.
+- **Measures it.** Every correction you make is one measurement of the gap. Each time the same situation returns, the outcome is recorded as heeded or repeated.
+- **Shortens it.** A correction made to one agent is loaded by every agent at the start of every session, so the next one starts closer to you than the last.
+
+The bar is one question: does the agent behave measurably differently in session 50 than in session 1, with the same person? Memory is a component of that; it is not the product. The full specification is the [Intelligent Distance Protocol](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/intelligent-distance-protocol.md).
+
+Here is what that looks like in practice.
 
 You tell your agent *"don't bump the version without asking."* It apologizes, fixes it, and the session ends. Next week a fresh session does it again, or a different agent does, because the correction lived in a chat log nobody reads.
 
@@ -587,7 +599,7 @@ All memory is markdown files. An optional Supabase mirror (local installs only) 
 
 ## Platforms
 
-| Platform | Local | Hosted (`recall.aiakada.com`) |
+| Platform | Local | Hosted (`agentrecallx.com`) |
 |---|---|---|
 | Claude Code | MCP + skill + hooks (primary) | `claude mcp add --transport http`, then `/mcp` → Authenticate |
 | Codex | MCP (stdio) | `codex mcp add --url`, GitHub sign-in |

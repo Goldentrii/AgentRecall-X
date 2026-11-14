@@ -29,7 +29,7 @@ test("server.json npm package entry matches the published package", () => {
 
 test("server.json declares the hosted endpoint", () => {
   assert.deepEqual(server.remotes, [
-    { type: "streamable-http", url: "https://recall.aiakada.com/mcp" },
+    { type: "streamable-http", url: "https://agentrecallx.com/mcp" },
   ]);
 });
 

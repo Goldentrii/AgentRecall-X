@@ -250,10 +250,10 @@ function door(p, { tab, tabFill, title, lines, cta, alt }) {
 }
 
 const hosted = (p) => door(p, {
-  tab: "Hosted", tabFill: p.hi, title: "recall.aiakada.com",
+  tab: "Hosted", tabFill: p.hi, title: "agentrecallx.com",
   lines: ["Sign in with GitHub", "One URL for any MCP agent", "Ready in about a minute"],
   cta: "Connect an agent",
-  alt: "Hosted: sign in with GitHub at recall.aiakada.com. One URL works for any MCP agent and setup takes about a minute.",
+  alt: "Hosted: sign in with GitHub at agentrecallx.com. One URL works for any MCP agent and setup takes about a minute.",
 });
 const local = (p) => door(p, {
   tab: "Local", tabFill: null, title: "On your own machine",

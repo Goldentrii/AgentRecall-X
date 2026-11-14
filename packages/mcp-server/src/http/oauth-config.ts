@@ -28,7 +28,7 @@ export interface ProviderCreds {
 }
 
 export interface OAuthConfig {
-  /** Issuer / public origin, e.g. https://recall.aiakada.com */
+  /** Issuer / public origin, e.g. https://agentrecallx.com */
   publicUrl: URL;
   /** Protected resource: <public>/mcp. Tokens are audience-bound to it. */
   resourceUrl: URL;
