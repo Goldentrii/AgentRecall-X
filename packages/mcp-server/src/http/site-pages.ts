@@ -63,7 +63,7 @@ h1+.lede{margin-top:14px}
 .cta{display:flex;gap:12px;flex-wrap:wrap;margin:26px 0 18px}
 .btn{display:inline-block;font:600 16px/1 var(--sans);padding:15px 24px;border-radius:999px;border:1px solid var(--gold);background:var(--gold);color:var(--bg);text-decoration:none;cursor:pointer}
 .btn:hover{filter:brightness(1.08)}
-.btn.alt{background:transparent;color:var(--ink);border-color:rgba(255,255,255,.4)}
+.btn.alt{background:transparent;color:var(--ink);border-color:var(--edge)}
 .btn.alt:hover{filter:none;border-color:var(--ink)}
 .btn.small{padding:10px 16px;font-size:14px}
 .btn.danger{background:transparent;color:var(--err-ink);border-color:var(--err-line)}
@@ -108,7 +108,7 @@ footer.foot nav{display:flex;gap:22px;flex-wrap:wrap}
 .cmd{position:relative;margin:10px 0 14px}
 pre{margin:0;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font:14px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
 .cmd pre{padding-right:84px}
-.copy{display:none;position:absolute;top:8px;right:8px;font:600 13px/1 var(--sans);padding:8px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.4);background:var(--card);color:var(--ink);cursor:pointer}
+.copy{display:none;position:absolute;top:8px;right:8px;font:600 13px/1 var(--sans);padding:8px 11px;border-radius:999px;border:1px solid var(--edge);background:var(--card);color:var(--ink);cursor:pointer}
 .js .copy{display:block}
 .copy:hover{border-color:var(--ink)}
 .idrow .copy{position:static;display:none}
@@ -126,6 +126,11 @@ pre{margin:0;background:var(--sunk);border:1px solid var(--line);border-radius:1
 .step-note{color:var(--muted);font-size:15.5px;margin:4px 0 0}
 .agentprompt{margin-top:22px;padding-top:20px;border-top:1px dashed var(--line)}
 .agentprompt h3{margin-bottom:4px}
+details.fold{margin:12px 0;border:1px solid var(--line);border-radius:10px;background:var(--sunk)}
+details.fold>summary{cursor:pointer;padding:12px 16px;font-weight:600;border-radius:10px}
+details.fold>summary:focus-visible{outline:3px solid var(--cyan);outline-offset:2px}
+details.fold[open]>summary{border-bottom:1px solid var(--line);border-bottom-left-radius:0;border-bottom-right-radius:0}
+details.fold>.cmd,details.fold>.step-note{margin:12px 14px}
 .rows{list-style:none;margin:0;padding:0}
 .rows li{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--line)}
 .rows li:first-child{border-top:0}
@@ -147,7 +152,7 @@ pre{margin:0;background:var(--sunk);border:1px solid var(--line);border-radius:1
 .trial .rows li>div{min-width:0;flex:1 1 100%}
 .trial .rows .btn{margin-top:10px;color:var(--bg)}
 .trial .tick{color:var(--ok-ink);background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:999px;padding:1px 9px;font-size:13px;white-space:nowrap}
-.trial .muted{opacity:.7}
+.trial .muted{opacity:.8}
 .signin{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:34px;align-items:start;padding:20px 0 20px}
 .signin ul{padding-left:20px;margin:0 0 14px}
 .signin li{margin:6px 0}
@@ -155,7 +160,7 @@ pre{margin:0;background:var(--sunk);border:1px solid var(--line);border-radius:1
 .signin .btn{width:100%;text-align:center;margin-bottom:10px}
 code{font:.9em var(--mono);background:var(--sunk);padding:1px 6px;border-radius:5px}
 .who h1{font-size:clamp(1.8rem,4vw,2.6rem);margin-bottom:6px}
-.small{font-size:14px;color:var(--dim)}
+.small:not(.btn){font-size:14px;color:var(--dim)}
 .imp label.opt{display:block;margin:8px 0}
 .imp input[type=text],.imp input[type=file]{display:block;margin:6px 0 16px;font:inherit;color:var(--ink);max-width:100%}
 .imp input[type=text]{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--sunk)}
@@ -196,6 +201,8 @@ export const TEXT_HEADERS: Record<string, string> = {
   "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
 };
 
+// Colours repeat SITE_TOKENS (--line, --dim, --card, --gold, --bg): an SVG used as a favicon cannot read
+// CSS variables. A test in hosted-site.test.mjs fails if any of them stops being a token value.
 const MARK = `<svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><rect x="9" y="3" width="28" height="22" rx="5" fill="#1e2a3b" stroke="#9aaec3" stroke-width="2.4"/><rect x="5" y="9" width="28" height="22" rx="5" fill="#0c121c" stroke="#9aaec3" stroke-width="2.4"/><rect x="1.5" y="15" width="28" height="22" rx="5" fill="#F5C451" stroke="#9aaec3" stroke-width="2.4"/><circle cx="23.5" cy="21.5" r="3" fill="#04060a"/></svg>`;
 
 export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">${MARK.replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "")}</svg>`;
@@ -221,6 +228,11 @@ function layout(title: string, body: string, ctx: SiteCtx, nav: Nav, description
     `<footer class="foot"><span>AgentRecall is open source (MIT). Memory you host here is private to your account.</span>` +
     `<nav aria-label="Footer"><a href="${REPO_URL}" rel="noopener">GitHub</a><a href="${esc(ctx.privacyUrl)}" rel="noopener">Privacy</a><a href="${TELEGRAM_URL}" rel="noopener">Telegram</a></nav></footer>` +
     `</div><script>${SCRIPT}</script></body></html>`;
+}
+
+/** A closed-by-default disclosure, so long copy blocks do not stack up on a phone. */
+function fold(title: string, inner: string): string {
+  return `<details class="fold"><summary>${esc(title)}</summary>${inner}</details>`;
 }
 
 /** A copyable block. `id` must be unique on the page. */
@@ -597,8 +609,8 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     tabs.map((_, i) => `<input type="radio" name="client" id="t${i + 1}"${i === 0 ? " checked" : ""} aria-label="${esc(tabs[i][0])}">`).join("") +
     `<div class="tablist" aria-hidden="true">${tabs.map((t, i) => `<label for="t${i + 1}">${esc(t[0])}</label>`).join("")}</div>` +
     `<div class="panels">${tabs.map((t, i) => `<div class="p" id="p${i + 1}">${t[1]}${t[2]}</div>`).join("")}</div></div>` +
-    `<div class="agentprompt"><h3>Or let your agent do it</h3><p class="step-note">Paste this into any agent. It runs the right command for itself and asks you to sign in.</p>` +
-    cmd("prompt", hostedAgentPrompt(b)) + `</div></section>` +
+    `<div class="agentprompt"><h3>Or let your agent do it</h3>` +
+    fold("Show the prompt to paste", `<p class="step-note">Paste this into any agent. It runs the right command for itself and asks you to sign in.</p>${cmd("prompt", hostedAgentPrompt(b))}`) + `</div></section>` +
 
     `<section class="panel" aria-labelledby="h-agents"><h2 id="h-agents">Your agents</h2>` +
     `<p class="sub">${esc(v.agents.length)} ${v.agents.length === 1 ? "agent shares" : "agents share"} this memory. Every agent that signed in or holds a token is listed, with its last activity. Names are what each app calls itself; AgentRecall cannot verify them. Disconnect ends an OAuth sign-in at once; to revoke a token, ask the server operator.</p>` +
@@ -628,9 +640,9 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     `<div class="notice err" role="note"><strong>Only import an archive you made yourself.</strong> Its rules become active for all your agents.</div>` +
     `<h3>1. Pack your local memory</h3>` +
     `<p class="step-note">Only memory files are packed (never config, keys, logs or telemetry). The store is <code>$AGENT_RECALL_ROOT</code>, else <code>~/.agent-recall</code>. Writes <code>${esc(PACK_NAME)}</code> in your home folder.</p>` +
-    `<h3>PowerShell (Windows)</h3>${cmd("i1", PACK_POWERSHELL)}` +
-    `<h3>bash / zsh (macOS, Linux)</h3>${cmd("i2", PACK_BASH)}` +
-    `<h3>Or let your agent pack it</h3><p class="step-note">It cannot upload for you; it tells you where the file is.</p>${cmd("i3", importAgentPrompt(b))}` +
+    fold("PowerShell (Windows)", cmd("i1", PACK_POWERSHELL)) +
+    fold("bash / zsh (macOS, Linux)", cmd("i2", PACK_BASH)) +
+    fold("Or let your agent pack it", `<p class="step-note">It cannot upload for you; it tells you where the file is.</p>${cmd("i3", importAgentPrompt(b))}`) +
     `<h3>2. Upload it</h3>` +
     `<form method="post" action="/connect/import" enctype="multipart/form-data">${hidden("csrf", v.csrf)}` +
     `<label class="opt"><input type="radio" name="mode" value="add" checked> <strong>Add</strong>: keep everything already here; only files that do not exist yet are added, nothing is overwritten.</label>` +

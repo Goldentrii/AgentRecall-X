@@ -11,7 +11,7 @@
 export const SITE_TOKENS = `:root{color-scheme:dark;` +
   `--bg:#04060a;--sunk:#070b12;--card:#0c121c;--line:#1e2a3b;` +
   `--ink:#eef1f6;--muted:#c9d3df;--dim:#9aaec3;` +
-  `--gold:#F5C451;--cyan:#6fe3ff;` +
+  `--gold:#F5C451;--cyan:#6fe3ff;--edge:rgba(255,255,255,.4);` +
   `--warn-bg:#2a1f08;--warn-line:#7a5a14;--warn-ink:#ffd98a;` +
   `--err-bg:#2c1317;--err-line:#7a2a34;--err-ink:#ffb9c0;` +
   `--ok-bg:#0e2a1b;--ok-line:#1f6b43;--ok-ink:#a9e6c0;` +
