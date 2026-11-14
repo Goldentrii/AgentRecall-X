@@ -8,7 +8,8 @@
  * anything the client says, so a client cannot forge or merge rows; the
  * self-reported client name is display text only.
  *
- * Stored per agent: client name, first/last seen, last tool NAME, count of
+ * Stored per agent: client name, first/last seen, when it last made a tool call
+ * (last_call: initialize and tools/list do not move it), last tool NAME, count of
  * tool calls. Never request content, arguments, IPs or tokens.
  *
  * Writes are write-behind: recorded in memory, flushed at most once per
@@ -32,6 +33,8 @@ export interface ActivityEntry {
   client: string;
   first_seen: string;
   last_seen: string;
+  /** ISO time of the last tools/call; absent until one is made (and on entries saved before this field). */
+  last_call?: string;
   last_tool?: string;
   calls: number;
 }
@@ -84,6 +87,7 @@ function parseEntries(raw: unknown): Record<string, ActivityEntry> {
       client: sanitizeClientName(e.client) ?? "Unknown client",
       first_seen: e.first_seen,
       last_seen: e.last_seen,
+      last_call: typeof e.last_call === "string" ? e.last_call : undefined,
       last_tool: typeof e.last_tool === "string" && TOOL_NAMES.has(e.last_tool) ? e.last_tool : undefined,
       calls: Number.isSafeInteger(e.calls) && (e.calls as number) >= 0 ? (e.calls as number) : 0,
     };
@@ -177,6 +181,7 @@ export class ActivityStore {
         client: obs.client ?? prev?.client ?? "Unknown client",
         first_seen: prev?.first_seen ?? at,
         last_seen: at,
+        last_call: obs.toolCalls > 0 ? at : prev?.last_call,
         last_tool: obs.tool ?? prev?.last_tool,
         calls: (prev?.calls ?? 0) + obs.toolCalls,
       };

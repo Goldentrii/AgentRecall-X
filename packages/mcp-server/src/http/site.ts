@@ -194,7 +194,7 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
         const creds: TrialCredential[] = [
           ...d.store.liveGrantsOf(s.uid).map((g) => `grant:${g.id}`),
           ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t) => `token:${t.id}`),
-        ].flatMap((key) => (seen[key] ? [{ key, lastSeen: seen[key].last_seen, calls: seen[key].calls }] : []));
+        ].flatMap((key) => (seen[key] ? [{ key, lastSeen: seen[key].last_seen, lastCall: seen[key].last_call }] : []));
         const trial = computeTrial(creds, rules);
         const flash = s.flash !== undefined ? NOTICES[s.flash] : undefined;
         view = {

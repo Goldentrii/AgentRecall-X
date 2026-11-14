@@ -954,7 +954,7 @@ describe("website: guided trial card", () => {
     assert.deepEqual(doneSteps(html), [1, 2]);
     assert.match(trialOf(html), /waiting for (your )?approval/i);
     assert.match(trialOf(html), /href="\/review"/);
-    assert.ok(!/Two of your agents/.test(html));
+    assert.ok(!/Two credentials of yours/.test(html));
   });
 
   it("step 3 needs a credential other than the author's, active after the rule went live", async () => {
@@ -962,8 +962,8 @@ describe("website: guided trial card", () => {
     let html = await view(alice);
     assert.equal(countOf(html), 2, "approved but nobody has been active since");
     assert.ok(!/waiting for (your )?approval/i.test(trialOf(html)));
-    assert.match(trialOf(html), /Next: connect a second agent/i);
-    assert.match(trialOf(html), /A second agent connected after your rule went live/);
+    assert.match(trialOf(html), /Next: use a second agent/i);
+    assert.match(trialOf(html), /A second agent active after your rule went live/);
     await sleep(40);
     // The author alone, however active, proves nothing.
     const a = await agent(env.base, tokA);
@@ -980,7 +980,8 @@ describe("website: guided trial card", () => {
     assert.equal(countOf(html), 3);
     assert.deepEqual(doneSteps(html), [1, 2, 3]);
     assert.ok(trialOf(html).includes(STRONG));
-    assert.match(trialOf(html), /new sign-in of the same agent counts as another credential/i, "the card states what it cannot tell");
+    const notice = /<div class="notice ok"[\s\S]*?<\/div>/.exec(trialOf(html))?.[0] ?? "";
+    assert.match(notice, /new sign-in of the same agent counts as another credential/i, "the caveat sits in the banner itself");
   });
 
   it("tenant isolation: both accounts have their own rule and agents, and neither page shows the other's state", async () => {
@@ -993,7 +994,7 @@ describe("website: guided trial card", () => {
     assert.equal(countOf(bobHtml), 2, "bob: his agent and his waiting rule, nothing of alice's");
     assert.deepEqual(doneSteps(bobHtml), [1, 2]);
     assert.match(trialOf(bobHtml), /waiting for (your )?approval/i);
-    assert.ok(!/Two of your agents/.test(bobHtml));
+    assert.ok(!/Two credentials of yours/.test(bobHtml));
     assert.ok(!/token (first|second|reissued)/.test(bobHtml));
     assert.equal(countOf(aliceHtml), 3, "alice is unchanged by bob's activity");
     assert.ok(!/waiting for (your )?approval/i.test(trialOf(aliceHtml)), "bob's staged rule is not alice's");
@@ -1074,6 +1075,66 @@ describe("website: guided trial card", () => {
     });
   });
 
+  describe("what counts as active after the rule", () => {
+    it("a reconnect (initialize, no tool call) after the approval is not a call after it", async () => {
+      const x = await account(935);
+      const t1 = x.mint("teacher"), t2 = x.mint("other");
+      const a = await agent(env.base, t1.token);
+      await propose(a, RULE);
+      await a.close();
+      const o = await agent(env.base, t2.token);
+      await o.callTool({ name: "session_start", arguments: {} }); // a lifetime call count above zero, but before the rule
+      await o.close();
+      await sleep(40);
+      await approveAll(x.b);
+      await sleep(40);
+      const re = await agent(env.base, t2.token); // initialize only
+      await re.close();
+      assert.deepEqual(doneSteps(await view(x.b)), [1, 2], "a request that is not a tool call proves nothing");
+      const call = await agent(env.base, t2.token);
+      await call.callTool({ name: "recall", arguments: { query: "rules" } });
+      await call.close();
+      assert.deepEqual(doneSteps(await view(x.b)), [1, 2, 3]);
+    });
+  });
+
+  describe("a rule two credentials proposed is not proven by either", () => {
+    it("the same rule proposed by both before approval is staged once with no author, so no strong line", async () => {
+      const x = await account(936);
+      const t1 = x.mint("one"), t2 = x.mint("two");
+      for (const t of [t1, t2]) { const c = await agent(env.base, t.token); await propose(c, RULE); await c.close(); }
+      assert.ok(!("authored_by" in JSON.parse(fs.readFileSync(stagedFile(x.dir), "utf-8"))), "two proposers: no single author");
+      await sleep(40);
+      await approveAll(x.b);
+      await sleep(40);
+      assert.ok(!("authored_by" in JSON.parse(fs.readFileSync(activeFile(x.dir), "utf-8"))));
+      const c = await agent(env.base, t2.token);
+      await c.callTool({ name: "recall", arguments: { query: "rules" } });
+      await c.close();
+      assert.ok(!(await view(x.b)).includes(STRONG));
+    });
+
+    it("the same rule approved from two credentials in turn never counts one as the other's reader", async () => {
+      const x = await account(937);
+      const t1 = x.mint("one"), t2 = x.mint("two");
+      const a = await agent(env.base, t1.token);
+      await propose(a, RULE);
+      await a.close();
+      await approveAll(x.b);
+      const b = await agent(env.base, t2.token);
+      await propose(b, RULE);
+      await b.close();
+      await sleep(40);
+      await approveAll(x.b);
+      await sleep(40);
+      const c = await agent(env.base, t2.token);
+      await c.callTool({ name: "recall", arguments: { query: "rules" } });
+      await c.close();
+      const html = await view(x.b);
+      assert.ok(!html.includes(STRONG), "B was taught the rule directly; nothing reached it");
+    });
+  });
+
   describe("a rule with no recorded author (legacy)", () => {
     it("an active legacy rule keeps the weaker wording and is never called proven", async () => {
       const x = await account(933);
@@ -1084,8 +1145,9 @@ describe("website: guided trial card", () => {
       for (const t of [t1, t2]) { const c = await agent(env.base, t.token); await c.callTool({ name: "session_start", arguments: {} }); await c.close(); }
       const html = await view(x.b);
       assert.deepEqual(doneSteps(html), [1, 2, 3]);
-      assert.match(html, /Two of your agents have been active since your rule went live: each one loads it at session start./);
+      assert.match(html, /Two credentials of yours have been active since your rule went live\./);
       assert.ok(!html.includes(STRONG));
+      assert.ok(!/loads it at session start/.test(html), "a legacy rule is not claimed to be loaded");
     });
 
     it("a staged proposal without an author still shows, approves, and activates without inventing one", async () => {
@@ -1220,32 +1282,50 @@ describe("website: guided trial (rules scan and state, unit)", () => {
 
   it("scanRules carries a well-formed authored_by onto the rule and ignores anything else", () => {
     const t = tenant();
-    t.rule("2026-03-01-a.json", { id: "a", authored_by: { type: "grant", id: "0123456789ab" } }, MON);
-    t.rule("2026-03-02-b.json", { id: "b" }, MON);
-    t.rule("2026-03-03-c.json", { id: "c", authored_by: { type: "token", id: "not-hex-at-all" } }, MON);
-    t.rule("2026-03-04-d.json", { id: "d", authored_by: "token:0123456789ab" }, MON);
-    t.rule("2026-03-05-e.json", { id: "e", authored_by: { type: "other", id: "0123456789ab" } }, MON);
-    const authors = t.scan().rules.map((r) => r.author).sort((x, y) => String(x).localeCompare(String(y)));
-    assert.deepEqual(authors, ["grant:0123456789ab", undefined, undefined, undefined, undefined]);
+    t.rule("2026-03-01-a.json", { id: "a", rule: "Rule a.", authored_by: { type: "grant", id: "0123456789ab" } }, MON);
+    t.rule("2026-03-02-b.json", { id: "b", rule: "Rule b." }, MON);
+    t.rule("2026-03-03-c.json", { id: "c", rule: "Rule c.", authored_by: { type: "token", id: "not-hex-at-all" } }, MON);
+    t.rule("2026-03-04-d.json", { id: "d", rule: "Rule d.", authored_by: "token:0123456789ab" }, MON);
+    t.rule("2026-03-05-e.json", { id: "e", rule: "Rule e.", authored_by: { type: "other", id: "0123456789ab" } }, MON);
+    const authors = t.scan().rules.map((r) => r.authors.join(",")).sort();
+    assert.deepEqual(authors, ["", "", "", "", "grant:0123456789ab"]);
+  });
+
+  it("scanRules: every credential that taught the same rule text is an author of each copy; one unattributed copy makes all unattributed", () => {
+    const AA = { type: "token", id: "aaaaaaaaaaaa" }, BB = { type: "token", id: "bbbbbbbbbbbb" };
+    const two = tenant();
+    two.rule("2026-03-02-x.json", { id: "x", rule: "Always answer in one short paragraph.", authored_by: AA }, MON);
+    two.rule("2026-03-02-y.json", { id: "x", rule: "always  answer in one SHORT paragraph.", authored_by: BB }, MON);
+    two.rule("2026-03-02-z.json", { id: "z", rule: "Never use tabs.", authored_by: AA }, MON);
+    const authors = two.scan().rules.map((r) => r.authors.join("+")).sort();
+    assert.deepEqual(authors, ["token:aaaaaaaaaaaa", "token:aaaaaaaaaaaa+token:bbbbbbbbbbbb", "token:aaaaaaaaaaaa+token:bbbbbbbbbbbb"]);
+    const legacy = tenant();
+    legacy.rule("2026-03-02-x.json", { id: "x", rule: "Be brief.", authored_by: AA }, MON);
+    legacy.rule("2026-03-03-y.json", { id: "y", rule: "Be brief." }, MON);
+    assert.deepEqual(legacy.scan().rules.map((r) => r.authors), [[], []]);
   });
 
   const at = (ms) => new Date(ms).toISOString();
-  const cred = (key, last, calls = 3) => ({ key, firstSeen: at(1), lastSeen: at(last), calls });
+  const cred = (key, last, lastCall = last) => ({ key, lastSeen: at(last), ...(lastCall !== null ? { lastCall: at(lastCall) } : {}) });
   const A = "token:aaaaaaaaaaaa", B = "token:bbbbbbbbbbbb", C = "grant:cccccccccccc";
   const rulesOf = (...rules) => ({ ready: 0, rules, capped: false });
 
   it("computeTrial: a rule with a recorded author is proven by ANOTHER credential active after it went live", () => {
-    const r = rulesOf({ at: 1_000_000, author: A });
+    const r = rulesOf({ at: 1_000_000, authors: [A] });
     assert.equal(T.computeTrial([cred(A, 2_000_000)], r).done[2], false, "the author alone");
     assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 500_000)], r).done[2], false, "another credential, but only before the rule");
     assert.equal(T.computeTrial([cred(B, 2_000_000)], r).done[2], true, "a different credential after, author idle: a re-sign-in counts as different");
-    assert.equal(T.computeTrial([cred(B, 2_000_000, 0)], r).done[2], false, "no tool call recorded");
+    assert.equal(T.computeTrial([cred(B, 2_000_000, null)], r).done[2], false, "requests after the rule but no tool call recorded");
+    assert.equal(T.computeTrial([cred(B, 2_000_000, 500_000)], r).done[2], false, "its last tool call was before the rule");
+    const both = rulesOf({ at: 1_000_000, authors: [A, B] });
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 2_000_000)], both).done[2], false, "every author is excluded");
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(C, 2_000_000)], both).proven, true);
     const proven = T.computeTrial([cred(A, 2_000_000), cred(C, 2_500_000)], r);
     assert.deepEqual([proven.done[2], proven.proven], [true, true]);
   });
 
   it("computeTrial: a rule with no author keeps the weak signal (two credentials after it) and is never proven", () => {
-    const r = rulesOf({ at: 1_000_000 });
+    const r = rulesOf({ at: 1_000_000, authors: [] });
     assert.equal(T.computeTrial([cred(A, 2_000_000)], r).done[2], false);
     assert.equal(T.computeTrial([cred(A, 500_000), cred(B, 2_000_000)], r).done[2], false);
     const weak = T.computeTrial([cred(A, 2_000_000), cred(B, 2_500_000)], r);

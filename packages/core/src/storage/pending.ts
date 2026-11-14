@@ -45,7 +45,7 @@ import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { projectSubPath } from "./paths.js";
-import { toCredentialRef, type CredentialRef } from "../types.js";
+import { toCredentialRef, credentialKeyOf, type CredentialRef } from "../types.js";
 import { withLock } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
 import {
@@ -390,8 +390,12 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         const entryComplete = entry.record.channel === "check_structured_unconfirmed";
         if (complete && entryComplete && entry.record.digest !== digest) continue; // different content: separate row
         if (complete && !entryComplete) { retire.push(entry); continue; }
+        // Two credentials proposing the same rule: neither is its single author any more.
+        const { authored_by: first, ...rest } = entry.record;
+        const sameAuthor = credentialKeyOf(first) === credentialKeyOf(toCredentialRef(input.authoredBy));
         const merged: PendingRecord = {
-          ...entry.record,
+          ...rest,
+          ...(first && sameAuthor ? { authored_by: first } : {}),
           seen_count: (entry.record.seen_count ?? 1) + 1,
           last_seen: nowISO,
         };

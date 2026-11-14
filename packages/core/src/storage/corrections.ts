@@ -14,7 +14,7 @@ import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
 import { tokenizeWords, HAN_RUN_RE } from "../helpers/tokenize.js";
-import type { Confidence, CredentialRef, DecayClass } from "../types.js";
+import { credentialKeyOf, type Confidence, type CredentialRef, type DecayClass } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1420,8 +1420,11 @@ export async function writeCorrection(
       if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
       if (normalizeRule(existing.rule) !== normNew) continue;
+      // A rule restated by a different credential (or by none) has no single author any more.
+      const { authored_by: first, ...kept } = existing;
       const merged: CorrectionRecord = {
-        ...existing,
+        ...kept,
+        ...(first && credentialKeyOf(first) === credentialKeyOf(record.authored_by) ? { authored_by: first } : {}),
         proof_count: (existing.proof_count ?? 1) + 1,
         merged_from: [...(existing.merged_from ?? []), record.id],
         tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),

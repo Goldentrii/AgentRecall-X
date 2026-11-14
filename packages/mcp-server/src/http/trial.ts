@@ -4,22 +4,28 @@
  *
  *   1. Connect an agent   a live credential of this account has recorded activity (activity.ts)
  *   2. Teach it one rule  the account has a rule: one waiting for approval, or an active one
- *   3. A second agent     a credential other than the rule's author has been active since that rule went live
+ *   3. A second agent     a credential that did not teach the rule has made a tool call since it went live
  *
  * What the stores can and cannot tell (so the card never claims more):
  *  - Step 2 counts READY proposals (the ones /review can approve) and active corrections. A partial
  *    capture that cannot be approved is not a rule the user can see, so it does not count.
  *  - A rule proposed through the hosted server records `authored_by`: the credential id activity.ts
  *    keys its rows by (never a token), stamped on the staged proposal and carried onto the active
- *    correction when the owner approves it. Step 3 is PROVEN when some credential other than that
- *    author has tool calls with last_seen after the rule went live. "Different credential" is all
- *    the records can say: an agent that signed in again gets a new credential, so a re-sign-in of the
- *    author counts as another one. The card words it that way and never claims the rule was read.
- *  - A rule with no recorded author (written before the field existed, or imported) cannot be
- *    attributed. It keeps the weaker v1 signal: two distinct credentials with tool calls after it
+ *    correction when the owner approves it. A proposal or rule restated by a second credential
+ *    loses it (the stores drop it on that merge), and rules with the same text are one rule here:
+ *    the credentials that taught it are the union of their authors, and one unattributed copy makes
+ *    the whole group unattributed. Step 3 is PROVEN when a credential outside that union has made a
+ *    tool call after the rule went live. "Different credential" is all the records can say: an agent
+ *    that signed in again gets a new credential, so a re-sign-in of the author counts as another
+ *    one. The card words it that way and never claims the rule was read or loaded.
+ *    Not covered: a proposal still waiting for approval (it is not scanned), so a credential that
+ *    has proposed the same text but is not yet approved is excluded only once it is.
+ *  - A rule with no attributable author (written before the field existed, imported, or restated by
+ *    another credential) keeps the weaker signal: two distinct credentials with tool calls after it
  *    went live. That completes the step but is never called proven.
- *  - "Active" is activity: any tool call, not proof the rule was read. `calls` is a lifetime count
- *    and last_seen the last request, so "a call after the rule" is judged by both, not exactly.
+ *  - "Active" is a tool call (activity.ts last_call, which initialize and tools/list never move),
+ *    not proof the rule was read. Entries saved before last_call existed have none and so never
+ *    count, which can only under-claim.
  *  - A rule's go-live time is its promotion row (the owner's approval, matched by correction id) when
  *    one exists, else its file's modification time (imported rules; only ever later than the truth).
  *    Only rules that are still active are listed, so a retracted or replaced rule never counts.
@@ -49,12 +55,12 @@ const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const SCAN_TTL_MS = 10_000;
 const CACHE_MAX = 1000;
 
-export interface TrialCredential { key: string; lastSeen?: string; calls?: number }
+export interface TrialCredential { key: string; lastSeen?: string; lastCall?: string }
 export interface ActiveRule {
   /** ms epoch the rule went live. */
   at: number;
-  /** Credential id that proposed it; undefined for a legacy or imported rule. */
-  author?: string;
+  /** Every credential that taught this rule text; empty when any copy of it has no recorded author. */
+  authors: readonly string[];
 }
 export interface RuleScan {
   /** Active corrections found (bounded scan). */
@@ -82,14 +88,15 @@ export interface TrialState {
 }
 
 const ms = (iso: string | undefined): number => (iso === undefined ? NaN : Date.parse(iso));
+const sameRule = (rule: string): string => rule.toLowerCase().replace(/\s+/g, " ").trim();
 
 /** Pure: the trial state from the account's credentials and rule signals (null = rules unreadable). */
 export function computeTrial(credentials: readonly TrialCredential[], rules: RuleSignals | null): TrialState {
   const s1 = credentials.some((c) => Number.isFinite(ms(c.lastSeen)));
   const s2 = rules !== null && rules.ready + rules.rules.length > 0;
-  const activeAfter = (r: ActiveRule): TrialCredential[] => credentials.filter((c) => ms(c.lastSeen) > r.at && (c.calls ?? 0) > 0);
-  const proven = rules !== null && rules.rules.some((r) => r.author !== undefined && activeAfter(r).some((c) => c.key !== r.author));
-  const s3 = proven || (rules !== null && rules.rules.some((r) => r.author === undefined && activeAfter(r).length >= 2));
+  const calledAfter = (r: ActiveRule): TrialCredential[] => credentials.filter((c) => ms(c.lastCall) > r.at);
+  const proven = rules !== null && rules.rules.some((r) => r.authors.length > 0 && calledAfter(r).some((c) => !r.authors.includes(c.key)));
+  const s3 = proven || (rules !== null && rules.rules.some((r) => r.authors.length === 0 && calledAfter(r).length >= 2));
   const done: [boolean, boolean, boolean] = [s1, s2, s3];
   const first = done.indexOf(false);
   return {
@@ -171,9 +178,9 @@ function promotions(file: string): Map<string, number> {
 export function scanRules(dataDir: string, uid: string): RuleScan {
   const root = tenantRoot(dataDir, uid);
   let capped = false;
-  const rules: ActiveRule[] = [];
+  const found: Array<{ at: number; text: string; author?: string }> = [];
   const projects = listDir(path.join(root, "projects"), MAX_DIR_ENTRIES);
-  if (projects === null) return { rules, capped: false };
+  if (projects === null) return { rules: [], capped: false };
   const names = projects.entries.filter((e) => e.dir && PROJECT_NAME_RE.test(e.name)).map((e) => e.name).sort();
   if (projects.more || names.length > MAX_PROJECTS) capped = true;
   for (const project of names.slice(0, MAX_PROJECTS)) {
@@ -191,12 +198,16 @@ export function scanRules(dataDir: string, uid: string): RuleScan {
         if (!st.isFile() || st.size > MAX_FILE_BYTES) continue; // symlink, directory, oversized: not read
         const rec = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
         if (!isActive(rec)) continue;
-        const author = credentialKeyOf(rec.authored_by);
-        rules.push({ at: (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs, ...(author !== undefined ? { author } : {}) });
+        found.push({ at: (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs, text: sameRule(rec.rule), author: credentialKeyOf(rec.authored_by) });
       } catch { /* a malformed correction file is skipped, as readCorrections does */ }
     }
   }
-  return { rules, capped };
+  const taught = new Map<string, Set<string> | null>(); // rule text -> its authors; null once any copy has none
+  for (const f of found) {
+    const so = taught.get(f.text);
+    taught.set(f.text, f.author === undefined || so === null ? null : (so ?? new Set<string>()).add(f.author));
+  }
+  return { rules: found.map((f) => ({ at: f.at, authors: [...(taught.get(f.text) ?? [])].sort() })), capped };
 }
 
 /** Per-account cache of scanRules for SCAN_TTL_MS. Bounded; expired entries are dropped when it fills. Only successes are kept. */

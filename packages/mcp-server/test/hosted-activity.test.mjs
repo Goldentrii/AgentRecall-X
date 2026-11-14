@@ -20,6 +20,35 @@ const obs = { client: "Claude Code", toolCalls: 1 };
 const fresh = (opts = {}) => new ActivityStore(fs.mkdtempSync(path.join(root, "d-")), { flushMs: 3_600_000, ...opts });
 
 describe("activity store", () => {
+  it("last_call moves only on a tool call, never on a request that is not one", () => {
+    const dataDir = fs.mkdtempSync(path.join(root, "d-"));
+    let t = Date.parse("2026-03-02T09:00:00Z");
+    const s = new ActivityStore(dataDir, { flushMs: 3_600_000, now: () => t });
+    s.record("alice", KEY, { client: "Claude Code", toolCalls: 0 });
+    assert.equal(s.entriesOf("alice")[KEY].last_call, undefined, "initialize alone");
+    t += 1000;
+    s.record("alice", KEY, { toolCalls: 1, tool: "recall" });
+    const called = s.entriesOf("alice")[KEY];
+    assert.equal(called.last_call, new Date(t).toISOString());
+    t += 1000;
+    s.record("alice", KEY, { toolCalls: 0 });
+    const after = s.entriesOf("alice")[KEY];
+    assert.equal(after.last_call, called.last_call, "a later non-call keeps it");
+    assert.equal(after.last_seen, new Date(t).toISOString());
+    s.flush();
+    assert.equal(new ActivityStore(dataDir).entriesOf("alice")[KEY].last_call, called.last_call, "survives a reload");
+  });
+
+  it("an entry saved before last_call existed still loads, without it", () => {
+    const s = fresh();
+    const file = s.fileFor("alice");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ version: 1, entries: { [KEY]: { client: "Old", first_seen: "2026-01-01T00:00:00.000Z", last_seen: "2026-01-02T00:00:00.000Z", calls: 4 } } }));
+    const e = s.entriesOf("alice")[KEY];
+    assert.equal(e.calls, 4);
+    assert.equal(e.last_call, undefined);
+  });
+
   it("a file the operator deleted is not recreated by the next flush", () => {
     const s = fresh();
     s.record("alice", KEY, obs);

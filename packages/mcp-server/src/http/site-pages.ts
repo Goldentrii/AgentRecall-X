@@ -532,13 +532,13 @@ function trialCard(t: TrialState): string {
         : `<div class="meta">You have a rule your agents follow.</div>`)
       : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : ""}${cmd("trial-rule", TRIAL_RULE_SAY)}`);
   const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
-  const s3 = step(3, "A second agent connected after your rule went live", t.degraded ? unknown
+  const s3 = step(3, "A second agent active after your rule went live", t.degraded ? unknown
     : t.done[2]
-      ? `<div class="meta">${t.proven ? "A credential other than the one that proposed your rule has been active since it went live." : "Two of your agents have been active since your rule went live."} A new sign-in of the same agent counts as another credential.</div>`
+      ? `<div class="meta">${t.proven ? "A credential other than the one that proposed your rule has made a call since it went live." : "Two credentials of yours have made a call since your rule went live."} A new sign-in of the same agent counts as another credential.</div>`
       : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`);
-  const names = ["connect an agent", "teach it one rule", "connect a second agent"];
+  const names = ["connect an agent", "teach it one rule", "use a second agent"];
   const status = t.next === null
-    ? `<div class="notice ok" role="status">${t.proven ? "It works: a rule you taught one agent reached another." : "Two of your agents have been active since your rule went live: each one loads it at session start."}</div>`
+    ? `<div class="notice ok" role="status">${t.proven ? "It works: a rule you taught one agent reached another. This is read from records: a credential other than the one that proposed the rule has made a call since it went live, and a new sign-in of the same agent counts as another credential." : "Two credentials of yours have been active since your rule went live."}</div>`
     : t.degraded && t.next > 1
       ? `<p class="sub">Some steps could not be checked just now.</p>`
       : `<p class="sub">Next: ${names[t.next - 1]}.</p>`;
