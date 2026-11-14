@@ -253,13 +253,18 @@ void main(){
   if (spread > 1.0) {
     col = tone * 0.035 * (1.0 - across) * (0.4 + lit);            // a soft halo around the strip
   } else {
-    float flow = st.y * 6.5 + 0.5 * sin(st.x * 5.0 + time * 0.4);
-    float lines = pow(abs(cos(flow * 3.14159)), 10.0);
-    float thread = mix(0.25, lines, 1.0 - smoothstep(0.30, 0.70, fwidth(flow)));   // threads packed below a pixel average out: no moire
-    float pulse = pow(0.5 + 0.5 * sin(st.x * 9.0 - time * 1.1), 10.0);
+    // Seam-consistent by construction: one trip round maps w to -w, so every pattern is even in w
+    // (the wave bends the thread spacing through w * g(u), g 2pi-periodic) and the pulses depend on u alone at integer frequency.
+    float flow = st.y * (7.0 + 1.2 * sin(st.x * 3.0 + time * 0.4));
+    float fw = fwidth(flow);
+    float dist = abs(flow - floor(flow + 0.5));                    // distance to the nearest thread centre
+    float hw = 0.16;
+    float line = 1.0 - smoothstep(hw - 0.75 * fw, hw + 0.75 * fw, dist);
+    float thread = mix(line, 2.0 * hw, smoothstep(0.30, 0.80, fw)); // sub-pixel threads fade to their mean: no moire
+    float pulse = pow(0.5 + 0.5 * sin(st.x * 4.0 - time * 0.9), 3.0);   // broad soft pulses riding the threads
     float edge = smoothstep(0.80, 1.0, across);
-    col = tone * (0.03 + 1.25 * lit * lit) * (0.40 + 0.60 * thread)
-        + tone * pulse * thread * 0.8
+    col = tone * (0.03 + 1.25 * lit * lit) * (0.40 + 0.60 * thread) * (0.8 + 0.5 * pulse)
+        + tone * pulse * thread * 0.35
         + mix(tone, vec3(1.0), 0.65) * spec * (0.9 + 1.6 * edge)
         + tone * rim * (0.5 + 1.4 * edge)
         + mix(tone, vec3(1.0), 0.5) * edge * 0.18 * (0.4 + lit);
