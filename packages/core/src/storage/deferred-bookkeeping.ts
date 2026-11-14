@@ -11,7 +11,8 @@
  *   1. before the next WRITE tool call on that store (flushBookkeeping), so the write sees current counters;
  *   2. by a periodic background flush (flushAllBookkeeping on an unref-ed timer, every 30 s);
  *   3. at graceful shutdown: the stdio server flushes (bounded, about 1.5 s) when stdin ends or closes and on
- *      SIGTERM/SIGINT, on every host including hook-owned ones; the HTTP server flushes while draining.
+ *      SIGTERM/SIGINT, on every host including hook-owned ones; the HTTP server flushes within its 8 s drain
+ *      window, and whatever is still queued when that window closes is lost.
  * Best effort by design: a read never waits on the queue, never fails because of it, and a crash (kill -9,
  * power loss) before the next flush loses the queued counters, telemetry and recall ratings (each one
  * re-derivable or advisory), never memory. A write tool waits at most about 1.5 s for the queue
@@ -23,13 +24,17 @@
  * Bounds: MAX_OPS_PER_ROOT queued operations per store, past which the oldest op is dropped; MAX_ROOTS
  * stores, past which the oldest IDLE store's queue is dropped (a store with a flush in flight is never
  * evicted; if none is idle the new op is dropped). Every drop is counted (bookkeepingStats().dropped).
- * Each op is also bounded in time (DEFAULT_OP_TIMEOUT_MS): one that never settles is counted failed, logged
- * once, and its late result ignored, so a hung op can never wedge the store's flush chain.
+ * Each op is also bounded in time (DEFAULT_OP_TIMEOUT_MS): one that does not settle in time is counted failed,
+ * logged once, and the chain moves on, so a hung op can never wedge the store's flush chain. A timed-out op
+ * cannot be cancelled and may still land later, so "failed" means "not confirmed"; every queued op must be
+ * idempotent or advisory.
  *
  * Counters are ADVISORY. A write tool waits at most 1.5 s for the queue; if a flush is still applying ops after
  * that, the write runs concurrently with it, and a read-modify-write counter op on a file the write also edits
- * can lose one update (the counter undercounts). Nothing ranks on an exact count, so no lock is taken. A repeated operation under one key collapses (the latest
- * replaces the earlier one), or with `repeat` counts up to REPEAT_CAP applications.
+ * can lose one update (the counter undercounts). Nothing ranks on an exact count, so no lock is taken.
+ *
+ * A repeated operation under one key collapses (the latest replaces the earlier one), or with `repeat` counts
+ * up to REPEAT_CAP applications.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getRoot, getTenantContext, withRoot, withTenant, type TenantContext } from "../types.js";
