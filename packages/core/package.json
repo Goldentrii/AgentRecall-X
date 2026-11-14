@@ -1,7 +1,7 @@
 {
   "name": "agent-recall-core",
   "version": "3.5.3",
-  "description": "Core memory palace engine for AgentRecall",
+  "description": "AgentRecall core: the corrections, rules and session cards that close the Intelligent Distance between you and your agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
