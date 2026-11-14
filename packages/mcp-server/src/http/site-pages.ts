@@ -143,6 +143,12 @@ pre{margin:0;background:var(--code);border:1px solid var(--line);border-radius:1
 .notice{border-radius:10px;padding:12px 16px;margin:0 0 20px;font-size:15.5px}
 .notice.ok{background:var(--okbg);color:var(--okink)}
 .notice.err{background:var(--errbg);color:var(--errink)}
+.notice.plain{background:var(--soft);color:var(--ink)}
+.notice .meta{display:block;margin-top:4px;font-size:14px}
+.trial .rows li>div{min-width:0;flex:1 1 100%}
+.trial .rows .btn{margin-top:10px;color:var(--btnink)}
+.trial .tick{color:var(--okink);background:var(--okbg);border-radius:6px;padding:1px 8px;font-size:13px;white-space:nowrap}
+.trial .muted{opacity:.55}
 .signin{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:34px;align-items:start;padding:20px 0 20px}
 .signin ul{padding-left:20px;margin:0 0 14px}
 .signin li{margin:6px 0}
@@ -158,7 +164,7 @@ code{font:.9em var(--mono);background:var(--code);padding:1px 6px;border-radius:
 .msg{max-width:560px;margin:40px auto}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (max-width:820px){.hero,.signin{grid-template-columns:1fr;gap:28px}.doors,.pair{grid-template-columns:1fr}.steps{grid-template-columns:1fr}}
-@media (max-width:520px){body{font-size:16px}.wrap{padding:0 18px}.panel{padding:20px 18px}.door{padding:26px 20px 22px}.tablist label{padding:8px 12px;font-size:14px}.btn{width:100%;text-align:center}.cta{flex-direction:column}.cmd pre{padding:48px 14px 14px}.idrow .copy{position:static}.rows .btn,.who .btn{width:auto}}
+@media (max-width:520px){body{font-size:16px}.wrap{padding:0 18px}.panel{padding:20px 18px}.door{padding:26px 20px 22px}.tablist label{padding:8px 12px;font-size:14px}.btn{width:100%;text-align:center}.cta{flex-direction:column}.cmd pre{padding:14px}.cmd .copy{position:static;width:100%;margin-top:8px;padding:11px}.idrow .copy{position:static}.trial .rows .btn{width:100%}.rows .btn,.who .btn{width:auto}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;
 
@@ -517,33 +523,38 @@ export interface DashboardView {
 export const TRIAL_RULE_SAY = "Remember this rule: always answer me in one short paragraph.";
 export const TRIAL_ASK_SAY = "What rules do I have?";
 
-/** The "See it work" card: three steps decided from server records (see trial.ts). */
+/** The "See it work" card: three steps decided from server records (see trial.ts). Says only what those records show. */
 function trialCard(t: TrialState): string {
-  const step = (n: 1 | 2 | 3, title: string, body: string): string =>
-    `<li data-step="${n}" data-done="${t.done[n - 1]}"><div><div class="name">${t.done[n - 1] ? "Done: " : `${n}. `}${esc(title)}</div>${body}</div></li>`;
+  const step = (n: 1 | 2 | 3, title: string, body: string, state = ""): string =>
+    `<li data-step="${n}" data-done="${t.done[n - 1]}"${state ? ` class="${state}"` : ""}><div><div class="name">${n}. ${esc(title)}${t.done[n - 1] ? ` <span class="tick">&#10003; done</span>` : ""}</div>${body}</div></li>`;
   const unknown = `<div class="meta">This could not be checked just now. Reload in a moment.</div>`;
+  const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
   const s1 = step(1, "Connect an agent", t.done[0]
     ? `<div class="meta">An agent of yours has used your memory.</div>`
-    : `<div class="meta">Add one in the next section, then let it do anything once.</div>`);
-  const s2 = step(2, "Teach it one rule", t.degraded ? unknown
-    : t.done[1]
-      ? (t.waiting
-        ? `<div class="meta">Your rule is waiting for your approval. <a href="/review">Approve it there</a>; nothing is active until you do.</div>`
-        : `<div class="meta">You have a rule your agents follow.</div>`)
-      : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : ""}${cmd("trial-rule", TRIAL_RULE_SAY)}`);
-  const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
-  const s3 = step(3, "A second agent active after your rule went live", t.degraded ? unknown
+    : `<div class="meta">Add one below, then ask it anything once, so the server sees it.</div><a class="btn small" href="#h-connect">Add an agent</a>`);
+  const s2 = t.waiting
+    ? step(2, "Approve your rule", `<div class="meta">Your agent proposed a rule. Nothing is active until you approve it.</div><a class="btn small" href="/review">Review and approve your rule</a>`)
+    : step(2, "Teach it one rule", t.degraded ? unknown
+      : t.done[1]
+        ? `<div class="meta">You have an active rule.</div>`
+        : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${cap}${cmd("trial-rule", TRIAL_RULE_SAY)}`);
+  const ready = t.done[1]; // a second agent is only meaningful once a rule is active
+  const s3 = step(3, "Use a second agent", t.degraded ? unknown
     : t.done[2]
-      ? `<div class="meta">${t.proven ? "A credential other than the one that proposed your rule has made a call since it went live." : "Two credentials of yours have made a call since your rule went live."} A new sign-in of the same agent counts as another credential.</div>`
-      : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`);
+      ? `<div class="meta">${t.proven ? "A different sign-in of yours made a call after your rule went live." : "Two sign-ins of yours made a call after your rule went live."}</div>`
+      : ready
+        ? `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`
+        : `<div class="meta">Available once your rule is active.</div>`, !t.done[2] && !ready ? "muted" : "");
   const names = ["connect an agent", "teach it one rule", "use a second agent"];
   const status = t.next === null
-    ? `<div class="notice ok" role="status">${t.proven ? "It works: a rule you taught one agent reached another. This is read from records: a credential other than the one that proposed the rule has made a call since it went live, and a new sign-in of the same agent counts as another credential." : "Two credentials of yours have been active since your rule went live."}</div>`
+    ? (t.proven
+      ? `<div class="notice ok" role="status">A second agent has been active since your rule went live. <span class="meta">The records show a call, not that it read your rule; a new sign-in of the same agent counts too.</span></div>`
+      : `<div class="notice plain" role="status">Two sign-ins of yours have been active since your rule went live.</div>`)
     : t.degraded && t.next > 1
       ? `<p class="sub">Some steps could not be checked just now.</p>`
-      : `<p class="sub">Next: ${names[t.next - 1]}.</p>`;
+      : `<p class="sub">Next: ${t.waiting ? "approve your rule" : names[t.next - 1]}.</p>`;
   return `<section class="panel trial" aria-labelledby="h-trial"><h2 id="h-trial">See it work</h2>` +
-    `<p class="sub" data-trial-count="${t.count}">${t.count} of 3 steps done. It takes about three minutes.</p>${status}` +
+    `<p class="sub" data-trial-count="${t.count}">${t.count} of 3 steps done.${t.count < 3 ? " It takes about three minutes." : ""}</p>${status}` +
     `<ol class="rows">${s1}${s2}${s3}</ol></section>`;
 }
 
