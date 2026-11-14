@@ -9,7 +9,7 @@
  * goes through esc(), so raw HTML in the markdown is shown as text, never parsed. A link
  * is emitted only for http(s) and mailto targets; any other target (javascript:, data:,
  * relative paths) renders as its text without a link. No attribute is built from source
- * text except an href that passed that check.
+ * text except an href that passed that check and a table cell's data-label (escaped).
  */
 import { esc } from "./oauth-pages.js";
 
@@ -30,6 +30,9 @@ function inline(src: string, nested = false): string {
   }
   return out + esc(src.slice(last));
 }
+
+/** Header text without inline markup, for the data-label attribute (esc() is applied at use). */
+const plain = (s: string): string => s.replace(/`([^`]+)`|\*\*([^*]+?)\*\*|\[([^\]]+)\]\([^)\s]+\)/g, (_, a, b, c) => a ?? b ?? c);
 
 const cells = (line: string): string[] => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 const isRule = (line: string | undefined): boolean => line !== undefined && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line);
@@ -60,7 +63,7 @@ export function renderMarkdown(src: string): string {
       for (i += 2; i < lines.length && lines[i].trim().startsWith("|"); i++) rows.push(cells(lines[i]));
       i--;
       html.push(`<div class="tbl"><table><thead><tr>${heads.map((h) => `<th scope="col">${inline(h)}</th>`).join("")}</tr></thead><tbody>` +
-        rows.map((r) => `<tr>${heads.map((_, c) => `<td>${inline(r[c] ?? "")}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`);
+        rows.map((r) => `<tr>${heads.map((_, c) => `<td data-label="${esc(plain(heads[c]))}">${inline(r[c] ?? "")}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`);
     } else if (item) {
       if (para.length) flush();
       list.push(item[1]);

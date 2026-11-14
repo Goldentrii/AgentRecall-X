@@ -205,8 +205,14 @@ describe("markdown-lite never turns source text into markup", () => {
 
   it("tables keep their columns; a short row is padded, an extra cell dropped", () => {
     const h = renderMarkdown("| A | B |\n|---|---|\n| 1 |\n| 2 | 3 | 4 |");
-    assert.match(h, /<td>1<\/td><td><\/td>/);
-    assert.match(h, /<td>2<\/td><td>3<\/td><\/tr>/);
+    assert.match(h, /<td data-label="A">1<\/td><td data-label="B"><\/td>/);
+    assert.match(h, /<td data-label="A">2<\/td><td data-label="B">3<\/td><\/tr>/);
     assert.ok(!/<td>4/.test(h));
+  });
+
+  it("each cell carries its column header as an escaped data-label so a phone can stack rows", () => {
+    const h = renderMarkdown('| **Da"ta** | <b>Why</b> |\n|---|---|\n| x | y |');
+    assert.match(h, /<td data-label="Da&quot;ta">x<\/td><td data-label="&lt;b&gt;Why&lt;\/b&gt;">y<\/td>/);
+    assert.ok(!/<b>/.test(h));
   });
 });

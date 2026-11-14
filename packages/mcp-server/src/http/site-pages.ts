@@ -187,6 +187,7 @@ code{font:.9em var(--mono);background:var(--sunk);padding:1px 6px;border-radius:
 .support .addr{font:600 1.05rem/1.4 var(--mono);overflow-wrap:anywhere}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (max-width:820px){.hero,.signin{grid-template-columns:1fr;gap:28px}.doors,.pair{grid-template-columns:1fr}.steps{grid-template-columns:1fr}}
+@media (max-width:560px){.legal .tbl{overflow:visible;border:0;background:none}.legal table,.legal tbody,.legal tr,.legal td{display:block;min-width:0;width:100%}.legal thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.legal tr{margin:0 0 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);overflow:hidden}.legal td{border-top:0;padding:8px 14px}.legal td:first-child{padding-top:12px}.legal td:last-child{padding-bottom:12px}.legal td[data-label]:not([data-label=""])::before{content:attr(data-label);display:block;color:var(--dim);font:600 12px/1.3 var(--sans);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px}}
 @media (max-width:520px){body{font-size:16px}.wrap{padding:0 18px}.panel{padding:20px 18px}.door{padding:24px 20px 22px}.tablist label{padding:8px 12px;font-size:14px}.btn{width:100%;text-align:center}.cta{flex-direction:column}.cmd pre{padding:14px}.cmd .copy{position:static;width:100%;margin-top:8px;padding:11px}.idrow .copy{position:static}.trial .rows .btn{width:100%}.rows .btn,.who .btn{width:auto}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 `;
