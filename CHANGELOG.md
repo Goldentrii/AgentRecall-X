@@ -8,12 +8,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [3.5.3] — 2026-11-14
+
+All four packages 3.5.3 in lockstep. This is a large release under a patch number: read "Upgrade notes" first.
+
+### Upgrade notes — read before upgrading
+
+- **`session_start` returns less by default.** The default is now `mode: "cards"`: the owner card, HARD RULES (P0 corrections and behaviour policies), the project state card and a one-line pending-review count. Insights, rooms, recent activity, `watch_for` and continuity are no longer loaded unless you ask for them. To get the previous output: pass `mode: "full"` on each MCP call (or `verbose: true` for full JSON), `{ mode: "full" }` in the SDK, or set `AGENT_RECALL_SESSION_START_MODE=full` for `ar hook-start`. That variable does not affect the MCP tool: there is no setting that restores the old MCP default, the mode is chosen per call.
+- **SDK callers: `sessionStart()` changed shape by default.** `insights`, `active_rooms`, `cross_project`, `recent_captures` and `watch_for` are `[]`, and `resume`, `pipeline` and `alignment` are `null`, unless `{ mode: "full" }` is passed. Nothing throws: code that reads those fields silently gets nothing. `fencedText` is now the rendered text, not a fenced JSON dump.
+- **`ar hook-start` prints a different format** (see Changed). Anything that matched the old `Project:` / `🚨 P0 rules` / `💡 Awareness insights` / `🏛️ Palace rooms` markers must be updated.
+- **Rendered `session_start` text is capped at 16,384 bytes** in cards and full mode (lite is already at most 500 tokens) (`AGENT_RECALL_SESSION_START_MAX_BYTES`); HARD RULES always survive the cap.
+- No tool, command, flag, export or environment variable was removed or renamed. The on-disk store needs no migration, and a downgrade to 3.5.2 reads everything it read before.
+- `agent-recall-mcp` is larger: it now also contains the hosted server (`agent-recall-server` bin, the `express` dependency, and about 470 KB of website images). The stdio entry point does not load any of it.
+
+### Hosted server (new)
+
+One hosted AgentRecall that any MCP agent connects to with one URL: `https://agentrecallx.com/mcp`. On agentrecallx.com it is free and sign-up is open to any GitHub account; a self-hosted server is invite-only unless its operator sets `AR_OAUTH_SIGNUP=open`. Self-hosting: `docs/hosted-server.md`.
+
+- **`agent-recall-server`**: Streamable HTTP MCP server with one isolated memory per user, static tokens and OAuth 2.1 sign-in with GitHub or Google (dynamic client registration, PKCE), per-user storage quota and rate limit (#49, #50).
+- **Website**: home page, `/connect` dashboard with your ID and copyable connect commands, `/local`, and plain-text instructions for agents at `/connect.md`, `/local.md` and `/llms.txt`. Strict CSP, no third-party requests (#57). The home page is a scroll-driven film about Intelligent Distance (#64).
+- **"Your agents"**: the dashboard lists every agent connected to your account and when it was last active (#59).
+- **Memory import**: upload a local memory archive to your hosted account from `/connect`, with add or replace, a 7-day trash for replaced data, and rule files imported only when you opt in (#60).
+- **Deploy kit** (`deploy/hosted/`): one-command install on Ubuntu, a restricted deploy key that can only deploy a reviewed commit of main, alias domains and `domain-switch.sh` (#55, #63).
+- Privacy policy (`PRIVACY.md`) and `AR_PRIVACY_URL` (#52).
+
 ### Security
 
 - **Hosted server: agents can propose corrections but not activate them (owner gate).** `check`'s structured `human_correction` used to write straight to the active ledger, so anyone holding a tenant's token, or steering an agent that does, could plant a P0 that every other agent of that tenant loads at `session_start` under "HARD RULES (always follow, no exceptions)". Every hosted MCP request now runs with `TenantContext.stageAgentCorrections`: the structured form (and `pending_id` promotion) is staged as `check_structured_unconfirmed` and answers `status: "staged"`; staged text is loaded nowhere and `session_start` shows only a count. Activation is operator-only: `agent-recall-server corrections list | approve <id> --uid <uid> | reject <id> --uid <uid>` (new core export `confirmPendingCorrection`, which refuses to run inside an agent channel, also when a tenant scope is nested in one). A proposal row is immutable, its id ends in a 128-bit digest of its content and a staged row is never overwritten, so an id always activates exactly the text `corrections list` printed, at the listed severity; a re-submission that differs in any way is a separate row. `corrections list` prints counts per user, and full proposals only with `--uid` (capped by `--limit`, default 20). Proposal text is reduced to visible characters and capped (rule 200, why 600) before staging. In an agent channel `check` no longer records `delta` (it fed `watch_for` and auto-promoted insights) and cannot discard or replace a proposal that awaits the owner. Local stdio installs are unchanged. Not covered: the agent-written state card. Docs: `docs/hosted-server.md` "Corrections need the owner".
 
 ### Added
 
+- **Tool annotations on every MCP tool.** Each tool now declares `readOnlyHint` / `destructiveHint` / `openWorldHint`, classified by what its handler really writes: `session_end`, `remember` and `digest` can replace earlier data; the others write but never replace what you saved. No tool is read-only today (`session_start` and `recall` record bookkeeping). Clients no longer have to assume the worst case (#62).
+- `server.json` declares the hosted remote endpoint alongside the npm package, and a test pins it to `package.json` so the MCP Registry entry cannot go stale again (#61).
+- First-run guidance: a new hosted memory tells the agent what to ask the user and save first; hosted tools name the page where the owner reviews staged corrections (#58).
 - **Hosted server: owners approve their own corrections at `/review`.** With OAuth on, a user signs in with GitHub/Google in a browser (same apps and callback URL as the MCP sign-in) and sees only their own `ready` proposals in full, with Approve / Reject. Activation goes through `confirmPendingCorrection` / `resolvePendingCorrection` as the owner, only for rows `readStagedProposal` accepts, so the digest-bound id activates exactly the text shown. MCP tokens (`ar_`/`aro_`) cannot use it: the page trusts only its own 30-minute `HttpOnly; SameSite=Lax; Path=/review` session and refuses any request with an `Authorization` header. CSRF token per session, `Sec-Fetch-Site`/`Origin` checks, strict CSP / `no-store`, full escaping, single-use browser-bound sign-in state. Off without OAuth; the operator CLI is unchanged. `corrections list` now prints `applies_when` as JSON. The owner gate also caps `applies_when` (at most 8 entries of at most 60 characters; refused, not truncated), and `readStagedProposal` refuses a row over any cap: a row staged before this change with a longer `applies_when` turns from `ready` into `incomplete` (reject it, or have the agent re-submit it within the caps). `listPendingCorrections(project, { strict: true })` throws on a read failure instead of returning `[]`. Docs: `docs/hosted-server.md` "The review page".
 - Identity card `<root>/identity-card.md` (≤1,600 chars, versioned, personal tier, never synced). Created and replaced only via `ar identity init` / `ar identity set <file>`; `ar identity show` prints the stored file (frontmatter + body, fenced) and that output feeds straight back into `set`, which drops the fence lines. Over-cap, secret or NUL-laden (UTF-16) bodies are rejected, and `version:` must be a plain integer (anything else reads as a malformed card). `session_start` returns it as `owner` and renders it first, inside the fence.
 - State card `projects/<slug>/state-card.md` (Goal, Open decisions, Blockers, Next, Pointers, Last session; ≤2,400 chars). Every non-hook `session_end` except `ar saveall` rewrites it atomically from the optional `state` input, carrying omitted fields forward and listing cut fields in `state_card.truncated`; `hook-end` saves and `ar saveall` leave it alone. An unreadable card is moved to `.bak-<timestamp>` before the rewrite (a valid card written concurrently is never moved). It renders after HARD RULES (a card without fields renders nothing), is marked `stale: N d` at ≥7 days, counts as project memory for the empty-store banner, and is printed by `ar state show`.
@@ -31,6 +58,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- The `session_start` tail no longer tells hook-less hosts to call `brief()`, a tool that was removed; it says to call `session_end` before stopping (#58).
 - Hooks resolve the session id as stdin `session_id` → `CLAUDE_CODE_SESSION_ID` → `CLAUDE_SESSION_ID` → `SESSION_ID`, and `hook-start` reads stdin. Before this, `hook-start` read only `CLAUDE_SESSION_ID` / `SESSION_ID`; with neither set (the usual case) its lock key was the UTC hour, so a second session started in the same hour loaded no context.
 
 ### Deprecated
