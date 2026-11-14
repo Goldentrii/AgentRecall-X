@@ -3,7 +3,7 @@
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { parseMemory, isEmptyMemory, parseRecallItem, type MemoryDoc, type RecallCard } from "./view";
+import { parseMemory, isEmptyMemory, parseRecallItem, COPY, connectHow, type ConnectId, type MemoryDoc, type RecallCard } from "./view";
 
 const inApp = "__TAURI_INTERNALS__" in window;
 
@@ -105,7 +105,7 @@ function renderSignedOut(): void {
 // ---------- signed in ----------
 
 function renderSignedIn(): void {
-  const tabs: Array<[typeof state.tab, string]> = [["memory", "Rules"], ["remember", "Teach"], ["recall", "Search"], ["connect", "Connect"]];
+  const tabs: Array<[typeof state.tab, string]> = [["memory", "Rules"], ["remember", COPY.tabNotes], ["recall", "Search"], ["connect", "Connect"]];
   const bar = h("div", { class: "tabs", role: "tablist" });
   for (const [id, label] of tabs) {
     const t = h("button", { class: "tab", role: "tab", id: "tab-" + id, "aria-selected": String(state.tab === id), tabindex: state.tab === id ? "0" : "-1" }, label);
@@ -149,14 +149,11 @@ async function loadMemory(): Promise<void> {
   if (state.tab === "memory") render();
 }
 
-const EMPTY_TITLE = "No rules yet.";
-const EMPTY_BODY = "Teach one agent a rule and every agent you connect will follow it. Say to any connected agent: \u201CRemember this rule: \u2026\u201D. It then waits for your approval at agentrecallx.com/review.";
-
 function section(title: string, ...kids: Child[]): HTMLElement {
   return h("section", { class: "block" }, h("h2", {}, title), ...kids);
 }
 
-function renderMemoryDoc(doc: MemoryDoc, into: HTMLElement): void {
+function renderMemoryDoc(doc: MemoryDoc, into: HTMLElement, openConnect: () => void): void {
   if (doc.owner) into.append(section("You", h("p", { class: "prose" }, doc.owner)));
   if (doc.rules.length > 0) {
     const ul = h("ul", { class: "rules" });
@@ -179,8 +176,13 @@ function renderMemoryDoc(doc: MemoryDoc, into: HTMLElement): void {
     }
     into.append(section(doc.stateUpdated ? `Where things stand \u00B7 ${doc.stateUpdated}` : "Where things stand", dl));
   }
-  if (doc.other.length > 0) into.append(section("Also from the server", ...doc.other.map((l) => h("p", { class: "prose" }, l))));
-  if (isEmptyMemory(doc)) into.append(h("div", { class: "empty" }, h("h2", {}, EMPTY_TITLE), h("p", { class: "muted" }, EMPTY_BODY)));
+  if (doc.other.length > 0) into.append(section(COPY.alsoFromServer, ...doc.other.map((l) => h("p", { class: "prose" }, l))));
+  if (isEmptyMemory(doc)) {
+    const go = h("button", { id: "empty-connect" }, COPY.emptyConnectButton);
+    go.addEventListener("click", openConnect);
+    const steps = h("ol", { class: "steps" }, ...COPY.emptySteps.map((t) => h("li", {}, t)));
+    into.append(h("div", { class: "empty" }, h("h2", {}, COPY.emptyTitle), h("p", { class: "muted" }, COPY.emptyLead), steps, go));
+  }
 }
 
 function panelMemory(panel: HTMLElement): void {
@@ -201,7 +203,7 @@ function panelMemory(panel: HTMLElement): void {
   panel.append(head);
   if (m.error) panel.append(h("p", { class: "note err" }, m.error));
   const view = h("div", { class: "scroll view", tabindex: "0", "aria-label": "Rules your agents follow" });
-  renderMemoryDoc(parseMemory(m.text ?? ""), view);
+  renderMemoryDoc(parseMemory(m.text ?? ""), view, () => { state.tab = "connect"; render(); });
   panel.append(view);
   if (m.pending && m.pending > 0) {
     const b = h("button", {}, `Review ${m.pending} proposed rule${m.pending === 1 ? "" : "s"}`);
@@ -211,17 +213,17 @@ function panelMemory(panel: HTMLElement): void {
 }
 
 function panelRemember(panel: HTMLElement): void {
-  const ta = h("textarea", { id: "rem", "aria-label": "What should every agent know?", placeholder: "A rule, a preference or a fact every agent should follow" });
+  const ta = h("textarea", { id: "rem", "aria-label": COPY.notePlaceholder, placeholder: COPY.notePlaceholder });
   const out = h("p", { class: "note", role: "status" });
-  const btn = h("button", { class: "primary" }, "Teach every agent");
+  const btn = h("button", { class: "primary" }, COPY.noteButton);
   btn.addEventListener("click", async () => {
     (btn as HTMLButtonElement).disabled = true;
     out.className = "note";
     out.textContent = "Saving";
     try {
-      const line = await invoke<string>("remember", { content: (ta as HTMLTextAreaElement).value });
+      await invoke<void>("remember", { content: (ta as HTMLTextAreaElement).value });
       out.className = "note ok";
-      out.textContent = line;
+      out.textContent = COPY.noteSaved;
       (ta as HTMLTextAreaElement).value = "";
     } catch (e) {
       out.className = "note err";
@@ -229,13 +231,13 @@ function panelRemember(panel: HTMLElement): void {
     }
     (btn as HTMLButtonElement).disabled = false;
   });
-  panel.append(ta, h("div", { class: "row" }, btn), out);
+  panel.append(ta, h("div", { class: "row" }, btn), out, h("p", { class: "muted small" }, COPY.noteRulesHint));
 }
 
 let lastRecall: RecallView | null = null;
 
-function recallCard(c: RecallCard): HTMLElement {
-  const meta = [c.kind, c.topic, c.date].filter((x): x is string => !!x).join(" \u00B7 ");
+function recallCard(c: RecallCard, labelPlain: boolean): HTMLElement {
+  const meta = c.plain ? (labelPlain ? COPY.alsoFromServer : "") : [c.kind, c.topic, c.date].filter((x): x is string => !!x).join(" \u00B7 ");
   return h("article", { class: "item" },
     h("p", { class: "item-text" }, c.text),
     c.detail ? h("p", { class: "item-detail" }, c.detail) : null,
@@ -249,7 +251,9 @@ function panelRecall(panel: HTMLElement): void {
   const list = h("div", { class: "scroll", tabindex: "0", "aria-label": "Recall results" });
   const show = (v: RecallView): void => {
     list.replaceChildren();
-    for (const c of v.results.map(parseRecallItem)) list.append(recallCard(c));
+    const cards = v.results.map(parseRecallItem);
+    const hasResults = cards.some((c) => !c.plain); // a lone plain line is the server's "no results" answer: show it unlabelled
+    for (const c of cards) list.append(recallCard(c, hasResults));
     out.className = v.error ? "note err" : "note";
     out.textContent = v.offline ? `Offline, as of ${fmt(v.as_of)}. Showing "${v.query}" from the last search.` : v.error ?? "";
   };
@@ -277,30 +281,31 @@ let commands: ConnectCommands | null = null;
 function panelConnect(panel: HTMLElement): void {
   const out = h("p", { class: "note", role: "status" });
   const build = (c: ConnectCommands): void => {
-    const rows: Array<[string, string]> = [["Claude Code", c.claude], ["Codex", c.codex], ["Cursor", c.cursor]];
-    for (const [name, cmd] of rows) {
-      const b = h("button", {}, `Copy ${name} command`);
+    const rows: Array<[ConnectId, string, string]> = [["claude", "Claude Code", c.claude], ["codex", "Codex", c.codex], ["cursor", "Cursor", c.cursor]];
+    for (const [id, name, text] of rows) {
+      const how = connectHow(id, text);
+      const b = h("button", { "aria-label": `${how.copyLabel} for ${name}` }, how.copyLabel);
       b.addEventListener("click", async () => {
         try {
-          await navigator.clipboard.writeText(cmd);
+          await navigator.clipboard.writeText(text);
           out.className = "note ok";
-          out.textContent = `${name} command copied.`;
+          out.textContent = how.copied;
         } catch {
           out.className = "note err";
           out.textContent = "Could not copy. Select the text below instead.";
         }
       });
-      panel.insertBefore(h("div", { class: "cmd" }, b, h("code", {}, cmd)), out);
+      panel.insertBefore(h("div", { class: "cmd" }, h("div", { class: "cmd-head" }, h("strong", {}, name), b), h("p", { class: "muted small" }, how.how), h("code", {}, text)), out);
     }
   };
-  panel.append(h("p", { class: "muted small" }, "Run one of these in each agent that should follow your rules, then sign in when it asks."));
+  panel.append(h("p", { class: "muted small" }, COPY.connectIntro));
   panel.append(out);
   const dash = h("button", { class: "link" }, "Open my dashboard");
   dash.addEventListener("click", () => void invoke("open_url", { url: BASE + "/connect" }).catch(() => undefined));
   panel.append(dash);
   if (commands) build(commands);
   else {
-    out.textContent = "Loading commands";
+    out.textContent = "Loading";
     invoke<ConnectCommands>("connect_commands").then((c) => {
       commands = c;
       out.textContent = c.from_server ? "" : "Showing the built-in commands.";

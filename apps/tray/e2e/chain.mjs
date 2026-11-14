@@ -234,12 +234,19 @@ async function walk({ page, openLog, mock, dataDir }) {
     assert.match(await page.locator(".badge").innerText(), /^Updated /);
     const view = await page.locator(".panel .view").innerText();
     assert.match(view, /No rules yet\./);
-    assert.match(view, /Remember this rule/, "the empty state says how to teach the first rule");
+    assert.deepEqual(await page.locator(".empty ol.steps li").allInnerTexts(), [
+      "Connect an agent in the Connect tab.",
+      "Tell it “Remember this rule: …” and approve it at agentrecallx.com/review.",
+    ], "the empty state is two steps: connect an agent, then teach it");
     assert.match(view, /agentrecallx\.com\/review/);
     assert.doesNotMatch(view, AGENT_ONLY, "no text meant for agents is shown");
     await until("the cache file", () => fs.existsSync(path.join(testCacheDir, "cache.json")));
     assert.doesNotMatch(fs.readFileSync(path.join(testCacheDir, "cache.json"), "utf-8"), /aro_|arr_/, "no token in the cache");
     await shot(page, "05-rules-empty");
+    await page.getByRole("button", { name: "Open the Connect tab" }).click();
+    await page.locator(".cmd").first().waitFor();
+    await page.locator("#tab-memory").click();
+    await page.locator(".panel .view").waitFor();
   });
 
   const agent = await connectAgent(mock);
@@ -271,6 +278,9 @@ async function walk({ page, openLog, mock, dataDir }) {
       assert.equal(await page.locator(".rules .tag.p0").innerText(), "P0");
       const labels = await page.locator("dl.rows dt").allInnerTexts();
       assert.deepEqual(labels, ["Goal", "Next", "Blockers", "Open decisions", "Last session"]);
+      for (const t of await page.locator("dl.rows ul.plain li").allInnerTexts()) assert.doesNotMatch(t, /^\s*-/, "list items carry no literal dash");
+      const bullet = await page.locator("dl.rows ul.plain li").first().evaluate((el) => getComputedStyle(el, "::before").content);
+      assert.ok(bullet !== '"- "', "the marker is drawn, not typed");
       assert.equal(await page.getByRole("button", { name: /^Review \d+ proposed/ }).count(), 0, "nothing is waiting any more");
       assert.doesNotMatch(await page.locator(".panel .view").innerText(), AGENT_ONLY);
       await shot(page, "07-rules");
@@ -279,13 +289,17 @@ async function walk({ page, openLog, mock, dataDir }) {
     await agent.close().catch(() => undefined);
   }
 
-  await step("teach: a sentence is saved for every agent through the remember tool", async () => {
+  await step("notes: a sentence is saved for the agents through the remember tool, and no server path is shown", async () => {
     await page.locator("#tab-remember").click();
     await page.locator("#rem").fill(SENTENCE);
-    await page.getByRole("button", { name: "Teach every agent" }).click();
+    await page.getByRole("button", { name: "Save for your agents" }).click();
     const note = page.locator(".note.ok");
     await note.waitFor();
-    assert.ok((await note.innerText()).trim().length > 0, "the server's confirmation line is shown");
+    assert.equal((await note.innerText()).trim(), "Saved. Your agents can find this when they search.");
+    const shown = await page.locator(".panel").innerText();
+    assert.doesNotMatch(shown, /hosted:|\.md|\/projects\/|→|appended/i, "no server path or storage detail is shown");
+    assert.doesNotMatch(shown, /Teach every agent/, "a note is not promised to be a rule every agent follows");
+    assert.match(shown, /agentrecallx\.com\/review/, "rules are pointed at the review page");
     assert.equal(await page.locator("#rem").inputValue(), "");
     await shot(page, "08-teach");
   });
@@ -306,8 +320,14 @@ async function walk({ page, openLog, mock, dataDir }) {
 
   await step("connect: three commands, and the dashboard goes to the browser (the log), not a real one", async () => {
     await page.locator("#tab-connect").click();
-    for (const name of ["Claude Code", "Codex", "Cursor"]) await page.getByRole("button", { name: `Copy ${name} command` }).waitFor();
+    assert.equal((await page.locator(".panel > p").first().innerText()).trim(), "Add AgentRecall to each agent that should follow your rules.");
+    for (const [name, label] of [["Claude Code", "Copy command"], ["Codex", "Copy command"], ["Cursor", "Copy settings"]]) await page.getByRole("button", { name: `${label} for ${name}` }).waitFor();
     assert.match(await page.locator(".cmd code").first().innerText(), /^claude mcp add /);
+    const rows = await page.locator(".cmd").allInnerTexts();
+    assert.match(rows[0], /Paste into your terminal/);
+    assert.match(rows[1], /Paste into your terminal/);
+    assert.match(rows[2], /Add to Cursor's MCP settings\./);
+    assert.doesNotMatch(rows[2].split("\n").slice(0, 3).join(" "), /terminal/i, "the Cursor snippet is not something to paste into a terminal");
     await page.getByRole("button", { name: "Open my dashboard" }).click();
     await until("the dashboard URL in the open log", () => openedUrls(openLog).includes("https://agentrecallx.com/connect"));
     const layout = await page.evaluate(() => {

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseMemory, isEmptyMemory, parseRecallItem, stripMarkdown } from "../src/view.ts";
+import { parseMemory, isEmptyMemory, parseRecallItem, stripMarkdown, COPY, connectHow } from "../src/view.ts";
 
 const fx = (n) => fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", n), "utf-8");
 const everything = (d) => JSON.stringify(d);
@@ -126,4 +126,49 @@ test("stripMarkdown: emphasis, code, links and headings go; snake_case and lone 
   assert.equal(stripMarkdown("## Heading\nplain"), "Heading\nplain");
   assert.equal(stripMarkdown("my_var_name and 2 * 3 * 4"), "my_var_name and 2 * 3 * 4");
   assert.equal(stripMarkdown("<b>x</b>"), "<b>x</b>", "angle brackets are text, the UI uses textContent");
+});
+
+// ---------- recall: lines that are not [n][...] items ----------
+
+test("recall: a line with no [n][...] shape is a plain note, an item is not", () => {
+  assert.equal(parseRecallItem("[1][journal][WEA] a — b").plain, false);
+  assert.equal(parseRecallItem("[1][][WEA] a — b").plain, false);
+  const warn = parseRecallItem("⚠ Search index is rebuilding; results may be incomplete.");
+  assert.equal(warn.plain, true);
+  assert.equal(warn.text, "⚠ Search index is rebuilding; results may be incomplete.");
+  assert.equal(parseRecallItem("first line\nsecond line").text, "first line\nsecond line");
+});
+
+// ---------- the words the person reads ----------
+
+test("copy: saving a note does not promise a rule, and rules point at the real route", () => {
+  assert.equal(COPY.noteButton, "Save for your agents");
+  assert.doesNotMatch(JSON.stringify([COPY.noteButton, COPY.notePlaceholder, COPY.noteSaved]), /teach|every agent|follow|→|hosted:|\.md|\/projects\//i);
+  assert.match(COPY.noteSaved, /^Saved\. /);
+  assert.match(COPY.noteRulesHint, /agent/i);
+  assert.match(COPY.noteRulesHint, /agentrecallx\.com\/review/);
+});
+
+test("copy: the empty state is two steps, the first is the Connect tab", () => {
+  assert.equal(COPY.emptySteps.length, 2);
+  assert.match(COPY.emptySteps[0], /^Connect an agent in the Connect tab\.$/);
+  assert.match(COPY.emptySteps[1], /Remember this rule/);
+  assert.match(COPY.emptySteps[1], /agentrecallx\.com\/review/);
+  assert.ok(COPY.emptyConnectButton.length > 0);
+});
+
+test("connect: each agent says what to do with its text, and only terminal agents say terminal", () => {
+  assert.match(COPY.connectIntro, /^Add AgentRecall to each agent that should follow your rules\.$/);
+  const claude = connectHow("claude", "claude mcp add x");
+  const codex = connectHow("codex", "codex mcp add a\ncodex mcp login a");
+  const cursor = connectHow("cursor", '{ "mcpServers": {} }');
+  assert.match(claude.how, /terminal/i);
+  assert.match(claude.how, /\/mcp/);
+  assert.match(codex.how, /terminal/i);
+  assert.match(codex.how, /second line/i);
+  assert.match(cursor.how, /Cursor's MCP settings/);
+  assert.doesNotMatch(cursor.how, /terminal|sign in/i, "a JSON snippet is not run, and Cursor does not ask here");
+  assert.doesNotMatch(connectHow("codex", "codex mcp add a").how, /second line/i, "no login line, no mention of one");
+  assert.equal(cursor.copyLabel, "Copy settings");
+  assert.equal(claude.copyLabel, "Copy command");
 });

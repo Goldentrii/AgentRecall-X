@@ -128,6 +128,8 @@ export interface RecallCard {
   topic: string | null;
   /** ISO date, or null. */
   date: string | null;
+  /** True when the line had no `[n][...]` shape: something the server said next to the results, not a result. */
+  plain: boolean;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -155,7 +157,7 @@ export function parseRecallItem(raw: string): RecallCard {
   const [first, ...more] = String(raw ?? "").replace(/\r\n?/g, "\n").split("\n");
   const extra = more.map((l) => stripMarkdown(l.trim().replace(/^↳\s*/, ""))).filter(Boolean);
   const m = ITEM.exec(first.trim());
-  if (!m) return { text: stripMarkdown([first, ...more].join("\n")), detail: null, kind: null, topic: null, date: null };
+  if (!m) return { text: stripMarkdown([first, ...more].join("\n")), detail: null, kind: null, topic: null, date: null, plain: true };
 
   const [source, ...roomParts] = m[1].split("/");
   const room = roomParts.join("/") || null;
@@ -176,5 +178,37 @@ export function parseRecallItem(raw: string): RecallCard {
   const side = ownText && title ? stripMarkdown(excerpt) : "";
   const detail = [side, ...extra].filter(Boolean).join("\n") || null;
   const topic = kind === "Note" && title ? stripMarkdown(title) : room;
-  return { text: body, detail, kind, topic: topic && topic !== body ? topic : null, date };
+  return { text: body, detail, kind, topic: topic && topic !== body ? topic : null, date, plain: false };
+}
+
+// ---------- the words the person reads (kept here so tests can hold them) ----------
+
+export const COPY = {
+  /** A note is not a rule: rules are proposed by an agent and approved by the owner. */
+  tabNotes: "Notes",
+  notePlaceholder: "Something your agents should remember",
+  noteButton: "Save for your agents",
+  noteSaved: "Saved. Your agents can find this when they search.",
+  noteRulesHint: "Want an agent to follow it as a rule? Ask an agent to propose it, then approve it at agentrecallx.com/review.",
+  emptyTitle: "No rules yet.",
+  emptyLead: "Your agents follow the rules you approve. To add the first one:",
+  emptySteps: [
+    "Connect an agent in the Connect tab.",
+    "Tell it “Remember this rule: …” and approve it at agentrecallx.com/review.",
+  ],
+  emptyConnectButton: "Open the Connect tab",
+  connectIntro: "Add AgentRecall to each agent that should follow your rules.",
+  alsoFromServer: "Also from the server",
+} as const;
+
+export type ConnectId = "claude" | "codex" | "cursor";
+
+/** What to do with the text of one connect row. Cursor takes a JSON snippet for its MCP settings, not a command. */
+export function connectHow(id: ConnectId, text: string): { how: string; copyLabel: string; copied: string } {
+  if (id === "cursor") return { how: "Add to Cursor's MCP settings.", copyLabel: "Copy settings", copied: "Cursor settings copied." };
+  if (id === "codex") {
+    const two = text.includes("\n");
+    return { how: two ? "Paste into your terminal. The second line signs you in." : "Paste into your terminal.", copyLabel: "Copy command", copied: "Codex command copied." };
+  }
+  return { how: "Paste into your terminal, then type /mcp in Claude Code to sign in.", copyLabel: "Copy command", copied: "Claude Code command copied." };
 }

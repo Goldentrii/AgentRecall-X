@@ -131,13 +131,26 @@ fn delete_tokens() {
 
 // ---------- errors ----------
 
+/// Fixed sentences for what a person can do about a failure. Technical detail never reaches the window: it goes
+/// to `log_detail` and the person gets one of these (or, for a tool failure, the server's own words once
+/// `mcp::person_safe` accepts them).
+const MSG_UNREACHABLE: &str = "Could not reach AgentRecall. Check your connection and try again.";
+const MSG_TROUBLE: &str = "AgentRecall had a problem. Try again in a moment.";
+const MSG_UNREADABLE: &str = "AgentRecall sent a reply this app could not read. Try again in a moment.";
+const MSG_SIGN_IN_SETUP: &str = "Could not start sign-in with AgentRecall. Try again in a moment.";
+
+/// Technical detail for whoever debugs this (stderr). Passes through the redactor like everything else.
+fn log_detail(what: &str, detail: &str) {
+    eprintln!("[agent-recall-tray] {what}: {}", redact(detail));
+}
+
 #[derive(Debug)]
 enum ApiErr {
-    /// could not reach the server
-    Network(String),
+    /// could not reach the server (the detail was logged where it happened)
+    Network,
     /// not signed in, or the server rejected our access token and refresh
     Auth,
-    /// the server answered with an error (retryable, tokens kept)
+    /// the server answered with an error (retryable, tokens kept). Holds a sentence already fit for a person.
     Server(String),
     /// the token endpoint said invalid_grant
     Rejected,
@@ -146,16 +159,24 @@ enum ApiErr {
 impl ApiErr {
     fn message(&self) -> String {
         match self {
-            ApiErr::Network(m) | ApiErr::Server(m) => redact(m),
+            ApiErr::Network => MSG_UNREACHABLE.into(),
+            ApiErr::Server(m) => redact(m),
             ApiErr::Auth => "Signed out. Sign in again.".into(),
             ApiErr::Rejected => "The server rejected the sign-in. Please try again.".into(),
         }
     }
+
+    /// A failure of the server's reply: log the detail, show a fixed sentence.
+    fn trouble(what: &str, detail: &str) -> ApiErr {
+        log_detail(what, detail);
+        ApiErr::Server(MSG_TROUBLE.into())
+    }
 }
 
 fn net_err(e: reqwest::Error) -> ApiErr {
-    // reqwest errors may embed the URL; redact defensively and drop the URL.
-    ApiErr::Network(redact(&e.without_url().to_string()))
+    // reqwest errors may embed the URL; drop it, and keep the rest in the log only.
+    log_detail("network", &e.without_url().to_string());
+    ApiErr::Network
 }
 
 fn too_large() -> ApiErr {
@@ -220,7 +241,10 @@ fn open_allowed(app: &AppHandle, raw: &str) -> Result<(), String> {
     if let Some(log) = &hooks::get().open_log {
         return hooks::append_open(log, raw);
     }
-    app.opener().open_url(raw, None::<&str>).map_err(|e| redact(&e.to_string()))
+    app.opener().open_url(raw, None::<&str>).map_err(|e| {
+        log_detail("open browser", &e.to_string());
+        "Could not open your browser. Open agentrecallx.com yourself.".to_string()
+    })
 }
 
 // ---------- token endpoint ----------
@@ -239,12 +263,15 @@ async fn token_request(http: &reqwest::Client, endpoint: &str, form: &[(&str, &s
     let status = resp.status();
     let body = read_limited(resp, MAX_SMALL_BODY).await?;
     if status.is_success() {
-        return serde_json::from_slice::<TokenResp>(&body).map_err(|_| ApiErr::Server("The token reply was not understood.".into()));
+        return serde_json::from_slice::<TokenResp>(&body).map_err(|_| {
+            log_detail("token reply", "success status but the body is not a token response");
+            ApiErr::Server(MSG_UNREADABLE.into())
+        });
     }
     if is_invalid_grant(&body) {
         return Err(ApiErr::Rejected);
     }
-    Err(ApiErr::Server(format!("The server could not renew your sign-in right now ({status}). Try again in a moment.")))
+    Err(ApiErr::trouble("token endpoint", &format!("status {status}")))
 }
 
 async fn refresh(state: &AppState, old: &Tokens) -> Result<Tokens, ApiErr> {
@@ -322,11 +349,23 @@ async fn call_tool(state: &AppState, tool: &str, args: serde_json::Value) -> Res
         }
     }
     if !(200..300).contains(&status) {
-        return Err(ApiErr::Server(format!("server answered {status}")));
+        return Err(ApiErr::trouble("tools/call", &format!("status {status}")));
     }
     let text = String::from_utf8_lossy(&body).to_string();
-    let msg = mcp::parse_rpc_body(&text, 1).map_err(ApiErr::Server)?;
-    mcp::tool_text(&msg).map_err(ApiErr::Server)
+    let msg = mcp::parse_rpc_body(&text, 1).map_err(|d| {
+        log_detail("tools/call reply", &d);
+        ApiErr::Server(MSG_UNREADABLE.into())
+    })?;
+    mcp::tool_text(&msg).map_err(|f| match f {
+        mcp::ToolFailure::Protocol(d) => {
+            log_detail("tools/call reply", &d);
+            ApiErr::Server(MSG_UNREADABLE.into())
+        }
+        mcp::ToolFailure::Reported(t) => {
+            log_detail("tool error", &t);
+            ApiErr::Server(mcp::person_safe(&t).unwrap_or_else(|| MSG_TROUBLE.into()))
+        }
+    })
 }
 
 // ---------- commands ----------
@@ -384,7 +423,7 @@ async fn memory(state: State<'_, AppState>) -> Result<MemoryView, String> {
         }
         Err(ApiErr::Auth) => Ok(MemoryView { signed_in: false, text: None, pending: None, offline: false, as_of: None, error: Some(ApiErr::Auth.message()) }),
         Err(e) => {
-            let offline = matches!(e, ApiErr::Network(_));
+            let offline = matches!(e, ApiErr::Network);
             // never show cached text for an account that has since signed out
             let c = if load_tokens().is_some() { state.cache_read().memory } else { None };
             Ok(MemoryView {
@@ -400,7 +439,7 @@ async fn memory(state: State<'_, AppState>) -> Result<MemoryView, String> {
 }
 
 #[tauri::command]
-async fn remember(state: State<'_, AppState>, content: String) -> Result<String, String> {
+async fn remember(state: State<'_, AppState>, content: String) -> Result<(), String> {
     let content = content.trim().to_string();
     if content.is_empty() {
         return Err("Write something to remember first.".into());
@@ -408,8 +447,9 @@ async fn remember(state: State<'_, AppState>, content: String) -> Result<String,
     if content.chars().count() > 8000 {
         return Err("Too long (8000 characters max).".into());
     }
-    let text = call_tool(&state, "remember", json!({"content": content})).await.map_err(|e| e.message())?;
-    Ok(cache::truncate_bytes(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Saved."), 300))
+    // The server's confirmation names an internal storage path; the person is told "Saved" by the window instead.
+    call_tool(&state, "remember", json!({"content": content})).await.map_err(|e| e.message())?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -441,7 +481,7 @@ async fn recall(state: State<'_, AppState>, query: String) -> Result<RecallView,
         }
         Err(ApiErr::Auth) => Err(ApiErr::Auth.message()),
         Err(e) => {
-            let offline = matches!(e, ApiErr::Network(_));
+            let offline = matches!(e, ApiErr::Network);
             let cached = if load_tokens().is_some() { state.cache_read().recall } else { None };
             match cached {
                 Some(c) => Ok(RecallView { query: c.query, results: c.results, offline, as_of: Some(c.saved_at), error: Some(e.message()) }),
@@ -515,13 +555,17 @@ async fn discover(http: &reqwest::Client) -> Result<(String, String, String), St
         .timeout(Duration::from_secs(8))
         .send()
         .await
-        .map_err(|e| redact(&e.without_url().to_string()))?;
+        .map_err(|e| net_err(e).message())?;
     let body = read_limited(resp, MAX_SMALL_BODY).await.map_err(|e| e.message())?;
-    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "server metadata was not understood".to_string())?;
+    let sign_in_setup = |detail: String| {
+        log_detail("sign-in discovery", &detail);
+        MSG_SIGN_IN_SETUP.to_string()
+    };
+    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| sign_in_setup("server metadata was not understood".into()))?;
     let get = |k: &str| -> Result<String, String> {
-        let s = v.get(k).and_then(|x| x.as_str()).ok_or_else(|| format!("server metadata lacks {k}"))?;
+        let s = v.get(k).and_then(|x| x.as_str()).ok_or_else(|| sign_in_setup(format!("server metadata lacks {k}")))?;
         if !s.starts_with(&format!("{}/", config::base())) {
-            return Err(format!("{k} points outside {}", config::base()));
+            return Err(sign_in_setup(format!("{k} points outside {}", config::base())));
         }
         Ok(s.to_string())
     };
@@ -543,7 +587,10 @@ fn http_reply(status: &str, msg: &str) -> String {
 async fn wait_for_callback(listener: tokio::net::TcpListener, expected_state: &str) -> Result<String, String> {
     use oauth::CallbackAction as A;
     loop {
-        let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
+        let (mut sock, _) = listener.accept().await.map_err(|e| {
+            log_detail("sign-in listener", &e.to_string());
+            "Sign-in could not finish on this PC. Try again.".to_string()
+        })?;
         let mut buf = vec![0u8; 8192];
         let n = match tokio::time::timeout(Duration::from_secs(5), sock.read(&mut buf)).await {
             Ok(Ok(n)) if n > 0 => n,
@@ -559,11 +606,12 @@ async fn wait_for_callback(listener: tokio::net::TcpListener, expected_state: &s
             }
             A::ProviderError(e) => {
                 let _ = sock.write_all(http_reply("200 OK", "Sign-in was not completed. You can close this tab.").as_bytes()).await;
-                return Err(format!("Sign-in was not completed ({}).", redact(&cache::truncate_bytes(&e, 60))));
+                log_detail("sign-in provider error", &cache::truncate_bytes(&e, 60));
+                return Err("Sign-in was not completed.".into());
             }
             A::NoCode => {
                 let _ = sock.write_all(http_reply("200 OK", "Sign-in failed: no code returned.").as_bytes()).await;
-                return Err("Sign-in failed: the server returned no code.".into());
+                return Err("Sign-in failed. Try again.".into());
             }
             A::Code(code) => {
                 let _ = sock.write_all(http_reply("200 OK", "Signed in. You can close this tab and return to AgentRecall.").as_bytes()).await;
@@ -579,9 +627,13 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
     // a Cancel click with no sign-in running leaves a permit behind; drop it
     let _ = tokio::time::timeout(Duration::ZERO, state.cancel.notified()).await;
 
-    let (authorize, token_ep, register_ep) = discover(&state.http).await.map_err(|e| format!("Cannot reach the server: {e}"))?;
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let (authorize, token_ep, register_ep) = discover(&state.http).await?;
+    let local_listener = |e: std::io::Error| {
+        log_detail("sign-in listener", &e.to_string());
+        "Could not start sign-in on this PC. Try again.".to_string()
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(local_listener)?;
+    let port = listener.local_addr().map_err(local_listener)?.port();
     let redirect = format!("http://127.0.0.1:{port}/callback");
 
     let reg: serde_json::Value = {
@@ -597,15 +649,22 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             }))
             .send()
             .await
-            .map_err(|e| redact(&e.without_url().to_string()))?;
+            .map_err(|e| net_err(e).message())?;
         let status = r.status();
         let body = read_limited(r, MAX_SMALL_BODY).await.map_err(|e| e.message())?;
         if !status.is_success() {
-            return Err(format!("Registration refused ({status})."));
+            log_detail("client registration", &format!("refused, status {status}"));
+            return Err("AgentRecall did not accept this app for sign-in. Try again later.".into());
         }
-        serde_json::from_slice(&body).map_err(|_| "registration reply was not understood".to_string())?
+        serde_json::from_slice(&body).map_err(|_| {
+            log_detail("client registration", "reply was not understood");
+            MSG_UNREADABLE.to_string()
+        })?
     };
-    let client_id = reg.get("client_id").and_then(|v| v.as_str()).ok_or("registration returned no client_id")?.to_string();
+    let client_id = reg.get("client_id").and_then(|v| v.as_str()).ok_or_else(|| {
+        log_detail("client registration", "reply has no client_id");
+        MSG_UNREADABLE.to_string()
+    })?.to_string();
 
     let (verifier, challenge) = oauth::pkce_pair();
     let st = oauth::random_b64url(16);
@@ -638,7 +697,10 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
     })?;
     let tokens = Tokens {
         access: t.access_token,
-        refresh: t.refresh_token.ok_or("Sign-in failed: the server issued no refresh token.")?,
+        refresh: t.refresh_token.ok_or_else(|| {
+            log_detail("sign-in", "token reply has no refresh token");
+            "Sign-in failed. Try again.".to_string()
+        })?,
         exp: cache::now() + t.expires_in.unwrap_or(3600),
         client_id,
     };
@@ -748,8 +810,17 @@ mod tests {
 
     #[test]
     fn api_err_messages_are_redacted() {
-        let e = ApiErr::Network("boom aro_SECRET123 here".into());
+        let e = ApiErr::Server("boom aro_SECRET123 here".into());
         assert!(!e.message().contains("SECRET123"));
+    }
+
+    #[test]
+    fn failures_reach_the_person_as_fixed_plain_sentences() {
+        assert_eq!(ApiErr::Network.message(), MSG_UNREACHABLE);
+        assert_eq!(ApiErr::trouble("t", "status 502 Bad Gateway").message(), MSG_TROUBLE);
+        for m in [MSG_UNREACHABLE, MSG_TROUBLE, MSG_UNREADABLE, MSG_SIGN_IN_SETUP] {
+            assert!(!m.contains("server answered") && !m.contains("JSON") && !m.contains("502") && !m.contains("endpoint"), "{m}");
+        }
     }
 
     #[test]
