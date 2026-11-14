@@ -12,6 +12,7 @@
  * navy ink, one yellow highlighter line and one red pin, the same palette as the README
  * art. Headlines are a system serif, commands are mono, everything else is system sans.
  */
+import type { TrialState } from "./trial.js";
 import { createHash } from "node:crypto";
 import { esc } from "./oauth-pages.js";
 import { ROOT_FILES } from "./tar-import.js";
@@ -510,6 +511,40 @@ export interface DashboardView {
   /** 0 = no quota. */
   quotaBytes: number;
   pending: number;
+  trial: TrialState;
+}
+
+export const TRIAL_RULE_SAY = "Remember this rule: always answer me in one short paragraph.";
+export const TRIAL_ASK_SAY = "What rules do I have?";
+
+/** The "See it work" card: three steps decided from server records (see trial.ts). */
+function trialCard(t: TrialState): string {
+  const step = (n: 1 | 2 | 3, title: string, body: string): string =>
+    `<li data-step="${n}" data-done="${t.done[n - 1]}"><div><div class="name">${t.done[n - 1] ? "Done: " : `${n}. `}${esc(title)}</div>${body}</div></li>`;
+  const unknown = `<div class="meta">This could not be checked just now. Reload in a moment.</div>`;
+  const s1 = step(1, "Connect an agent", t.done[0]
+    ? `<div class="meta">An agent of yours has used your memory.</div>`
+    : `<div class="meta">Add one in the next section, then let it do anything once.</div>`);
+  const s2 = step(2, "Teach it one rule", t.degraded ? unknown
+    : t.done[1]
+      ? (t.waiting
+        ? `<div class="meta">Your rule is waiting for your approval. <a href="/review">Approve it there</a>; nothing is active until you do.</div>`
+        : `<div class="meta">You have a rule your agents follow.</div>`)
+      : `<div class="meta">Say this to your agent, then approve the rule it proposes on the review page.</div>${t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : ""}${cmd("trial-rule", TRIAL_RULE_SAY)}`);
+  const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
+  const s3 = step(3, "A second agent active after your rule went live", t.degraded ? unknown
+    : t.done[2]
+      ? `<div class="meta">${t.proven ? "A credential other than the one that proposed your rule has made a call since it went live." : "Two credentials of yours have made a call since your rule went live."} A new sign-in of the same agent counts as another credential.</div>`
+      : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`);
+  const names = ["connect an agent", "teach it one rule", "use a second agent"];
+  const status = t.next === null
+    ? `<div class="notice ok" role="status">${t.proven ? "It works: a rule you taught one agent reached another. This is read from records: a credential other than the one that proposed the rule has made a call since it went live, and a new sign-in of the same agent counts as another credential." : "Two credentials of yours have been active since your rule went live."}</div>`
+    : t.degraded && t.next > 1
+      ? `<p class="sub">Some steps could not be checked just now.</p>`
+      : `<p class="sub">Next: ${names[t.next - 1]}.</p>`;
+  return `<section class="panel trial" aria-labelledby="h-trial"><h2 id="h-trial">See it work</h2>` +
+    `<p class="sub" data-trial-count="${t.count}">${t.count} of 3 steps done. It takes about three minutes.</p>${status}` +
+    `<ol class="rows">${s1}${s2}${s3}</ol></section>`;
 }
 
 const day = (iso: string): string => `<time datetime="${esc(iso)}">${esc(iso.slice(0, 10))}</time>`;
@@ -541,6 +576,7 @@ export function dashboardPage(ctx: SiteCtx, v: DashboardView): string {
     `<form method="post" action="/connect/logout">${hidden("csrf", v.csrf)}<button type="submit" class="btn alt small">Sign out</button></form></div>` +
     (v.notice ? `<div class="notice ${v.notice.kind}" role="status">${esc(v.notice.text)}</div>` : "") +
 
+    trialCard(v.trial) +
     `<section class="panel" aria-labelledby="h-id"><h2 id="h-id">Your AgentRecall ID</h2>` +
     `<p class="sub">It names your private memory on this server. It was created when you first signed in; no email is collected. You never type it into an agent: signing in connects an agent to it.</p>` +
     `<div class="idrow"><span class="idval" id="uid">${esc(v.uid)}</span><button type="button" class="copy" data-copy="uid">Copy</button></div></section>` +
