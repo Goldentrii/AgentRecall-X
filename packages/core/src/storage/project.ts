@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getLegacyRoot, getTenantContext, isTenantScoped } from "../types.js";
 import { projectsRootDir, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
-import { bookkeep } from "./deferred-bookkeeping.js";
+import { bookkeep, inReadScope } from "./deferred-bookkeeping.js";
 import type { ProjectInfo } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -395,7 +395,13 @@ export async function resolveProject(project: string | undefined): Promise<strin
     const cwd = process.cwd();
     // Hosted: the server's cwd is not the agent's — never teach a tenant's allowlist about it.
     if (!isTenantScoped() && isProjectRoot(cwd)) {
-      // Teaching the allowlist is bookkeeping: a read must not register a directory.
+      // Teaching the allowlist is bookkeeping: a read must not register a directory. The write is queued, but
+      // the registration is visible to this process's next "auto" resolution at once (notePendingCwd), so
+      // deferring it never changes what a following read resolves to.
+      if (inReadScope()) {
+        const { notePendingCwd } = await import("./cwd-allowlist.js");
+        notePendingCwd(project, cwd);
+      }
       await bookkeep({ key: `cwd:${project}:${cwd}`, apply: async () => {
         const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
         addCwdToAllowlist(project, cwd);

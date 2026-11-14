@@ -78,15 +78,15 @@ function readSoleWmFile(root) {
 }
 
 describe("C-1 ambient capture — every MCP tool call appends one working-memory gist line", () => {
-  it("a recall() call appends exactly one WM line carrying the query", async () => {
+  it("a remember() call appends exactly one WM line carrying its content", async () => {
     const root = isolatedRoot();
-    await callToolAndInspect(root, "recall", { query: "AMBIENT_CAPTURE_UNIQUE_QUERY_TERM" }, (result) => {
-      assert.ok(result, "recall returned no result");
-      assert.ok(!result.isError, `recall unexpectedly errored: ${JSON.stringify(result)}`);
+    await callToolAndInspect(root, "remember", { content: "AMBIENT_CAPTURE_UNIQUE_QUERY_TERM" }, (result) => {
+      assert.ok(result, "remember returned no result");
+      assert.ok(!result.isError, `remember unexpectedly errored: ${JSON.stringify(result)}`);
 
       const { lines } = readSoleWmFile(root);
       assert.equal(lines.length, 1, "exactly one gist line should have been appended for one tool call");
-      assert.ok(lines[0].prompt.startsWith("recall:"), `gist should be prefixed with the tool name: ${lines[0].prompt}`);
+      assert.ok(lines[0].prompt.startsWith("remember:"), `gist should be prefixed with the tool name: ${lines[0].prompt}`);
       assert.ok(lines[0].prompt.includes("AMBIENT_CAPTURE_UNIQUE_QUERY_TERM"), `gist should carry the query text: ${lines[0].prompt}`);
       assert.ok(typeof lines[0].ts === "string" && !Number.isNaN(Date.parse(lines[0].ts)), "gist line must carry a valid ISO timestamp");
     });
@@ -104,7 +104,7 @@ describe("C-1 ambient capture — every MCP tool call appends one working-memory
     // exact hosts this module exists for) fell back to the literal "auto"
     // slug on rescue, even when the server's cwd unambiguously pointed at a
     // real project directory.
-    await callToolAndInspect(root, "recall", { query: "H2_CWD_CAPTURE_TERM" }, (result) => {
+    await callToolAndInspect(root, "remember", { content: "H2_CWD_CAPTURE_TERM" }, (result) => {
       assert.ok(!result.isError);
       const { lines } = readSoleWmFile(root);
       assert.equal(lines.length, 1);
@@ -114,18 +114,17 @@ describe("C-1 ambient capture — every MCP tool call appends one working-memory
     });
   });
 
-  it("defaults-only: calling session_start with NO optional args still appends a non-empty gist", async () => {
+  it("read-only tools (session_start, recall) write no working-memory note: a read never touches the disk", async () => {
     const root = isolatedRoot();
-    // session_start's inputSchema is entirely optional/defaulted (project
-    // defaults to "auto", verbose to false, mode to "full") — this is the
-    // "defaults-only" fixture-class axis: zero explicit arguments.
-    await callToolAndInspect(root, "session_start", {}, (result) => {
+    await callToolAndInspect(root, "session_start", {}, async (result) => {
       assert.ok(result, "session_start returned no result");
-
-      const { lines } = readSoleWmFile(root);
-      assert.equal(lines.length, 1);
-      assert.ok(lines[0].prompt.length > 0, "a defaults-only call must still produce a non-empty gist, never a silent skip");
-      assert.ok(lines[0].prompt.startsWith("session_start:"), `gist: ${lines[0].prompt}`);
+      const wmDir = path.join(root, "working-memory");
+      assert.ok(!fs.existsSync(wmDir) || fs.readdirSync(wmDir).length === 0, "session_start must not append working memory");
+    });
+    await callToolAndInspect(root, "recall", { query: "READ_ONLY_QUERY_MUST_NOT_LAND_ON_DISK" }, async (result) => {
+      assert.ok(!result.isError);
+      const wmDir = path.join(root, "working-memory");
+      assert.ok(!fs.existsSync(wmDir) || fs.readdirSync(wmDir).length === 0, "recall must not append working memory");
     });
   });
 
@@ -165,8 +164,8 @@ describe("C-1 ambient capture — every MCP tool call appends one working-memory
     try {
       await Promise.all([clientA.connect(transportA), clientB.connect(transportB)]);
       const [resultA, resultB] = await Promise.all([
-        clientA.callTool({ name: "recall", arguments: { query: "CONCURRENT_PROCESS_A_TERM" } }),
-        clientB.callTool({ name: "recall", arguments: { query: "CONCURRENT_PROCESS_B_TERM" } }),
+        clientA.callTool({ name: "remember", arguments: { content: "CONCURRENT_PROCESS_A_TERM" } }),
+        clientB.callTool({ name: "remember", arguments: { content: "CONCURRENT_PROCESS_B_TERM" } }),
       ]);
       assert.ok(!resultA.isError && !resultB.isError, "both concurrent calls must succeed independently");
 
@@ -204,7 +203,7 @@ describe("C-1 ambient capture — every MCP tool call appends one working-memory
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, "working-memory"), "not a directory", "utf-8");
 
-    await callToolAndInspect(root, "recall", { query: "UNWRITABLE_ROOT_QUERY" }, (result) => {
+    await callToolAndInspect(root, "remember", { content: "UNWRITABLE_ROOT_QUERY" }, (result) => {
       assert.ok(result, "recall must still return a result even when ambient capture cannot write");
       assert.ok(!result.isError, `recall must not surface the ambient-capture failure as a tool error: ${JSON.stringify(result)}`);
       assert.ok(Array.isArray(result.content) && result.content.length > 0, "recall's real response content must be intact");
@@ -226,7 +225,7 @@ describe("C-1 + C-3 pipeline — an ambient-captured gist survives into a sessio
     });
     const client = new Client({ name: "pipeline-test-client", version: "1.0.0" }, { capabilities: {} });
     await client.connect(transport);
-    const result = await client.callTool({ name: "recall", arguments: { query: "PIPELINE_UNIQUE_TERM_XYZ" } });
+    const result = await client.callTool({ name: "remember", arguments: { content: "PIPELINE_UNIQUE_TERM_XYZ" } });
     assert.ok(!result.isError);
     await client.close(); // triggers C-3's graceful-exit distillation
 

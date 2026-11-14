@@ -5,7 +5,7 @@
  * (destructive, open-world write), and directories such as the Claude
  * connectors directory reject it. Three classes cover the surface:
  *
- *   READ       writes nothing at all through its own handler.
+ *   READ       the call itself writes nothing; its bookkeeping is deferred (see below).
  *   ADD        writes, but nothing the user saved is replaced or dropped.
  *   OVERWRITE  writes, and can replace or drop what an earlier call saved.
  *
@@ -16,13 +16,18 @@
  *     palace scaffolding, the cwd allowlist, the lexical index cache) is queued
  *     by core's bookkeep() and applied by the next write tool call, a periodic
  *     flush, or shutdown (lib/bookkeeping.ts). The call itself leaves the store
- *     byte-identical. Still written during the call, on purpose: on a hook-less
- *     stdio host the ambient working-memory note (a crash-survival scratch
- *     buffer, see lib/bookkeeping.ts; absent on hosted and under Claude Code
- *     hooks), and on the hosted
- *     server's per-credential activity record (http/activity.ts: buffered in
- *     memory, flushed to the server's own _server/ directory; it describes the
- *     credential, not the memory, and feeds no ranking).
+ *     byte-identical.
+ *   - Deferred, not dropped: usage counters (retrieved_count, last_retrieved,
+ *     rule hits, room access_count and salience) and recall `feedback`
+ *     ratings are applied after the call, so repeated reads can change what a
+ *     LATER call ranks; nothing a call returns depends on its own bookkeeping.
+ *     Deferred writes are best effort: a crash inside the flush window (30 s)
+ *     loses them.
+ *   - Still written during the call, outside the read-only claim: on the
+ *     hosted server the per-credential activity record (http/activity.ts:
+ *     buffered in memory, flushed to the server's own _server/ directory; it
+ *     describes the credential, not the memory, and feeds no ranking). The
+ *     stdio ambient working-memory note is NOT written for READ tools.
  *   - Exception: with the operator's A/B experiment on (AR_AB_ENABLED=1)
  *     session_start writes an arm ledger row, so it is ADD for that process.
  *   - pipeline_list / pipeline_current / pipeline_show are not audited for this
@@ -43,8 +48,8 @@
  * embedding provider; both are off by default and disabled on the hosted
  * server, and neither acts on anything outside that owner's own store.
  *
- * In stdio mode the ambient-capture wrapper also notes each call in working
- * memory. That is server plumbing around the handler, not the tool's effect.
+ * In stdio mode the ambient-capture wrapper notes each ADD/OVERWRITE call in
+ * working memory (crash survival); READ tools are skipped.
  */
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 

@@ -82,9 +82,8 @@ describe("local stdio server", () => {
   after(async () => { await h.close(); delete process.env.AGENT_RECALL_ROOT; });
 
   it("session_start and recall leave every file byte-identical, repeated and with feedback", async () => {
-    // The stdio ambient working-memory note is not queued (crash survival, see lib/bookkeeping.ts), so that one
-    // directory is excluded here and pinned on its own below: nothing else may change.
-    const before = snapshot(root, ["working-memory"]);
+    // Ambient capture skips read-only tools, so the whole store (working-memory included) must not change.
+    const before = snapshot(root);
     const call = (name, args) => h.client.callTool({ name, arguments: { project, ...args } });
     await call("session_start", {});
     await call("session_start", {});
@@ -94,7 +93,7 @@ describe("local stdio server", () => {
     const id = /IDs: 1=(\S+)/.exec(r)?.[1];
     assert.ok(id, "recall returned a result id: " + r);
     await call("recall", { query: "cache hash", feedback: [{ id, useful: true }] });
-    assert.deepEqual(snapshot(root, ["working-memory"]), before, "a read changed the store");
+    assert.deepEqual(snapshot(root), before, "a read changed the store");
     assert.ok(bookkeepingStats().pending > 0, "the bookkeeping was queued, not dropped");
   });
 
@@ -123,12 +122,40 @@ describe("local stdio server", () => {
   });
 
   it("a read of a project that does not exist yet creates nothing", async () => {
-    const before = snapshot(root, ["working-memory"]);
+    const before = snapshot(root);
     await h.client.callTool({ name: "session_start", arguments: { project: "brand-new" } });
     await h.client.callTool({ name: "recall", arguments: { project: "brand-new", query: "anything" } });
-    assert.deepEqual(snapshot(root, ["working-memory"]), before);
+    assert.deepEqual(snapshot(root), before);
     await flushAllBookkeeping();
     assert.ok(fs.existsSync(path.join(root, "projects", "brand-new")), "the scaffold arrives with the flush");
+  });
+});
+
+describe("deferred allowlist registration", () => {
+  it("an explicit read then an auto read in the same cwd resolve to the explicit project, with no flush between", async () => {
+    const root = mk("ar-ro-al-");
+    const repo = mk("ar-ro-repo-");
+    cleanup.push(root, repo);
+    fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "repo-x-pkg" }));
+    const prevRoot = process.env.AGENT_RECALL_ROOT;
+    const prevCwd = process.cwd();
+    process.env.AGENT_RECALL_ROOT = root;
+    delete process.env.AGENT_RECALL_PROJECT;
+    process.chdir(repo);
+    try {
+      const { resolveProject } = await import("agent-recall-core");
+      const explicit = await withDeferredBookkeeping(() => resolveProject("my-explicit"));
+      assert.equal(explicit, "my-explicit");
+      assert.ok(!fs.existsSync(path.join(root, "projects", "my-explicit")), "the read wrote nothing");
+      assert.ok(bookkeepingStats().pending > 0, "the registration is queued");
+      const auto = await withDeferredBookkeeping(() => resolveProject("auto"));
+      assert.equal(auto, "my-explicit", "deferring the registration changed what auto resolves to");
+      await flushBookkeeping();
+      assert.equal(await resolveProject("auto"), "my-explicit", "same answer once written");
+    } finally {
+      process.chdir(prevCwd);
+      if (prevRoot === undefined) delete process.env.AGENT_RECALL_ROOT; else process.env.AGENT_RECALL_ROOT = prevRoot;
+    }
   });
 });
 

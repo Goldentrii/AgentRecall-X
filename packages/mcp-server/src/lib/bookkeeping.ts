@@ -9,9 +9,7 @@
  * Never throws into the tool call. Must be installed BEFORE ambient capture and hosted redaction so it is the
  * outermost wrapper.
  *
- * Deliberately NOT queued: the stdio ambient working-memory note (ambient-capture.ts). It exists to survive a
- * SIGKILL (kill9-orphan-rescue.test.mjs), which a queue cannot, it is a per-session scratch buffer that no
- * ranking reads, and it is absent on the hosted server and on hook-owned hosts such as Claude Code.
+ * Ambient capture (ambient-capture.ts) skips read-only tools, so a read writes no working-memory note either.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { withDeferredBookkeeping, flushBookkeeping } from "agent-recall-core";

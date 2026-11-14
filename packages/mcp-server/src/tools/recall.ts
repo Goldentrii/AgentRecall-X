@@ -31,7 +31,7 @@ export function register(server: McpServer): void {
   server.registerTool("recall", {
     title: "Recall",
     annotations: READ,
-    description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions.",
+    description: "[RETRIEVE — use freely, any time] Use when the user asks to recall, search, find, or look up previous memory, context, or decisions. Read-only: usage counters and any feedback ratings are recorded after the call, not during it.",
     inputSchema: {
       query: z.string().describe("What to search for."),
       project: z.string().default("auto"),
@@ -42,6 +42,7 @@ export function register(server: McpServer): void {
         useful: z.boolean().describe("Was this result useful? true=boost, false=penalize in future recalls."),
       })).optional().describe(
         "Rate previous recall results to improve future ranking. " +
+        "Applied AFTER this call (queued; flushed by the next write tool, within ~30 s, or at shutdown): it never changes this call's results and may be lost if the process crashes first. " +
         "Pass {id, useful:true} for each result you actually used; {id, useful:false} for noise."
       ),
       since: z.string().optional().describe('ISO date ("2026-05-01") or relative duration ("7d"). Filters journal results.'),
