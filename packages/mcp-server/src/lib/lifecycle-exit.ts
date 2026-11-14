@@ -68,19 +68,11 @@ async function runOnce(): Promise<void> {
  * registered listener a no-op, but this function itself is not meant to be
  * (and is not) called more than once.
  *
- * H1 fix (review, post-build) — no-op on a hook-owned host (see
- * `isHookOwnedHost`'s doc comment, agent-recall-core/host-profile.ts, for
- * the full root-cause writeup, and ambient-capture.ts's matching gate on
- * `installAmbientCapture`, which this mirrors). On Claude Code with hooks
- * active, hook-end already owns end-of-session distillation for the REAL
- * session id; this module's `distillSessionToCard(getSessionId())` targets
- * a different, MCP-process-local random id. Post the ambient-capture gate,
- * that id has no working-memory file to distill anyway, so this handler
- * would already be a no-op in practice — but registering the SIGTERM/SIGINT
- * listeners themselves is still skipped, so this MCP server process never
- * intercepts a signal that the host's own hook/process-supervision stack
- * expects to observe unhandled (e.g. Node's default terminate-on-SIGTERM),
- * and never calls `process.exit(0)` on a host that did not ask for that.
+ * Hook-owned host (see `isHookOwnedHost`, agent-recall-core/host-profile.ts; ambient-capture.ts gates the
+ * same way): hook-end owns distillation for the REAL session id, so this process does NOT distill and never
+ * calls process.exit(0) on its own. It installs flush-only handlers instead (installFlushOnlyHandlers): the
+ * queued read bookkeeping belongs to this process, so it is flushed (bounded) on stdin end/close and on
+ * SIGTERM/SIGINT, and a signal is then re-raised with its handler removed so the process still dies of it.
  */
 export function installLifecycleExitHandlers(): void {
   if (isHookOwnedHost()) {

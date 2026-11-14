@@ -8,6 +8,10 @@
  *   - every other tool applies this store's queue first (flushBookkeeping), so a write sees current counters,
  *     but waits at most PRE_WRITE_FLUSH_MS for it: a wedged lock or a hung op must not stall the write. The
  *     flush keeps running in the background and is never cancelled.
+ * Advisory counters: after the 1.5 s wait a slow flush may still be applying ops while the write runs, so a
+ * read-modify-write counter op on a file the write also edits can lose one update (counters may undercount
+ * after a slow flush). Nothing ranks on an exact count; no lock is taken. A queued op that never settles is
+ * cut off per op inside core's flush, so the chain behind it still advances.
  * Never throws into the tool call. Must be installed BEFORE ambient capture and hosted redaction so it is the
  * outermost wrapper.
  *

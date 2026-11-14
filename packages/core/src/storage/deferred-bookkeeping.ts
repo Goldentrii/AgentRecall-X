@@ -20,8 +20,15 @@
  * Outside withDeferredBookkeeping() (the CLI, the SDK, every write tool) bookkeep() just runs the operation
  * now and returns its result, so those paths behave exactly as before.
  *
- * Bounds: MAX_OPS_PER_ROOT queued operations per store and MAX_ROOTS stores; past either the oldest are
- * dropped and counted (bookkeepingStats().dropped). A repeated operation under one key collapses (the latest
+ * Bounds: MAX_OPS_PER_ROOT queued operations per store, past which the oldest op is dropped; MAX_ROOTS
+ * stores, past which the oldest IDLE store's queue is dropped (a store with a flush in flight is never
+ * evicted; if none is idle the new op is dropped). Every drop is counted (bookkeepingStats().dropped).
+ * Each op is also bounded in time (DEFAULT_OP_TIMEOUT_MS): one that never settles is counted failed, logged
+ * once, and its late result ignored, so a hung op can never wedge the store's flush chain.
+ *
+ * Counters are ADVISORY. A write tool waits at most 1.5 s for the queue; if a flush is still applying ops after
+ * that, the write runs concurrently with it, and a read-modify-write counter op on a file the write also edits
+ * can lose one update (the counter undercounts). Nothing ranks on an exact count, so no lock is taken. A repeated operation under one key collapses (the latest
  * replaces the earlier one), or with `repeat` counts up to REPEAT_CAP applications.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -41,6 +48,13 @@ const MAX_OPS_PER_ROOT = 256;
 const MAX_ROOTS = 256;
 const REPEAT_CAP = 16;
 const FLUSH_INTERVAL_MS = 30_000;
+/** Longest one queued op may run before the flush gives up on it and moves on (AGENT_RECALL_BOOKKEEP_OP_TIMEOUT_MS overrides, read per op). */
+const DEFAULT_OP_TIMEOUT_MS = 3000;
+
+function opTimeoutMs(): number {
+  const n = Number(process.env.AGENT_RECALL_BOOKKEEP_OP_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_OP_TIMEOUT_MS;
+}
 
 interface Entry { op: BookkeepingOp; times: number }
 interface Queue {
@@ -93,9 +107,13 @@ export function bookkeep(op: BookkeepingOp): void | Promise<void> {
   let q = queues.get(scope.root);
   if (!q) {
     if (queues.size >= MAX_ROOTS) {
-      const oldest = queues.keys().next().value as string;
-      dropped += queues.get(oldest)!.entries.size;
-      queues.delete(oldest);
+      // Evict the oldest IDLE queue: deleting one with a flush in flight would let a fresh queue for that root
+      // interleave with the running flush.
+      let victim: string | undefined;
+      for (const [root, cand] of queues) if (!cand.busy) { victim = root; break; }
+      if (victim === undefined) { dropped++; return; }
+      dropped += queues.get(victim)!.entries.size;
+      queues.delete(victim);
     }
     q = { scope, entries: new Map(), flushing: Promise.resolve(), busy: 0 };
     queues.set(scope.root, q);
@@ -118,6 +136,19 @@ export function bookkeep(op: BookkeepingOp): void | Promise<void> {
   }
 }
 
+/** Apply one op, rejecting after the op timeout. The op cannot be cancelled; its late result is ignored. */
+function applyBounded(scope: Queue["scope"], op: BookkeepingOp): Promise<void> {
+  const ms = opTimeoutMs();
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`bookkeeping op timed out after ${ms} ms`)), ms);
+    timer.unref();
+    // Promise.resolve().then also turns a synchronous throw into a rejection. Settling after the timeout is a no-op.
+    Promise.resolve()
+      .then(() => runInScope(scope, () => op.apply()))
+      .then(() => { clearTimeout(timer); resolve(); }, (err) => { clearTimeout(timer); reject(err); });
+  });
+}
+
 async function flushQueue(q: Queue): Promise<FlushResult> {
   const result: FlushResult = { applied: 0, failed: 0 };
   const run = async (): Promise<void> => {
@@ -126,7 +157,7 @@ async function flushQueue(q: Queue): Promise<FlushResult> {
     for (const { op, times } of batch) {
       for (let i = 0; i < times; i++) {
         try {
-          await runInScope(q.scope, () => op.apply());
+          await applyBounded(q.scope, op);
           result.applied++;
         } catch (err) {
           result.failed++;
@@ -156,13 +187,16 @@ export async function flushBookkeeping(): Promise<FlushResult> {
   }
 }
 
-/** Apply every store's queue (the periodic timer and shutdown). Never throws. */
+/**
+ * Apply every store's queue (the periodic timer and shutdown). Never throws. Stores flush concurrently, each
+ * bounded per op, so one slow tenant cannot delay the others.
+ */
 export async function flushAllBookkeeping(): Promise<FlushResult> {
   const total: FlushResult = { applied: 0, failed: 0 };
-  for (const q of [...queues.values()]) {
-    const r = await flushQueue(q).catch(() => ({ applied: 0, failed: 1 }));
-    total.applied += r.applied;
-    total.failed += r.failed;
+  const settled = await Promise.allSettled([...queues.values()].map((q) => flushQueue(q)));
+  for (const s of settled) {
+    if (s.status === "fulfilled") { total.applied += s.value.applied; total.failed += s.value.failed; }
+    else total.failed++;
   }
   // Only idle queues: one with a flush in flight (or ops added meanwhile) must stay, or a new queue for the
   // same root could interleave with the running flush.

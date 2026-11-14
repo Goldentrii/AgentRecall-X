@@ -19,7 +19,7 @@
  *     call (which waits at most 1.5 s; a slower flush continues in the
  *     background), by the 30 s background flush, when the stdio server's stdin
  *     ends or closes or it gets SIGTERM/SIGINT (every stdio host, hook-owned
- *     included; bounded to 1.5 s), and while the HTTP server drains. The call
+ *     included; bounded to 1.5 s), and while the HTTP server drains (within the 8 s drain window). The call
  *     itself leaves the store byte-identical, apart from the exceptions
  *     disclosed below (AR_AB_ENABLED, the hosted activity record).
  *   - Deferred, not dropped: usage counters (retrieved_count, last_retrieved,
@@ -27,7 +27,9 @@
  *     ratings are applied after the call, so repeated reads can change what a
  *     LATER call ranks; nothing a call returns depends on its own bookkeeping.
  *     Deferred writes are best effort: a crash (kill -9, power loss) before the
- *     next flush loses the queued counters, telemetry and ratings.
+ *     next flush loses the queued counters, telemetry and ratings. Counters are
+ *     advisory: after a slow (over 1.5 s) flush a write tool runs alongside it,
+ *     and a counter both touch may undercount.
  *   - Still written during the call, outside the read-only claim: on the
  *     hosted server the per-credential activity record (http/activity.ts:
  *     buffered in memory, flushed to the server's own _server/ directory; it

@@ -536,6 +536,20 @@ function mergeFeedback(log: FeedbackEntry[], feedback: RecallFeedback[], query: 
   return [...log, ...newFeedbackEntries(log, feedback, query)].slice(-FEEDBACK_READ_CAP);
 }
 
+/**
+ * The queued (read-scope) form of the feedback write. A persist that reports persistenceSkipped did NOT write,
+ * so it throws: the flush then counts it as failed and logs it, instead of counting it as applied.
+ * `persist` is injectable for tests only.
+ */
+export async function persistQueuedFeedback(
+  feedback: RecallFeedback[],
+  query: string,
+  persist: (f: RecallFeedback[], q: string) => Promise<{ persistenceSkipped: boolean }> = processFeedback,
+): Promise<void> {
+  const r = await persist(feedback, query);
+  if (r.persistenceSkipped) throw new Error("recall feedback was not persisted");
+}
+
 async function processFeedback(
   feedback: RecallFeedback[],
   query: string,
@@ -1090,10 +1104,7 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
     if (inReadScope()) {
       // Inside a read the rating is queued (ranking input), applied by the next write or flush.
       // A skipped persist must count as failed (logged by the flush), not as applied.
-      void bookkeep({ apply: async () => {
-        const r = await processFeedback(feedback, query);
-        if (r.persistenceSkipped) throw new Error("recall feedback was not persisted");
-      } });
+      void bookkeep({ apply: () => persistQueuedFeedback(feedback, query) });
     } else {
       feedbackPersist = processFeedback(feedback, query).catch((err: unknown) => {
         console.error(

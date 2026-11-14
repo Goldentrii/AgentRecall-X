@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -91,5 +92,54 @@ describe("pre-write flush is bounded", () => {
       await server.close();
       delete process.env.AGENT_RECALL_ROOT;
     }
+  });
+});
+
+describe("SIGTERM on a hook-owned stdio host", () => {
+  const skip = process.platform === "win32" ? "POSIX signals cannot be delivered to a child on win32 (kill() is a hard terminate, no handler runs)" : false;
+  it("flushes queued feedback to disk, then dies of the signal", { skip }, async () => {
+    const root = mk();
+    const project = "sigproj";
+    const jdir = path.join(root, "projects", project, "journal");
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.writeFileSync(path.join(jdir, "2026-11-01.md"), "# 2026-11-01\n\nCache invalidation keyed by content hash, not path. Rollback plan checked.\n");
+    const env = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (k === "AR_HOST" || k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_") || k.startsWith("AGENT_RECALL_") || k === "AR_AB_ENABLED") continue;
+      if (v !== undefined) env[k] = v;
+    }
+    env.AR_HOST = "claude-code";
+    env.AGENT_RECALL_ROOT = root;
+    const child = spawn("node", [ENTRY], { env, stdio: ["pipe", "pipe", "inherit"] });
+    const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+    let buf = "";
+    const waiters = new Map();
+    child.stdout.on("data", (d) => {
+      buf += d.toString();
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line);
+        waiters.get(msg.id)?.(msg);
+      }
+    });
+    let id = 0;
+    const rpc = (method, params) => new Promise((resolve) => {
+      const n = ++id; waiters.set(n, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: n, method, params }) + "\n");
+    });
+    await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "sig", version: "0" } });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+    const call = (args) => rpc("tools/call", { name: "recall", arguments: { project, ...args } });
+    const first = await call({ query: "cache hash rollback" });
+    const rid = /IDs: 1=(\S+)/.exec(textOf(first.result))?.[1];
+    assert.ok(rid, "recall returned a result id");
+    await call({ query: "cache hash", feedback: [{ id: rid, useful: true }] });
+    assert.equal(fs.existsSync(path.join(root, "feedback-log.json")), false, "still queued before the signal");
+    child.kill("SIGTERM");
+    const { signal } = await exited;
+    assert.equal(signal, "SIGTERM", "the process died of the signal");
+    assert.match(fs.readFileSync(path.join(root, "feedback-log.json"), "utf-8"), /useful/);
   });
 });
