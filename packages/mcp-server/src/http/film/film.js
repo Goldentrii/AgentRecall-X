@@ -13,7 +13,7 @@ const hintEl = document.querySelector(".hint");
 const track = document.getElementById("track");
 const root = document.documentElement;
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-const MESH_U = 420, MESH_W = 14;   // 6.3k vertices
+const MESH_U = 420, MESH_W = 64;   // 27k vertices: fine enough that the interpolated normal shows no facets across the band
 const PLATES = ["human", "m0", "wrong", "m2", "m3"];
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -238,6 +238,12 @@ in vec3 pos; in vec3 nrm; in vec2 st; in float presence; in float grade; in floa
 uniform float time, spread;
 out vec4 o;
 const vec3 GOLD = vec3(0.961, 0.769, 0.318), CYAN = vec3(0.45, 0.95, 1.0);
+float threadAt(float f, float fw){
+  float dist = abs(f - floor(f + 0.5));                          // distance to the nearest thread centre
+  float hw = 0.17;
+  float line = 1.0 - smoothstep(hw - 0.75 * fw, hw + 0.75 * fw, dist);
+  return mix(line, 2.0 * hw, smoothstep(0.30, 0.60, fw));        // sub-pixel threads fade to their mean: no moire
+}
 void main(){
   vec3 V = vec3(0.0, 0.0, 1.0);
   vec3 N = normalize(nrm);
@@ -255,12 +261,13 @@ void main(){
   } else {
     // Seam-consistent by construction: one trip round maps w to -w, so every pattern is even in w
     // (the wave bends the thread spacing through w * g(u), g 2pi-periodic) and the pulses depend on u alone at integer frequency.
-    float flow = st.y * (7.0 + 1.2 * sin(st.x * 3.0 + time * 0.4));
-    float fw = fwidth(flow);
-    float dist = abs(flow - floor(flow + 0.5));                    // distance to the nearest thread centre
-    float hw = 0.16;
-    float line = 1.0 - smoothstep(hw - 0.75 * fw, hw + 0.75 * fw, dist);
-    float thread = mix(line, 2.0 * hw, smoothstep(0.30, 0.80, fw)); // sub-pixel threads fade to their mean: no moire
+    float flow = st.y * (9.0 + 1.0 * sin(st.x * 3.0 + time * 0.4));   // one shared thread function of w, same on both halves
+    float fw = fwidth(flow);                                       // thread spacing in pixels, from the local footprint
+    // Integer octaves of the same thread (9, 18, 36, 72 per half-turn): pick the octave whose threads are ~3.5 px apart
+    // and cross-fade to the next, so a wide near face and a narrow far face show the same fine thread, never broad stripes.
+    float lvl = clamp(log2(0.28 / max(fw, 1e-4)), 0.0, 3.0);
+    float l0 = floor(lvl);
+    float thread = mix(threadAt(flow * exp2(l0), fw * exp2(l0)), threadAt(flow * exp2(l0 + 1.0), fw * exp2(l0 + 1.0)), smoothstep(0.0, 1.0, lvl - l0));
     float pulse = pow(0.5 + 0.5 * sin(st.x * 4.0 - time * 0.9), 3.0);   // broad soft pulses riding the threads
     float edge = smoothstep(0.80, 1.0, across);
     col = tone * (0.03 + 1.25 * lit * lit) * (0.40 + 0.60 * thread) * (0.8 + 0.5 * pulse)
@@ -270,7 +277,8 @@ void main(){
         + mix(tone, vec3(1.0), 0.5) * edge * 0.18 * (0.4 + lit);
   }
   float keep = smoothstep(0.34, 0.24, screenY) * smoothstep(-0.15, 0.0, screenY);   // clear of the header and the caption scrim, judged on screen
-  o = vec4(col * depth * keep * presence * grade * 1.25, 1.0);
+  float cov = clamp((1.0 - across) / max(1.5 * fwidth(across), 1e-4), 0.0, 1.0);   // silhouette falloff over ~1.5 px
+  o = vec4(col * depth * keep * presence * grade * 1.25 * cov, 1.0);
 }`;
 
 function loadImage(src) {
@@ -303,7 +311,7 @@ async function start() {
   readScroll();
   updateCopy(target);          // the first beat must be readable before the first frame
 
-  const gl = canvas.getContext("webgl2", { antialias: false });
+  const gl = canvas.getContext("webgl2", { antialias: true });
   if (!gl) {
     // No WebGL: the copy still tells the story over the CSS background.
     root.classList.add("nogl");
