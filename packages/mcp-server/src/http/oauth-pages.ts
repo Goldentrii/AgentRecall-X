@@ -42,7 +42,7 @@ const STYLE = SITE_TOKENS + `
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans)}
 a{color:var(--cyan);text-underline-offset:3px}
-:focus-visible{outline:3px solid var(--cyan);outline-offset:3px;border-radius:6px}
+:focus-visible{outline:3px solid var(--cyan);outline-offset:3px}
 .page{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:28px 16px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}
 .mark{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 14px var(--gold)}
