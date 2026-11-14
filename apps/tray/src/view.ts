@@ -124,7 +124,7 @@ export interface RecallCard {
   detail: string | null;
   /** "Journal", "Rule", ... or the server's own word when it is one we do not know. null when the item had no kind. */
   kind: string | null;
-  /** Palace room / topic, shown quietly beside the kind. */
+  /** A human title for the result, shown quietly beside the kind; null when the server only gave an internal room name. */
   topic: string | null;
   /** ISO date, or null. */
   date: string | null;
@@ -137,6 +137,7 @@ const KIND_LABELS: Record<string, string> = {
 };
 const ITEM = /^\[\d+\]\[([^\]]*)\](?:\[[A-Z]{3}\])?\s*(.*)$/s;
 const TRAILING_DATE = /\s*\((\d{4}-\d{2}-\d{2})\)\s*$/;
+const INTERNAL_NAME = /^[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)*$/;
 const LEADING_DATE = /^(\d{4}-\d{2}-\d{2})\b/;
 
 /** Removes the markdown a person should not have to read around: emphasis, code ticks, links, headings. Never produces markup. */
@@ -159,8 +160,7 @@ export function parseRecallItem(raw: string): RecallCard {
   const m = ITEM.exec(first.trim());
   if (!m) return { text: stripMarkdown([first, ...more].join("\n")), detail: null, kind: null, topic: null, date: null, plain: true };
 
-  const [source, ...roomParts] = m[1].split("/");
-  const room = roomParts.join("/") || null;
+  const source = m[1].split("/")[0];
   const sep = m[2].indexOf(" — ");
   const title = sep < 0 ? "" : m[2].slice(0, sep).trim();
   let excerpt = sep < 0 ? m[2].trim() : m[2].slice(sep + 3).trim();
@@ -177,7 +177,9 @@ export function parseRecallItem(raw: string): RecallCard {
   const body = stripMarkdown(ownText ? title || excerpt : excerpt || title);
   const side = ownText && title ? stripMarkdown(excerpt) : "";
   const detail = [side, ...extra].filter(Boolean).join("\n") || null;
-  const topic = kind === "Note" && title ? stripMarkdown(title) : room;
+  // The room path ("palace/goals") and a title that is only a room slug ("goals/evolution") are the server's filing, not words for a person.
+  const label = kind === "Note" && title ? stripMarkdown(title) : "";
+  const topic = label && !INTERNAL_NAME.test(label) ? label : null;
   return { text: body, detail, kind, topic: topic && topic !== body ? topic : null, date, plain: false };
 }
 

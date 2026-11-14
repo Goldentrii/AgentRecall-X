@@ -2,6 +2,10 @@
 
 A small tray app and one compact dark window (380x560) that is a door to the hosted AgentRecall at https://agentrecallx.com. Tauri v2, Rust back end, plain HTML/CSS/TypeScript front end. No change to the server was needed.
 
+## How to get it
+
+Build from source today (see "Build and run" below). A signed download is not offered yet. To see the whole flow as pictures first, read [docs/chain.md](docs/chain.md).
+
 ## What it does
 
 - Sign in: opens your default browser for the GitHub sign-in on agentrecallx.com (OAuth 2.1, PKCE S256, dynamic client registration, loopback redirect on 127.0.0.1). Tokens go to the Windows Credential Manager. Tokens are refreshed automatically. Sign out (a link under the tabs, and the tray menu) deletes them.

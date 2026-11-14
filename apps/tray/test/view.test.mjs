@@ -106,8 +106,14 @@ test("recall: insights show their title, note and palace results keep their topi
   assert.equal(insight.detail, "[important] ferry");
   const note = parseRecallItem(items()[0]);
   assert.equal(note.kind, "Note");
-  assert.equal(note.topic, "goals/evolution");
+  assert.equal(note.topic, null); // "goals/evolution" is an internal room name, not a label
   assert.equal(note.text, "Shipped the harbour ferry timetable page.");
+});
+
+test("recall: a human title is the topic, internal room names never are", () => {
+  assert.equal(parseRecallItem("[1][palace/goals][LOW] Harbour ferry plan — body").topic, "Harbour ferry plan");
+  assert.equal(parseRecallItem("[1][palace/goals][LOW] goals/evolution — body").topic, null);
+  assert.equal(parseRecallItem("[1][journal/architecture][LOW] x — body").topic, null);
 });
 
 test("recall: unknown kinds, no kind, and linked lines are shown, not dropped", () => {
