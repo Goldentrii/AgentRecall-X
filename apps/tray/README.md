@@ -15,17 +15,40 @@ A small tray app and one compact dark window (380x560) that is a door to the hos
 
 ## Build and run
 
-Requirements: Windows 11, WebView2, Rust (MSVC toolchain) 1.77+, Node 20+. Nothing else: the Tauri CLI is the npm package `@tauri-apps/cli`.
+Requirements to run: Windows 11 with WebView2. Keep `WebView2Loader.dll` beside the exe.
+
+### How the shipped exe was built (Docker cross-compile, no Windows toolchain)
+
+The PC this was written on has no MSVC or MinGW, so the exe is cross-compiled to `x86_64-pc-windows-gnu` in a Linux container (`rust:1.97-bookworm`, `mingw-w64`, posix threads). Cargo registry and target dir live on a named volume, not in the Windows tree.
+
+```
+docker pull rust:1.97-bookworm
+docker volume create ar-tray-cache
+docker run -d --name ar-tray-build -v <abs path to apps/tray>:/work -v ar-tray-cache:/cache   -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target -w /work/src-tauri rust:1.97-bookworm sleep infinity
+docker exec ar-tray-build bash -c "apt-get update && apt-get install -y mingw-w64 && rustup target add x86_64-pc-windows-gnu   && update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix   && update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix"
+npm ci && npm run build:ui            # on the host: produces dist/, which the exe embeds
+docker exec ar-tray-build bash -c "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc   cargo build --release --target x86_64-pc-windows-gnu --features custom-protocol"
+docker cp ar-tray-build:/cache/target/x86_64-pc-windows-gnu/release/agent-recall-tray.exe release/
+docker cp ar-tray-build:/cache/target/x86_64-pc-windows-gnu/release/WebView2Loader.dll release/
+```
+
+`--features custom-protocol` makes the exe serve the embedded `dist/` instead of a dev URL. Tests: `cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol --no-run`, then run the produced `*.exe` on Windows.
+
+### Native route (alternative)
+
+Install Visual Studio Build Tools with the "Desktop development with C++" workload, then from PowerShell (not Git Bash, whose `/usr/bin/link` shadows the MSVC linker):
 
 ```
 cd apps/tray
 npm ci
 npm run build          # release exe, no installer: src-tauri/target/release/agent-recall-tray.exe
-npm run build:bundle   # optional: also builds an installer (downloads NSIS/WiX tooling)
+npm run build:bundle   # optional installer (downloads NSIS/WiX tooling)
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-If you build from Git Bash, make sure MSVC `link.exe` comes before `/usr/bin/link` on PATH (the Git coreutils `link` shadows it and breaks the Rust linker). Running the build from PowerShell avoids this.
+### Testing offline start
+
+Set `AGENTRECALL_TRAY_TEST_HEALTH_URL` (for example `http://127.0.0.1:9/healthz`) before starting the exe to point only the health check at a dead address. The window must still open and show "Offline".
 
 ## Where things live
 

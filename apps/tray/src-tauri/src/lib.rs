@@ -221,7 +221,9 @@ struct Status {
 #[tauri::command]
 async fn status(state: State<'_, AppState>) -> Result<Status, String> {
     let signed_in = load_tokens().is_some();
-    let r = state.http.get(format!("{}/healthz", oauth::BASE)).timeout(Duration::from_secs(5)).send().await;
+    // AGENTRECALL_TRAY_TEST_HEALTH_URL (testing only) overrides the health-check URL, e.g. to simulate an unreachable server.
+    let health = std::env::var("AGENTRECALL_TRAY_TEST_HEALTH_URL").unwrap_or_else(|_| format!("{}/healthz", oauth::BASE));
+    let r = state.http.get(health).timeout(Duration::from_secs(5)).send().await;
     let (online, version) = match r {
         Ok(resp) if resp.status().is_success() => {
             let v: Option<serde_json::Value> = resp.json().await.ok();
