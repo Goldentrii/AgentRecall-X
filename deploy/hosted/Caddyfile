@@ -5,6 +5,7 @@
 {$AR_DOMAIN} {
 	encode zstd gzip
 	header -Server
+	header Strict-Transport-Security "max-age=31536000"
 	reverse_proxy server:8787
 }
 
@@ -17,6 +18,7 @@
 {$AR_DOMAIN_ALIAS} {
 	encode zstd gzip
 	header -Server
+	header Strict-Transport-Security "max-age=31536000"
 	@agent path /mcp /mcp/* /healthz
 	handle @agent {
 		reverse_proxy server:8787
