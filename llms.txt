@@ -1,6 +1,6 @@
 # AgentRecall
 
-> One memory shared by every AI agent you use. Rules, corrections and project state follow the user from Claude Code to Codex to Cursor and any MCP client. Use the free hosted server (https://recall.aiakada.com/mcp, open sign-up with GitHub) or run it locally and fully offline (npx -y agent-recall-mcp, plain markdown in ~/.agent-recall/).
+> One memory shared by every AI agent you use. Rules, corrections and project state follow the user from Claude Code to Codex to Cursor and any MCP client. Use the free hosted server (https://agentrecallx.com/mcp, open sign-up with GitHub) or run it locally and fully offline (npx -y agent-recall-mcp, plain markdown in ~/.agent-recall/).
 
 If you are an AI agent and AgentRecall's tools are connected, run this loop without being asked. Saying "noted" is not saving: only a tool call saves.
 
@@ -14,13 +14,13 @@ If you are an AI agent and AgentRecall's tools are connected, run this loop with
 
 ## Connect
 
-- Instructions written for agents: https://recall.aiakada.com/connect.md (hosted) and https://recall.aiakada.com/local.md (local); the same index is served at https://recall.aiakada.com/llms.txt
-- Humans: https://recall.aiakada.com/ (sign in with GitHub, get an ID, copy a command)
+- Instructions written for agents: https://agentrecallx.com/connect.md (hosted) and https://agentrecallx.com/local.md (local); the same index is served at https://agentrecallx.com/llms.txt
+- Humans: https://agentrecallx.com/ (sign in with GitHub, get an ID, copy a command)
 
-- Claude Code, hosted: `claude mcp add --scope user --transport http agent-recall https://recall.aiakada.com/mcp`, then `/mcp` → Authenticate
-- Codex, hosted: `codex mcp add agent-recall --url https://recall.aiakada.com/mcp` (re-run sign-in with `codex mcp login agent-recall`)
-- Cursor, hosted: `~/.cursor/mcp.json` → `{ "mcpServers": { "agent-recall": { "url": "https://recall.aiakada.com/mcp" } } }`
-- claude.ai: add a custom connector with the URL `https://recall.aiakada.com/mcp`
+- Claude Code, hosted: `claude mcp add --scope user --transport http agent-recall https://agentrecallx.com/mcp`, then `/mcp` → Authenticate
+- Codex, hosted: `codex mcp add agent-recall --url https://agentrecallx.com/mcp` (re-run sign-in with `codex mcp login agent-recall`)
+- Cursor, hosted: `~/.cursor/mcp.json` → `{ "mcpServers": { "agent-recall": { "url": "https://agentrecallx.com/mcp" } } }`
+- claude.ai: add a custom connector with the URL `https://agentrecallx.com/mcp`
 - Claude Code, local: `claude mcp add --scope user agent-recall -- npx -y agent-recall-mcp`
 - Codex, local: `codex mcp add agent-recall -- npx -y agent-recall-mcp`
 - Other clients, local: `{ "mcpServers": { "agent-recall": { "command": "npx", "args": ["-y", "agent-recall-mcp"] } } }`

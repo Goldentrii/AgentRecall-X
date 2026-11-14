@@ -22,7 +22,7 @@ export const TELEGRAM_URL = "https://t.me/+ywZwoHrg3AM0NDVi";
 export const DEFAULT_PRIVACY_URL = `${REPO_URL}/blob/main/PRIVACY.md`;
 
 export interface SiteCtx {
-  /** Origin of this server, e.g. https://recall.aiakada.com (no trailing slash). */
+  /** Origin of this server, e.g. https://agentrecallx.com (no trailing slash). */
   base: string;
   privacyUrl: string;
   /** Is hosted sign-in configured (OAuth on)? */
