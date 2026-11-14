@@ -126,7 +126,7 @@ float link(vec2 c, vec2 a, vec2 b){
   float h = clamp(dot(c - a, ab) / dot(ab, ab), 0.0, 1.0);
   return 0.00035 / (length(c - a - ab * h) + 0.0007);
 }
-vec3 galaxy(vec2 c){
+vec3 galaxy(vec2 c, float fit){
   vec3 o = starLayer(c, 0.0) + starLayer(c, 1.0) + starLayer(c, 2.0);
   // the galactic band: dust with lanes, gold toward the human side, cyan toward the machine
   float th = 0.42 + 0.02 * sin(time * 0.05);
@@ -136,7 +136,8 @@ vec3 galaxy(vec2 c){
   float dust = lane * smoothstep(0.30, 0.85, cloud) * (0.4 + 0.6 * fbm(bq * 7.0 - time * 0.01));
   o += mix(GOLD * 0.9, CYAN, smoothstep(-0.45, 0.45, c.x)) * dust * 0.65;
   vec2 pr = mouse * 0.02 + vec2(0.0, -0.03) * p;
-  vec2 s0 = vec2(-0.62, 0.30) + pr, s1 = vec2(-0.21, 0.40) + pr * 1.4, s2 = vec2(0.26, 0.33) + pr * 1.2, s3 = vec2(0.66, 0.22) + pr, s4 = vec2(0.02, -0.10) + pr * 0.6;
+  vec2 fx = vec2(fit, 1.0);                       // narrow screens: the network contracts toward the middle
+  vec2 s0 = vec2(-0.62, 0.26) * fx + pr, s1 = vec2(-0.21, 0.29) * fx + pr * 1.4, s2 = vec2(0.26, 0.27) * fx + pr * 1.2, s3 = vec2(0.66, 0.20) * fx + pr, s4 = vec2(0.02, -0.10) * fx + pr * 0.6;
   o += flare(c, s0, 0.07, vec3(1.0, 0.88, 0.62)) + flare(c, s1, 0.05, vec3(1.0)) + flare(c, s2, 0.09, vec3(0.7, 0.95, 1.0))
      + flare(c, s3, 0.06, vec3(0.7, 0.95, 1.0)) + flare(c, s4, 0.04, vec3(1.0, 0.9, 0.75));
   o += vec3(0.8, 0.9, 1.0) * (link(c, s0, s1) + link(c, s1, s2) + link(c, s2, s3)) * 0.5;
@@ -170,9 +171,11 @@ void main(){
   col += mix(warm, cold, smoothstep(-0.3, 0.3, c.x)) * rays * rush * rush * smoothstep(0.08, 0.8, r) * 0.55;
   col = mix(col, vec3(1.0, 0.98, 0.95), 0.7 * pow(rush, 5.0) * (1.0 - 0.55 * smoothstep(0.0, 0.9, r)));
 
-  // the galaxy: nothing bright behind the header or the caption block; the plates always sit in front
-  vec3 b = galaxy(cz) * smoothstep(0.48, 0.36, c.y) * smoothstep(-0.15, 0.0, c.y);
-  col += b * (1.0 - clamp(dot(col, vec3(0.33)) * 2.5, 0.0, 1.0));
+  // behind the worlds: the strip (already drawn) and the galaxy show only where the plates and the beam are dark
+  float open = 1.0 - clamp(dot(col, vec3(0.33)) * 4.0, 0.0, 1.0);
+  // nothing bright behind the header or the caption block
+  vec3 b = galaxy(cz, min(1.0, a / 1.75)) * smoothstep(0.40, 0.28, c.y) * smoothstep(-0.15, 0.0, c.y);
+  col += b * open;
 
   // air: drifting motes, a cool floor of mist, vignette, grain
   vec2 g = c * 34.0 + vec2(time * 0.05, time * 0.11);
@@ -182,7 +185,7 @@ void main(){
   col *= 1.0 - 0.5 * smoothstep(0.45, 1.05, r);
   col += (hash(v * res + time * 60.0) - 0.5) * 0.03;
   col *= 1.0 - 0.55 * smoothstep(-0.12, -0.5, c.y) * (1.0 - pow(rush, 5.0));   // scrim under the copy
-  o = vec4(pow(max(col, 0.0), vec3(0.94)), 1.0);
+  o = vec4(pow(max(col, 0.0), vec3(0.94)), open);   // blended over the strip: dst * open + this
 }`;
 
 const MESH_VERT = `#version 300 es
@@ -190,7 +193,7 @@ const MESH_VERT = `#version 300 es
 in vec2 uv;                       // u: around the loop 0..2pi, w: across the band -1..1
 uniform vec2 res, mouse;
 uniform float p, time, spread;
-out vec3 pos; out vec3 nrm; out vec2 st; out float presence; out float grade;
+out vec3 pos; out vec3 nrm; out vec2 st; out float presence; out float grade; out float screenY;
 const float TILT = 0.62, DEPTH = 1.7, TWISTS = 0.5;
 float sep(float q){
   return 0.50 - 0.13 * smoothstep(0.33, 0.42, q) - 0.10 * smoothstep(0.58, 0.67, q) - 0.05 * smoothstep(0.80, 0.95, q);
@@ -219,18 +222,19 @@ void main(){
                         strip(uv.x, uv.y + e, axes, halfWidth, sway) - strip(uv.x, uv.y - e, axes, halfWidth, sway)));
   pos = q; st = uv;
   float rush = clamp(bump(0.375, 0.030, p) + bump(0.625, 0.030, p), 0.0, 1.0);
-  float beam = 0.5 * bump(0.38, 0.10, p);                               // the strip yields to the correction beam
+  float beam = 0.85 * (smoothstep(0.22, 0.30, p) - smoothstep(0.50, 0.58, p));   // the strip yields to the correction beam
   float hairline = 0.35 * smoothstep(0.84, 0.97, p);                    // and to the hairline at the end
   presence = (1.0 - rush) * (1.0 - beam) * (1.0 - hairline);
   float push = 1.0 + 0.05 * p + rush * 0.9;
   vec2 c = (q.xy * DEPTH / (DEPTH - q.z) + vec2(0.0, 0.10) + mouse * vec2(0.01, 0.006)) * push;
+  screenY = c.y;
   grade = 1.0 - 0.5 * smoothstep(0.45, 1.05, length(c));                // the same vignette as the film grade
   gl_Position = vec4(c.x * 2.0 / a, c.y * 2.0, 0.0, 1.0);
 }`;
 
 const MESH_FRAG = `#version 300 es
 precision highp float;
-in vec3 pos; in vec3 nrm; in vec2 st; in float presence; in float grade;
+in vec3 pos; in vec3 nrm; in vec2 st; in float presence; in float grade; in float screenY;
 uniform float time, spread;
 out vec4 o;
 const vec3 GOLD = vec3(0.961, 0.769, 0.318), CYAN = vec3(0.45, 0.95, 1.0);
@@ -260,8 +264,7 @@ void main(){
         + tone * rim * (0.5 + 1.4 * edge)
         + mix(tone, vec3(1.0), 0.5) * edge * 0.18 * (0.4 + lit);
   }
-  float y = pos.y + 0.10;
-  float keep = smoothstep(0.48, 0.36, y) * smoothstep(-0.15, 0.0, y);  // clear of the header and the caption scrim
+  float keep = smoothstep(0.34, 0.24, screenY) * smoothstep(-0.15, 0.0, screenY);   // clear of the header and the caption scrim, judged on screen
   o = vec4(col * depth * keep * presence * grade * 1.25, 1.0);
 }`;
 
@@ -358,6 +361,7 @@ async function start() {
     gl.uniform1i(u(name), unit);
   });
 
+  gl.clearColor(0, 0, 0, 1);
   readScroll();
   let p = target, mx = 0, my = 0, tmx = 0, tmy = 0, dirty = true, snapped = false;
   // The browser may restore the scroll position after this point: jump there once, do not play through.
@@ -382,15 +386,8 @@ async function start() {
     const covered = scrollY > track.offsetHeight;          // the page below the film has scrolled over it
     const clock = reduced ? 0 : t / 1000;
     if ((moved || dirty || !reduced) && !document.hidden && !covered) {
-      gl.useProgram(prog);
-      gl.bindVertexArray(quadVao);
-      gl.uniform2f(u("res"), canvas.width, canvas.height);
-      gl.uniform2f(u("mouse"), mx, my);
-      gl.uniform1f(u("p"), p);
-      gl.uniform1f(u("calm"), reduced ? 1 : 0);
-      gl.uniform1f(u("time"), clock);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      // the strip is laid over the finished frame with a screen blend: it yields to whatever is already bright
+      // the strip goes down first, on black; the film frame is then laid over it and lets it through only where it is dark
+      gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(meshProg);
       gl.bindVertexArray(meshVao);
       gl.uniform2f(um("res"), canvas.width, canvas.height);
@@ -403,6 +400,15 @@ async function start() {
         gl.uniform1f(um("spread"), spread);
         gl.drawElements(gl.TRIANGLES, MESH_U * MESH_W * 6, gl.UNSIGNED_SHORT, 0);
       }
+      gl.blendFuncSeparate(gl.ONE, gl.SRC_ALPHA, gl.ZERO, gl.ONE);
+      gl.useProgram(prog);
+      gl.bindVertexArray(quadVao);
+      gl.uniform2f(u("res"), canvas.width, canvas.height);
+      gl.uniform2f(u("mouse"), mx, my);
+      gl.uniform1f(u("p"), p);
+      gl.uniform1f(u("calm"), reduced ? 1 : 0);
+      gl.uniform1f(u("time"), clock);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disable(gl.BLEND);
       updateCopy(p);
       dirty = false;
