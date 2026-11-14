@@ -82,7 +82,7 @@ If your change is substantial enough to warrant a version bump, add a row to the
 
 This is the canonical changelog.
 
-A version bump must also move `packages/mcp-server/server.json` (the file published to the official MCP Registry) to the same version; `server-json-drift.test.mjs` fails otherwise.
+A version bump must also move `packages/mcp-server/server.json` (the file published to the official MCP Registry) to the same version; `server-json-drift.test.mjs` fails otherwise. The registry entry is immutable per version, so a change to `server.json` (such as the hosted address) only reaches the registry with the next published version.
 
 ## PR Checklist
 

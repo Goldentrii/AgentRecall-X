@@ -199,8 +199,8 @@ ar bootstrap --import       # import what it found (secrets are skipped)
 AgentRecall does not pretend the gap goes away. It does three things with it:
 
 - **Makes it visible.** Before a risky step the agent states what it thinks you want (`check`), so a misunderstanding surfaces before the work is done.
-- **Measures it.** Every correction you make is one measurement of the gap. Each time the same situation returns, the outcome is recorded as heeded or repeated.
-- **Shortens it.** A correction made to one agent is loaded by every agent at the start of every session, so the next one starts closer to you than the last.
+- **Measures it.** Each correction it captures is one reading of the gap. When the same situation returns, the outcome is recorded as heeded or recurred. The instrument is young and the numbers are small: see [Measured, not promised](#measured-not-promised).
+- **Shortens it.** A correction made to one agent is loaded by every connected agent at the start of its next session (on the hosted server, once you approve it), so the next one starts closer to you than the last.
 
 The bar is one question: does the agent behave measurably differently in session 50 than in session 1, with the same person? Memory is a component of that; it is not the product. The full specification is the [Intelligent Distance Protocol](docs/intelligent-distance-protocol.md).
 

@@ -1,8 +1,8 @@
 # Privacy policy: hosted AgentRecall at agentrecallx.com
 
-Last updated: 2026-11-12
+Last updated: 2026-11-14
 
-This policy covers the hosted AgentRecall service at `https://agentrecallx.com` ("the service"). Until 14 November 2026 the service was reached at `https://recall.aiakada.com`; that address still reaches the same service, the same server and the same data. It does not cover AgentRecall installed on your own computer: that version keeps everything on your machine and sends nothing to us.
+This policy covers the hosted AgentRecall service at `https://agentrecallx.com` ("the service"). Until 14 November 2026 the service was reached at `https://recall.aiakada.com`; that address still reaches the same service, the same server and the same data, but signing in works only at the new address. It does not cover AgentRecall installed on your own computer: that version keeps everything on your machine and sends nothing to us.
 
 The service is a free, early-stage project run by one person. It has no ads, no analytics and no trackers, and your data is never sold or shared for marketing.
 
