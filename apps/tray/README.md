@@ -6,11 +6,11 @@ A small tray app and one compact dark window (380x560) that is a door to the hos
 
 - Sign in: opens your default browser for the GitHub sign-in on agentrecallx.com (OAuth 2.1, PKCE S256, dynamic client registration, loopback redirect on 127.0.0.1). Tokens go to the Windows Credential Manager. Tokens are refreshed automatically. Sign out (a link under the tabs, and the tray menu) deletes them.
 - Status header: connected or offline (`GET /healthz`) and the server version. The server does not expose the account ID to a token, so the app shows "Signed in" only.
-- Memory: calls `session_start` (cards mode) and shows the owner card, HARD RULES and project state card as text. If proposed rules await review, a button opens https://agentrecallx.com/review in the browser.
-- Remember: sends text through the `remember` tool and shows the server's confirmation line.
-- Recall: searches through the `recall` tool and lists results.
+- Rules: calls `session_start` (cards mode) and shows what every connected agent follows: the owner card, "Rules every agent follows" (P0 marked) and the project state card (goal, next, blockers, open decisions) as labelled rows. The text the server writes for agents (fence lines, instructions) is never shown; a line the app does not know is shown as plain text, not dropped. The parser is `src/view.ts`. If proposed rules await review, a button opens https://agentrecallx.com/review in the browser. An empty account gets a short note on how to teach the first rule.
+- Teach: sends text through the `remember` tool and shows the server's confirmation line.
+- Search: searches through the `recall` tool; each result is a small card with the sentence (markdown stripped) and a quiet line with its kind and date.
 - Connect: copies the connect command for Claude Code, Codex or Cursor (read live from https://agentrecallx.com/connect.md, with a built-in fallback) and opens your dashboard (/connect).
-- Offline: the last Memory view and the last recall results (up to 20) are shown with an "offline, as of <time>" label.
+- Offline: the last Rules view and the last recall results (up to 20) are shown with an "offline, as of <time>" label.
 - Tray: left click toggles the window; menu has Open, Sign out, Quit. Closing the window hides it to the tray.
 
 ## Build and run
@@ -45,6 +45,10 @@ cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol,t
 
 Each prints the path of its `agent_recall_tray_lib-*.exe`; copy it out with `docker cp` (for example to `release/tests.exe` and `release/tests-testhooks.exe`) and run it on Windows. Last recorded run: release build 32 passed, test-hooks build 37 passed, 0 failed.
 
+### UI parser tests
+
+`npm run test:ui` runs `test/view.test.mjs` (Node's test runner) against `src/view.ts`. The fixtures in `test/fixtures/` are real `session_start` and `recall` output from a local server; `node e2e/capture-fixtures.mjs` re-captures them (empty account, proposal waiting, approved rule, project state card, recall hits).
+
 ### Native route (alternative)
 
 Install Visual Studio Build Tools with the "Desktop development with C++" workload, then from PowerShell (not Git Bash, whose `/usr/bin/link` shadows the MSVC linker):
@@ -71,14 +75,14 @@ A test build also uses its own credential-store entry (`AgentRecall Tray (test)`
 
 ### End-to-end chain test
 
-`node e2e/chain.mjs` (or `npm run e2e`) runs the real exe against a local server with a mock GitHub and walks the whole chain: start, sign in, Memory, Remember, Recall, Connect, sign out. It asserts what each screen shows and writes the storyboard images to `docs/chain/`; `docs/chain.md` explains them. Everything is local: the server is the real `packages/mcp-server` build with the provider mock preload from its tests, the test build writes the sign-in URL to a log instead of opening a browser, the harness plays the browser in headless Edge (which is only allowed to reach 127.0.0.1), and the app's webview is driven over DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`) with `playwright-core`.
+`node e2e/chain.mjs` (or `npm run e2e`) runs the real exe against a local server with a mock GitHub and walks the whole chain: start, sign in, Rules (empty), another agent teaches a rule, the owner approves it, Teach, Search, Connect, sign out. It asserts that no text meant for agents is visible and that a recall result reads as a plain sentence. It asserts what each screen shows and writes the storyboard images to `docs/chain/`; `docs/chain.md` explains them (eleven images). Everything is local: the server is the real `packages/mcp-server` build with the provider mock preload from its tests, the test build writes the sign-in URL to a log instead of opening a browser, the harness plays the browser in headless Edge (which is only allowed to reach 127.0.0.1), and the app's webview is driven over DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`) with `playwright-core`.
 
-Needs: the server built (`npm ci` at the repo root, then `npm run build` in `packages/core` and `packages/mcp-server`), `npm ci` here, the test-hooks exe at `release/agent-recall-tray-testhooks.exe` (override with `AR_CHAIN_EXE`), WebView2 and Microsoft Edge. Ports are 8150, 8151 and 8152 (DevTools, server, mock); set `AR_CHAIN_PORT` to start elsewhere. It deletes the test credential entry and the test cache directory before and after the run, and never touches the `AgentRecall Tray` entry.
+The test plays a second agent through the server's MCP OAuth flow with the same mock GitHub profile and approves the rule with the server's operator command. Needs: the server built (`npm ci` at the repo root, then `npm run build` in `packages/core` and `packages/mcp-server`), `npm ci` here, the test-hooks exe at `release/agent-recall-tray-testhooks.exe` (override with `AR_CHAIN_EXE`), WebView2 and Microsoft Edge. Ports are 8150, 8151 and 8152 (DevTools, server, mock); set `AR_CHAIN_PORT` to start elsewhere. It deletes the test credential entry and the test cache directory before and after the run, and never touches the `AgentRecall Tray` entry.
 
 ## Where things live
 
 - Tokens: Windows Credential Manager, entry `oauth-tokens` under `AgentRecall Tray`, one JSON blob of about 250 characters (two 47-character tokens, expiry, client id), far below the Credential Manager limit. Never in a file, never logged, never sent to the webview (`withGlobalTauri` is off; the webview only has event-listen permission). All log and error text passes through a redactor.
-- Cache: `%APPDATA%\com.agentrecall.tray\cache.json`. **The cache holds your memory text** (the last Memory view and the last recall results) in plain JSON so it can be shown offline. It is capped (64 KiB memory text, 20 results of 2 KiB, 256 KiB file) and guarded by a lock.
+- Cache: `%APPDATA%\com.agentrecall.tray\cache.json`. **The cache holds your rules and recall text** (the last Rules view and the last recall results) in plain JSON so it can be shown offline. It is capped (64 KiB rules text, 20 results of 2 KiB, 256 KiB file) and guarded by a lock.
 - What sign out clears: the credential-store entry and the cache file. This happens on every sign-out path: the Sign out button, the tray menu, the server rejecting the refresh token, a second 401, and a failed save of rotated tokens. A request that was in flight during sign-out cannot write the cache afterwards.
 - The webview makes no network calls (CSP `default-src 'self'`); Rust makes every HTTP call, and every response body is size-capped (1 MiB tool results, 64 KiB everything else). Opening URLs from the app is limited to https://agentrecallx.com and https://github.com.
 

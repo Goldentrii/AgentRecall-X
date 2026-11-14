@@ -3,6 +3,7 @@
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { parseMemory, isEmptyMemory, parseRecallItem, type MemoryDoc, type RecallCard } from "./view";
 
 const inApp = "__TAURI_INTERNALS__" in window;
 
@@ -94,8 +95,8 @@ function renderSignedOut(): void {
   cancel.addEventListener("click", () => void invoke("cancel_sign_in").catch(() => undefined));
   app.append(
     h("div", { class: "center" },
-      h("h1", {}, "Your memory, one step away."),
-      h("p", { class: "muted" }, "AgentRecall keeps one memory for every agent you use. Sign in to see it here, add to it and search it."),
+      h("h1", {}, "Teach one agent. Every agent follows."),
+      h("p", { class: "muted" }, "A correction you give one agent reaches every agent you connect. Sign in to see the rules they follow and to teach them more."),
       btn, cancel, note,
     ),
   );
@@ -104,7 +105,7 @@ function renderSignedOut(): void {
 // ---------- signed in ----------
 
 function renderSignedIn(): void {
-  const tabs: Array<[typeof state.tab, string]> = [["memory", "Memory"], ["remember", "Remember"], ["recall", "Recall"], ["connect", "Connect"]];
+  const tabs: Array<[typeof state.tab, string]> = [["memory", "Rules"], ["remember", "Teach"], ["recall", "Search"], ["connect", "Connect"]];
   const bar = h("div", { class: "tabs", role: "tablist" });
   for (const [id, label] of tabs) {
     const t = h("button", { class: "tab", role: "tab", id: "tab-" + id, "aria-selected": String(state.tab === id), tabindex: state.tab === id ? "0" : "-1" }, label);
@@ -148,10 +149,44 @@ async function loadMemory(): Promise<void> {
   if (state.tab === "memory") render();
 }
 
+const EMPTY_TITLE = "No rules yet.";
+const EMPTY_BODY = "Teach one agent a rule and every agent you connect will follow it. Say to any connected agent: \u201CRemember this rule: \u2026\u201D. It then waits for your approval at agentrecallx.com/review.";
+
+function section(title: string, ...kids: Child[]): HTMLElement {
+  return h("section", { class: "block" }, h("h2", {}, title), ...kids);
+}
+
+function renderMemoryDoc(doc: MemoryDoc, into: HTMLElement): void {
+  if (doc.owner) into.append(section("You", h("p", { class: "prose" }, doc.owner)));
+  if (doc.rules.length > 0) {
+    const ul = h("ul", { class: "rules" });
+    for (const r of doc.rules) {
+      ul.append(h("li", {}, r.severity === "P0" ? h("span", { class: "tag p0", title: "Top priority" }, "P0") : null, h("span", {}, r.text)));
+    }
+    into.append(section("Rules every agent follows", ul));
+  }
+  if (doc.state.length > 0) {
+    const dl = h("dl", { class: "rows" });
+    for (const row of doc.state) {
+      dl.append(h("dt", {}, row.label));
+      const dd = h("dd", {}, row.value);
+      if (row.items.length > 0) {
+        const ul = h("ul", { class: "plain" });
+        for (const it of row.items) ul.append(h("li", {}, it));
+        dd.append(ul);
+      }
+      dl.append(dd);
+    }
+    into.append(section(doc.stateUpdated ? `Where things stand \u00B7 ${doc.stateUpdated}` : "Where things stand", dl));
+  }
+  if (doc.other.length > 0) into.append(section("Also from the server", ...doc.other.map((l) => h("p", { class: "prose" }, l))));
+  if (isEmptyMemory(doc)) into.append(h("div", { class: "empty" }, h("h2", {}, EMPTY_TITLE), h("p", { class: "muted" }, EMPTY_BODY)));
+}
+
 function panelMemory(panel: HTMLElement): void {
   const m = lastMemory;
   if (!m) {
-    panel.append(h("p", { class: "muted" }, "Loading your memory"));
+    panel.append(h("p", { class: "muted" }, "Loading your rules"));
     void loadMemory();
     return;
   }
@@ -165,7 +200,9 @@ function panelMemory(panel: HTMLElement): void {
   head.append(refreshBtn);
   panel.append(head);
   if (m.error) panel.append(h("p", { class: "note err" }, m.error));
-  panel.append(h("div", { class: "scroll", tabindex: "0", "aria-label": "Your memory now" }, h("pre", {}, m.text ?? "Nothing to show yet.")));
+  const view = h("div", { class: "scroll view", tabindex: "0", "aria-label": "Rules your agents follow" });
+  renderMemoryDoc(parseMemory(m.text ?? ""), view);
+  panel.append(view);
   if (m.pending && m.pending > 0) {
     const b = h("button", {}, `Review ${m.pending} proposed rule${m.pending === 1 ? "" : "s"}`);
     b.addEventListener("click", () => void invoke("open_url", { url: BASE + "/review" }).catch(() => undefined));
@@ -174,9 +211,9 @@ function panelMemory(panel: HTMLElement): void {
 }
 
 function panelRemember(panel: HTMLElement): void {
-  const ta = h("textarea", { id: "rem", "aria-label": "What should AgentRecall remember?", placeholder: "A fact, a decision, a preference" });
+  const ta = h("textarea", { id: "rem", "aria-label": "What should every agent know?", placeholder: "A rule, a preference or a fact every agent should follow" });
   const out = h("p", { class: "note", role: "status" });
-  const btn = h("button", { class: "primary" }, "Remember");
+  const btn = h("button", { class: "primary" }, "Teach every agent");
   btn.addEventListener("click", async () => {
     (btn as HTMLButtonElement).disabled = true;
     out.className = "note";
@@ -197,14 +234,22 @@ function panelRemember(panel: HTMLElement): void {
 
 let lastRecall: RecallView | null = null;
 
+function recallCard(c: RecallCard): HTMLElement {
+  const meta = [c.kind, c.topic, c.date].filter((x): x is string => !!x).join(" \u00B7 ");
+  return h("article", { class: "item" },
+    h("p", { class: "item-text" }, c.text),
+    c.detail ? h("p", { class: "item-detail" }, c.detail) : null,
+    meta ? h("p", { class: "item-meta" }, meta) : null);
+}
+
 function panelRecall(panel: HTMLElement): void {
-  const input = h("input", { type: "search", id: "q", "aria-label": "Search your memory", placeholder: "Search your memory" });
+  const input = h("input", { type: "search", id: "q", "aria-label": "Search what your agents know", placeholder: "Search what your agents know" });
   const btn = h("button", { class: "primary" }, "Search");
   const out = h("p", { class: "note", role: "status" });
   const list = h("div", { class: "scroll", tabindex: "0", "aria-label": "Recall results" });
   const show = (v: RecallView): void => {
     list.replaceChildren();
-    for (const r of v.results) list.append(h("div", { class: "item" }, r));
+    for (const c of v.results.map(parseRecallItem)) list.append(recallCard(c));
     out.className = v.error ? "note err" : "note";
     out.textContent = v.offline ? `Offline, as of ${fmt(v.as_of)}. Showing "${v.query}" from the last search.` : v.error ?? "";
   };
@@ -248,7 +293,7 @@ function panelConnect(panel: HTMLElement): void {
       panel.insertBefore(h("div", { class: "cmd" }, b, h("code", {}, cmd)), out);
     }
   };
-  panel.append(h("p", { class: "muted small" }, "Run one of these in the agent you want to connect, then sign in when it asks."));
+  panel.append(h("p", { class: "muted small" }, "Run one of these in each agent that should follow your rules, then sign in when it asks."));
   panel.append(out);
   const dash = h("button", { class: "link" }, "Open my dashboard");
   dash.addEventListener("click", () => void invoke("open_url", { url: BASE + "/connect" }).catch(() => undefined));

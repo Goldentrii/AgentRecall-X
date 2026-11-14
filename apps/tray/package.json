@@ -12,7 +12,8 @@
     "build:bundle": "tauri build",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "e2e": "node e2e/chain.mjs",
-    "check:release": "node e2e/check-release.mjs release/agent-recall-tray.exe"
+    "check:release": "node e2e/check-release.mjs release/agent-recall-tray.exe",
+    "test:ui": "node --test test/view.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.12.4",
