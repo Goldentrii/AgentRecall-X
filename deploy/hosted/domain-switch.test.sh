@@ -35,7 +35,7 @@ if [[ "$url" == */healthz ]]; then echo '{"ok":true,"version":"test"}'; exit 0; 
 if [[ "$*" == *redirect_url* ]]; then echo "${AR_TEST_REDIRECT:-https://new.example.com/connect}"; exit 0; fi
 exit 0
 STUB
-printf '#!/usr/bin/env bash\necho "stub-docker $*" >> "%s/docker.log"\n' "$work" > "$work/bin/docker"
+printf '#!/usr/bin/env bash\necho "stub-docker $* sha=${AR_CADDYFILE_SHA:-}" >> "%s/docker.log"\n' "$work" > "$work/bin/docker"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$work/bin/sleep"
 chmod +x "$work/bin/"*
 
@@ -46,7 +46,7 @@ bad() { fail=$((fail+1)); printf 'FAIL %s\n%s\n' "$1" "${2:-}"; }
 # fresh ENV_BODY: a new hosted dir holding the script, a compose file and .env
 fresh() {
   dir="$work/hosted.$RANDOM$RANDOM"; mkdir -p "$dir"
-  cp "$here/domain-switch.sh" "$dir/"; : > "$dir/compose.yaml"
+  cp "$here/domain-switch.sh" "$here/Caddyfile" "$dir/"; : > "$dir/compose.yaml"
   printf '%s' "$1" > "$dir/.env"; chmod 600 "$dir/.env"
   : > "$work/docker.log"
 }
@@ -70,6 +70,9 @@ if [[ $code -eq 0 ]] && has "AR_DOMAIN=new.example.com" && has "AR_PUBLIC_URL=ht
    && has "AR_DOMAIN_ALIAS=old.example.com, www.new.example.com" \
    && has "AR_OAUTH_GITHUB_CLIENT_SECRET=0123456789abcdef0123456789abcdef01234567" && has "AR_OAUTH_SIGNUP=open" \
    && [[ "$(grep -c '^AR_DOMAIN=' "$dir/.env")" == 1 && "$(grep -c '^AR_PUBLIC_URL=' "$dir/.env")" == 1 ]]; then ok; else bad "switch with aliases" "$out"; fi
+# compose.yaml labels caddy with the Caddyfile's sha256: the restart must carry the real value
+want_sha="$(sha256sum "$here/Caddyfile" | cut -d' ' -f1)"
+grep -qF "stub-docker compose up -d sha=$want_sha" "$work/docker.log" && ok || bad "restart exports AR_CADDYFILE_SHA" "$(cat "$work/docker.log")"
 # File modes mean nothing on a filesystem that ignores chmod (Git Bash on Windows): check them only where they do.
 probe="$work/mode-probe"; : > "$probe"; chmod 600 "$probe"
 if [[ "$(stat -c %a "$probe")" == 600 ]]; then modes=1; else modes=0; echo "note: this filesystem ignores chmod; mode checks skipped"; fi
@@ -148,7 +151,7 @@ if [[ $code -eq 0 ]] && has "AR_DOMAIN_FOO=keep" && [[ "$(grep -c '^AR_DOMAIN=' 
 fresh "$OAUTH"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$work/bin/docker"
 run "new.example.com" new.example.com
-printf '#!/usr/bin/env bash\necho "stub-docker $*" >> "%s/docker.log"\n' "$work" > "$work/bin/docker"
+printf '#!/usr/bin/env bash\necho "stub-docker $* sha=${AR_CADDYFILE_SHA:-}" >> "%s/docker.log"\n' "$work" > "$work/bin/docker"
 [[ $code -ne 0 && "$out" == *"restart failed"* && "$out" == *"cp -p .env.before-domain-switch."* ]] && ok || bad "restart failure prints the rollback" "$out"
 
 # an alias that does not redirect pages to the primary is reported

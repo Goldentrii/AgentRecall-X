@@ -120,12 +120,13 @@ rollback() {
   cat <<EOF
 
 To go back to the previous settings:
-  cd $(pwd) && sudo cp -p $backup .env && sudo docker compose up -d
+  cd $(pwd) && sudo cp -p $backup .env && sudo env AR_CADDYFILE_SHA=$(sha256sum Caddyfile | cut -d' ' -f1) docker compose up -d
 (and restore the old OAuth callback URL if you changed it)
 EOF
 }
 
 echo "==> restarting (Caddy requests a certificate for each new name)"
+AR_CADDYFILE_SHA="$(sha256sum Caddyfile | cut -d' ' -f1)"; export AR_CADDYFILE_SHA  # compose.yaml label: recreates Caddy when the Caddyfile changed
 docker compose up -d || { rollback; die "the settings were saved, but the restart failed; see: sudo docker compose logs --tail 40 caddy server"; }
 
 wait_health() { # HOST TRIES

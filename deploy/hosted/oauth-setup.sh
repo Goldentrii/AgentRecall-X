@@ -48,6 +48,7 @@ mv -f "$tmp" .env
 echo "saved to $(pwd)/.env (mode 600)"
 
 echo "restarting the server with OAuth on…"
+AR_CADDYFILE_SHA="$(sha256sum Caddyfile | cut -d' ' -f1)"; export AR_CADDYFILE_SHA  # compose.yaml label: recreates Caddy when the Caddyfile changed
 docker compose up -d || die "credentials were saved, but the restart failed; see: cd $(pwd) && sudo docker compose logs --tail 40 server"
 for _ in $(seq 1 60); do
   if issuer="$(curl -fsS --max-time 5 "https://$domain/.well-known/oauth-authorization-server" 2>/dev/null | grep -o '"issuer":"[^"]*"')"; then

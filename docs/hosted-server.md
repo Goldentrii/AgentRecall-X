@@ -95,6 +95,19 @@ Keep the old name's DNS record pointing at the box for as long as it is an alias
 
 Tests: `bash deploy/hosted/domain-switch.test.sh` (stubs, no server) and `bash deploy/hosted/caddy.test.sh` (real Caddy in Docker).
 
+### After a deploy
+
+Run the smoke check from any machine with Node 18+ (no install, no dependencies). It only reads, plus one unauthenticated `POST /mcp` that must be refused:
+
+```bash
+node deploy/hosted/smoke.mjs --base https://agentrecallx.com --expect-version 3.5.3
+node deploy/hosted/smoke.mjs --base https://agentrecallx.com --alias https://recall.aiakada.com   # also checks the alias
+```
+
+One `PASS` or `FAIL` line per check, with the evidence; exit 1 on any `FAIL`. It checks `/healthz` (and the version, with `--expect-version`), every public page and film plate (status and content type), that `/connect` answers without a session, that the CSP of `/` allows exactly the sha256 of the page's one inline style and one inline script, the security headers (HSTS, `nosniff`, `frame-ancestors`), that `POST /mcp` without credentials is a 401 pointing at the OAuth metadata, the two `/.well-known/oauth-*` documents, and with `--alias` that `/healthz` and `/mcp` are proxied while every other path 308-redirects to the primary. `node --test deploy/hosted/smoke.test.mjs` proves each check against a fake server; CI runs it in the `deploy-kit` job.
+
+A change to `deploy/hosted/Caddyfile` restarts Caddy during the deploy, for about a second. The Caddyfile is a single-file bind mount that compose never notices changing, so `setup.sh` (and `domain-switch.sh`) export its sha256 as `AR_CADDYFILE_SHA`, which `compose.yaml` puts in a label on the `caddy` service: the label changes exactly when the file does, and compose then recreates Caddy; with the file unchanged Caddy keeps running. Certificates persist in the `caddy-data` volume, so nothing is re-issued. Run `docker compose up` by hand only through `setup.sh` or `sudo env AR_CADDYFILE_SHA=$(sha256sum Caddyfile | cut -d" " -f1) docker compose up -d`, otherwise the label falls back to `unset` and Caddy restarts once. `bash deploy/hosted/compose-label.test.sh` proves the label (CI: `deploy-kit`).
+
 ### Docker (single container, bring your own proxy)
 
 ```bash

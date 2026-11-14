@@ -72,6 +72,13 @@ expect "alias redirects OAuth discovery"       old.localhost         /.well-know
 expect "alias redirects the sign-in callback"  old.localhost         /authorize/callback/github "308 *"
 expect "alias does not proxy a look-alike path" old.localhost        /mcpx     "308 *"
 
+# hsts HOST PATH -> the Strict-Transport-Security response header value (empty if absent)
+hsts() { curl -sk --max-time 5 --resolve "$1:$port:127.0.0.1" -D - -o /dev/null "https://$1:$port$2" 2>&1 | tr -d '' | sed -n 's/^[Ss]trict-[Tt]ransport-[Ss]ecurity: *//p'; }
+for h in "primary.localhost /connect" "old.localhost /mcp" "old.localhost /connect"; do
+  r="$(hsts $h)"
+  if [[ "$r" =~ ^max-age=[0-9]+ ]]; then ok; else bad "HSTS is sent for $h" "got: ${r:-missing}"; fi
+done
+
 r="$(plain old.localhost '/mcp?a=1')"
 if [[ "$r" == "308 https://old.localhost/mcp?a=1" ]]; then ok; else bad "plain HTTP on an alias upgrades to HTTPS on the same name" "$r"; fi
 
