@@ -32,7 +32,18 @@ docker cp ar-tray-build:/cache/target/x86_64-pc-windows-gnu/release/agent-recall
 docker cp ar-tray-build:/cache/target/x86_64-pc-windows-gnu/release/WebView2Loader.dll release/
 ```
 
-`--features custom-protocol` makes the exe serve the embedded `dist/` instead of a dev URL. Tests: `cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol --no-run`, then run the produced `*.exe` on Windows.
+`--features custom-protocol` makes the exe serve the embedded `dist/` instead of a dev URL.
+
+### Unit tests: two builds, both must pass
+
+The test hooks (and their tests, for example the base-URL parser) exist only with the `test-hooks` feature, so the release build's unit tests cannot cover them. Run both, each with its own `CARGO_TARGET_DIR`, inside the container:
+
+```
+cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol --no-run                  # CARGO_TARGET_DIR=/cache/target
+cargo test --release --target x86_64-pc-windows-gnu --features custom-protocol,test-hooks --no-run        # CARGO_TARGET_DIR=/cache/target-hooks
+```
+
+Each prints the path of its `agent_recall_tray_lib-*.exe`; copy it out with `docker cp` (for example to `release/tests.exe` and `release/tests-testhooks.exe`) and run it on Windows. Last recorded run: release build 32 passed, test-hooks build 37 passed, 0 failed.
 
 ### Native route (alternative)
 
