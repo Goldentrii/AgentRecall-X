@@ -4,7 +4,7 @@ A small tray app and one compact dark window (380x560) that is a door to the hos
 
 ## What it does
 
-- Sign in: opens your default browser for the GitHub sign-in on agentrecallx.com (OAuth 2.1, PKCE S256, dynamic client registration, loopback redirect on 127.0.0.1). Tokens go to the Windows Credential Manager. Tokens are refreshed automatically. Sign out deletes them.
+- Sign in: opens your default browser for the GitHub sign-in on agentrecallx.com (OAuth 2.1, PKCE S256, dynamic client registration, loopback redirect on 127.0.0.1). Tokens go to the Windows Credential Manager. Tokens are refreshed automatically. Sign out (a link under the tabs, and the tray menu) deletes them.
 - Status header: connected or offline (`GET /healthz`) and the server version. The server does not expose the account ID to a token, so the app shows "Signed in" only.
 - Memory: calls `session_start` (cards mode) and shows the owner card, HARD RULES and project state card as text. If proposed rules await review, a button opens https://agentrecallx.com/review in the browser.
 - Remember: sends text through the `remember` tool and shows the server's confirmation line.
@@ -46,9 +46,23 @@ npm run build:bundle   # optional installer (downloads NSIS/WiX tooling)
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-### Testing offline start
+### Test hooks (test builds only)
 
-The release exe has no test hooks. To simulate an unreachable server, build with `--features custom-protocol,test-hooks` (the Docker steps above, with a separate `CARGO_TARGET_DIR`), then set `AGENTRECALL_TRAY_TEST_HEALTH_URL=http://127.0.0.1:9/healthz` before starting that exe. It redirects only the health check. The window must still open and show "Offline". Debug builds honour the variable too; release builds without `test-hooks` ignore it.
+The release exe has no test hooks. Build with `--features custom-protocol,test-hooks` (the Docker steps above, with a separate `CARGO_TARGET_DIR`, for example `/cache/target-hooks`) to get them. They live in `src-tauri/src/hooks.rs` and nothing else reads these variables:
+
+- `AGENTRECALL_TRAY_TEST_BASE_URL`: replaces https://agentrecallx.com as the server origin. Only `http://127.0.0.1:<port>` is accepted; anything else stops the app at start. The URL allowlist for opening links gains that one origin and nothing more.
+- `AGENTRECALL_TRAY_TEST_OPEN_LOG`: instead of opening the system browser, the app appends each URL to this file.
+- `AGENTRECALL_TRAY_TEST_HEALTH_URL`: replaces the health check URL only. Pointing it at `http://127.0.0.1:9/healthz` simulates an unreachable server; the window must still open and show "Offline".
+
+A test build also uses its own credential-store entry (`AgentRecall Tray (test)`) and cache directory (`%APPDATA%\com.agentrecall.tray.test`), so it can never touch a real sign-in or a real cache. Debug builds do not honour the variables; only the `test-hooks` feature does.
+
+`npm run check:release` proves the shipped exe has none of it: it searches `release/agent-recall-tray.exe` for the variable names and the test service name (8-bit and UTF-16) and fails if one is present.
+
+### End-to-end chain test
+
+`node e2e/chain.mjs` (or `npm run e2e`) runs the real exe against a local server with a mock GitHub and walks the whole chain: start, sign in, Memory, Remember, Recall, Connect, sign out. It asserts what each screen shows and writes the storyboard images to `docs/chain/`; `docs/chain.md` explains them. Everything is local: the server is the real `packages/mcp-server` build with the provider mock preload from its tests, the test build writes the sign-in URL to a log instead of opening a browser, the harness plays the browser in headless Edge (which is only allowed to reach 127.0.0.1), and the app's webview is driven over DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`) with `playwright-core`.
+
+Needs: the server built (`npm ci` at the repo root, then `npm run build` in `packages/core` and `packages/mcp-server`), `npm ci` here, the test-hooks exe at `release/agent-recall-tray-testhooks.exe` (override with `AR_CHAIN_EXE`), WebView2 and Microsoft Edge. Ports are 8150, 8151 and 8152 (DevTools, server, mock); set `AR_CHAIN_PORT` to start elsewhere. It deletes the test credential entry and the test cache directory before and after the run, and never touches the `AgentRecall Tray` entry.
 
 ## Where things live
 

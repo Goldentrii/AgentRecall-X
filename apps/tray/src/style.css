@@ -36,7 +36,7 @@ button.link { border: none; padding: 4px 0; color: var(--muted); text-decoration
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
 .tab { border: none; border-radius: 8px 8px 0 0; color: var(--muted); padding: 8px 12px; border-bottom: 2px solid transparent; }
 .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--gold); }
-.panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.panel { flex: 1; min-height: 0; overflow-y: auto; scrollbar-color: var(--line) transparent; display: flex; flex-direction: column; gap: 12px; }
 .scroll { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: rgba(12,18,28,.6); }
 .scroll pre, .item { white-space: pre-wrap; word-break: break-word; margin: 0; font: 12.5px/1.55 var(--font); }
 .item + .item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -54,3 +54,4 @@ textarea { min-height: 110px; resize: vertical; }
 .err { color: #ff9b8a; }
 .ok { color: var(--cyan); }
 .center { margin: auto 0; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+#signout { align-self: flex-start; }

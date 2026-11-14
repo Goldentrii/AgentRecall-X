@@ -123,7 +123,9 @@ function renderSignedIn(): void {
     bar.append(t);
   }
   const panel = h("section", { class: "panel", role: "tabpanel", "aria-labelledby": "tab-" + state.tab });
-  app.append(bar, panel);
+  const signOut = h("button", { class: "link", id: "signout" }, "Sign out");
+  signOut.addEventListener("click", () => void invoke("sign_out").catch(() => undefined)); // Rust emits "signed-out"; boot() re-renders
+  app.append(bar, panel, signOut);
   if (state.tab === "memory") panelMemory(panel);
   else if (state.tab === "remember") panelRemember(panel);
   else if (state.tab === "recall") panelRecall(panel);
@@ -256,7 +258,7 @@ function panelConnect(panel: HTMLElement): void {
     out.textContent = "Loading commands";
     invoke<ConnectCommands>("connect_commands").then((c) => {
       commands = c;
-      out.textContent = c.from_server ? "" : "Offline: showing built-in commands.";
+      out.textContent = c.from_server ? "" : "Showing the built-in commands.";
       build(c);
     }).catch((e) => { out.className = "note err"; out.textContent = String(e); });
   }

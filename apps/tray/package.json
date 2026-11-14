@@ -10,12 +10,15 @@
     "tauri": "tauri",
     "build": "tauri build --no-bundle",
     "build:bundle": "tauri build",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "e2e": "node e2e/chain.mjs",
+    "check:release": "node e2e/check-release.mjs release/agent-recall-tray.exe"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/cli": "^2",
     "esbuild": "^0.25.0",
+    "playwright-core": "^1.65.1",
     "typescript": "^5.6.0"
   }
 }
