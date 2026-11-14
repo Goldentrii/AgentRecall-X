@@ -15,7 +15,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { REPO_URL, TELEGRAM_URL, type SiteCtx } from "./site-pages.js";
+import { REPO_URL, footerNav, type SiteCtx } from "./site-pages.js";
 
 /** The plates the film script loads, in the order the shader binds them. */
 export const FILM_PLATES = ["human", "m0", "wrong", "m2", "m3"] as const;
@@ -127,6 +127,6 @@ export function filmPage(film: Film, ctx: SiteCtx): string {
     `<li><strong>Every agent loads it</strong><span>At the start of each session your agents receive the same rules and the state of your project.</span></li>` +
     `<li><strong>Each outcome is recorded</strong><span>When the situation comes back, the rule is marked heeded or repeated. Rules that keep failing get rewritten.</span></li></ol></section>` +
     `<footer class="foot"><span>AgentRecall is open source (MIT). Memory you host here is private to your account.</span>` +
-    `<nav aria-label="Footer"><a href="${REPO_URL}" rel="noopener">GitHub</a><a href="${esc(ctx.privacyUrl)}" rel="noopener">Privacy</a><a href="${TELEGRAM_URL}" rel="noopener">Telegram</a></nav></footer>` +
+    footerNav() + `</footer>` +
     `</div></div><script>${film.script}</script></body></html>`;
 }

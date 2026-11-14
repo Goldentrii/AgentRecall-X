@@ -285,7 +285,7 @@ describe("pages built from the Host header are not cached", () => {
   after(async () => { await srv?.stop(); });
 
   it("with OAuth off every public page that reflects Host is no-store and varies on Host", async () => {
-    for (const p of ["/", "/local", "/connect", "/connect.md", "/local.md", "/llms.txt"]) {
+    for (const p of ["/", "/local", "/privacy", "/support", "/connect", "/connect.md", "/local.md", "/llms.txt"]) {
       const r = await new Browser(srv.base).go(p);
       assert.equal(r.headers.get("cache-control"), "no-store", p);
       assert.match(r.headers.get("vary") ?? "", /host/i, p);

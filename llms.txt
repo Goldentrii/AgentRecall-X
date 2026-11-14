@@ -38,6 +38,7 @@ If you are an AI agent and AgentRecall's tools are connected, run this loop with
 
 - [README](https://github.com/Goldentrii/AgentRecall-X/blob/main/README.md): overview, install, architecture, the math
 - [Hosted server](https://github.com/Goldentrii/AgentRecall-X/blob/main/docs/hosted-server.md): limits (100 MB, 120 requests/min per user), the correction approval gate, running your own server
-- [Privacy policy](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md): hosted memory is private per user and stored in the EU
+- [Privacy policy](https://agentrecallx.com/privacy): hosted memory is private per user and stored in the EU (source: [PRIVACY.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/PRIVACY.md))
+- [Support](https://agentrecallx.com/support): contact, GitHub issues, best-effort response time
 - [AGENTS.md](https://github.com/Goldentrii/AgentRecall-X/blob/main/AGENTS.md): full lifecycle doctrine and CLI equivalents
 - [Full reference](https://github.com/Goldentrii/AgentRecall-X/blob/main/README.full.md): SDK API, CLI, every tool parameter
