@@ -60,6 +60,10 @@ export interface OAuthOptions {
   onTenantChanged?: (uid: string) => void;
   /** Test seams for the memory import: limits and hooks. */
   importTesting?: ImportTesting;
+  /** A federated account signed in (MCP sign-in or website). Must not throw. */
+  onSignIn?: (uid: string) => void;
+  /** An OAuth route failed with an internal (5xx) error; the response is still answered generically here. Must not throw. */
+  onInternalError?: (res: http.ServerResponse, err: unknown) => void;
 }
 
 /**
@@ -147,6 +151,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     maxPendingPerKey: opts.maxPendingPerKey,
     keyOf: (req) => ipKey(req.ip),
     federation,
+    onSignIn: opts.onSignIn,
   });
   const site: SiteCtx = { base: config.publicUrl.origin, privacyUrl: config.privacyUrl?.href ?? DEFAULT_PRIVACY_URL, hosted: true };
   const pages: WebPages = {
@@ -156,7 +161,7 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
       : messagePage(site, title, msg, surface === "connect" ? { href: "/connect", label: "Back to the connect page" } : { href: "/", label: "Back to AgentRecall" }),
   };
   // The review page and the /connect dashboard share one browser sign-in and session, and the provider callback URL (told apart by state).
-  const review = new WebSession({ config, dataDir: opts.dataDir, federation, log, now, pages });
+  const review = new WebSession({ config, dataDir: opts.dataDir, federation, log, now, pages, onSignIn: opts.onSignIn });
   const siteStartIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   const reviewStartIp = new WindowCounter(limits.perIp, limits.windowMs, now);
   // Its own global budget, so review sign-ins (no client registration needed) cannot starve MCP sign-ins.
@@ -287,6 +292,9 @@ export function createOAuth(opts: OAuthOptions): OAuthRuntime {
     const status = typeof (err as { status?: unknown })?.status === "number" ? (err as { status: number }).status : 500;
     const client = status >= 400 && status < 500;
     log(`[oauth] request failed status=${client ? status : 500} kind=${(err as Error)?.name ?? "unknown"}`);
+    if (!client) {
+      try { opts.onInternalError?.(res, err); } catch { /* reporting never changes the answer */ }
+    }
     if (res.headersSent) return;
     res.status(client ? status : 500).json(client
       ? { error: "invalid_request", error_description: "The request could not be processed." }

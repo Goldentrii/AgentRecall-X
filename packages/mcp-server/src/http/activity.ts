@@ -27,7 +27,7 @@ const MAX_ENTRIES_PER_UID = 50;
 const MAX_UIDS_IN_MEMORY = 10_000;
 const DEFAULT_FLUSH_MS = 60_000;
 /** The hosted tool names (tier B, with and without --full). Anything else is not recorded. */
-const TOOL_NAMES: ReadonlySet<string> = new Set(["session_start", "session_end", "remember", "recall", "check", "check_action"]);
+export const TOOL_NAMES: ReadonlySet<string> = new Set(["session_start", "session_end", "remember", "recall", "check", "check_action"]);
 
 export interface ActivityEntry {
   client: string;
@@ -101,6 +101,8 @@ export interface ActivityOptions {
   flushMs?: number;
   /** Test seam: replaces the atomic file write. */
   write?: (file: string, data: unknown) => void;
+  /** Called on every failed write (the server raises a rate-limited alert). Must not throw. */
+  onWriteError?: (err: unknown) => void;
 }
 
 /** onDisk: the file exists (loaded from it, or written by us); if it vanishes the operator deleted it on purpose. */
@@ -119,12 +121,14 @@ export class ActivityStore {
   private readonly log: (line: string) => void;
   private readonly flushMs: number;
   private readonly write: (file: string, data: unknown) => void;
+  private readonly onWriteError: (err: unknown) => void;
 
   constructor(private readonly dataDir: string, opts: ActivityOptions = {}) {
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? (() => {});
     this.flushMs = opts.flushMs ?? DEFAULT_FLUSH_MS;
     this.write = opts.write ?? writeJsonAtomic;
+    this.onWriteError = opts.onWriteError ?? (() => {});
   }
 
   /** Where a user's activity lives. Outside the tenant directory on purpose. */
@@ -169,12 +173,12 @@ export class ActivityStore {
     this.timer.unref();
   }
 
-  /** Record one authenticated request. Memory only; never throws. */
-  record(uid: string, key: string, obs: ActivityObservation): void {
+  /** Record one authenticated request. Memory only; never throws. True when this credential was never seen before (a newly connected agent). */
+  record(uid: string, key: string, obs: ActivityObservation): boolean {
     try {
-      if (!UID_RE.test(uid) || !CREDENTIAL_ID_RE.test(key)) return;
+      if (!UID_RE.test(uid) || !CREDENTIAL_ID_RE.test(key)) return false;
       const s = this.slot(uid);
-      if (s === null) return;
+      if (s === null) return false;
       const at = new Date(this.now()).toISOString();
       const prev = s.entries[key];
       s.entries[key] = {
@@ -192,8 +196,10 @@ export class ActivityStore {
       }
       s.dirty = true;
       this.schedule();
+      return prev === undefined;
     } catch (err) {
       this.complain(err);
+      return false;
     }
   }
 
@@ -231,6 +237,7 @@ export class ActivityStore {
       } catch (err) {
         failed = true;
         this.complain(err);
+        try { this.onWriteError(err); } catch { /* reporting never breaks the flush */ }
       }
     }
     this.failures = failed ? this.failures + 1 : 0;

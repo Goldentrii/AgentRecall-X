@@ -108,6 +108,8 @@ export interface ProviderDeps {
   keyOf?: (req: Request) => string;
   log: (line: string) => void;
   now: () => number;
+  /** A federated account signed in (after the invite check). serve.ts counts first sign-ins; must not throw. */
+  onSignIn?: (uid: string) => void;
 }
 
 const str = (v: unknown, max: number): string | null =>
@@ -412,6 +414,7 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
       return this.retryPage(p, id, 503, MSG_UNAVAILABLE);
     }
     this.dropPending(id);
+    try { this.d.onSignIn?.(uid); } catch { /* a counter never fails a sign-in */ }
     return { kind: "redirect", location: this.issueCode(p, uid, up.provider, subject), clearCookieFor: id };
   }
 

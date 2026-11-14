@@ -5,6 +5,10 @@
  *   GET  /healthz  liveness
  *   OAuth routes   only when OAuth is configured (see oauth-app.ts)
  *
+ * Every finished response is counted in the daily usage statistics (stats.ts,
+ * counts only) and internal failures raise a rate-limited Telegram alert when
+ * configured (alerts.ts).
+ *
  * Per request: bearer token → uid → withTenant({root: DATA/tenants/<uid>, …}) →
  * a FRESH McpServer + transport. Nothing MCP-level is shared between requests,
  * and strict tenant mode makes any code path that loses the tenant context
@@ -26,6 +30,8 @@ import type { OAuthConfig } from "./oauth-config.js";
 import type { ProviderUrls } from "./federation.js";
 import { isStaticPath, renderStatic, fallbackBase } from "./site.js";
 import { DEFAULT_PRIVACY_URL } from "./site-pages.js";
+import { UsageStats, routeClass, toolNamesOf, type InternalKind, type RouteClass, type StatsOptions } from "./stats.js";
+import { Alerter, type AlertConfig, type AlerterOptions } from "./alerts.js";
 
 export interface ServeOptions {
   /** Absolute data directory: tenants/ and _server/ live here. */
@@ -48,6 +54,12 @@ export interface ServeOptions {
   oauth?: OAuthConfig | null;
   /** Test seams for the per-agent activity log: clock, flush interval, file writer. */
   activityTesting?: ActivityOptions;
+  /** Telegram error alerts (see alerts.ts); null/undefined → off. */
+  alerts?: AlertConfig | null;
+  /** Test seams for alerts: Bot API origin, fetch, clock, window, timeout. */
+  alertsTesting?: Omit<AlerterOptions, "config">;
+  /** Test seams for the usage statistics: clock, flush interval, file writer. */
+  statsTesting?: StatsOptions;
   /** Test seams for OAuth only: clock, login rate limits, provider endpoints, fetch and its timeout. */
   oauthTesting?: { now?: () => number; loginLimits?: LoginLimits; providerUrls?: ProviderUrls; fetchImpl?: typeof fetch; providerTimeoutMs?: number; maxPending?: number };
 }
@@ -138,7 +150,7 @@ function authenticate(req: http.IncomingMessage, dataDir: string, oauth: OAuthRu
 }
 
 export type RequestHandler = ((req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>) & {
-  /** Write buffered per-agent activity to disk now (shutdown path). Never throws. */
+  /** Write buffered per-agent activity and today's usage statistics to disk now (shutdown path). Never throws. */
   flushActivity(): void;
 };
 
@@ -155,8 +167,36 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
     `AgentRecall storage quota reached (${formatMb(quotaBytes)} per user): this memory was NOT saved. ` +
     "Reading still works (recall, session_start). Tell the user their hosted memory is full and that the server operator can raise the limit.";
   const log = opts.log ?? ((line: string) => process.stderr.write(line + "\n"));
-  const activity = new ActivityStore(dataDir, { log, ...opts.activityTesting });
-  const oauth = opts.oauth ? createOAuth({ config: opts.oauth, dataDir, log, quotaBytes, activity, onTenantChanged: (u) => usage?.invalidate(u), ...opts.oauthTesting }) : null;
+  let alerts: Alerter | null = null;
+  try {
+    alerts = opts.alerts ? new Alerter({ config: opts.alerts, version: VERSION, log, ...opts.alertsTesting }) : null;
+  } catch {
+    log("[agent-recall-server] alerts off: invalid Telegram configuration");
+  }
+  /** Responses whose 5xx was already reported with its own kind (so the generic http_5xx alert does not repeat it). */
+  const reported = new WeakSet<http.ServerResponse>();
+  // A write error is only reported from a flush, which never runs inside the constructor.
+  const counts: UsageStats = new UsageStats(dataDir, { log, onWriteError: (err) => internal("stats_write", undefined, err), ...opts.statsTesting });
+  /** An internal failure: counted, and alerted (rate-limited) when alerts are on. Never throws. */
+  function internal(kind: InternalKind, route?: RouteClass, err?: unknown): void {
+    counts.internalError(kind);
+    alerts?.raise(kind, { route, err });
+  }
+  const activity = new ActivityStore(dataDir, { log, onWriteError: (err) => internal("activity_write", undefined, err), ...opts.activityTesting });
+  /** A federated sign-in. An account's memory space is created on its first one, and that is a sign-up. */
+  const onSignIn = (uid: string): void => {
+    try {
+      if (fs.mkdirSync(tenantRoot(dataDir, uid), { recursive: true, mode: 0o700 }) !== undefined) counts.signup();
+    } catch {
+      // the first MCP request creates it (and fails visibly) if the disk refuses now
+    }
+  };
+  const oauth = opts.oauth ? createOAuth({
+    config: opts.oauth, dataDir, log, quotaBytes, activity, onTenantChanged: (u) => usage?.invalidate(u), onSignIn,
+    onInternalError: (res, err) => { reported.add(res); internal("oauth_internal", "oauth", err); },
+    ...opts.oauthTesting,
+  }) : null;
+  const ownHost = oauth ? new URL(oauth.site.base).hostname : undefined;
   const unauthorizedHeader = oauth
     ? `Bearer realm="agent-recall", resource_metadata="${oauth.resourceMetadataUrl}"`
     : 'Bearer realm="agent-recall"';
@@ -165,7 +205,13 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
     const started = Date.now();
     const url = new URL(req.url ?? "/", "http://localhost");
     let uid = "-";
-    res.once("finish", () => log(`${new Date().toISOString()} ${req.method} ${url.pathname} uid=${uid} ${res.statusCode} ${Date.now() - started}ms`));
+    res.once("finish", () => {
+      const ms = Date.now() - started;
+      log(`${new Date().toISOString()} ${req.method} ${url.pathname} uid=${uid} ${res.statusCode} ${ms}ms`);
+      const route = routeClass(url.pathname);
+      counts.request({ route, method: req.method, path: url.pathname, status: res.statusCode, ms, referer: req.headers.referer, ownHost: ownHost ?? hostOf(req.headers.host) });
+      if (res.statusCode >= 500 && !reported.has(res)) internal("http_5xx", route);
+    });
     try {
       if (url.pathname === "/healthz" && req.method === "GET") {
         sendJson(res, 200, { ok: true, version: VERSION });
@@ -230,7 +276,10 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
         return;
       }
 
-      activity.record(uid, who.key, observe(body)); // memory only; flushed in the background
+      // memory only; flushed in the background
+      if (activity.record(uid, who.key, observe(body))) counts.newAgent();
+      counts.activeUser(uid);
+      counts.toolCalls(toolNamesOf(body));
 
       const root = tenantRoot(dataDir, uid);
       fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -263,24 +312,46 @@ export function createRequestHandler(opts: ServeOptions): RequestHandler {
         sendJson(res, err.status, { error: err.code, message: err.message, agent_instruction: err.agentInstruction }, headers);
       } else if (err instanceof TokenStoreUnavailableError) {
         log(`[agent-recall-server] token store unavailable: ${err.message}`);
+        reported.add(res);
+        internal("token_store", routeClass(url.pathname), err);
         sendJson(res, 503, { error: "auth_unavailable", message: "authentication temporarily unavailable", agent_instruction: "Retry shortly; the server operator must fix the token store." }, { "retry-after": "5" });
       } else {
         log(`[agent-recall-server] internal error uid=${uid}: ${(err as Error)?.stack ?? String(err)}`);
+        reported.add(res);
+        internal("mcp_internal", routeClass(url.pathname), err);
         sendJson(res, 500, { error: "internal_error", message: "internal server error", agent_instruction: "Retry once; if it persists, continue without memory and tell the user the AgentRecall server failed." });
       }
     }
   };
-  return Object.assign(handler, { flushActivity: () => activity.flush() });
+  const flushAll = (): void => {
+    try {
+      activity.flush();
+    } finally {
+      // Called on shutdown: a failure here has no retry left, so say so (the retry log line says "quietly").
+      if (!counts.flush()) log("[agent-recall-server] usage stats NOT saved at shutdown (disk full or not writable?); today's counts are lost");
+    }
+  };
+  return Object.assign(handler, { flushActivity: flushAll });
 }
 
-/** The HTTP server plus a way to write buffered activity now (cli.ts uses it before a forced exit). */
+/** Host name of a Host header (no port), or undefined. Used only to tell internal navigation from a referrer. */
+function hostOf(header: string | undefined): string | undefined {
+  if (typeof header !== "string" || header.length > 300) return undefined;
+  try {
+    return new URL(`http://${header}`).hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The HTTP server plus a way to write buffered activity and usage statistics now (cli.ts uses it before a forced exit). */
 export type HostedServer = http.Server & { flushActivity(): void };
 
 export function startHttpServer(opts: ServeOptions): Promise<HostedServer> {
   enableStrictTenantMode();
   const handler = createRequestHandler(opts);
   const server = Object.assign(http.createServer((req, res) => void handler(req, res)), { flushActivity: () => handler.flushActivity() });
-  // Graceful shutdown (cli.ts calls server.close on SIGTERM/SIGINT): write buffered activity before exit.
+  // Graceful shutdown (cli.ts calls server.close on SIGTERM/SIGINT): write buffered activity and stats before exit.
   server.once("close", () => handler.flushActivity());
   return new Promise((resolve, reject) => {
     server.once("error", reject);

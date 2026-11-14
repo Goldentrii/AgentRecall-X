@@ -44,6 +44,10 @@ check "status"                 "status"           0  "DRY-RUN: sudo docker compo
 check "logs default"           "logs"             0  "--tail 50 server"
 check "logs N"                 "logs 200"         0  "--tail 200 server"
 check "usage"                  "usage"            0  "exec -T server agent-recall-server usage"
+check "stats default"          "stats"            0  "exec -T server agent-recall-server stats --days 7$"
+check "stats N"                "stats 30"         0  "exec -T server agent-recall-server stats --days 30$"
+check "stats max"              "stats 400"        0  "stats --days 400$"
+check "stats leading zero"     "stats 09"         0  "stats --days 9$"
 
 # refused: shell syntax, interactive login, other commands, bad args
 check "no command (shell)"     ""                 64 "refused"
@@ -62,6 +66,12 @@ check "logs too many"          "logs 999"         64 "1-500"
 check "logs zero"              "logs 0"           64 "1-500"
 check "status with arg"        "status 1"         64 "no argument"
 check "usage with arg"         "usage 1"          64 "no argument"
+check "stats zero"             "stats 0"          64 "1-400"
+check "stats too many"         "stats 401"        64 "1-400"
+check "stats hex"              "stats ab"         64 "1-400"
+check "stats too long"         "stats 1234"       64 "1-400"
+check "stats two args"         "stats 5 6"        64 "refused"
+check "stats flag"             "stats --json"     64 "refused"
 check "two args"               "logs 5 6"         64 "refused"
 
 # the on-main check (real mode, stubbed GitHub): only the newest commits of main deploy
