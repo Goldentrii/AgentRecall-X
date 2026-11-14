@@ -8,15 +8,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../dist/build-server.js";
 
+const READ = { readOnlyHint: true, openWorldHint: false };
 const ADD = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const OVERWRITE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
 // Why each write tool is not read-only is documented in src/tools/annotations.ts.
 const EXPECTED = {
-  session_start: ADD,
+  session_start: READ,
   session_end: OVERWRITE,
   remember: OVERWRITE,
-  recall: ADD,
+  recall: READ,
   check: ADD,
   check_action: ADD,
   pipeline_open: ADD,

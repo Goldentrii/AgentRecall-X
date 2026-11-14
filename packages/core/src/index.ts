@@ -283,6 +283,8 @@ export {
 } from "./storage/session.js";
 // C2 — zero-cloud lifecycle telemetry (counters only, no transcript content).
 export { recordLifecycleEvent, lifecycleStats } from "./storage/lifecycle-telemetry.js";
+export { bookkeep, inReadScope, withDeferredBookkeeping, flushBookkeeping, flushAllBookkeeping, bookkeepingStats } from "./storage/deferred-bookkeeping.js";
+export type { BookkeepingOp, FlushResult } from "./storage/deferred-bookkeeping.js";
 export type { LifecycleEvent, LifecycleTelemetryRow, LifecycleStats } from "./storage/lifecycle-telemetry.js";
 // fix9 (2026-09-12): acquireLockSync/withLockSync retired — the async
 // primitive is the only locking surface (see filelock.ts header).

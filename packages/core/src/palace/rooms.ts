@@ -15,6 +15,7 @@ import { roomReadmeContent } from "./obsidian.js";
 import { computeSalience } from "./salience.js";
 import { getConnectionCount } from "./graph.js";
 import { withLock } from "../storage/filelock.js";
+import { bookkeep } from "../storage/deferred-bookkeeping.js";
 
 function roomMetaPath(projectPalaceDir: string, roomSlug: string): string {
   const safe = sanitizeSlug(roomSlug);
@@ -168,6 +169,17 @@ export function listRooms(project: string): RoomMeta[] {
 export function roomExists(project: string, roomSlug: string): boolean {
   const pd = palaceDir(project);
   return fs.existsSync(roomMetaPath(pd, roomSlug));
+}
+
+/**
+ * ensurePalaceInitialized for a caller that is a read. A project with no palace directory has nothing to read, so
+ * scaffolding it is bookkeeping (queued inside a read). A palace that exists but predates its index needs the
+ * one-time migration before its rooms can be listed at all, so that runs now; it writes only then, and is a
+ * no-op on every initialized palace.
+ */
+export function ensurePalaceInitializedForRead(project: string): void {
+  if (fs.existsSync(palaceDir(project))) ensurePalaceInitialized(project);
+  else void bookkeep({ key: `palace-init:${project}`, apply: () => ensurePalaceInitialized(project) });
 }
 
 /** Initialize default palace rooms if palace doesn't exist yet. */

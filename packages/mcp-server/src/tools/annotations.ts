@@ -9,15 +9,24 @@
  *   ADD        writes, but nothing the user saved is replaced or dropped.
  *   OVERWRITE  writes, and can replace or drop what an earlier call saved.
  *
- * No tool is READ today, and that is deliberate: a tool is READ only when it
- * writes nothing, bookkeeping included.
- *   - session_start records which corrections were surfaced, rule hit counts
- *     and a lifecycle event.
- *   - recall bumps access counts and salience on every call, and its
- *     `feedback` argument changes later ranking.
- *   - pipeline_list / pipeline_current / pipeline_show write no memory, but
- *     resolving the project can record which working directory maps to it.
- * These are ADD until those writes move out of the call path.
+ * READ:
+ *   - session_start and recall. What they used to record while answering
+ *     (correction "retrieved" outcomes, rule hit counts, room access counts and
+ *     salience, recall `feedback`, lifecycle telemetry, crash-rescue sweeps,
+ *     palace scaffolding, the cwd allowlist, the lexical index cache) is queued
+ *     by core's bookkeep() and applied by the next write tool call, a periodic
+ *     flush, or shutdown (lib/bookkeeping.ts). The call itself leaves the store
+ *     byte-identical. Still written during the call, on purpose: on a hook-less
+ *     stdio host the ambient working-memory note (a crash-survival scratch
+ *     buffer, see lib/bookkeeping.ts; absent on hosted and under Claude Code
+ *     hooks), and on the hosted
+ *     server's per-credential activity record (http/activity.ts: buffered in
+ *     memory, flushed to the server's own _server/ directory; it describes the
+ *     credential, not the memory, and feeds no ranking).
+ *   - Exception: with the operator's A/B experiment on (AR_AB_ENABLED=1)
+ *     session_start writes an arm ledger row, so it is ADD for that process.
+ *   - pipeline_list / pipeline_current / pipeline_show are not audited for this
+ *     and stay ADD (extras only).
  *
  * OVERWRITE:
  *   - session_end rewrites the project state card.

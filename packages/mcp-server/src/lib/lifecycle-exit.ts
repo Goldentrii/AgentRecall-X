@@ -21,7 +21,7 @@
  * of that durability guarantee, never a replacement for it.
  */
 
-import { getSessionId, distillSessionToCard, isHookOwnedHost } from "agent-recall-core";
+import { getSessionId, distillSessionToCard, isHookOwnedHost, flushAllBookkeeping } from "agent-recall-core";
 
 /** Hard ceiling on how long this handler may delay process exit (design doc C-3 guard). */
 const EXIT_TIMEOUT_MS = 2000;
@@ -29,7 +29,7 @@ const EXIT_TIMEOUT_MS = 2000;
 /** Idempotency guard — `stdin` "end" AND "close" can both fire, and a signal could race either. */
 let fired = false;
 
-function runOnce(): void {
+async function runOnce(): Promise<void> {
   if (fired) return;
   fired = true;
 
@@ -44,6 +44,8 @@ function runOnce(): void {
   forceExit.unref();
 
   try {
+    // Queued read bookkeeping (including the working-memory notes of read-only calls) lands first, so the distill sees it.
+    await flushAllBookkeeping();
     // Reuses the SAME WM→card mechanism C-2's orphan-rescue sweep uses
     // (distillOneSession, storage/working-memory.ts) for THIS process's own,
     // still-fresh session id — no age gate, because this fires precisely

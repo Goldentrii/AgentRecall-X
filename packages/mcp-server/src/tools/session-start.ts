@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import {
   sessionStart,
+  isExperimentEnabled,
   sessionStartLite,
   fenceMemory,
   formatOwnerSection,
@@ -11,7 +12,7 @@ import {
   type SessionStartResult,
   type SessionStartLiteResult,
 } from "agent-recall-core";
-import { ADD } from "./annotations.js";
+import { READ, ADD } from "./annotations.js";
 
 /**
  * Terse text = the ONE core renderer (Cards v2, G6): sections, byte cap, fence and tail all live in
@@ -94,7 +95,8 @@ export function formatLite(lite: SessionStartLiteResult): string {
 export function register(server: McpServer): void {
   server.registerTool("session_start", {
     title: "Start Session",
-    annotations: ADD,
+    // Read-only, except under the operator's A/B experiment (AR_AB_ENABLED=1), which assigns an arm by writing a ledger row.
+    annotations: isExperimentEnabled() ? ADD : READ,
     description: "[ENTRY — call FIRST, before acting] Use when the user asks to start, load, continue, resume, or open memory for a project. Default mode='cards' loads the owner card, the HARD RULES and the project state card and nothing else; mode='full' adds continuity, insights, rooms, captures and the rest (and is the default when verbose=true, which promises the full JSON context); mode='lite' is a ≤500-token sketch (pull memory on demand via recall()).",
     inputSchema: {
       project: z.string().default("auto"),

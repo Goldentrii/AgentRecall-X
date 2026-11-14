@@ -115,6 +115,7 @@ import { palaceDir } from "../storage/paths.js";
 import { calibratedConfidence, CONFIDENCE_FLOOR, type ConfidenceScale } from "./confidence.js";
 import { fetchVerbatim, type VerbatimKey } from "./drill-down.js";
 import { resolveProject } from "../storage/project.js";
+import { bookkeep, inReadScope } from "../storage/deferred-bookkeeping.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { queryMemory, queryArchiveFallback, type QueryMemoryItem } from "../retrieval/query-memory.js";
 import type { SemanticLegNote } from "../retrieval/semantic-leg.js";
@@ -1084,13 +1085,19 @@ export async function smartRecall(input: SmartRecallInput): Promise<SmartRecallR
   let feedbackLog: FeedbackEntry[];
   let feedbackPersist: Promise<{ persistenceSkipped: boolean }> | undefined;
   if (input.feedback && input.feedback.length > 0) {
-    feedbackLog = mergeFeedback(readFeedbackLog(), input.feedback, input.query);
-    feedbackPersist = processFeedback(input.feedback, input.query).catch((err: unknown) => {
-      console.error(
-        `[agent-recall] smart_recall feedback: persist failed — ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return { persistenceSkipped: true };
-    });
+    const { feedback, query } = input;
+    feedbackLog = mergeFeedback(readFeedbackLog(), feedback, query); // this call ranks with it either way
+    if (inReadScope()) {
+      // Inside a read the rating is queued (ranking input), applied by the next write or flush.
+      void bookkeep({ apply: async () => { await processFeedback(feedback, query); } });
+    } else {
+      feedbackPersist = processFeedback(feedback, query).catch((err: unknown) => {
+        console.error(
+          `[agent-recall] smart_recall feedback: persist failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return { persistenceSkipped: true };
+      });
+    }
   } else {
     feedbackLog = readFeedbackLog();
   }

@@ -13,7 +13,8 @@
 import { resolveProject, isValidProjectSlug } from "../storage/project.js";
 import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
-import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
+import { bookkeep } from "../storage/deferred-bookkeeping.js";
+import { ensurePalaceInitializedForRead, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
 import { DEFAULT_PALACE_ROOMS, getRoot, isTenantScoped } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
 import { readIdentityCard } from "../storage/identity-card.js";
@@ -535,7 +536,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // not scaffold a palace anywhere, and everything below degrades to empty
   // reads for the sentinel. Call left unconditional so the gate lives in ONE
   // place (the function itself), not per-caller.
-  ensurePalaceInitialized(slug);
+  ensurePalaceInitializedForRead(slug); // a read of a project with no palace yet does not create one
 
   // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
   // workable identity for one MCP-server lifetime. claimSessionStartOnce
@@ -764,8 +765,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // accepted as an acceptable synchronous cost at session_start/hook-start
   // frequency (not the ambient-capture hot path) — only its POSITION within
   // sessionStart() changed, not its cost or its failure semantics.
+  // Deferred inside a read (it writes journal entries and the recency ledger): a crashed session is recovered by
+  // the next flush, so only the same call's full-mode continuity no longer shows it.
   try {
-    rescueOrphanedWorkingMemory();
+    void bookkeep({ key: "wm-rescue", apply: () => { rescueOrphanedWorkingMemory(); } });
   } catch {
     // rescueOrphanedWorkingMemory never throws — guard kept so a future
     // change to that contract can never break session_start.
@@ -780,7 +783,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // the guard mirrors the rescue call's.
   let unclaimedCount = 0;
   try {
-    archiveExpiredUnclaimed(); // both modes: the TTL sweep is maintenance, not payload
+    void bookkeep({ key: "unclaimed-ttl", apply: () => { archiveExpiredUnclaimed(); } }); // both modes: the TTL sweep is maintenance, not payload
     unclaimedCount = full ? countUnclaimedSessions() : 0;
   } catch {
     unclaimedCount = 0;
@@ -1074,14 +1077,15 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     for (const c of rawCorrections) {
       if (c.last_retrieved && new Date(c.last_retrieved).toLocaleDateString("sv") === todayStr) continue; // already counted today
       try {
-        await recordOutcome({
+        // Ranking input (retrieved_count, last_retrieved, the alignment KPI): queued inside a read.
+        await bookkeep({ key: `retrieved:${slug}:${c.id}`, apply: () => recordOutcome({
           correction_id: c.id,
           project: slug,
           kind: "retrieved",
           at: nowISO,
           evidence: "surfaced at session_start",
           session_id: sessionId,
-        });
+        }) });
       } catch {
         // Outcome tracking must NEVER break orientation — swallow all errors
       }
@@ -1205,9 +1209,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();
   if (sbConfig) {
-    setImmediate(() => {
-      void autoBackfill(slug);
-    });
+    // Owner opt-in sync to the owner's own Supabase; never on the hosted server. Queued so a read pushes nothing.
+    void bookkeep({ key: `backfill:${slug}`, apply: () => { setImmediate(() => { void autoBackfill(slug); }); } });
   }
 
   // Behavior policies — always-loaded high-salience rules. Bump hit counter
@@ -1218,7 +1221,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // same session would double (or triple, ...) count every rule's hits.
   // Cards v2: behaviour policies are always-follow rules the owner registered, so they render in BOTH modes (right
   // before the HARD RULES, as before) and the load is counted in both — nothing registered as a rule goes silent by default.
-  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
+  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) void bookkeep({ key: `policy-load:${slug}`, apply: () => recordPolicyLoad(slug) });
   const behaviorRules = readBehaviorPolicies(slug).rules;
 
   // North-star alignment metric — correction precision (heeded/retrieved).
@@ -1524,7 +1527,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // C2 — lifecycle telemetry: counters only, never transcript content.
   // dup=true means this call's write-phase was idempotent-suppressed (a
   // repeat session_start for this process's session + project).
-  recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
+  // Pure telemetry, never read back by behaviour; queued so the call itself writes nothing (stamped now, not at flush).
+  const calledAt = new Date().toISOString();
+  const wasDup = !isFirstCallThisSession;
+  void bookkeep({ apply: () => recordLifecycleEvent("session_start", sessionId, slug, wasDup, calledAt) });
 
   return result;
 }

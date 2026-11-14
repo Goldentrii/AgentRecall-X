@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getLegacyRoot, getTenantContext, isTenantScoped } from "../types.js";
 import { projectsRootDir, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
+import { bookkeep } from "./deferred-bookkeeping.js";
 import type { ProjectInfo } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -306,12 +307,14 @@ async function stageFailedResolution(reason: string, candidate: string | null): 
   try {
     const { recordUnclaimedProvenance } = await import("./unclaimed.js");
     const { getSessionId } = await import("./session.js");
-    recordUnclaimedProvenance(getSessionId(), {
+    const provenance = {
       cwd: isTenantScoped() ? "(hosted)" : process.cwd(),
       reason,
       slug_candidates: candidate ? [{ slug: candidate, count: 1 }] : [],
       slug_confidence: 0,
-    });
+    };
+    const sid = getSessionId();
+    await bookkeep({ key: `unclaimed:${sid}`, apply: () => { recordUnclaimedProvenance(sid, provenance); } });
   } catch {
     // provenance is best-effort — never let it break resolution
   }
@@ -392,8 +395,11 @@ export async function resolveProject(project: string | undefined): Promise<strin
     const cwd = process.cwd();
     // Hosted: the server's cwd is not the agent's — never teach a tenant's allowlist about it.
     if (!isTenantScoped() && isProjectRoot(cwd)) {
-      const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
-      addCwdToAllowlist(project, cwd);
+      // Teaching the allowlist is bookkeeping: a read must not register a directory.
+      await bookkeep({ key: `cwd:${project}:${cwd}`, apply: async () => {
+        const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
+        addCwdToAllowlist(project, cwd);
+      } });
     }
   } catch {
     // never let allowlist write break resolution
