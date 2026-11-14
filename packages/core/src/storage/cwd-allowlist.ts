@@ -100,6 +100,33 @@ export function readCwdAllowlist(slug: string): CwdAllowlist {
 }
 
 /**
+ * Registrations a read has queued (deferred-bookkeeping.ts) but not yet written. matchCwd consults them, so a
+ * later "auto" call in the same process resolves exactly as if the registration had been written at once:
+ * deferring the write must not change what the next read sees. In memory only; cleared when the write lands.
+ */
+const pendingCwds = new Map<string, Map<string, { slug: string; path: string }>>(); // projects root -> key -> entry
+const MAX_PENDING_CWDS = 256;
+
+function pendingKey(slug: string, normalized: string): string {
+  return `${slug}|${pathCompareKey(normalized)}`;
+}
+
+/** Make a queued (not yet written) registration visible to cwd matching in this process. */
+export function notePendingCwd(slug: string, cwdPath: string): void {
+  if (!cwdPath || !path.isAbsolute(cwdPath)) return;
+  const normalized = normalizePath(cwdPath);
+  const root = projectsRootDir();
+  let m = pendingCwds.get(root);
+  if (!m) pendingCwds.set(root, (m = new Map()));
+  if (m.size >= MAX_PENDING_CWDS) m.delete(m.keys().next().value as string);
+  m.set(pendingKey(slug, normalized), { slug, path: normalized });
+}
+
+function forgetPendingCwd(slug: string, normalized: string): void {
+  pendingCwds.get(projectsRootDir())?.delete(pendingKey(slug, normalized));
+}
+
+/**
  * Atomically add an absolute path to the project's cwd-allowlist (idempotent).
  * Normalizes the path (trailing slash removed).
  */
@@ -108,7 +135,10 @@ export function addCwdToAllowlist(slug: string, cwdPath: string): void {
   const normalized = normalizePath(cwdPath);
   const current = readCwdAllowlist(slug);
   // Case-folded dedupe (win32): two spellings of one directory are one entry.
-  if (current.paths.some((p) => pathCompareKey(p) === pathCompareKey(normalized))) return;
+  if (current.paths.some((p) => pathCompareKey(p) === pathCompareKey(normalized))) {
+    forgetPendingCwd(slug, normalized); // already persisted: nothing left pending
+    return;
+  }
   const next: CwdAllowlist = { paths: [...current.paths, normalized].sort() };
   const dir = palaceDir(slug);
   ensureDir(dir);
@@ -117,6 +147,8 @@ export function addCwdToAllowlist(slug: string, cwdPath: string): void {
   const tmp = `${target}.tmp.${process.pid}.${Date.now()}`;
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { encoding: "utf-8", mode: 0o600 });
   fs.renameSync(tmp, target);
+  // Only after the entry is on disk: a throw above leaves it pending for the next flush.
+  forgetPendingCwd(slug, normalized);
 }
 
 /**
@@ -164,22 +196,24 @@ function matchCwd(cwd: string): CwdMatch | null {
   const normalized = normalizePath(cwd);
   const cwdKey = pathCompareKey(normalized);
   const projectsDir = projectsRootDir();
-  if (!fs.existsSync(projectsDir)) return null;
+  const pending = [...(pendingCwds.get(projectsDir)?.values() ?? [])];
+  if (!fs.existsSync(projectsDir) && pending.length === 0) return null;
 
-  let bestMatch: { slug: string; matchedPath: string } | null = null;
-  for (const entry of fs.readdirSync(projectsDir)) {
-    if (entry.startsWith("_archived_") || entry.startsWith(".")) continue;
-    const list = readCwdAllowlist(entry); // entries arrive re-normalized (realpath'd)
-    for (const p of list.paths) {
-      // Exact match OR cwd lives strictly under p — case-folded on win32.
-      const pKey = pathCompareKey(p);
-      if (cwdKey === pKey || cwdKey.startsWith(pKey + "/")) {
-        if (!bestMatch || p.length > bestMatch.matchedPath.length) {
-          bestMatch = { slug: entry, matchedPath: p };
-        }
-      }
+  const best: { hit: { slug: string; matchedPath: string } | null } = { hit: null };
+  const consider = (slug: string, p: string): void => {
+    // Exact match OR cwd lives strictly under p — case-folded on win32.
+    const pKey = pathCompareKey(p);
+    if (cwdKey === pKey || cwdKey.startsWith(pKey + "/")) {
+      if (!best.hit || p.length > best.hit.matchedPath.length) best.hit = { slug, matchedPath: p };
     }
+  };
+  const entries = fs.existsSync(projectsDir) ? fs.readdirSync(projectsDir) : [];
+  for (const entry of entries) {
+    if (entry.startsWith("_archived_") || entry.startsWith(".")) continue;
+    for (const p of readCwdAllowlist(entry).paths) consider(entry, p); // entries arrive re-normalized (realpath'd)
   }
+  for (const e of pending) consider(e.slug, e.path);
+  const bestMatch = best.hit;
   if (!bestMatch) return null;
   return {
     slug: bestMatch.slug,

@@ -12,6 +12,7 @@
  */
 import type { HostTier } from "agent-recall-core";
 import { createMcpServer, type ServerType } from "./server.js";
+import { installBookkeeping } from "./lib/bookkeeping.js";
 import { installAmbientCapture } from "./lib/ambient-capture.js";
 import { installHostedRedaction } from "./lib/hosted-redact.js";
 
@@ -48,6 +49,8 @@ export interface BuildServerOptions {
 export function buildServer(opts: BuildServerOptions): ServerType {
   const server = createMcpServer(opts.tier);
 
+  // Read-only tools queue their bookkeeping, write tools apply it. First, so it is the outermost wrapper.
+  installBookkeeping(server);
   // C-1 — must wrap registerTool BEFORE any registration (see ambient-capture.ts).
   if (opts.ambientCapture) installAmbientCapture(server);
   // Hosted backstop — also before any registration (see lib/hosted-redact.ts).

@@ -21,7 +21,8 @@
  * of that durability guarantee, never a replacement for it.
  */
 
-import { getSessionId, distillSessionToCard, isHookOwnedHost } from "agent-recall-core";
+import { getSessionId, distillSessionToCard, isHookOwnedHost, flushAllBookkeeping } from "agent-recall-core";
+import { PRE_WRITE_FLUSH_MS, settleWithin } from "./bookkeeping.js";
 
 /** Hard ceiling on how long this handler may delay process exit (design doc C-3 guard). */
 const EXIT_TIMEOUT_MS = 2000;
@@ -29,7 +30,7 @@ const EXIT_TIMEOUT_MS = 2000;
 /** Idempotency guard — `stdin` "end" AND "close" can both fire, and a signal could race either. */
 let fired = false;
 
-function runOnce(): void {
+async function runOnce(): Promise<void> {
   if (fired) return;
   fired = true;
 
@@ -44,6 +45,8 @@ function runOnce(): void {
   forceExit.unref();
 
   try {
+    // Queued read bookkeeping (including the working-memory notes of read-only calls) lands first, so the distill sees it.
+    await settleWithin(flushAllBookkeeping(), PRE_WRITE_FLUSH_MS);
     // Reuses the SAME WM→card mechanism C-2's orphan-rescue sweep uses
     // (distillOneSession, storage/working-memory.ts) for THIS process's own,
     // still-fresh session id — no age gate, because this fires precisely
@@ -65,25 +68,47 @@ function runOnce(): void {
  * registered listener a no-op, but this function itself is not meant to be
  * (and is not) called more than once.
  *
- * H1 fix (review, post-build) — no-op on a hook-owned host (see
- * `isHookOwnedHost`'s doc comment, agent-recall-core/host-profile.ts, for
- * the full root-cause writeup, and ambient-capture.ts's matching gate on
- * `installAmbientCapture`, which this mirrors). On Claude Code with hooks
- * active, hook-end already owns end-of-session distillation for the REAL
- * session id; this module's `distillSessionToCard(getSessionId())` targets
- * a different, MCP-process-local random id. Post the ambient-capture gate,
- * that id has no working-memory file to distill anyway, so this handler
- * would already be a no-op in practice — but registering the SIGTERM/SIGINT
- * listeners themselves is still skipped, so this MCP server process never
- * intercepts a signal that the host's own hook/process-supervision stack
- * expects to observe unhandled (e.g. Node's default terminate-on-SIGTERM),
- * and never calls `process.exit(0)` on a host that did not ask for that.
+ * Hook-owned host (see `isHookOwnedHost`, agent-recall-core/host-profile.ts; ambient-capture.ts gates the
+ * same way): hook-end owns distillation for the REAL session id, so this process does NOT distill and never
+ * calls process.exit(0) on its own. It installs flush-only handlers instead (installFlushOnlyHandlers): the
+ * queued read bookkeeping belongs to this process, so it is flushed (bounded) on stdin end/close and on
+ * SIGTERM/SIGINT, and a signal is then re-raised with its handler removed so the process still dies of it.
  */
 export function installLifecycleExitHandlers(): void {
-  if (isHookOwnedHost()) return;
+  if (isHookOwnedHost()) {
+    installFlushOnlyHandlers();
+    return;
+  }
 
   process.stdin.on("end", runOnce);
   process.stdin.on("close", runOnce);
   process.on("SIGTERM", runOnce);
   process.on("SIGINT", runOnce);
+}
+
+/**
+ * Hook-owned host (Claude Code with hooks): hook-end owns distillation, so none happens here, and this process
+ * never calls process.exit(0) on its own. But the queued read bookkeeping (counters, lifecycle telemetry, recall
+ * ratings) belongs to THIS process and nothing else will flush it, so it is flushed (bounded) on stdin end/close
+ * and on SIGTERM/SIGINT. A signal is then re-raised with the handler removed, so the process still dies of the
+ * signal exactly as it would have without a handler; stdin close just lets the process exit naturally.
+ */
+let flushOnlyRun: Promise<void> | undefined;
+/** One bounded flush shared by every trigger: a SIGTERM arriving after stdin closed waits for the SAME flush. */
+function flushOnce(): Promise<void> {
+  flushOnlyRun ??= settleWithin(flushAllBookkeeping(), PRE_WRITE_FLUSH_MS);
+  return flushOnlyRun;
+}
+
+function installFlushOnlyHandlers(): void {
+  process.stdin.on("end", () => { void flushOnce(); });
+  process.stdin.on("close", () => { void flushOnce(); });
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    const handler = (): void => {
+      process.removeListener(sig, handler);
+      // If the flush hangs, the bounded wait still ends and the signal is re-raised.
+      void flushOnce().finally(() => { process.kill(process.pid, sig); });
+    };
+    process.on(sig, handler);
+  }
 }

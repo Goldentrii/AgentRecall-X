@@ -100,6 +100,7 @@ export function recordLifecycleEvent(
   sessionId: string,
   project: string,
   dup: boolean,
+  at: string = new Date().toISOString(),
 ): void {
   try {
     const dir = telemetryDir();
@@ -111,7 +112,7 @@ export function recordLifecycleEvent(
       sessionId,
       project,
       host_tier: resolveHostProfile().tier,
-      at: new Date().toISOString(),
+      at,
       dup,
     };
     fs.appendFileSync(p, JSON.stringify(row) + "\n", "utf-8");

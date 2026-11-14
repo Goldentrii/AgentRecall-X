@@ -102,6 +102,7 @@ import { tokenizeWords } from "../helpers/tokenize.js";
 import { stem } from "../helpers/normalize.js";
 import { withLock } from "../storage/filelock.js";
 import { writeJsonAtomic } from "../storage/fs-utils.js";
+import { bookkeep } from "../storage/deferred-bookkeeping.js";
 
 const INDEX_VERSION = 1;
 const INDEX_FILENAME = "lexical-journal-v1.json";
@@ -514,7 +515,8 @@ export async function loadJournalLexicalSnapshot(
     for (const k of [...state.contents.keys()]) {
       if (!keep.has(k)) dropContent(state, k);
     }
-    if (dirty) await persistEntries(project, indexPath, keep);
+    // A derived cache, not memory: persisting it is bookkeeping (the in-process state above already serves this call).
+    if (dirty) await bookkeep({ key: `lexical-index:${indexPath}`, apply: () => persistEntries(project, indexPath, keep) });
 
     // ---- build snapshot structures (postings + memoized lookups) ----
     const runPostings = new Map<string, number[]>();
