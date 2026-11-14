@@ -8,6 +8,8 @@
  *   agent-recall-server token list   [--data DIR]
  *   agent-recall-server token revoke <id> [--data DIR]
  *   agent-recall-server usage        [--quota-mb 100] [--data DIR]
+ *   agent-recall-server stats        [--days 7] [--json] [--data DIR]     (daily counts, no personal data)
+ *   agent-recall-server alert test                                       (one Telegram test message)
  *   agent-recall-server identity link --github-id <n> | --google-sub <s> [--uid <uid>] [--data DIR]
  *   agent-recall-server identity unlink --github-id <n> | --google-sub <s> [--data DIR]
  *   agent-recall-server identity list [--data DIR]
@@ -20,6 +22,7 @@
  *
  * OAuth (optional): serve [--public-url URL], plus GitHub and/or Google client env vars
  * AR_PUBLIC_URL + AR_OAUTH_{GITHUB,GOOGLE}_CLIENT_ID/_SECRET; see docs/hosted-server.md.
+ * Error alerts (optional): AR_ALERT_TELEGRAM_BOT_TOKEN + AR_ALERT_TELEGRAM_CHAT_ID.
  *
  * DIR = --data or AR_SERVER_DATA (required; no implicit default, so a server
  * can never silently write tenants into the operator's home).
@@ -34,6 +37,8 @@ import { dirSize } from "./limits.js";
 import { loadOAuthConfig, OAuthConfigError } from "./oauth-config.js";
 import { linkIdentity, listIdentities, unlinkIdentity } from "./identities.js";
 import { operatorRevokeGrant, operatorRevokeUid, readGrantsFresh, readJsonFreshRevoked } from "./oauth-store.js";
+import { readSnapshots, formatStats } from "./stats.js";
+import { Alerter, loadAlertConfig, testAlertText } from "./alerts.js";
 
 const USAGE = `agent-recall-server v${VERSION}
 
@@ -44,6 +49,8 @@ Usage:
   agent-recall-server token list [--data DIR]
   agent-recall-server token revoke <id> [--data DIR]
   agent-recall-server usage [--quota-mb 100] [--data DIR]
+  agent-recall-server stats [--days 7] [--json] [--data DIR]
+  agent-recall-server alert test
   agent-recall-server identity link --github-id <n> [--uid <uid>] [--data DIR]
   agent-recall-server identity link --google-sub <s> [--uid <uid>] [--data DIR]
   agent-recall-server identity unlink --github-id <n> | --google-sub <s> [--data DIR]
@@ -68,6 +75,15 @@ Sign-up is invite-only by default: only accounts invited with 'identity link' ca
 (omit --uid to give the account its own gh-<id> / gg-<sub> tenant). AR_OAUTH_SIGNUP=open lets anyone in.
 Optional env: AR_OAUTH_REDIRECT_ALLOW (extra redirect URI prefixes, comma-separated),
 AR_TRUST_PROXY=1 (trust one proxy hop for client IPs; set it behind Caddy).
+
+Usage statistics: 'stats' prints daily counts (requests, tool calls, distinct users, sign-ups,
+new agents, errors, latency, page views, referring sites) for the last --days (1-400, default 7),
+today live (written at most once a minute). Counts only: no user id, token or content is stored.
+
+Error alerts to Telegram are on only when both are set (see docs/hosted-server.md):
+  $AR_ALERT_TELEGRAM_BOT_TOKEN   the bot's token from BotFather
+  $AR_ALERT_TELEGRAM_CHAT_ID     the chat that receives the alerts
+At most one message per error kind per 10 minutes. 'alert test' sends one test message.
 
 Per-user limits: --quota-mb ($AR_SERVER_QUOTA_MB, default 100) and
 --rate-per-min ($AR_SERVER_RATE_PER_MIN, default 120); 0 = off.
@@ -176,11 +192,15 @@ async function main(argv: string[]): Promise<void> {
       if (err instanceof OAuthConfigError) fail(err.message);
       throw err;
     }
-    const server = await startHttpServer({ dataDir: dir, port, host, full: args.includes("--full"), quotaBytes: quota, ratePerMinute: rate, oauth });
+    // A wrong alert setting turns alerts off with a warning; it never stops the server.
+    const alert = loadAlertConfig();
+    if (alert.problem) process.stderr.write(`agent-recall-server: ${alert.problem}\n`);
+    const server = await startHttpServer({ dataDir: dir, port, host, full: args.includes("--full"), quotaBytes: quota, ratePerMinute: rate, oauth, alerts: alert.config });
     process.stderr.write(
       `agent-recall-server v${VERSION} listening on http://${host}:${port}/mcp (data: ${dir}; ` +
       `quota ${quota > 0 ? formatMb(quota) + "/user" : "off"}; rate ${rate > 0 ? `${rate} req/min/user` : "off"}; ` +
-      `oauth ${oauth ? `on, issuer ${oauth.publicUrl.origin}, login: ${Object.keys(oauth.providers).join("+")}` : "off"})\n`,
+      `oauth ${oauth ? `on, issuer ${oauth.publicUrl.origin}, login: ${Object.keys(oauth.providers).join("+")}` : "off"}; ` +
+      `alerts ${alert.config ? "on (telegram)" : "off"})\n`,
     );
 
     // Graceful drain: stop accepting, let in-flight memory writes finish, then
@@ -434,6 +454,30 @@ async function main(argv: string[]): Promise<void> {
       const share = quota > 0 ? `${Math.round((bytes / quota) * 100)}% of ${formatMb(quota)}` : "no quota";
       process.stdout.write(`${uid.padEnd(width)}  ${bytes} bytes  ${share}\n`);
     }
+    return;
+  }
+
+  if (cmd === "stats") {
+    const args = argv.slice(1);
+    const dir = dataDir(args);
+    const daysArg = flag(args, "--days") ?? "7";
+    if (!/^\d{1,3}$/.test(daysArg) || Number(daysArg) < 1 || Number(daysArg) > 400) fail(`--days must be 1-400, got "${daysArg}"`);
+    const now = Date.now();
+    const rows = readSnapshots(dir, Number(daysArg), now);
+    process.stdout.write(args.includes("--json") ? JSON.stringify({ generated_at: new Date(now).toISOString(), days: rows }, null, 2) + "\n" : formatStats(rows, now));
+    return;
+  }
+
+  if (cmd === "alert") {
+    if (sub !== "test" || rest.length > 0) fail("usage: agent-recall-server alert test");
+    const { config, problem } = loadAlertConfig();
+    if (!config) fail(problem ?? "alerts are off: set AR_ALERT_TELEGRAM_BOT_TOKEN and AR_ALERT_TELEGRAM_CHAT_ID");
+    const r = await new Alerter({ config, version: VERSION }).send(testAlertText(VERSION, Date.now()));
+    if (!r.ok) {
+      process.stderr.write(`alert test failed: ${r.reason}. Check the bot token, that the bot is in the chat (or that you sent it /start), and the chat id.\n`);
+      process.exit(1);
+    }
+    process.stdout.write("sent a test message to the Telegram chat\n");
     return;
   }
 

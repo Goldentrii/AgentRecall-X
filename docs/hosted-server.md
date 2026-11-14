@@ -49,7 +49,7 @@ To update, re-run `setup.sh` with a newer `AR_REF`. **Never run `docker compose 
 
 ### Restricted deploy key (let an agent deploy, nothing else)
 
-`deploy/hosted/remote.sh` is a forced command for one SSH key. Whoever holds that key, for example a coding agent on your laptop, can run exactly four requests and gets no shell:
+`deploy/hosted/remote.sh` is a forced command for one SSH key. Whoever holds that key, for example a coding agent on your laptop, can run exactly five requests and gets no shell:
 
 | Request | Does |
 |---|---|
@@ -57,6 +57,7 @@ To update, re-run `setup.sh` with a newer `AR_REF`. **Never run `docker compose 
 | `status` | Deployed commit, container status, `/healthz` |
 | `logs [N]` | Last N server log lines (default 50, max 500) |
 | `usage` | Storage per user |
+| `stats [N]` | Daily usage counts for the last N days (default 7, max 400): `agent-recall-server stats --days N`. Counts only, no personal data |
 
 Anything else (a login shell, `scp`, other commands, shell syntax) is refused.
 
@@ -70,9 +71,9 @@ Set it up once:
    sudo install -m 755 remote.sh /usr/local/bin/agent-recall-remote
    printf '\nrestrict,command="/usr/local/bin/agent-recall-remote" %s\n' "<contents of agent_recall_deploy.pub>" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
    ```
-3. Use it: `ssh -i ~/.ssh/agent_recall_deploy ubuntu@<server> status` (or `deploy <sha>`, `logs 100`, `usage`).
+3. Use it: `ssh -i ~/.ssh/agent_recall_deploy ubuntu@<server> status` (or `deploy <sha>`, `logs 100`, `usage`, `stats 30`).
 
-The key has no passphrase so an agent can use it unattended; what it can do is limited to the four requests above. Since `deploy` runs the repo's own `setup.sh` with sudo, the real gate is that only reviewed code reaches `main` (protect the branch). To revoke, delete that line from `~/.ssh/authorized_keys`. The script's tests: `bash deploy/hosted/remote.test.sh` (Linux, needs `flock`). Re-run step 2's `install` line with a newer commit to update the script.
+The key has no passphrase so an agent can use it unattended; what it can do is limited to the five requests above. Since `deploy` runs the repo's own `setup.sh` with sudo, the real gate is that only reviewed code reaches `main` (protect the branch). To revoke, delete that line from `~/.ssh/authorized_keys`. The script's tests: `bash deploy/hosted/remote.test.sh` (Linux, needs `flock`). Re-run step 2's `install` line with a newer commit to update the script; a new request such as `stats` exists on the server only after that.
 
 ### Change the domain, keep the old one working
 
@@ -323,8 +324,25 @@ The same process serves a small website at `<AR_PUBLIC_URL>/`, so a person who o
 
 - **Health:** `GET /healthz` returns `{ ok, version }`. The Docker image has a `HEALTHCHECK`.
 - **Logs:** one line per request (method, path, uid, status, ms) on stderr. Tokens and bodies are never logged.
+- **Usage statistics:** the server counts each UTC day in memory and writes one file per day, `_server/stats/YYYY-MM-DD.json` (at most once a minute, at midnight UTC and on shutdown; files older than 400 days are deleted). Counts only: MCP requests (every completed request to `/mcp`, refused ones included), tool calls by tool name, distinct active users (deduplicated in memory, only the number is written), sign-ups (an account's first sign-in, which creates its memory space), newly connected agents (a sign-in or token making its first request), HTTP 4xx/5xx by route class (`mcp`, `oauth`, `connect`, `review`, `site`, `health`, `other`), internal errors by kind, MCP latency p50/p95 (a fixed-bucket histogram, shown as "<= N ms"), page views of the site's own pages (a fixed list of paths) and which well-known site linked to a page (a fixed list in `stats.ts`, for example `github.com`, `google`, `news.ycombinator.com`; subdomains fold into their site; any other site is counted only as `(other)`, so a personal or private host name is never written). No user id, token, path parameter, query string, IP address, user agent or memory content is ever written. `agent-recall-server stats [--days 7] [--json]` prints a table (today live, then past days) and the breakdown; from a laptop with the deploy key: `ssh -i ~/.ssh/agent_recall_deploy ubuntu@<server> stats 30`. Pages crawled by bots count as views (no user agent is kept to tell them apart). A failed write keeps the counts in memory and retries with backoff (a day that still cannot be written after a week is dropped, with a log line and an alert); a failure at shutdown is logged. After a restart the same day the server continues from that day's file; after a crash the last minute of counts is lost and distinct users or new agents can be slightly over-counted. A request running across midnight UTC may count on both days.
+- **Error alerts (Telegram, optional):** internal failures send a message to the owner's Telegram chat, at most one per error kind per 10 minutes, carrying the count since the last one. Kinds: `mcp_internal` (500 on `/mcp`), `token_store` (tokens file unreadable), `oauth_internal` (500 on a sign-in route), `http_5xx` (any other 5xx, by route class), `activity_write` and `stats_write` (a file could not be written: disk full or permissions). A message holds the kind, the count, the route class, the top stack frame inside AgentRecall's own code (for example `mcp-server/http/serve.js:212`), the server version and the time: never a user id, token, path parameter, body, memory content or the error message itself. The only outbound host is `api.telegram.org`; a call times out after 5 s and never delays a request. Alerts are off unless both variables below are set. Set them up once:
+  1. In Telegram, open a chat with **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`. BotFather replies with the bot's token (`<digits>:<letters>`). Treat it like a password.
+  2. Open a chat with your new bot and send it `/start` (a bot cannot message you first). For a group instead, add the bot to the group.
+  3. Find the chat id after step 2, without putting the token in your shell history or browser history:
+     ```bash
+     read -rs TOKEN && curl -fsS "https://api.telegram.org/bot$TOKEN/getUpdates" | grep -o '"chat":{"id":-\?[0-9]*'; unset TOKEN
+     ```
+     (paste the token at the silent prompt; a group id is negative). Or ask **@userinfobot** for your own id.
+  4. On the server, add both to `/opt/agent-recall/deploy/hosted/.env` (see `deploy/hosted/.env.example`) and keep that file private (`sudo chmod 600 .env`):
+     ```bash
+     AR_ALERT_TELEGRAM_BOT_TOKEN=123456789:AA...
+     AR_ALERT_TELEGRAM_CHAT_ID=123456789
+     ```
+  5. Apply and check: `cd /opt/agent-recall/deploy/hosted && sudo env AR_CADDYFILE_SHA=$(sha256sum Caddyfile | cut -d" " -f1) docker compose up -d`, then `sudo docker compose exec server agent-recall-server alert test` (one test message; exit 1 with the reason if it fails). The start-up line in `docker compose logs server` ends in `alerts on (telegram)`; a malformed value prints why alerts are off (never the value) and the server starts anyway.
+
+  To turn alerts off, empty or remove the two lines and apply again. To stop a leaked token, send `/revoke` to @BotFather. Anyone with Docker access on the box can read the token from the container's environment; the restricted deploy key cannot. Unauthenticated traffic can cause an alert (for example a 5xx it provokes), but never more than one message per kind per 10 minutes.
 - **Backups:** back up the whole data volume. A user's memory is plain files under `tenants/<uid>/`.
-- **Deleting a user:** revoke their tokens, then delete `tenants/<uid>/` and `_server/activity/<uid>.json`.
+- **Deleting a user:** revoke their tokens, then delete `tenants/<uid>/` and `_server/activity/<uid>.json`. The daily statistics hold no per-user data, so nothing there needs deleting.
 - **Per-user limits (on by default):**
 
   | Limit | Default | Set with | When exceeded |
@@ -341,7 +359,7 @@ The same process serves a small website at `<AR_PUBLIC_URL>/`, so a person who o
 - **Server-wide limits:**
   - Request bodies are capped at 4 MiB, with a delivered `413`.
   - At most 64 concurrent in-flight MCP requests across all users; beyond that the server returns `503` with `retry-after`.
-- **Shutdown:** SIGTERM/SIGINT drains in-flight requests (up to 8 s) before exiting.
+- **Shutdown:** SIGTERM/SIGINT drains in-flight requests (up to 8 s), then writes buffered agent activity and today's statistics before exiting.
 - **Token store:** if `tokens.json` is unreadable, requests get `503 auth_unavailable` rather than being let through; the server recovers as soon as the file is valid again.
 
 ## Not in v1

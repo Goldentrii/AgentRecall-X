@@ -36,6 +36,9 @@ services:
       AR_PRIVACY_URL: ${AR_PRIVACY_URL:-}  # optional https link to the privacy policy, shown on the sign-in page
       AR_OAUTH_SIGNUP: ${AR_OAUTH_SIGNUP:-}  # empty = invite-only (only accounts added with `identity link`); "open" = anyone
       AR_TRUST_PROXY: "1"  # Caddy is the one proxy hop in front
+      # Error alerts to the owner's Telegram chat: on only when both are set in .env (see .env.example).
+      AR_ALERT_TELEGRAM_BOT_TOKEN: ${AR_ALERT_TELEGRAM_BOT_TOKEN:-}
+      AR_ALERT_TELEGRAM_CHAT_ID: ${AR_ALERT_TELEGRAM_CHAT_ID:-}
     volumes:
       - ar-data:/data
     expose:

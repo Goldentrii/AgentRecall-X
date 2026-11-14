@@ -12,6 +12,7 @@
 #   status                   containers, deployed commit, /healthz
 #   logs [N]                 last N (default 50, max 500) server log lines
 #   usage                    storage per user
+#   stats [N]                daily usage counts, last N days (default 7, max 400); no personal data
 #
 # AR_REMOTE_DRY_RUN=1 (tests only; sshd never passes client env through) prints the
 # action instead of running it. Removing the key's line from authorized_keys revokes it.
@@ -30,7 +31,7 @@ run() { if [[ "$DRY" == "1" ]]; then printf 'DRY-RUN: %s\n' "$*"; else "$@"; fi;
 
 req="${SSH_ORIGINAL_COMMAND:-}"
 # Plain words only: no shell syntax can reach a command line, whatever the client sends.
-[[ "$req" =~ ^[a-z]+(\ [0-9a-f]{1,40})?$ ]] || deny "allowed: deploy <commit> | status | logs [N] | usage"
+[[ "$req" =~ ^[a-z]+(\ [0-9a-f]{1,40})?$ ]] || deny "allowed: deploy <commit> | status | logs [N] | usage | stats [N]"
 verb="${req%% *}"
 arg=""
 [[ "$req" == *" "* ]] && arg="${req#* }"
@@ -85,6 +86,12 @@ case "$verb" in
   usage)
     [[ -z "$arg" ]] || deny "usage takes no argument"
     run sudo docker compose --project-directory "$HOSTED_DIR" exec -T server agent-recall-server usage
+    ;;
+  stats)
+    n="${arg:-7}"
+    # 10# reads "09" as nine, not as an invalid octal number.
+    [[ "$n" =~ ^[0-9]{1,3}$ ]] && (( 10#$n >= 1 && 10#$n <= 400 )) || deny "stats N (days) must be 1-400"
+    run sudo docker compose --project-directory "$HOSTED_DIR" exec -T server agent-recall-server stats --days "$((10#$n))"
     ;;
   *)
     deny "unknown request '$verb'"

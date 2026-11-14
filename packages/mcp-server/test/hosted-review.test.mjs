@@ -519,6 +519,21 @@ describe("review page — sessions and invites (in-process)", () => {
     }
   });
 
+  it("a first website sign-in counts one sign-up (usage stats); signing in again does not", async () => {
+    const env = await startEnv();
+    try {
+      await signIn(new Browser(env.base), env.mock, "github", { id: 4321 });
+      assert.ok(fs.existsSync(path.join(env.dataDir, "tenants", "gh-4321")));
+      await signIn(new Browser(env.base), env.mock, "github", { id: 4321 });
+    } finally {
+      await env.close(); // closing the server writes today's counts
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const s = JSON.parse(fs.readFileSync(path.join(env.dataDir, "_server", "stats", `${day}.json`), "utf-8"));
+    assert.equal(s.signups, 1);
+    assert.ok(!JSON.stringify(s).includes("4321"));
+  });
+
   it("a session expires after 30 minutes, and ends when the operator unlinks the account", async () => {
     const env = await startEnv({ signup: "invite" });
     try {

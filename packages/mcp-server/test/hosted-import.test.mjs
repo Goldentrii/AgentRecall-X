@@ -22,6 +22,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startMock, b64url, sha256b64, GH } from "./lib/mock-providers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+/** No memory in a tenant: the directory is absent, or empty (a first sign-in creates it empty). */
+const noMemory = (dir) => !fs.existsSync(dir) || fs.readdirSync(dir).length === 0;
 const DIST = path.join(here, "..", "dist", "http");
 const readSrc = (f) => fs.readFileSync(path.join(here, "..", "src", "http", f), "utf8");
 const load = (f) => import(pathToFileURL(path.join(DIST, f)).href);
@@ -543,7 +545,7 @@ describe("import — who may import", () => {
       }
       assert.equal(r.status, status, `${label}: ${r.text.slice(0, 200)}`);
       assert.ok(!fs.existsSync(env.staging), `${label}: staging was never even created`);
-      assert.ok(!fs.existsSync(env.tenants("gh-21")), `${label}: nothing in the tenant`);
+      assert.ok(noMemory(env.tenants("gh-21")), `${label}: nothing in the tenant`);
     }
   });
 
@@ -841,7 +843,7 @@ describe("import — rules are opt-in, digests never", () => {
       for (const missing of ["mode", "confirm", "rules_seen"]) {
         const r = await u.b.upload({ csrf: u.csrf, [missing]: undefined }, tarOf(GOOD));
         assert.equal(r.status, 400, missing);
-        assert.ok(!fs.existsSync(env.staging) && !fs.existsSync(env.tenants("gh-63")), missing);
+        assert.ok(!fs.existsSync(env.staging) && noMemory(env.tenants("gh-63")), missing);
       }
       assert.equal((await u.b.upload({ csrf: u.csrf, rules: "yes" }, tarOf(GOOD))).status, 400, "a bad rules value");
       assert.equal((await u.b.upload({ csrf: u.csrf, mode: "merge" }, tarOf(GOOD))).status, 400, "a bad mode");

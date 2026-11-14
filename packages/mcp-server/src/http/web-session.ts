@@ -99,6 +99,8 @@ export interface WebSessionDeps {
   log: (line: string) => void;
   now: () => number;
   pages: WebPages;
+  /** A federated account signed in on the website (after the invite check). serve.ts counts first sign-ins; must not throw. */
+  onSignIn?: (uid: string) => void;
 }
 
 export const str = (v: unknown, max: number): string | null =>
@@ -251,6 +253,7 @@ export class WebSession {
       uid, provider: login.provider, subject, csrf: b64url(randomBytes(32)), created: t, actions: 0, actionsReset: t + ACTION_WINDOW_MS,
     });
     this.d.log(`[${sf}] signed in ${login.provider}=${subject} uid=${uid}`);
+    try { this.d.onSignIn?.(uid); } catch { /* a counter never fails a sign-in */ }
     return { kind: "redirect", status: 302, location: SURFACES[sf].path, cookies: [...this.sessionCookies(token), ...clear] };
   }
 

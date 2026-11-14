@@ -91,7 +91,7 @@ async function startEnv({ oauth = true, providers = ["github", "google"], loginL
     throw err;
   }
   return {
-    base, dataDir, mock, clock, logs, config,
+    base, dataDir, mock, clock, logs, config, server,
     async close() {
       server.closeAllConnections?.();
       await new Promise((r) => server.close(r));
@@ -1414,6 +1414,46 @@ describe("oauth — privacy policy link", () => {
       assert.doesNotMatch(a.html, /Privacy policy/);
     } finally {
       await off.close();
+    }
+  });
+});
+
+describe("oauth — usage stats: sign-ups", () => {
+  const day = () => new Date().toISOString().slice(0, 10);
+  const snap = (env) => {
+    env.server.flushActivity();
+    const f = path.join(env.dataDir, "_server", "stats", `${day()}.json`);
+    return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf-8")) : null;
+  };
+
+  it("the first sign-in of an account creates its memory space and counts one sign-up; repeats do not", async () => {
+    const env = await startEnv();
+    try {
+      const client = await newClient(env);
+      assert.ok(!fs.existsSync(path.join(env.dataDir, "tenants", "gh-5150")));
+      await getTokens(env, client, { profile: { id: 5150 } });
+      assert.ok(fs.existsSync(path.join(env.dataDir, "tenants", "gh-5150")), "the account's memory space exists after its first sign-in");
+      await getTokens(env, client, { profile: { id: 5150 } });
+      await getTokens(env, client, { provider: "google", profile: { sub: "1000000000000005150" } });
+      const s = snap(env);
+      assert.equal(s.signups, 2, "two accounts, three sign-ins");
+      const raw = JSON.stringify(s);
+      for (const needle of ["gh-5150", "gg-1000000000000005150", "1000000000000005150"]) assert.ok(!raw.includes(needle), needle);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("a refused (not invited) sign-in creates nothing and counts nothing", async () => {
+    const env = await startEnv({ signup: "invite" });
+    try {
+      const a = await authorize(env, await newClient(env));
+      const { cb } = await attempt(env, a, "github", { profile: { id: 5151 } });
+      assert.equal(cb.status, 403);
+      assert.ok(!fs.existsSync(path.join(env.dataDir, "tenants", "gh-5151")));
+      assert.equal(snap(env)?.signups ?? 0, 0);
+    } finally {
+      await env.close();
     }
   });
 });
