@@ -34,8 +34,9 @@ const sha = (s: string): string => `'sha256-${createHash("sha256").update(s, "ut
 
 export function loadFilm(dir: string): Film | null {
   try {
-    const css = fs.readFileSync(`${dir}/film.css`, "utf8");
-    const script = fs.readFileSync(`${dir}/film.js`, "utf8");
+    // The HTML parser turns CRLF into LF before a CSP hash is checked (Windows checkouts), so hash the LF form.
+    const css = fs.readFileSync(`${dir}/film.css`, "utf8").replace(/\r?\n/g, "\n");
+    const script = fs.readFileSync(`${dir}/film.js`, "utf8").replace(/\r?\n/g, "\n");
     // Both are inlined: neither may be able to close its own element.
     if (/<\/style/i.test(css) || /<\/script/i.test(script)) return null;
     const plates = new Map<string, Buffer>();
@@ -74,14 +75,15 @@ export function plateHeaders(length: number): Record<string, string> {
 interface Beat { from: string; to: string; kicker?: string; h: string; p?: string; first?: boolean }
 const BEATS: readonly Beat[] = [
   { from: "-1", to: "0.13", kicker: "Session 1", h: "Two kinds of intelligence.", first: true,
-    p: "You think in intuition and fragments. Your agent thinks in tokens and logic. The distance between you is structural." },
+    p: "You think in intuition and fragments. Your agent thinks in tokens and logic. Intelligent Distance is the gap between what you mean and what it builds." },
   { from: "0.15", to: "0.27", kicker: "A misunderstanding", h: "It built it well. It was not what you meant.",
-    p: "Next week a new session, or a different agent, makes the same mistake. The correction lived in a chat nobody reads." },
-  { from: "0.29", to: "0.355", kicker: "You correct it", h: "One correction crosses the gap." },
-  { from: "0.40", to: "0.58", kicker: "Session 2", h: "It is remembered. By every agent.",
+    p: "The gap is not a fault in either side. A correction made in one chat is gone by the next session, or the next agent." },
+  { from: "0.29", to: "0.355", kicker: "You correct it", h: "One correction crosses the gap.",
+    p: "A correction you approve becomes a rule, with its reason and where it applies." },
+  { from: "0.40", to: "0.58", kicker: "Session 2", h: "It is remembered. By every connected agent.",
     p: "Claude Code, Codex, Cursor, claude.ai: each one starts from what you taught the last one." },
   { from: "0.66", to: "0.80", kicker: "Session 50", h: "Each time it matters, it is measured.",
-    p: "Heeded, or repeated. A rule that keeps failing gets rewritten. The agent starts to think in your shape." },
+    p: "Heeded, or repeated. A rule that keeps failing gets rewritten. Each outcome narrows the distance." },
 ];
 
 export function filmPage(film: Film, ctx: SiteCtx): string {
@@ -103,9 +105,9 @@ export function filmPage(film: Film, ctx: SiteCtx): string {
     `<a class="skip" href="#doors">Skip to content</a>` +
     `<canvas id="stage" aria-hidden="true"></canvas>` +
     `<header class="top"><a class="brand" href="/" aria-label="AgentRecall home"><span class="mark"></span>AgentRecall</a>` +
-    `<nav aria-label="Main"><a href="/connect">Connect an agent</a><a href="/local">Run it locally</a><a href="${REPO_URL}" rel="noopener">GitHub</a></nav></header>` +
+    `<nav aria-label="Main"><a class="btn sm" href="/connect">Connect an agent</a><a class="btn sm alt" href="/local">Run it locally</a><a href="${REPO_URL}" rel="noopener">GitHub</a></nav></header>` +
     `<div class="meter" aria-hidden="true"><span id="session">SESSION 01</span><span id="dist">DISTANCE 1.00</span></div>` +
-    `<div class="hint" aria-hidden="true">Scroll</div>` +
+    `<div class="hint" aria-hidden="true">Scroll</div><a class="skipfilm" href="#doors">Skip the film</a>` +
     `<main id="track">${beats}` +
     `<section class="beat end" data-from="0.86" data-to="2">` +
     `<h2>The distance never closes.<br>It gets measured, and it gets shorter.</h2>` +

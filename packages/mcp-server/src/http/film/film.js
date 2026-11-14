@@ -37,6 +37,9 @@ float sep(float q){
   return 0.50 - 0.13 * smoothstep(0.33, 0.42, q) - 0.10 * smoothstep(0.58, 0.67, q) - 0.05 * smoothstep(0.80, 0.95, q);
 }
 // a square plate centred at ctr with height s; edges fade so the square never shows
+const vec3 GOLD = vec3(0.961, 0.769, 0.318);
+// the human plate is graded toward gold; luminance is kept, so detail is not washed out
+vec3 gold(vec3 c){ float l = dot(c, vec3(0.299, 0.587, 0.114)); return mix(c, GOLD * l * 1.55, 0.6); }
 vec3 plate(sampler2D t, vec2 c, vec2 ctr, float s){
   vec2 q = (c - ctr) / s + 0.5;
   if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return vec3(0.0);
@@ -52,7 +55,7 @@ vec3 scene(vec2 c, float a){
   float sp = sep(p) * fit;
   vec2 hc = vec2(-sp, 0.07) + mouse * vec2(-0.012, 0.008);
   vec2 mc = vec2( sp, 0.07) + mouse * vec2( 0.012, 0.008);
-  vec3 col = plate(H, c, hc, s);
+  vec3 col = gold(plate(H, c, hc, s));
 
   // machine: monolith -> wrong growth -> lattice -> tree. Each change is a rebuild, not a fade.
   float toWrong = smoothstep(0.14, 0.22, p);
@@ -76,7 +79,7 @@ vec3 scene(vec2 c, float a){
   float grow = smoothstep(0.27, 0.36, p);                       // the first crossing draws itself
   float live = smoothstep(grow, grow - 0.06, h) * step(0.001, grow) * (bump(0.345, 0.05, p) + 0.22 * smoothstep(0.40, 0.48, p));
   float pulse = pow(0.5 + 0.5 * sin((h - time * 0.35) * 28.0), 6.0) * smoothstep(0.42, 0.50, p);
-  vec3 beamCol = mix(vec3(1.0, 0.62, 0.25), vec3(0.45, 0.95, 1.0), h);
+  vec3 beamCol = mix(GOLD, vec3(0.45, 0.95, 1.0), h);
   col += beamCol * live * (0.0022 / (d * d + 0.00002) * 0.012 + 0.012 / (d + 0.012));
   col += mix(beamCol, vec3(1.0), 0.6) * pulse * 0.010 / (d + 0.004) * 0.35;
 
