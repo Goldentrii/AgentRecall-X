@@ -37,8 +37,8 @@ changed="$(label "$work/b")"
 unset_out="$(cd "$work/a" && env -u AR_CADDYFILE_SHA AR_DOMAIN=test.example.com docker compose config 2>&1 | grep -m1 'ar.caddyfile-sha')"
 [[ "$unset_out" == *unset* ]] && ok || bad "label falls back to 'unset'" "$unset_out"
 
-# setup.sh and domain-switch.sh compute and export the identical value, before compose up
-for f in setup.sh domain-switch.sh; do
+# setup.sh, domain-switch.sh and oauth-setup.sh compute and export the identical value, before compose up
+for f in setup.sh domain-switch.sh oauth-setup.sh; do
   [[ "$(grep -m1 '^AR_CADDYFILE_SHA=' "$here/$f")" == "$cmd" ]] && ok || bad "$f computes the same hash as setup.sh"
   n_up="$(grep -c -E '^(sudo )?(env [^ ]+ )?docker compose up' "$here/$f")"
   first_up="$(grep -n -m1 -E '^(sudo )?(env [^ ]+ )?docker compose up' "$here/$f" | cut -d: -f1)"
@@ -46,5 +46,10 @@ for f in setup.sh domain-switch.sh; do
   if [[ "$n_up" -ge 1 && -n "$first_exp" && "$first_exp" -lt "$first_up" ]]; then ok; else bad "$f exports before 'docker compose up'" "export line '$first_exp', first up line '$first_up'"; fi
 done
 grep -q 'env AR_CADDYFILE_SHA="\$AR_CADDYFILE_SHA" docker compose up' "$here/setup.sh" && ok || bad "setup.sh passes the value through sudo"
+
+# setup.sh validates the Caddyfile (same image, env and mount as the service) BEFORE it recreates anything
+v="$(grep -n -m1 "caddy validate" "$here/setup.sh" | cut -d: -f1)"; u="$(grep -n -m1 -E '^sudo env .*docker compose up' "$here/setup.sh" | cut -d: -f1)"
+if [[ -n "$v" && -n "$u" && "$v" -lt "$u" ]]; then ok; else bad "setup.sh runs caddy validate before compose up" "validate line '$v', up line '$u'"; fi
+grep -q "docker compose logs" "$here/setup.sh" && grep -q "previous" "$here/setup.sh" && ok || bad "setup.sh timeout prints a recovery hint"
 
 printf '%s passed, %s failed\n' "$pass" "$fail"; (( fail == 0 ))

@@ -93,6 +93,11 @@ else
   echo "AR_DOMAIN=$AR_DOMAIN" | sudo tee -a "$env_file" >/dev/null
 fi
 AR_CADDYFILE_SHA="$(sha256sum Caddyfile | cut -d' ' -f1)"; export AR_CADDYFILE_SHA  # compose.yaml label: recreates Caddy when the Caddyfile changed
+# A Caddyfile that does not parse would take 80/443 down once Caddy is recreated, so check it
+# first with the service's own image, env and mount; abort before anything is recreated.
+sudo docker compose pull --quiet caddy >/dev/null 2>&1 || true
+sudo docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null \
+  || { echo "ERROR: the Caddyfile in this commit does not validate; nothing was recreated and the running site is untouched."; echo "Fix it or deploy the previous commit."; exit 1; }
 sudo env AR_CADDYFILE_SHA="$AR_CADDYFILE_SHA" docker compose up -d --build --remove-orphans
 
 say "7/7 health (waits up to 10 min for the HTTPS certificate)"
@@ -114,6 +119,7 @@ EOF
 done
 
 echo "Still starting: https://$AR_DOMAIN/healthz did not answer within 10 minutes."
+echo "If this deploy changed the Caddyfile and Caddy keeps exiting, redeploy the previous known-good commit."
 echo "Check: DNS A record, Lightsail firewall (80 + 443 open), then:"
 echo "  cd $AR_DIR/deploy/hosted && sudo docker compose ps && sudo docker compose logs --tail 50 caddy server"
 exit 1
