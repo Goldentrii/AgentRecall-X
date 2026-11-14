@@ -351,6 +351,14 @@ describe("oauth — federated sign-in", () => {
   before(async () => { env = await startEnv(); client = await newClient(env); });
   after(async () => { await env.close(); });
 
+  it("keyboard focus ring follows each element's own radius (pill buttons stay pills)", async () => {
+    const a = await authorize(env, client);
+    const rule = /:focus-visible{([^}]*)}/.exec(a.html);
+    assert.ok(rule, "has a :focus-visible rule");
+    assert.doesNotMatch(rule[1], /border-radius/);
+    assert.match(rule[1], /outline-offset:3px/);
+  });
+
   for (const [provider, uid, authorizeHost] of [["github", "gh-101", "/gh/authorize"], ["google", "gg-1000000000000000101", "/gg/authorize"]]) {
     it(`happy path (${provider}): authorize → provider → callback → code+state → token (PKCE) → /mcp → tenant ${uid}`, async () => {
       const a = await authorize(env, client);
