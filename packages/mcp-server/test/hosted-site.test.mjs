@@ -20,6 +20,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { Writable } from "node:stream";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { startMock, b64url, sha256b64, GH, GG } from "./lib/mock-providers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -862,5 +864,131 @@ describe("website — your agents (real binary)", () => {
       await srv.stop();
       await mock.close();
     }
+  });
+});
+
+// ---- the guided trial card ("See it work") ---------------------------------------
+
+describe("website: guided trial card", () => {
+  let startHttpServer, loadOAuthConfig, env, alice, bob, tokA, tokB;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const RULE = "Always answer me in one short paragraph.";
+  const trialOf = (html) => /<section class="panel trial"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+  const countOf = (html) => Number(/data-trial-count="(\d)"/.exec(trialOf(html))?.[1] ?? -1);
+  const doneSteps = (html) => [...trialOf(html).matchAll(/data-step="(\d)" data-done="true"/g)].map((m) => Number(m[1]));
+  const agent = async (base, token) => {
+    const c = new Client({ name: "trial-agent", version: "0.0.0" });
+    await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${token}`, Connection: "close" } } }));
+    return c;
+  };
+
+  before(async () => {
+    ({ startHttpServer } = await load("serve.js"));
+    ({ loadOAuthConfig } = await load("oauth-config.js"));
+    const dataDir = fs.mkdtempSync(path.join(root, "data-trial-"));
+    cliIn(dataDir, "identity", "link", "--github-id", String(ALICE.id), "--uid", "alice");
+    tokA = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "first"));
+    tokB = tokenFrom(cliIn(dataDir, "token", "create", "--uid", "alice", "--label", "second"));
+    const mock = await startMock();
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    mock.state.base = base;
+    const config = loadOAuthConfig({ publicUrl: base }, { AR_OAUTH_SIGNUP: "open", AR_OAUTH_GITHUB_CLIENT_ID: GH.id, AR_OAUTH_GITHUB_CLIENT_SECRET: GH.secret });
+    const server = await startHttpServer({
+      dataDir, port, host: "127.0.0.1", full: false, oauth: config, log: () => {},
+      oauthTesting: { providerUrls: mock.urls, loginLimits: { perIp: 1000, global: 10000, windowMs: 600000 } },
+      activityTesting: { flushMs: 3_600_000 },
+    });
+    env = { dataDir, base, mock, server };
+    alice = new Browser(base);
+    bob = new Browser(base);
+    await signIn(alice, mock, ALICE);
+    await signIn(bob, mock, { id: 909 });
+  });
+  after(async () => {
+    env.server.closeAllConnections?.();
+    await new Promise((r) => env.server.close(r));
+    await env.mock.close();
+  });
+
+  it("a fresh account is at 0 of 3, with step 1 next and the two copyable sentences", async () => {
+    const html = (await alice.go("/connect")).text;
+    assert.equal(countOf(html), 0);
+    assert.deepEqual(doneSteps(html), []);
+    assert.match(trialOf(html), /See it work/);
+    assert.ok(trialOf(html).includes("Remember this rule: always answer me in one short paragraph."));
+    assert.ok(trialOf(html).includes("What rules do I have?"));
+    assert.match(trialOf(html), /Next: connect an agent/i);
+  });
+
+  it("after one agent has made a request, step 1 is done (1 of 3)", async () => {
+    const a = await agent(env.base, tokA);
+    await a.callTool({ name: "session_start", arguments: {} });
+    const html = (await alice.go("/connect")).text;
+    assert.equal(countOf(html), 1);
+    assert.deepEqual(doneSteps(html), [1]);
+    await a.close();
+  });
+
+  it("a staged rule completes step 2, says it is waiting for approval and links /review", async () => {
+    const a = await agent(env.base, tokA);
+    await a.callTool({ name: "check", arguments: { goal: "record the rule", human_correction: { rule: RULE, why: "The owner said so in chat just now.", applies_when: ["answers", "style"] } } });
+    await a.close();
+    const html = (await alice.go("/connect")).text;
+    assert.equal(countOf(html), 2);
+    assert.deepEqual(doneSteps(html), [1, 2]);
+    assert.match(trialOf(html), /waiting for (your )?approval/i);
+    assert.match(trialOf(html), /href="\/review"/);
+    assert.ok(!/It works:/.test(html));
+  });
+
+  it("an approved rule plus activity of a second credential after it is 3 of 3", async () => {
+    const page = await alice.go("/review");
+    const m = /<form method="post" action="\/review\/approve">([\s\S]*?)<\/form>/.exec(page.text)[1];
+    const unesc = (x) => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const r = await alice.post("/review/approve", { id: unesc(/name="id" value="([^"]+)"/.exec(m)[1]), project: "main", csrf: csrfOf(page.text) });
+    assert.equal(r.status, 303);
+    let html = (await alice.go("/connect")).text;
+    assert.equal(countOf(html), 2, "approved but no second agent has asked yet");
+    assert.ok(!/waiting for (your )?approval/i.test(trialOf(html)));
+    assert.match(trialOf(html), /Next: ask a second agent/i);
+    await sleep(40);
+    const b = await agent(env.base, tokB);
+    await b.callTool({ name: "recall", arguments: { query: "rules" } });
+    await b.close();
+    html = (await alice.go("/connect")).text;
+    assert.equal(countOf(html), 3);
+    assert.deepEqual(doneSteps(html), [1, 2, 3]);
+    assert.match(html, /It works: a rule you taught one agent reached another\./);
+  });
+
+  it("tenant isolation: another account never sees this progress", async () => {
+    const html = (await bob.go("/connect")).text;
+    assert.equal(countOf(html), 0);
+    assert.ok(!/It works:/.test(html));
+    assert.ok(!/token first|token second/.test(html));
+  });
+
+  it("a request with an Authorization header still gets 403 on /connect", async () => {
+    const r = await alice.go("/connect", { headers: { authorization: `Bearer ${tokA}` } });
+    assert.equal(r.status, 403);
+    assert.ok(!r.text.includes("See it work"));
+  });
+
+  it("an unreadable corrections store degrades the card, the dashboard still renders", async () => {
+    const dir = path.join(env.dataDir, "tenants", "gh-909", "projects", "main");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "corrections"), "not a directory");
+    const r = await bob.go("/connect");
+    assert.equal(r.status, 200);
+    assert.match(trialOf(r.text), /could not be checked/i);
+    assert.match(r.text, /Your agents/);
+  });
+
+  it("the card adds no inline style attribute and keeps one inline style and script", async () => {
+    const html = (await alice.go("/connect")).text;
+    assert.ok(!/\sstyle="/i.test(html));
+    assert.equal((html.match(/<style>/g) ?? []).length, 1);
+    assert.equal((html.match(/<script>/g) ?? []).length, 1);
   });
 });

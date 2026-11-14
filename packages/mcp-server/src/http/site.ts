@@ -22,6 +22,7 @@ import type * as http from "node:http";
 import express from "express";
 import type { OAuthConfig } from "./oauth-config.js";
 import type { OAuthStore } from "./oauth-store.js";
+import { computeTrial, readRuleSignals, type RuleSignals, type TrialCredential } from "./trial.js";
 import { listTokens, TokenStoreUnavailableError } from "./tokens.js";
 import type { ActivityStore } from "./activity.js";
 import { dirSize } from "./limits.js";
@@ -182,11 +183,23 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
           }),
         ].sort((x, y) => (Date.parse(y.lastSeen ?? "") || 0) - (Date.parse(x.lastSeen ?? "") || 0) || (Date.parse(y.connectedAt) || 0) - (Date.parse(x.connectedAt) || 0));
         const [usedBytes, proposals] = await Promise.all([storageUsed(s.uid), listTenantProposals(d.dataDir, s.uid)]);
+        const ready = proposals.items.length + proposals.hidden;
+        let rules: RuleSignals | null = null;
+        try {
+          rules = readRuleSignals(d.dataDir, s.uid, ready);
+        } catch (err) {
+          d.log(`[connect] trial rules unreadable uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"}`); // the card degrades; the page renders
+        }
+        const creds: TrialCredential[] = [
+          ...d.store.liveGrantsOf(s.uid).map((g) => seen[`grant:${g.id}`]),
+          ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t) => seen[`token:${t.id}`]),
+        ].filter((a): a is NonNullable<typeof a> => a !== undefined).map((a) => ({ firstSeen: a.first_seen, lastSeen: a.last_seen }));
+        const trial = computeTrial(creds, rules);
         const flash = s.flash !== undefined ? NOTICES[s.flash] : undefined;
         view = {
           account: flow.accountLabel(s), uid: s.uid, csrf: s.csrf, notice: flash,
           agents: rows, now: d.now(), usedBytes, quotaBytes: d.quotaBytes,
-          pending: proposals.items.length + proposals.hidden + proposals.incomplete,
+          pending: proposals.items.length + proposals.hidden + proposals.incomplete, trial,
         };
       } catch (err) {
         if (err instanceof TokenStoreUnavailableError) d.log("[connect] token store unavailable");
