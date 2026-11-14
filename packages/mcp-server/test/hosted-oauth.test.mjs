@@ -240,6 +240,19 @@ describe("oauth config + redirect policy + ipKey (units)", () => {
     assert.deepEqual(formActionOrigins(DEFAULT_PROVIDER_URLS, ["google"]), ["https://accounts.google.com"]);
   });
 
+  it("redirect policy: allows ChatGPT's two documented MCP callbacks (developers.openai.com/apps-sdk/build/auth) and nothing near them", () => {
+    for (const u of ["https://chatgpt.com/connector_platform_oauth_redirect", "https://chatgpt.com/connector/oauth/abc123_-XYZ"]) {
+      assert.equal(isAllowedRedirect(u, []), true, u);
+    }
+    for (const u of ["http://chatgpt.com/connector_platform_oauth_redirect", "https://chatgpt.com/connector_platform_oauth_redirect?x=1",
+      "https://chatgpt.com/connector_platform_oauth_redirect/x", "https://chatgpt.com/connector/oauth/", "https://chatgpt.com/connector/oauth/a/b",
+      "https://chatgpt.com/connector/oauth/a?x=1", "https://chatgpt.com/connector/oauth/%2e%2e", "https://chatgpt.com/connector/oauth/..",
+      "https://chatgpt.com/connector/oauth/a#f", "https://chatgpt.com.evil.net/connector_platform_oauth_redirect",
+      "https://chatgpt.com@evil.net/connector/oauth/a", "https://www.chatgpt.com/connector/oauth/a", "https://chatgpt.com/oauth/a"]) {
+      assert.equal(isAllowedRedirect(u, []), false, u);
+    }
+  });
+
   it("redirect policy: allows loopback + claude callbacks + boundary-safe extra prefixes, rejects the rest", () => {
     const ok = ["http://127.0.0.1:1234/cb", "http://localhost:80/x?y=1", "http://[::1]:9/cb", "http://127.0.0.1/cb",
       "https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"];
