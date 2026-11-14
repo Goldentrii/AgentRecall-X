@@ -96,6 +96,40 @@ export interface TenantContext {
    * It is shown to agents so they can tell the user where to go.
    */
   reviewUrl?: string;
+  /**
+   * Which credential this request authenticated with: the opaque, non-secret id the server
+   * already uses to key agent activity ("grant:<12 hex>" / "token:<12 hex>"), never a token.
+   * Set by the server from the authenticated request, never from tool input. Staged proposals
+   * record it as their author (PendingRecord.authored_by).
+   */
+  credential?: string;
+}
+
+/** The shape of a credential id, as TenantContext.credential and the server's activity keys carry it. */
+export const CREDENTIAL_ID_RE = /^(grant|token):([a-f0-9]{12})$/;
+
+/**
+ * A credential as a staged or active correction stores it (`authored_by`). An object, not the
+ * "token:<id>" string, because the write path scrubs anything that reads like a `token: <value>`
+ * assignment and would blank the id.
+ */
+export interface CredentialRef {
+  type: "grant" | "token";
+  id: string;
+}
+
+/** The stored form of a credential id; undefined when `key` is not one. */
+export function toCredentialRef(key: string | undefined): CredentialRef | undefined {
+  const m = key === undefined ? null : CREDENTIAL_ID_RE.exec(key);
+  return m ? { type: m[1] as CredentialRef["type"], id: m[2] } : undefined;
+}
+
+/** The credential id ("token:<id>") a stored `authored_by` names; undefined unless it is a well-formed ref. */
+export function credentialKeyOf(ref: unknown): string | undefined {
+  if (ref === null || typeof ref !== "object") return undefined;
+  const { type, id } = ref as Record<string, unknown>;
+  const key = `${type}:${id}`;
+  return typeof type === "string" && typeof id === "string" && CREDENTIAL_ID_RE.test(key) ? key : undefined;
 }
 
 const _tenantScope = new AsyncLocalStorage<TenantContext>();
@@ -129,6 +163,7 @@ export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
   // The owner gate never lifts by nesting: a scope opened inside an agent channel is one too.
   const outer = _tenantScope.getStore();
   const stage = ctx.stageAgentCorrections === true || outer?.stageAgentCorrections === true;
+  if (ctx.credential !== undefined && !CREDENTIAL_ID_RE.test(ctx.credential)) throw new Error("withTenant: credential must match " + CREDENTIAL_ID_RE);
   // Like the gate, the review URL is inherited by a nested scope that does not set its own.
   const reviewUrl = ctx.reviewUrl !== undefined ? assertReviewUrl(ctx.reviewUrl) : outer?.reviewUrl;
   return _tenantScope.run({
@@ -142,6 +177,11 @@ export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
 /** The page where the owner approves staged corrections, when the server has one (see TenantContext.reviewUrl). */
 export function ownerReviewUrl(): string | undefined {
   return _tenantScope.getStore()?.reviewUrl;
+}
+
+/** The credential the current agent request authenticated with, when the server said so (see TenantContext.credential). */
+export function requestCredential(): string | undefined {
+  return _tenantScope.getStore()?.credential;
 }
 
 export function getTenantContext(): TenantContext | undefined {
