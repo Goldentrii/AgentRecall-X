@@ -4,9 +4,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
-pub const BASE: &str = "https://agentrecallx.com";
-pub const RESOURCE: &str = "https://agentrecallx.com/mcp";
-
 pub fn random_b64url(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     rand::rngs::OsRng.fill_bytes(&mut buf);
@@ -87,7 +84,7 @@ pub fn classify_callback(expected_state: &str, request: &str) -> CallbackAction 
     }
 }
 
-pub fn authorize_url(endpoint: &str, client_id: &str, redirect: &str, challenge: &str, state: &str) -> Result<String, String> {
+pub fn authorize_url(endpoint: &str, client_id: &str, redirect: &str, challenge: &str, state: &str, resource: &str) -> Result<String, String> {
     let mut u = url::Url::parse(endpoint).map_err(|e| e.to_string())?;
     u.query_pairs_mut()
         .append_pair("response_type", "code")
@@ -97,7 +94,7 @@ pub fn authorize_url(endpoint: &str, client_id: &str, redirect: &str, challenge:
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", state)
         .append_pair("scope", "memory")
-        .append_pair("resource", RESOURCE);
+        .append_pair("resource", resource);
     Ok(u.into())
 }
 
@@ -160,12 +157,12 @@ mod tests {
 
     #[test]
     fn authorize_url_has_required_params() {
-        let u = authorize_url("https://agentrecallx.com/authorize", "cid", "http://127.0.0.1:5555/callback", "CH", "ST").unwrap();
+        let u = authorize_url("https://agentrecallx.com/authorize", "cid", "http://127.0.0.1:5555/callback", "CH", "ST", "https://agentrecallx.com/mcp").unwrap();
         let url = url::Url::parse(&u).unwrap();
         let q: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["code_challenge_method"], "S256");
         assert_eq!(q["redirect_uri"], "http://127.0.0.1:5555/callback");
-        assert_eq!(q["resource"], RESOURCE);
+        assert_eq!(q["resource"], "https://agentrecallx.com/mcp");
         assert_eq!(q["state"], "ST");
     }
 }

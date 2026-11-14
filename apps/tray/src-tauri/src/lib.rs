@@ -1,4 +1,7 @@
 mod cache;
+mod config;
+#[cfg(feature = "test-hooks")]
+mod hooks;
 mod mcp;
 mod oauth;
 mod redact;
@@ -18,7 +21,6 @@ use tauri::{
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const KEYRING_SERVICE: &str = "AgentRecall Tray";
 const KEYRING_USER: &str = "oauth-tokens";
 const MAX_TOOL_BODY: usize = 1024 * 1024;
 const MAX_SMALL_BODY: usize = 64 * 1024;
@@ -96,7 +98,7 @@ struct Tokens {
 }
 
 fn entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| redact(&e.to_string()))
+    keyring::Entry::new(config::keyring_service(), KEYRING_USER).map_err(|e| redact(&e.to_string()))
 }
 
 fn load_tokens() -> Option<Tokens> {
@@ -194,6 +196,10 @@ fn is_invalid_grant(body: &[u8]) -> bool {
 // ---------- URL allowlist ----------
 
 pub fn allowed_url(raw: &str) -> bool {
+    #[cfg(feature = "test-hooks")]
+    if hooks::is_test_origin(&config::base(), raw) {
+        return true;
+    }
     match url::Url::parse(raw) {
         Ok(u) => {
             u.scheme() == "https"
@@ -209,6 +215,10 @@ pub fn allowed_url(raw: &str) -> bool {
 fn open_allowed(app: &AppHandle, raw: &str) -> Result<(), String> {
     if !allowed_url(raw) {
         return Err("That address is not on the allowed list.".into());
+    }
+    #[cfg(feature = "test-hooks")]
+    if let Some(log) = &hooks::get().open_log {
+        return hooks::append_open(log, raw);
     }
     app.opener().open_url(raw, None::<&str>).map_err(|e| redact(&e.to_string()))
 }
@@ -247,8 +257,8 @@ async fn refresh(state: &AppState, old: &Tokens) -> Result<Tokens, ApiErr> {
     }
     let r = token_request(
         &state.http,
-        &format!("{}/token", oauth::BASE),
-        &[("grant_type", "refresh_token"), ("refresh_token", &old.refresh), ("client_id", &old.client_id), ("resource", oauth::RESOURCE)],
+        &format!("{}/token", config::base()),
+        &[("grant_type", "refresh_token"), ("refresh_token", &old.refresh), ("client_id", &old.client_id), ("resource", &config::resource())],
     )
     .await;
     match r {
@@ -285,7 +295,7 @@ async fn post_tool(state: &AppState, access: &str, tool: &str, args: serde_json:
     let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":tool,"arguments":args}});
     let resp = state
         .http
-        .post(oauth::RESOURCE)
+        .post(config::resource())
         .bearer_auth(access)
         .header("accept", "application/json, text/event-stream")
         .json(&body)
@@ -329,21 +339,10 @@ struct Status {
     checked_at: u64,
 }
 
-fn health_url() -> String {
-    // Testing hook: compiled only into debug builds or builds with the `test-hooks` feature.
-    #[cfg(any(debug_assertions, feature = "test-hooks"))]
-    {
-        if let Ok(v) = std::env::var("AGENTRECALL_TRAY_TEST_HEALTH_URL") {
-            return v;
-        }
-    }
-    format!("{}/healthz", oauth::BASE)
-}
-
 #[tauri::command]
 async fn status(state: State<'_, AppState>) -> Result<Status, String> {
     let signed_in = load_tokens().is_some();
-    let r = state.http.get(health_url()).timeout(Duration::from_secs(5)).send().await;
+    let r = state.http.get(config::health_url()).timeout(Duration::from_secs(5)).send().await;
     let (online, version) = match r {
         Ok(resp) if resp.status().is_success() => {
             let body = read_limited(resp, MAX_SMALL_BODY).await.unwrap_or_default();
@@ -479,7 +478,7 @@ fn validated_commands(parsed: (Option<String>, Option<String>, Option<String>)) 
 #[tauri::command]
 async fn connect_commands(state: State<'_, AppState>) -> Result<ConnectCommands, String> {
     let fetched = async {
-        let r = state.http.get(format!("{}/connect.md", oauth::BASE)).timeout(Duration::from_secs(6)).send().await.ok()?;
+        let r = state.http.get(format!("{}/connect.md", config::base())).timeout(Duration::from_secs(6)).send().await.ok()?;
         if !r.status().is_success() {
             return None;
         }
@@ -512,7 +511,7 @@ fn cancel_sign_in(state: State<'_, AppState>) {
 
 async fn discover(http: &reqwest::Client) -> Result<(String, String, String), String> {
     let resp = http
-        .get(format!("{}/.well-known/oauth-authorization-server", oauth::BASE))
+        .get(format!("{}/.well-known/oauth-authorization-server", config::base()))
         .timeout(Duration::from_secs(8))
         .send()
         .await
@@ -521,8 +520,8 @@ async fn discover(http: &reqwest::Client) -> Result<(String, String, String), St
     let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "server metadata was not understood".to_string())?;
     let get = |k: &str| -> Result<String, String> {
         let s = v.get(k).and_then(|x| x.as_str()).ok_or_else(|| format!("server metadata lacks {k}"))?;
-        if !s.starts_with(&format!("{}/", oauth::BASE)) {
-            return Err(format!("{k} points outside {}", oauth::BASE));
+        if !s.starts_with(&format!("{}/", config::base())) {
+            return Err(format!("{k} points outside {}", config::base()));
         }
         Ok(s.to_string())
     };
@@ -610,7 +609,7 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 
     let (verifier, challenge) = oauth::pkce_pair();
     let st = oauth::random_b64url(16);
-    let url = oauth::authorize_url(&authorize, &client_id, &redirect, &challenge, &st)?;
+    let url = oauth::authorize_url(&authorize, &client_id, &redirect, &challenge, &st, &config::resource())?;
     open_allowed(&app, &url)?;
 
     let code = tokio::select! {
@@ -629,7 +628,7 @@ async fn sign_in(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             ("redirect_uri", &redirect),
             ("client_id", &client_id),
             ("code_verifier", &verifier),
-            ("resource", oauth::RESOURCE),
+            ("resource", &config::resource()),
         ],
     )
     .await
@@ -686,7 +685,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![status, memory, remember, recall, connect_commands, open_url, sign_out, sign_in, cancel_sign_in])
         .setup(|app| {
-            let dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentrecall-tray"));
+            let dir = config::data_dir(app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentrecall-tray")));
             let _ = app.state::<AppState>().data_dir.set(dir);
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let signout = MenuItem::with_id(app, "signout", "Sign out", true, None::<&str>)?;
@@ -737,6 +736,14 @@ mod tests {
         assert!(!allowed_url("https://user@agentrecallx.com/"));
         assert!(!allowed_url("file:///C:/Windows/System32/calc.exe"));
         assert!(!allowed_url("javascript:alert(1)"));
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn test_origin_is_not_allowed_unless_configured() {
+        // no AGENTRECALL_TRAY_TEST_BASE_URL in the unit test run: loopback stays refused
+        assert!(!allowed_url("http://127.0.0.1:8151/authorize"));
+        assert!(allowed_url("https://agentrecallx.com/connect"));
     }
 
     #[test]
