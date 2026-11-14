@@ -874,6 +874,7 @@ describe("website: guided trial card", () => {
   let skew = 0; // the server clock runs ahead by this much, so the 10 s per-account scan cache can be expired on demand
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const RULE = "Always answer me in one short paragraph.";
+  const STRONG = "It works: a rule you taught one agent reached another.";
   const trialOf = (html) => /<section class="panel trial"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
   const countOf = (html) => Number(/data-trial-count="(\d)"/.exec(trialOf(html))?.[1] ?? -1);
   const doneSteps = (html) => [...trialOf(html).matchAll(/data-step="(\d)" data-done="true"/g)].map((m) => Number(m[1]));
@@ -956,7 +957,7 @@ describe("website: guided trial card", () => {
     assert.ok(!/Two of your agents/.test(html));
   });
 
-  it("step 3 needs TWO distinct credentials active after the rule went live; one re-issued credential is not enough", async () => {
+  it("step 3 needs a credential other than the author's, active after the rule went live", async () => {
     await approveAll(alice);
     let html = await view(alice);
     assert.equal(countOf(html), 2, "approved but nobody has been active since");
@@ -964,22 +965,22 @@ describe("website: guided trial card", () => {
     assert.match(trialOf(html), /Next: connect a second agent/i);
     assert.match(trialOf(html), /A second agent connected after your rule went live/);
     await sleep(40);
-    // The author signs in again with a new credential: one credential after the rule is not two.
-    const tokC = tokenFrom(cliIn(env.dataDir, "token", "create", "--uid", "alice", "--label", "reissued"));
-    const c = await agent(env.base, tokC);
-    await c.callTool({ name: "session_start", arguments: {} });
-    await c.close();
+    // The author alone, however active, proves nothing.
+    const a = await agent(env.base, tokA);
+    await a.callTool({ name: "session_start", arguments: {} });
+    await a.close();
     html = await view(alice);
-    assert.equal(countOf(html), 2, "one credential active after the rule: step 3 not done");
+    assert.equal(countOf(html), 2, "only the authoring credential is active after the rule");
     assert.ok(!doneSteps(html).includes(3));
+    assert.ok(!html.includes(STRONG));
     const b = await agent(env.base, tokB);
     await b.callTool({ name: "recall", arguments: { query: "rules" } });
     await b.close();
     html = await view(alice);
     assert.equal(countOf(html), 3);
     assert.deepEqual(doneSteps(html), [1, 2, 3]);
-    assert.match(html, /Two of your agents have been active since your rule went live: each one loads it at session start\./);
-    assert.ok(!/It works/.test(html), "no claim that the rule was read");
+    assert.ok(trialOf(html).includes(STRONG));
+    assert.match(trialOf(html), /new sign-in of the same agent counts as another credential/i, "the card states what it cannot tell");
   });
 
   it("tenant isolation: both accounts have their own rule and agents, and neither page shows the other's state", async () => {
@@ -1000,6 +1001,108 @@ describe("website: guided trial card", () => {
     await approveAll(bob);
     assert.equal(countOf(await view(bob)), 2, "bob has one agent only: step 3 not done");
     assert.equal(countOf(await view(alice)), 3);
+  });
+
+  /** A signed-in account (GitHub id linked to "user<id>") with its own tokens (the credential id is the first 12 hex of the token's sha256). */
+  const account = async (id) => {
+    const uid = "user" + id;
+    cliIn(env.dataDir, "identity", "link", "--github-id", String(id), "--uid", uid);
+    const b = new Browser(env.base);
+    await signIn(b, env.mock, { id });
+    const mint = (label) => { const token = tokenFrom(cliIn(env.dataDir, "token", "create", "--uid", uid, "--label", label)); return { token, key: "token:" + sha256(token).slice(0, 12) }; };
+    const dir = path.join(env.dataDir, "tenants", uid, "projects", "main", "corrections");
+    return { uid, b, mint, dir };
+  };
+  const ref = (key) => ({ type: key.split(":")[0], id: key.split(":")[1] });
+  const sha256 = (x) => createHash("sha256").update(x).digest("hex");
+  const stagedFile = (dir) => path.join(dir, "_pending", fs.readdirSync(path.join(dir, "_pending")).find((n) => n.endsWith(".json") && !n.startsWith("_")));
+  const activeFile = (dir) => path.join(dir, fs.readdirSync(dir).find((n) => n.endsWith(".json") && !n.startsWith("_")));
+
+  describe("who taught the rule", () => {
+    let x, t1, t2;
+    before(async () => { x = await account(931); t1 = x.mint("teacher"); t2 = x.mint("other"); });
+
+    it("records the authoring credential id on the staged proposal, never token material", async () => {
+      const a = await agent(env.base, t1.token);
+      await propose(a, RULE);
+      await a.close();
+      const raw = fs.readFileSync(stagedFile(x.dir), "utf-8");
+      assert.deepEqual(JSON.parse(raw).authored_by, ref(t1.key));
+      assert.ok(!raw.includes(t1.token), "no token");
+      assert.ok(!raw.includes(sha256(t1.token)), "no full token hash");
+    });
+
+    it("a different credential active only BEFORE the approval does not prove it", async () => {
+      const o = await agent(env.base, t2.token);
+      await o.callTool({ name: "session_start", arguments: {} });
+      await o.close();
+      await sleep(40);
+      await approveAll(x.b);
+      await sleep(40);
+      const html = await view(x.b);
+      assert.deepEqual(doneSteps(html), [1, 2]);
+      assert.ok(!html.includes(STRONG));
+    });
+
+    it("the approved rule carries the same author, still no token material", () => {
+      const raw = fs.readFileSync(activeFile(x.dir), "utf-8");
+      assert.deepEqual(JSON.parse(raw).authored_by, ref(t1.key));
+      assert.ok(!raw.includes(t1.token) && !raw.includes(sha256(t1.token)));
+    });
+
+    it("the author alone after the approval is still not done", async () => {
+      const a = await agent(env.base, t1.token);
+      await a.callTool({ name: "recall", arguments: { query: "rules" } });
+      await a.close();
+      assert.deepEqual(doneSteps(await view(x.b)), [1, 2]);
+    });
+
+    it("another credential after the approval completes step 3 with the strong line", async () => {
+      const o = await agent(env.base, t2.token);
+      await o.callTool({ name: "recall", arguments: { query: "rules" } });
+      await o.close();
+      const html = await view(x.b);
+      assert.deepEqual(doneSteps(html), [1, 2, 3]);
+      assert.ok(trialOf(html).includes(STRONG));
+    });
+
+    it("another account never sees or inherits it", async () => {
+      const y = await account(932);
+      const html = await view(y.b);
+      assert.equal(countOf(html), 0);
+      assert.ok(!html.includes(STRONG));
+    });
+  });
+
+  describe("a rule with no recorded author (legacy)", () => {
+    it("an active legacy rule keeps the weaker wording and is never called proven", async () => {
+      const x = await account(933);
+      const t1 = x.mint("one"), t2 = x.mint("two");
+      fs.mkdirSync(x.dir, { recursive: true });
+      fs.writeFileSync(path.join(x.dir, "2026-03-02-legacy.json"), JSON.stringify({ id: "2026-03-02-legacy", rule: "Always answer me in one short paragraph.", active: true }));
+      await sleep(40);
+      for (const t of [t1, t2]) { const c = await agent(env.base, t.token); await c.callTool({ name: "session_start", arguments: {} }); await c.close(); }
+      const html = await view(x.b);
+      assert.deepEqual(doneSteps(html), [1, 2, 3]);
+      assert.match(html, /Two of your agents have been active since your rule went live: each one loads it at session start./);
+      assert.ok(!html.includes(STRONG));
+    });
+
+    it("a staged proposal without an author still shows, approves, and activates without inventing one", async () => {
+      const x = await account(934);
+      const t1 = x.mint("one");
+      const a = await agent(env.base, t1.token);
+      await propose(a, RULE);
+      await a.close();
+      const file = stagedFile(x.dir);
+      const row = JSON.parse(fs.readFileSync(file, "utf-8"));
+      delete row.authored_by; // a row written before the field existed
+      fs.writeFileSync(file, JSON.stringify(row));
+      assert.match(await view(x.b), /waiting for (your )?approval/i);
+      await approveAll(x.b);
+      assert.ok(!("authored_by" in JSON.parse(fs.readFileSync(activeFile(x.dir), "utf-8"))));
+      assert.deepEqual(doneSteps(await view(x.b)), [1, 2]);
+    });
   });
 
   it("a request with an Authorization header still gets 403 on /connect", async () => {
@@ -1058,21 +1161,21 @@ describe("website: guided trial (rules scan and state, unit)", () => {
     t.rule("2026-03-06-b.json", { id: "2026-03-06-b" }, FRI + DAY);
     t.promoted([["2026-03-02-a", MON], ["2026-03-06-b", FRI]]);
     const s = t.scan();
-    assert.equal(s.active, 1);
-    assert.equal(s.activatedAt, FRI, "B went live Friday, not Monday");
+    assert.equal(s.rules.length, 1);
+    assert.equal(s.rules[0].at, FRI, "B went live Friday, not Monday");
     const both = tenant();
     both.rule("2026-03-02-a.json", { id: "2026-03-02-a" }, MON);
     both.rule("2026-03-06-b.json", { id: "2026-03-06-b" }, FRI);
     both.promoted([["2026-03-02-a", MON], ["2026-03-06-b", FRI]]);
-    assert.equal(both.scan().activatedAt, FRI, "with two active rules, the newest go-live");
+    assert.equal(Math.max(...both.scan().rules.map((r) => r.at)), FRI, "with two active rules, the newest go-live");
   });
 
   it("an imported rule with no promotion row is dated by its file's modification time", () => {
     const t = tenant();
     t.rule("2026-03-02-imp.json", { id: "2026-03-02-imp" }, MON);
     const s = t.scan();
-    assert.equal(s.active, 1);
-    assert.ok(Math.abs(s.activatedAt - MON) < 2000, `mtime used: ${s.activatedAt}`);
+    assert.equal(s.rules.length, 1);
+    assert.ok(Math.abs(s.rules[0].at - MON) < 2000, `mtime used: ${s.rules[0].at}`);
   });
 
   it("symlinks, a directory named x.json and an oversized file are never counted or followed", (tc) => {
@@ -1084,7 +1187,7 @@ describe("website: guided trial (rules scan and state, unit)", () => {
     fs.writeFileSync(outside, JSON.stringify({ rule: "Outside rule.", id: "out" }));
     let linked = true;
     try { fs.symlinkSync(outside, path.join(t.cdir, "2026-03-04-link.json")); } catch { linked = false; tc.diagnostic("file symlinks not permitted here; the other cases still run"); }
-    assert.equal(t.scan().active, 1, linked ? "only the regular, small file" : "only the regular, small file (no symlink created)");
+    assert.equal(t.scan().rules.length, 1, linked ? "only the regular, small file" : "only the regular, small file (no symlink created)");
     // The promotion log as a link is not opened either: the rule falls back to its mtime.
     const u = tenant();
     u.rule("2026-03-01-ok.json", { id: "ok" }, MON);
@@ -1092,14 +1195,14 @@ describe("website: guided trial (rules scan and state, unit)", () => {
     fs.writeFileSync(real, JSON.stringify({ ts: new Date(FRI).toISOString(), action: "promoted", correction_id: "ok" }) + "\n");
     let logLinked = true;
     try { fs.symlinkSync(real, path.join(u.cdir, "_pending", "_resolved.jsonl")); } catch { logLinked = false; }
-    if (logLinked) assert.ok(Math.abs(u.scan().activatedAt - MON) < 2000, "a linked log is ignored");
+    if (logLinked) assert.ok(Math.abs(u.scan().rules[0].at - MON) < 2000, "a linked log is ignored");
   });
 
   it("a cut scan says so: more than 20 rule files, or more than 8 projects", () => {
     const t = tenant();
     for (let i = 10; i < 35; i++) t.rule(`2026-03-${i}-r.json`, { id: `r${i}` });
     const s = t.scan();
-    assert.equal(s.active, 20, "the 20 newest");
+    assert.equal(s.rules.length, 20, "the 20 newest");
     assert.equal(s.capped, true);
     const m = tenant();
     for (let i = 0; i < 9; i++) fs.mkdirSync(path.join(dataDir, "tenants", m.uid, "projects", `p${i}`, "corrections"), { recursive: true });
@@ -1108,34 +1211,62 @@ describe("website: guided trial (rules scan and state, unit)", () => {
   });
 
   it("a missing tenant scans as none; a corrections path that is a file throws (the page degrades)", () => {
-    assert.deepEqual(T.scanRules(dataDir, "nobody-here"), { active: 0, capped: false });
+    assert.deepEqual(T.scanRules(dataDir, "nobody-here"), { rules: [], capped: false });
     const t = tenant();
     fs.rmSync(t.cdir, { recursive: true });
     fs.writeFileSync(t.cdir, "x");
     assert.throws(() => t.scan());
   });
 
-  it("computeTrial: two distinct credentials with calls after the rule; fewer, or no calls, is not enough", () => {
-    const rules = { ready: 0, active: 1, activatedAt: 1_000_000, capped: false };
-    const at = (ms) => new Date(ms).toISOString();
-    const cred = (last, calls = 3, first = 1) => ({ firstSeen: at(first), lastSeen: at(last), calls });
-    assert.equal(T.computeTrial([cred(500_000), cred(2_000_000)], rules).done[2], false, "one before, one after");
-    assert.equal(T.computeTrial([cred(2_000_000, 3, 1_500_000)], rules).done[2], false, "a single new credential");
-    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], rules).done[2], true);
-    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000, 0)], rules).done[2], false, "no tool call recorded");
-    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], { ...rules, active: 0 }).done[2], false, "no active rule");
-    assert.equal(T.computeTrial([cred(2_000_000), cred(2_500_000)], null).degraded, true);
+  it("scanRules carries a well-formed authored_by onto the rule and ignores anything else", () => {
+    const t = tenant();
+    t.rule("2026-03-01-a.json", { id: "a", authored_by: { type: "grant", id: "0123456789ab" } }, MON);
+    t.rule("2026-03-02-b.json", { id: "b" }, MON);
+    t.rule("2026-03-03-c.json", { id: "c", authored_by: { type: "token", id: "not-hex-at-all" } }, MON);
+    t.rule("2026-03-04-d.json", { id: "d", authored_by: "token:0123456789ab" }, MON);
+    t.rule("2026-03-05-e.json", { id: "e", authored_by: { type: "other", id: "0123456789ab" } }, MON);
+    const authors = t.scan().rules.map((r) => r.author).sort((x, y) => String(x).localeCompare(String(y)));
+    assert.deepEqual(authors, ["grant:0123456789ab", undefined, undefined, undefined, undefined]);
+  });
+
+  const at = (ms) => new Date(ms).toISOString();
+  const cred = (key, last, calls = 3) => ({ key, firstSeen: at(1), lastSeen: at(last), calls });
+  const A = "token:aaaaaaaaaaaa", B = "token:bbbbbbbbbbbb", C = "grant:cccccccccccc";
+  const rulesOf = (...rules) => ({ ready: 0, rules, capped: false });
+
+  it("computeTrial: a rule with a recorded author is proven by ANOTHER credential active after it went live", () => {
+    const r = rulesOf({ at: 1_000_000, author: A });
+    assert.equal(T.computeTrial([cred(A, 2_000_000)], r).done[2], false, "the author alone");
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 500_000)], r).done[2], false, "another credential, but only before the rule");
+    assert.equal(T.computeTrial([cred(B, 2_000_000)], r).done[2], true, "a different credential after, author idle: a re-sign-in counts as different");
+    assert.equal(T.computeTrial([cred(B, 2_000_000, 0)], r).done[2], false, "no tool call recorded");
+    const proven = T.computeTrial([cred(A, 2_000_000), cred(C, 2_500_000)], r);
+    assert.deepEqual([proven.done[2], proven.proven], [true, true]);
+  });
+
+  it("computeTrial: a rule with no author keeps the weak signal (two credentials after it) and is never proven", () => {
+    const r = rulesOf({ at: 1_000_000 });
+    assert.equal(T.computeTrial([cred(A, 2_000_000)], r).done[2], false);
+    assert.equal(T.computeTrial([cred(A, 500_000), cred(B, 2_000_000)], r).done[2], false);
+    const weak = T.computeTrial([cred(A, 2_000_000), cred(B, 2_500_000)], r);
+    assert.deepEqual([weak.done[2], weak.proven], [true, false]);
+  });
+
+  it("computeTrial: no active rule, or unreadable rules, never completes step 3", () => {
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 2_500_000)], rulesOf()).done[2], false);
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 2_500_000)], null).degraded, true);
+    assert.equal(T.computeTrial([cred(A, 2_000_000), cred(B, 2_500_000)], null).done[2], false);
   });
 
   it("the scan cache serves one read per account per 10 s and re-reads after", () => {
     const t = tenant();
     let now = 0;
     const cache = new T.RuleScanCache(() => now);
-    assert.equal(cache.get(dataDir, t.uid).active, 0);
+    assert.equal(cache.get(dataDir, t.uid).rules.length, 0);
     t.rule("2026-03-01-ok.json", { id: "ok" });
     now = 9_000;
-    assert.equal(cache.get(dataDir, t.uid).active, 0, "still cached");
+    assert.equal(cache.get(dataDir, t.uid).rules.length, 0, "still cached");
     now = 10_001;
-    assert.equal(cache.get(dataDir, t.uid).active, 1, "expired, re-read");
+    assert.equal(cache.get(dataDir, t.uid).rules.length, 1, "expired, re-read");
   });
 });

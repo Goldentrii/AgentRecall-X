@@ -17,6 +17,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { CREDENTIAL_ID_RE } from "agent-recall-core";
 import { UID_RE } from "./tokens.js";
 import { writeJsonAtomic } from "./jsonfile.js";
 
@@ -24,7 +25,6 @@ export const CLIENT_NAME_MAX = 60;
 const MAX_ENTRIES_PER_UID = 50;
 const MAX_UIDS_IN_MEMORY = 10_000;
 const DEFAULT_FLUSH_MS = 60_000;
-const KEY_RE = /^(grant|token):[a-f0-9]{12}$/;
 /** The hosted tool names (tier B, with and without --full). Anything else is not recorded. */
 const TOOL_NAMES: ReadonlySet<string> = new Set(["session_start", "session_end", "remember", "recall", "check", "check_action"]);
 
@@ -79,7 +79,7 @@ function parseEntries(raw: unknown): Record<string, ActivityEntry> {
   if (src === null || typeof src !== "object") return out;
   for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
     const e = v as Partial<ActivityEntry> | null;
-    if (!KEY_RE.test(k) || !e || typeof e.first_seen !== "string" || typeof e.last_seen !== "string") continue;
+    if (!CREDENTIAL_ID_RE.test(k) || !e || typeof e.first_seen !== "string" || typeof e.last_seen !== "string") continue;
     out[k] = {
       client: sanitizeClientName(e.client) ?? "Unknown client",
       first_seen: e.first_seen,
@@ -168,7 +168,7 @@ export class ActivityStore {
   /** Record one authenticated request. Memory only; never throws. */
   record(uid: string, key: string, obs: ActivityObservation): void {
     try {
-      if (!UID_RE.test(uid) || !KEY_RE.test(key)) return;
+      if (!UID_RE.test(uid) || !CREDENTIAL_ID_RE.test(key)) return;
       const s = this.slot(uid);
       if (s === null) return;
       const at = new Date(this.now()).toISOString();

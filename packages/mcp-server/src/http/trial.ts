@@ -4,22 +4,25 @@
  *
  *   1. Connect an agent   a live credential of this account has recorded activity (activity.ts)
  *   2. Teach it one rule  the account has a rule: one waiting for approval, or an active one
- *   3. A second agent     two distinct credentials have been active since the newest active rule went live
+ *   3. A second agent     a credential other than the rule's author has been active since that rule went live
  *
  * What the stores can and cannot tell (so the card never claims more):
  *  - Step 2 counts READY proposals (the ones /review can approve) and active corrections. A partial
  *    capture that cannot be approved is not a rule the user can see, so it does not count.
- *  - Neither a staged row nor an active correction records WHICH credential wrote it (the staging
- *    provenance is a per-request session id), and a re-authorised agent gets a new credential. So
- *    authorship cannot be proven and step 3 claims only what the records show: two distinct
- *    credentials with tool calls, last active after the newest active rule went live. A new
- *    credential of the author can be one of the two; the card words it accordingly.
+ *  - A rule proposed through the hosted server records `authored_by`: the credential id activity.ts
+ *    keys its rows by (never a token), stamped on the staged proposal and carried onto the active
+ *    correction when the owner approves it. Step 3 is PROVEN when some credential other than that
+ *    author has tool calls with last_seen after the rule went live. "Different credential" is all
+ *    the records can say: an agent that signed in again gets a new credential, so a re-sign-in of the
+ *    author counts as another one. The card words it that way and never claims the rule was read.
+ *  - A rule with no recorded author (written before the field existed, or imported) cannot be
+ *    attributed. It keeps the weaker v1 signal: two distinct credentials with tool calls after it
+ *    went live. That completes the step but is never called proven.
  *  - "Active" is activity: any tool call, not proof the rule was read. `calls` is a lifetime count
  *    and last_seen the last request, so "a call after the rule" is judged by both, not exactly.
  *  - A rule's go-live time is its promotion row (the owner's approval, matched by correction id) when
  *    one exists, else its file's modification time (imported rules; only ever later than the truth).
- *    The card uses the LATEST such time over the rules that are still active, so a retracted or
- *    replaced rule never sets it.
+ *    Only rules that are still active are listed, so a retracted or replaced rule never counts.
  *
  * Bounded reads. Worst case per scan (cached 10 s per account, see RuleScanCache): at most
  * MAX_DIR_ENTRIES (64) project-directory entries, then per project (at most MAX_PROJECTS = 8):
@@ -33,6 +36,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { credentialKeyOf } from "agent-recall-core";
 import { tenantRoot } from "./tenant-paths.js";
 
 export const MAX_PROJECTS = 8;
@@ -45,12 +49,16 @@ const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const SCAN_TTL_MS = 10_000;
 const CACHE_MAX = 1000;
 
-export interface TrialCredential { firstSeen?: string; lastSeen?: string; calls?: number }
+export interface TrialCredential { key: string; lastSeen?: string; calls?: number }
+export interface ActiveRule {
+  /** ms epoch the rule went live. */
+  at: number;
+  /** Credential id that proposed it; undefined for a legacy or imported rule. */
+  author?: string;
+}
 export interface RuleScan {
   /** Active corrections found (bounded scan). */
-  active: number;
-  /** ms epoch the NEWEST still-active rule went live; undefined when none or unknown. */
-  activatedAt?: number;
+  rules: ActiveRule[];
   /** A cap cut the scan: rules may exist that were not looked at. */
   capped: boolean;
 }
@@ -60,6 +68,8 @@ export interface RuleSignals extends RuleScan {
 }
 export interface TrialState {
   done: [boolean, boolean, boolean];
+  /** Step 3 is done because a credential other than a rule's recorded author was active after it (not just two credentials). */
+  proven: boolean;
   count: number;
   /** The first step not done (1..3), or null when all are. */
   next: 1 | 2 | 3 | null;
@@ -76,19 +86,18 @@ const ms = (iso: string | undefined): number => (iso === undefined ? NaN : Date.
 /** Pure: the trial state from the account's credentials and rule signals (null = rules unreadable). */
 export function computeTrial(credentials: readonly TrialCredential[], rules: RuleSignals | null): TrialState {
   const s1 = credentials.some((c) => Number.isFinite(ms(c.lastSeen)));
-  const s2 = rules !== null && rules.ready + rules.active > 0;
-  let s3 = false;
-  if (rules !== null && rules.active > 0 && rules.activatedAt !== undefined && Number.isFinite(rules.activatedAt)) {
-    const t = rules.activatedAt;
-    s3 = credentials.filter((c) => ms(c.lastSeen) > t && (c.calls ?? 0) > 0).length >= 2;
-  }
+  const s2 = rules !== null && rules.ready + rules.rules.length > 0;
+  const activeAfter = (r: ActiveRule): TrialCredential[] => credentials.filter((c) => ms(c.lastSeen) > r.at && (c.calls ?? 0) > 0);
+  const proven = rules !== null && rules.rules.some((r) => r.author !== undefined && activeAfter(r).some((c) => c.key !== r.author));
+  const s3 = proven || (rules !== null && rules.rules.some((r) => r.author === undefined && activeAfter(r).length >= 2));
   const done: [boolean, boolean, boolean] = [s1, s2, s3];
   const first = done.indexOf(false);
   return {
     done,
+    proven,
     count: done.filter(Boolean).length,
     next: first < 0 ? null : ((first + 1) as 1 | 2 | 3),
-    waiting: rules !== null && rules.ready > 0 && rules.active === 0,
+    waiting: rules !== null && rules.ready > 0 && rules.rules.length === 0,
     degraded: rules === null,
     capped: rules?.capped === true,
   };
@@ -120,7 +129,7 @@ function listDir(dir: string, cap: number): { entries: Entry[]; more: boolean } 
   }
 }
 
-function isActive(r: unknown): r is { id?: unknown; rule: string } {
+function isActive(r: unknown): r is { id?: unknown; rule: string; authored_by?: unknown } {
   const o = r as { active?: unknown; retracted_at?: unknown; superseded_by?: unknown; rule?: unknown } | null;
   return o !== null && typeof o === "object" && typeof o.rule === "string" && o.active !== false && !o.retracted_at && !o.superseded_by;
 }
@@ -155,17 +164,16 @@ function promotions(file: string): Map<string, number> {
 }
 
 /**
- * This account's active corrections (bounded) and when the newest went live. Throws on an
+ * This account's active corrections (bounded): when each went live and who proposed it. Throws on an
  * unreadable store (e.g. a corrections path that is not a directory); the caller degrades the
  * card. A missing tenant or corrections directory is simply "none". Never creates anything.
  */
 export function scanRules(dataDir: string, uid: string): RuleScan {
   const root = tenantRoot(dataDir, uid);
   let capped = false;
-  let active = 0;
-  let newest: number | undefined;
+  const rules: ActiveRule[] = [];
   const projects = listDir(path.join(root, "projects"), MAX_DIR_ENTRIES);
-  if (projects === null) return { active: 0, capped: false };
+  if (projects === null) return { rules, capped: false };
   const names = projects.entries.filter((e) => e.dir && PROJECT_NAME_RE.test(e.name)).map((e) => e.name).sort();
   if (projects.more || names.length > MAX_PROJECTS) capped = true;
   for (const project of names.slice(0, MAX_PROJECTS)) {
@@ -183,13 +191,12 @@ export function scanRules(dataDir: string, uid: string): RuleScan {
         if (!st.isFile() || st.size > MAX_FILE_BYTES) continue; // symlink, directory, oversized: not read
         const rec = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
         if (!isActive(rec)) continue;
-        active++;
-        const t = (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs;
-        if (newest === undefined || t > newest) newest = t;
+        const author = credentialKeyOf(rec.authored_by);
+        rules.push({ at: (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs, ...(author !== undefined ? { author } : {}) });
       } catch { /* a malformed correction file is skipped, as readCorrections does */ }
     }
   }
-  return { active, activatedAt: active > 0 ? newest : undefined, capped };
+  return { rules, capped };
 }
 
 /** Per-account cache of scanRules for SCAN_TTL_MS. Bounded; expired entries are dropped when it fills. Only successes are kept. */

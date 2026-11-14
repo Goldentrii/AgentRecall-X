@@ -534,11 +534,11 @@ function trialCard(t: TrialState): string {
   const cap = t.capped ? `<div class="meta">Not found among your most recent rules.</div>` : "";
   const s3 = step(3, "A second agent connected after your rule went live", t.degraded ? unknown
     : t.done[2]
-      ? `<div class="meta">Two of your agents have been active since your rule went live. A new sign-in of the same agent also counts as a second one.</div>`
+      ? `<div class="meta">${t.proven ? "A credential other than the one that proposed your rule has been active since it went live." : "Two of your agents have been active since your rule went live."} A new sign-in of the same agent counts as another credential.</div>`
       : `<div class="meta">Open a different agent and ask it this. It should list your rule.</div>${cap}${cmd("trial-ask", TRIAL_ASK_SAY)}`);
   const names = ["connect an agent", "teach it one rule", "connect a second agent"];
   const status = t.next === null
-    ? `<div class="notice ok" role="status">Two of your agents have been active since your rule went live: each one loads it at session start.</div>`
+    ? `<div class="notice ok" role="status">${t.proven ? "It works: a rule you taught one agent reached another." : "Two of your agents have been active since your rule went live: each one loads it at session start."}</div>`
     : t.degraded && t.next > 1
       ? `<p class="sub">Some steps could not be checked just now.</p>`
       : `<p class="sub">Next: ${names[t.next - 1]}.</p>`;

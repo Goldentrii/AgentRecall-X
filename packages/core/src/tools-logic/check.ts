@@ -23,7 +23,7 @@ import {
 } from "../storage/pending.js";
 import { classifyFailureClass, checkAction, type CheckActionResult } from "./check-action.js";
 import { getSessionId } from "../storage/session.js";
-import { agentCorrectionsStaged, ownerReviewUrl } from "../types.js";
+import { agentCorrectionsStaged, ownerReviewUrl, requestCredential, toCredentialRef, credentialKeyOf } from "../types.js";
 import { withLock, LockContentionError } from "../storage/filelock.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
 import {
@@ -332,7 +332,7 @@ export async function confirmPendingCorrection(project: string, id: string): Pro
       confidence: "high",
       project: slug,
       human_correction: { rule, why, applies_when, pending_id: id },
-    });
+    }, { authoredBy: credentialKeyOf(row.authored_by) });
   } catch (err) {
     // The write may or may not have happened: say which, never a bare failure.
     const a = added();
@@ -351,7 +351,13 @@ export async function confirmPendingCorrection(project: string, id: string): Pro
   return { ok: true, rule, ...where };
 }
 
-export async function check(input: CheckInput): Promise<CheckResult> {
+/** What only trusted code (never a tool call) can say about a check(). */
+export interface CheckOrigin {
+  /** Credential id ("token:<id>") of the agent that proposed the staged correction being activated (confirmPendingCorrection). */
+  authoredBy?: string;
+}
+
+export async function check(input: CheckInput, origin: CheckOrigin = {}): Promise<CheckResult> {
   const slug = await resolveProject(input.project);
 
   // Set when the correction quality gate rejects a human_correction (surfaced
@@ -479,6 +485,7 @@ export async function check(input: CheckInput): Promise<CheckResult> {
           severity: detectSeverity(rule),
           reason: "structured correction from an agent channel — awaiting the owner's confirmation",
           source: getSessionId(),
+          authoredBy: requestCredential(),
         });
         if (stageRes.staged) {
           // A pending_id names the earlier PARTIAL capture this completes. Staging
@@ -542,6 +549,8 @@ export async function check(input: CheckInput): Promise<CheckResult> {
             // consistent session identity, same as corrections.ts's own recordOutcome
             // call sites in session-start.ts/session-end.ts.
             holder: getSessionId(),
+            // Hosted: the agent credential that proposed this rule (the owner approved it); see PendingRecord.authored_by.
+            ...(toCredentialRef(origin.authoredBy) ? { authored_by: toCredentialRef(origin.authoredBy) } : {}),
           });
           if (!writeResult.written) {
             // Surface the gate rejection instead of silently dropping the

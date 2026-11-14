@@ -192,9 +192,9 @@ export function mountSite(app: express.Express, d: SiteRouteDeps): void {
           d.log(`[connect] trial rules unreadable uid=${s.uid} kind=${(err as Error)?.name ?? "unknown"}`); // the card degrades; the page renders
         }
         const creds: TrialCredential[] = [
-          ...d.store.liveGrantsOf(s.uid).map((g) => seen[`grant:${g.id}`]),
-          ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t) => seen[`token:${t.id}`]),
-        ].filter((a): a is NonNullable<typeof a> => a !== undefined).map((a) => ({ firstSeen: a.first_seen, lastSeen: a.last_seen, calls: a.calls }));
+          ...d.store.liveGrantsOf(s.uid).map((g) => `grant:${g.id}`),
+          ...listTokens(d.dataDir).filter((t) => t.uid === s.uid && !t.revoked_at).map((t) => `token:${t.id}`),
+        ].flatMap((key) => (seen[key] ? [{ key, lastSeen: seen[key].last_seen, calls: seen[key].calls }] : []));
         const trial = computeTrial(creds, rules);
         const flash = s.flash !== undefined ? NOTICES[s.flash] : undefined;
         view = {
