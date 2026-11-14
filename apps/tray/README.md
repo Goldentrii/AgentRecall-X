@@ -21,7 +21,7 @@ Build from source today (see "Build and run" below). A signed download is not of
 
 Requirements to run: Windows 11 with WebView2. Keep `WebView2Loader.dll` beside the exe.
 
-### How the shipped exe was built (Docker cross-compile, no Windows toolchain)
+### How the local exe is built (Docker cross-compile, no Windows toolchain)
 
 The PC this was written on has no MSVC or MinGW, so the exe is cross-compiled to `x86_64-pc-windows-gnu` in a Linux container (`rust:1.97-bookworm`, `mingw-w64`, posix threads). Cargo registry and target dir live on a named volume, not in the Windows tree.
 
@@ -51,7 +51,7 @@ Each prints the path of its `agent_recall_tray_lib-*.exe`; copy it out with `doc
 
 ### UI parser tests
 
-`npm run test:ui` runs `test/view.test.mjs` (Node's test runner) against `src/view.ts`. The fixtures in `test/fixtures/` are real `session_start` and `recall` output from a local server; `node e2e/capture-fixtures.mjs` re-captures them (empty account, proposal waiting, approved rule, project state card, recall hits).
+`npm run test:ui` runs `test/view.test.mjs` (Node's test runner) against `src/view.ts`. It needs Node 22.18 or later, which runs TypeScript files directly. The fixtures in `test/fixtures/` are real `session_start` and `recall` output from a local server; `node e2e/capture-fixtures.mjs` re-captures them (empty account, proposal waiting, approved rule, project state card, recall hits).
 
 ### Native route (alternative)
 
@@ -75,7 +75,7 @@ The release exe has no test hooks. Build with `--features custom-protocol,test-h
 
 A test build also uses its own credential-store entry (`AgentRecall Tray (test)`) and cache directory (`%APPDATA%\com.agentrecall.tray.test`), so it can never touch a real sign-in or a real cache. Debug builds do not honour the variables; only the `test-hooks` feature does.
 
-`npm run check:release` proves the shipped exe has none of it: it searches `release/agent-recall-tray.exe` for the variable names and the test service name (8-bit and UTF-16) and fails if one is present.
+`npm run check:release` proves the release exe has none of it: it searches `release/agent-recall-tray.exe` for the variable names and the test service name (8-bit and UTF-16) and fails if one is present.
 
 ### End-to-end chain test
 

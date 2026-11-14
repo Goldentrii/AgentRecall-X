@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "AgentRecall Windows tray app (Tauri v2)",
+  "engines": {
+    "node": ">=22.18"
+  },
   "type": "module",
   "scripts": {
     "build:ui": "tsc --noEmit && node scripts/build-ui.mjs",
