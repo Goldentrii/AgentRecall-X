@@ -2,6 +2,7 @@
    dark page: the beats are stacked sections. The script adds .film to <html>,
    which pins the canvas and turns the beats into scroll-driven captions. */
 *{box-sizing:border-box}
+:root{--gold:#F5C451}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:#04060a;color:#eef1f6;font:17px/1.6 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
 a{color:inherit;text-underline-offset:3px}
@@ -11,19 +12,24 @@ a{color:inherit;text-underline-offset:3px}
 #stage{display:none}
 .top{position:relative;z-index:4;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:20px 32px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em;text-decoration:none}
-.mark{width:10px;height:10px;border-radius:50%;background:#ffb057;box-shadow:0 0 14px #ffb057}
-.top nav{display:flex;gap:22px;flex-wrap:wrap;font-size:15px}
+.mark{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 14px var(--gold)}
+.top nav{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:15px}
 .top nav a{text-decoration:none;color:#c9d3df}
 .top nav a:hover{color:#fff}
+.top nav a.btn{color:#04060a}
+.top nav a.btn.alt{color:#eef1f6}
+.top nav a.btn:hover{color:#04060a;filter:brightness(1.08)}
+.top nav a.btn.alt:hover{color:#fff;border-color:#fff}
 .meter,.hint{display:none}
 .beat{max-width:760px;margin:0 auto;padding:44px 24px;text-align:center}
-.kicker{font:12px/1 ui-monospace,Consolas,monospace;letter-spacing:.24em;text-transform:uppercase;color:#ffb057;margin:0 0 14px}
+.kicker{font:12px/1 ui-monospace,Consolas,monospace;letter-spacing:.24em;text-transform:uppercase;color:var(--gold);margin:0 0 14px}
 h1,h2{font-family:Georgia,"Times New Roman",serif;font-weight:500;line-height:1.1;margin:0 0 14px;letter-spacing:-.01em}
 h1{font-size:clamp(36px,5.2vw,68px)}
 h2{font-size:clamp(28px,3.8vw,50px)}
 .beat p{font-size:clamp(15px,1.25vw,18px);line-height:1.55;color:#c9d3df;margin:0 auto;max-width:620px}
 .beat .cta{margin-top:24px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
-.btn{display:inline-block;padding:14px 24px;border-radius:999px;font-weight:600;text-decoration:none;font-size:16px;background:#fff;color:#04060a}
+.btn{display:inline-block;padding:14px 24px;border-radius:999px;font-weight:600;text-decoration:none;font-size:16px;background:var(--gold);color:#04060a}
+.btn.sm{padding:8px 16px;font-size:14px}
 .btn.alt{background:transparent;color:#eef1f6;border:1px solid rgba(255,255,255,.4)}
 .beat .agentnote{font-size:14px;color:#8fa2b6;margin-top:18px}
 .agentnote a{font-family:ui-monospace,Consolas,monospace;font-size:13px}
@@ -36,25 +42,29 @@ h2{font-size:clamp(28px,3.8vw,50px)}
 .door p{color:#a9b8ca;margin:0 0 12px}
 .door ul{margin:0 0 22px;padding-left:20px;color:#dbe3ee}
 .door li{margin:4px 0}
-.door.human{border-top:3px solid #ffb057}
+.door.human{border-top:3px solid var(--gold)}
 .door.machine{border-top:3px solid #6fe3ff}
 .how{padding-top:48px}
 .how h2{font-size:28px}
 .steps{list-style:none;margin:18px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:s}
 .steps li{counter-increment:s;background:#0c121c;border:1px solid #1e2a3b;border-radius:14px;padding:20px}
-.steps li:before{content:counter(s);display:block;font:600 13px/1 ui-monospace,Consolas,monospace;color:#ffb057;margin-bottom:10px}
+.steps li:before{content:counter(s);display:block;font:600 13px/1 ui-monospace,Consolas,monospace;color:var(--gold);margin-bottom:10px}
 .steps strong{display:block;margin-bottom:6px}
 .steps span{color:#a9b8ca;font-size:15px}
 .foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:48px;padding-top:20px;border-top:1px solid #16202e;font-size:14px;color:#8fa2b6}
 .foot nav{display:flex;gap:18px}
 
 .film #stage{display:block;position:fixed;inset:0;width:100vw;height:100vh;z-index:0}
-.film.nogl #stage{background:radial-gradient(ellipse at 30% 40%,#4a1e08 0,transparent 45%),radial-gradient(ellipse at 70% 40%,#083a44 0,transparent 45%),#04060a}
+.film.nogl #stage{background:radial-gradient(ellipse at 30% 40%,#4a3608 0,transparent 45%),radial-gradient(ellipse at 70% 40%,#083a44 0,transparent 45%),#04060a}
 .film .top{position:fixed;top:0;left:0;right:0}
-.film #track{position:relative;height:900vh}
+.film #track{position:relative;height:450vh}
 .film .meter{display:flex;gap:22px;position:fixed;top:64px;right:32px;z-index:3;font:12px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.14em;color:#a9bccf}
 .film .hint{display:block;position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:3;font:11px/1 ui-monospace,Consolas,monospace;letter-spacing:.3em;text-transform:uppercase;color:#7f93a8;transition:opacity .4s ease}
 .film .hint.off{opacity:0}
+.skipfilm{display:none}
+.film .skipfilm{display:block;position:fixed;right:32px;bottom:18px;z-index:3;font:11px/1 ui-monospace,Consolas,monospace;letter-spacing:.2em;text-transform:uppercase;color:#c9d3df;text-decoration:none;padding:8px 2px;border-bottom:1px solid rgba(245,196,81,.6)}
+.film .skipfilm:hover{color:var(--gold)}
+#doors{scroll-margin-top:72px}
 /* Off-screen captions are transparent, not hidden: a screen reader still reads the whole story in order. */
 .film .beat{position:fixed;left:50%;bottom:9vh;width:min(760px,88vw);max-width:none;margin:0;padding:0;transform:translate(-50%,16px);z-index:2;opacity:0;pointer-events:none;transition:opacity .45s ease,transform .45s ease;text-shadow:0 2px 26px rgba(0,0,0,.9)}
 .film .beat.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
@@ -62,6 +72,9 @@ h2{font-size:clamp(28px,3.8vw,50px)}
 @media (max-width:760px){
   .doors,.steps{grid-template-columns:1fr}
   .top{padding:16px}
-  .film .meter{right:16px;gap:12px;font-size:10px}
+  .film .meter{right:16px;top:104px;gap:12px;font-size:10px}
+  .top nav{gap:8px}
+  .top nav a.btn.sm{padding:7px 12px;font-size:13px}
+  .film .skipfilm{right:16px;bottom:14px;font-size:10px}
 }
 @media (prefers-reduced-motion:reduce){.film .beat,.film .beat.on,.film .hint{transition:none}}

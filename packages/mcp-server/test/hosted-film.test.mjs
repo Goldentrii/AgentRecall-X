@@ -150,3 +150,40 @@ describe("home page film — accessibility and motion", () => {
     assert.ok(!/high-performance/.test(script));
   });
 });
+
+describe("home page film — calls to action and gold", () => {
+  const html = renderStatic("/", ctx).body;
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
+  const header = /<header class="top">([\s\S]*?)<\/header>/.exec(html)[1];
+
+  it("the header carries two real buttons, GitHub stays a plain link", () => {
+    assert.match(header, /<a class="btn sm" href="\/connect">Connect an agent<\/a>/);
+    assert.match(header, /<a class="btn sm alt" href="\/local">Run it locally<\/a>/);
+    assert.match(header, /<a href="https:\/\/github\.com[^"]*" rel="noopener">GitHub<\/a>/);
+  });
+
+  it("'Skip the film' is a plain anchor to #doors, and #doors exists", () => {
+    assert.match(html, /<a class="skipfilm" href="#doors">Skip the film<\/a>/);
+    assert.match(html, /id="doors"/);
+  });
+
+  it("the film track is 450vh, not 900vh", () => {
+    assert.match(css, /\.film #track\{[^}]*height:450vh/);
+    assert.ok(!/900vh/.test(css));
+  });
+
+  it("one gold token drives brand, kickers and primary buttons; the shader grades the human side gold", () => {
+    assert.match(css, /--gold:#f5c451/i);
+    assert.match(css, /\.btn\{[^}]*background:var\(--gold\)/);
+    assert.match(css, /\.kicker\{[^}]*color:var\(--gold\)/);
+    assert.match(css, /\.mark\{[^}]*background:var\(--gold\)/);
+    assert.match(script, /const vec3 GOLD = vec3\(0\.961, 0\.769, 0\.318\)/);
+    assert.match(script, /gold\(plate\(H, c, hc, s\)\)/);
+  });
+
+  it("captions only explain the distance and the fix, and never promise automatic hosted rules", () => {
+    assert.match(html, /Intelligent Distance/);
+    assert.ok(!/automatically (becomes|saved|applied)/i.test(html));
+  });
+});
