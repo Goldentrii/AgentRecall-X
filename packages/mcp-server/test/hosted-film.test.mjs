@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { renderStatic, isStaticPath } = await import("../dist/http/site.js");
-const { FILM, FILM_PLATES, loadFilm, filmPage } = await import("../dist/http/film.js");
+const { FILM, FILM_PLATES, loadFilm } = await import("../dist/http/film.js");
 
 const ctx = { base: "https://recall.example.com", privacyUrl: "https://example.com/privacy", hosted: true };
 const hash = (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
@@ -51,7 +51,7 @@ describe("home page film", () => {
     assert.match(html, /href="\/local"/);
     assert.match(html, /href="\/connect\.md"/);
     assert.match(html, /href="\/local\.md"/);
-    assert.match(html, /href="https:\/\/example\.com\/privacy"/);
+    assert.match(html, /<a href="\/privacy">Privacy<\/a><a href="\/support">Support<\/a>/);
     // The captions are only pinned and hidden under html.film, which the script adds.
     const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
     for (const rule of css.matchAll(/([^{}]+)\{[^{}]*(?:opacity:0|visibility:hidden|position:fixed)[^{}]*\}/g)) {
@@ -59,10 +59,10 @@ describe("home page film", () => {
     }
   });
 
-  it("no host other than the repo, the privacy link and Telegram appears", () => {
+  it("no host other than the repo and Telegram appears", () => {
     const html = renderStatic("/", ctx).body;
     const hosts = new Set([...html.matchAll(/(?:href|src|action)="(https?:\/\/[^"/]+)/g)].map((m) => m[1]));
-    assert.deepEqual([...hosts].sort(), ["https://example.com", "https://github.com", "https://t.me"]);
+    assert.deepEqual([...hosts].sort(), ["https://github.com", "https://t.me"]);
     assert.ok(!/https?:\/\//.test(/<script>([\s\S]*?)<\/script>/.exec(html)[1]), "the script names no URL");
   });
 
@@ -119,11 +119,6 @@ describe("home page film", () => {
     assert.equal(classic.status, 200);
     assert.match(classic.body, /<a class="btn" href="\/connect">Connect an agent<\/a>/);
     assert.equal(renderStatic("/film/human.jpg", ctx, null), null);
-  });
-
-  it("filmPage escapes the privacy URL", () => {
-    const html = filmPage(FILM, { ...ctx, privacyUrl: 'https://example.com/"><script>x</script>' });
-    assert.equal([...html.matchAll(/<script>/g)].length, 1);
   });
 });
 

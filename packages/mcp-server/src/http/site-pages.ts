@@ -166,6 +166,25 @@ code{font:.9em var(--mono);background:var(--sunk);padding:1px 6px;border-radius:
 .imp input[type=text]{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--sunk)}
 .imp .notice{margin:14px 0}
 .msg{max-width:560px;margin:40px auto}
+.legal{max-width:46rem;padding:12px 0 8px}
+.legal h1{font-size:clamp(2rem,5vw,3rem);margin-bottom:18px}
+.legal h2{margin:34px 0 10px;padding-top:22px;border-top:1px solid var(--line)}
+.legal h1+p+h2,.legal h1+p+p+h2{margin-top:26px}
+.legal ul{margin:0 0 14px;padding-left:22px}
+.legal li{margin:6px 0}
+.legal a{color:var(--cyan)}
+.legal .tbl{overflow-x:auto;margin:0 0 18px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.legal table{border-collapse:collapse;width:100%;min-width:34rem;font-size:15.5px}
+.legal th,.legal td{text-align:left;vertical-align:top;padding:12px 14px;border-top:1px solid var(--line)}
+.legal thead th{border-top:0;color:var(--dim);font:600 13px/1.3 var(--sans);letter-spacing:.04em;text-transform:uppercase}
+.legal td{color:var(--muted)}
+.legal tbody td:first-child{color:var(--ink)}
+.support{max-width:46rem;padding:12px 0 8px}
+.support h1{font-size:clamp(2rem,5vw,3rem)}
+.support .panel{margin:0 0 18px}
+.support .panel p:last-child{margin-bottom:0}
+.support .panel h2{font-size:1.35rem;margin-bottom:8px}
+.support .addr{font:600 1.05rem/1.4 var(--mono);overflow-wrap:anywhere}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (max-width:820px){.hero,.signin{grid-template-columns:1fr;gap:28px}.doors,.pair{grid-template-columns:1fr}.steps{grid-template-columns:1fr}}
 @media (max-width:520px){body{font-size:16px}.wrap{padding:0 18px}.panel{padding:20px 18px}.door{padding:24px 20px 22px}.tablist label{padding:8px 12px;font-size:14px}.btn{width:100%;text-align:center}.cta{flex-direction:column}.cmd pre{padding:14px}.cmd .copy{position:static;width:100%;margin-top:8px;padding:11px}.idrow .copy{position:static}.trial .rows .btn{width:100%}.rows .btn,.who .btn{width:auto}}
@@ -209,13 +228,14 @@ export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 
 // ---- layout ---------------------------------------------------------------
 
-type Nav = "home" | "connect" | "local" | "none";
+type Nav = "home" | "connect" | "local" | "privacy" | "support" | "none";
 
 function layout(title: string, body: string, ctx: SiteCtx, nav: Nav, description = "One memory shared by every AI agent you use."): string {
   const cur = (n: Nav) => (nav === n ? ' aria-current="page"' : "");
+  const indexable = nav === "home" || nav === "local" || nav === "privacy" || nav === "support";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>${esc(title)}</title><meta name="description" content="${esc(description)}">` +
-    `<meta name="color-scheme" content="dark"><meta name="robots" content="${nav === "home" || nav === "local" ? "index,follow" : "noindex"}">` +
+    `<meta name="color-scheme" content="dark"><meta name="robots" content="${indexable ? "index,follow" : "noindex"}">` +
     `<link rel="icon" href="/favicon.svg" type="image/svg+xml">` +
     `<link rel="alternate" type="text/markdown" href="/connect.md" title="Connect an agent (for agents)">` +
     `<link rel="alternate" type="text/markdown" href="/local.md" title="Run locally (for agents)">` +
@@ -226,8 +246,15 @@ function layout(title: string, body: string, ctx: SiteCtx, nav: Nav, description
     `<a href="${REPO_URL}" rel="noopener">GitHub</a></nav></header>` +
     `<main id="main">${body}</main>` +
     `<footer class="foot"><span>AgentRecall is open source (MIT). Memory you host here is private to your account.</span>` +
-    `<nav aria-label="Footer"><a href="${REPO_URL}" rel="noopener">GitHub</a><a href="${esc(ctx.privacyUrl)}" rel="noopener">Privacy</a><a href="${TELEGRAM_URL}" rel="noopener">Telegram</a></nav></footer>` +
+    footerNav(nav) + `</footer>` +
     `</div><script>${SCRIPT}</script></body></html>`;
+}
+
+/** The footer links, on every site page (the home film uses it too). Privacy and Support are this site's own pages. */
+export function footerNav(current?: Nav): string {
+  const cur = (n: Nav) => (current === n ? ' aria-current="page"' : "");
+  return `<nav aria-label="Footer"><a href="${REPO_URL}" rel="noopener">GitHub</a><a href="/privacy"${cur("privacy")}>Privacy</a>` +
+    `<a href="/support"${cur("support")}>Support</a><a href="${TELEGRAM_URL}" rel="noopener">Telegram</a></nav>`;
 }
 
 /** A closed-by-default disclosure, so long copy blocks do not stack up on a phone. */
@@ -314,6 +341,37 @@ export function importAgentPrompt(b: string): string {
     `This writes ${PACK_NAME} in my home folder. It holds only memory files (projects/**, awareness, insights, identity card), never config.json, telemetry, keys or logs. A missing optional file is fine.`,
     `Then tell me the full path of the file and ask me to open ${b}/connect, find "Import memory", choose that file and press Import. Do not send the file anywhere else. Full instructions: ${b}/connect.md`,
   ].join("\n");
+}
+
+// ---- legal pages -----------------------------------------------------------------
+
+export const ISSUES_URL = `${REPO_URL}/issues`;
+
+/** /privacy: PRIVACY.md rendered (see legal.ts). `policyHtml` is already safe HTML from markdown-lite. */
+export function privacyPage(ctx: SiteCtx, policyHtml: string): string {
+  return layout("Privacy policy: AgentRecall", `<article class="legal">${policyHtml}</article>`, ctx, "privacy",
+    "How the hosted AgentRecall service handles your data.");
+}
+
+/** /privacy when the shipped policy text could not be loaded: say so, never show partial text. */
+export function privacyUnavailablePage(ctx: SiteCtx): string {
+  return layout("Privacy policy: AgentRecall", `<div class="panel msg"><h1>Privacy policy unavailable</h1>` +
+    `<p>This server could not load its privacy policy text just now. The same policy is on GitHub: <a href="${esc(DEFAULT_PRIVACY_URL)}" rel="noopener">PRIVACY.md</a>.</p></div>`, ctx, "privacy");
+}
+
+/** /support: the contact address is the one PRIVACY.md names (passed in, never typed here). */
+export function supportPage(ctx: SiteCtx, contact: string | null): string {
+  const mail = contact === null ? "" :
+    `<section class="panel"><h2>Email</h2><p>For account questions, data requests and deletion, write to ` +
+    `<a class="addr" href="mailto:${esc(contact)}">${esc(contact)}</a>.</p>` +
+    `<p>Please do not put personal data in public issues. Data requests are answered within one month, as the <a href="/privacy">privacy policy</a> says.</p></section>`;
+  return layout("Support: AgentRecall", `<div class="support"><h1>Support</h1>` +
+    `<p class="lede">AgentRecall is a free, early-stage project run by one person. Support is best effort: there is no support team and no guaranteed response time.</p>` +
+    `<div class="notice plain">Expect a reply within about a week. Sometimes it is faster, sometimes slower.</div>` +
+    mail +
+    `<section class="panel"><h2>Bugs and questions</h2><p>Open an issue on <a href="${ISSUES_URL}" rel="noopener">GitHub</a>. Issues are public, so they also help the next person with the same problem.</p></section>` +
+    `<section class="panel"><h2>Community</h2><p>Talk to other users in the <a href="${TELEGRAM_URL}" rel="noopener">Telegram group</a>.</p></section></div>`,
+    ctx, "support", "How to get help with AgentRecall.");
 }
 
 export function connectMarkdown(b: string, hosted: boolean): string {
@@ -413,7 +471,8 @@ export function llmsTxt(b: string): string {
     ``,
     `- [README](${REPO_URL}/blob/main/README.md)`,
     `- [Hosted server](${REPO_URL}/blob/main/docs/hosted-server.md)`,
-    `- [Privacy policy](${REPO_URL}/blob/main/PRIVACY.md)`,
+    `- [Privacy policy](${b}/privacy)`,
+    `- [Support](${b}/support)`,
     `- [AGENTS.md](${REPO_URL}/blob/main/AGENTS.md): lifecycle doctrine`,
     ``,
   ].join("\n");
