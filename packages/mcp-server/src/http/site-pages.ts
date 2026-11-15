@@ -8,7 +8,7 @@
  * a third party (PRIVACY.md promises none).
  *
  * Design: "index cards" in the site's one dark look: the same tokens (site-theme.ts) as the
- * home film, sign-in and review pages, dark always, gold primary buttons, cyan accents.
+ * home page, the film (/film), sign-in and review pages, dark always, gold primary buttons, cyan accents.
  * Headlines are a system serif, commands are mono, everything else is system sans.
  */
 import type { TrialState } from "./trial.js";
@@ -198,13 +198,14 @@ const sha = (s: string): string => `'sha256-${createHash("sha256").update(s, "ut
 export const STYLE_HASH = sha(CSS);
 export const SCRIPT_HASH = sha(SCRIPT);
 
-/** Headers for every site page. `formOrigins`: provider origins, only for a page whose sign-in form redirects to them. */
-export function siteHeaders(opts: { formOrigins?: readonly string[]; noStore?: boolean; hashes?: { style: string; script: string } } = {}): Record<string, string> {
+/** Headers for every site page. `formOrigins`: provider origins, only for a page whose sign-in form redirects to them.
+ *  `hashes`: a page with its own inline style/script; no `script` hash means the page has no script (script-src 'none'). */
+export function siteHeaders(opts: { formOrigins?: readonly string[]; noStore?: boolean; hashes?: { style: string; script?: string } } = {}): Record<string, string> {
   const extra = (opts.formOrigins ?? []).filter((o) => /^https?:\/\/[A-Za-z0-9.\-:[\]]+$/.test(o));
   return {
     "content-type": "text/html; charset=utf-8",
     "content-security-policy":
-      `default-src 'none'; img-src 'self' data:; style-src ${opts.hashes?.style ?? STYLE_HASH}; script-src ${opts.hashes?.script ?? SCRIPT_HASH}; base-uri 'none'; ` +
+      `default-src 'none'; img-src 'self' data:; style-src ${opts.hashes?.style ?? STYLE_HASH}; script-src ${opts.hashes ? (opts.hashes.script ?? "'none'") : SCRIPT_HASH}; base-uri 'none'; ` +
       `form-action 'self'${extra.length ? " " + extra.join(" ") : ""}; frame-ancestors 'none'`,
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
@@ -251,7 +252,7 @@ function layout(title: string, body: string, ctx: SiteCtx, nav: Nav, description
     `</div><script>${SCRIPT}</script></body></html>`;
 }
 
-/** The footer links, on every site page (the home film uses it too). Privacy and Support are this site's own pages. */
+/** The footer links, on every site page (the home page and the film use it too). Privacy and Support are this site's own pages. */
 export function footerNav(current?: Nav): string {
   const cur = (n: Nav) => (current === n ? ' aria-current="page"' : "");
   return `<nav aria-label="Footer"><a href="${REPO_URL}" rel="noopener">GitHub</a><a href="/privacy"${cur("privacy")}>Privacy</a>` +

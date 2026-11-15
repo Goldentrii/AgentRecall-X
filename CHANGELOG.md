@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Hosted website
+
+- The home page at `/` is now the blueprint page: the distance between you and your agents drawn as a figure, two ways in, how it works, one measured example, a clients table and a link to the film. It has no script, and its content security policy now says `script-src 'none'`.
+- The scroll film moved to `/film` (still with its five plates). The home page links to it.
+- If the home page assets are missing or fail the load checks, the server logs one line and serves the classic home page; if the film assets are missing, `/film` returns 404.
+
 ## [3.5.3] — 2026-11-14
 
 All four packages 3.5.3 in lockstep. This is a large release under a patch number: read "Upgrade notes" first.

@@ -2,7 +2,8 @@
  * site.ts — the routes of the hosted website.
  *
  * Public, no session, GET/HEAD only (served by serve.ts, with or without OAuth):
- *   /  /local  /privacy  /support  /connect.md  /local.md  /llms.txt  /favicon.svg  /film/<plate>.jpg (see film.ts)
+ *   /  (the blueprint home page, see home.ts)  /film  (the scroll film, see film.ts)  /film/<plate>.jpg
+ *   /local  /privacy  /support  /connect.md  /local.md  /llms.txt  /favicon.svg
  *   /connect   (OAuth off: explains that hosted sign-in is not set up)
  *
  * Signed-in (Express, only when OAuth is configured; same session as /review):
@@ -35,6 +36,7 @@ import { receiveImport, ImportAbort, ImportGate, restoreOrphans, sweepTrash, swe
 import { boundaryOf } from "./multipart.js";
 import { LEGAL, type Legal } from "./legal.js";
 import { FILM, filmPage, plateHeaders, type Film } from "./film.js";
+import { HOME, type Home } from "./home.js";
 import {
   importResultPage, type SiteCtx, TEXT_HEADERS, FAVICON_SVG, siteHeaders, homePage, localPage, connectUnavailablePage, connectMarkdown,
   localMarkdown, llmsTxt, privacyPage, privacyUnavailablePage, supportPage, dashboardPage, type DashboardView, type AgentRow,
@@ -42,7 +44,7 @@ import {
 
 export interface StaticResponse { status: number; headers: Record<string, string>; body: string | Buffer }
 
-export const STATIC_PATHS: ReadonlySet<string> = new Set(["/", "/local", "/privacy", "/support", "/connect.md", "/local.md", "/llms.txt", "/favicon.svg"]);
+export const STATIC_PATHS: ReadonlySet<string> = new Set(["/", "/film", "/local", "/privacy", "/support", "/connect.md", "/local.md", "/llms.txt", "/favicon.svg"]);
 
 /** Is this path one the site serves without a session? (`/connect` is added by the caller when OAuth is off.) */
 export function isStaticPath(pathname: string, hosted: boolean): boolean {
@@ -50,8 +52,8 @@ export function isStaticPath(pathname: string, hosted: boolean): boolean {
   return STATIC_PATHS.has(p) || (!hosted && p === "/connect") || (FILM !== null && FILM.plates.has(pathname));
 }
 
-/** `film`: the loaded home page film, or null to serve the classic home page (tests pass null). */
-export function renderStatic(pathname: string, ctx: SiteCtx, film: Film | null = FILM, legal: Legal | null = LEGAL): StaticResponse | null {
+/** `film`: the loaded film (served at /film; null = no such page). `home`: the loaded blueprint home page, or null to serve the classic one (tests pass null). */
+export function renderStatic(pathname: string, ctx: SiteCtx, film: Film | null = FILM, legal: Legal | null = LEGAL, home: Home | null = HOME): StaticResponse | null {
   // Plates are exact paths (no trailing-slash folding) and never reflect the Host header.
   const plate = film?.plates.get(pathname);
   if (plate) return { status: 200, headers: plateHeaders(plate.length), body: plate };
@@ -62,9 +64,12 @@ export function renderStatic(pathname: string, ctx: SiteCtx, film: Film | null =
   const page = (html: string): StaticResponse => fin({ status: 200, headers: siteHeaders({ noStore: false }), body: html });
   const text = (body: string): StaticResponse => fin({ status: 200, headers: { ...TEXT_HEADERS }, body });
   switch (p) {
-    case "/": return film
-      ? fin({ status: 200, headers: siteHeaders({ noStore: false, hashes: { style: film.styleHash, script: film.scriptHash } }), body: filmPage(film, ctx) })
+    case "/": return home
+      ? fin({ status: 200, headers: siteHeaders({ noStore: false, hashes: { style: home.styleHash } }), body: home.html })
       : page(homePage(ctx));
+    case "/film": return film
+      ? fin({ status: 200, headers: siteHeaders({ noStore: false, hashes: { style: film.styleHash, script: film.scriptHash } }), body: filmPage(film, ctx) })
+      : null;
     case "/local": return page(localPage(ctx));
     case "/privacy": return legal
       ? page(privacyPage(ctx, legal.html))

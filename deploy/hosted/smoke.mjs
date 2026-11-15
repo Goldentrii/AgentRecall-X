@@ -5,9 +5,12 @@
 //   node deploy/hosted/smoke.mjs [--base https://agentrecallx.com] [--expect-version 3.5.3]
 //                                [--alias https://recall.aiakada.com]
 //
+// The CSP check covers / (the home page: one inline style, no script, so script-src must be exactly 'none')
+// and /film (one inline style and one inline script, each the only source of its directive).
+//
 // Prints one PASS/FAIL line per check with its evidence; exit 1 if any FAIL, 2 on bad usage.
 // What the server must answer is defined in packages/mcp-server/src/http (site.ts,
-// film.ts, serve.ts, oauth-app.ts) and the alias behaviour in deploy/hosted/Caddyfile.
+// home.ts, film.ts, serve.ts, oauth-app.ts) and the alias behaviour in deploy/hosted/Caddyfile.
 import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -19,6 +22,7 @@ const PLATES = ["human", "m0", "wrong", "m2", "m3"];
 
 const PAGES = [
   ["/", "text/html"],
+  ["/film", "text/html"],
   ["/local", "text/html"],
   ["/connect.md", "text/plain"],
   ["/local.md", "text/plain"],
@@ -101,21 +105,32 @@ const checks = {
   },
 
   async csp({ base }) {
-    const res = await request(`${base}/`);
-    expect(res.status === 200, `status ${res.status}, want 200`);
-    const csp = res.headers.get("content-security-policy");
-    expect(csp, "no Content-Security-Policy header");
     const evidence = [];
-    for (const [tag, dir] of [["style", "style-src"], ["script", "script-src"]]) {
-      const bodies = inline(res.text, tag);
-      expect(bodies.length === 1, `${bodies.length} inline <${tag}> elements, want exactly 1`);
-      const want = cspHash(bodies[0]);
-      const have = directive(csp, dir);
-      expect(have, `CSP has no ${dir}`);
-      expect(have.length === 1 && have[0] === want, `${dir} is [${have.join(" ")}], served <${tag}> hashes to ${want}`);
-      evidence.push(`${dir} ${want.slice(1, 15)}...`);
+    for (const path of ["/", "/film"]) {
+      const res = await request(`${base}${path}`);
+      expect(res.status === 200, `${path}: status ${res.status}, want 200`);
+      const csp = res.headers.get("content-security-policy");
+      expect(csp, `${path}: no Content-Security-Policy header`);
+      const styles = inline(res.text, "style");
+      expect(styles.length === 1, `${path}: ${styles.length} inline <style> elements, want exactly 1`);
+      const styleHash = cspHash(styles[0]);
+      const styleSrc = directive(csp, "style-src");
+      expect(styleSrc, `${path}: CSP has no style-src`);
+      expect(styleSrc.length === 1 && styleSrc[0] === styleHash, `${path}: style-src is [${styleSrc.join(" ")}], served <style> hashes to ${styleHash}`);
+      const scripts = inline(res.text, "script");
+      expect(scripts.length <= 1, `${path}: ${scripts.length} inline <script> elements, want 0 or 1`);
+      const scriptSrc = directive(csp, "script-src");
+      expect(scriptSrc, `${path}: CSP has no script-src`);
+      if (scripts.length === 0) {
+        expect(scriptSrc.length === 1 && scriptSrc[0] === "'none'", `${path}: no inline <script>, so script-src must be exactly 'none', is [${scriptSrc.join(" ")}]`);
+        evidence.push(`${path} style-src ${styleHash.slice(1, 15)}..., script-src 'none'`);
+      } else {
+        const want = cspHash(scripts[0]);
+        expect(scriptSrc.length === 1 && scriptSrc[0] === want, `${path}: script-src is [${scriptSrc.join(" ")}], served <script> hashes to ${want}`);
+        evidence.push(`${path} style-src ${styleHash.slice(1, 15)}..., script-src ${want.slice(1, 15)}...`);
+      }
     }
-    return `${evidence.join(", ")} match the served bytes`;
+    return `${evidence.join("; ")} match the served bytes`;
   },
 
   async headers({ base }) {
