@@ -1,5 +1,6 @@
 /**
- * site-theme.ts — the design tokens of the site's dark look (the home film, film.css),
+ * site-theme.ts — the design tokens of the site's dark look (the film at /film, film.css; the home page's
+ * home.css repeats the same values),
  * as one CSS custom-property block. Server-rendered pages that are not the film (sign-in,
  * consent, owner review) put this at the top of their one <style> so they read the same
  * palette instead of each carrying its own copy of the colours.

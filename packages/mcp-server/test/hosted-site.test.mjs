@@ -232,7 +232,7 @@ describe("website — real agent-recall-server binary", () => {
 
   it("every page carries a strict CSP whose hashes match the inline style and script", async () => {
     const b = new Browser(srv.base);
-    for (const p of ["/", "/local", "/connect", "/privacy", "/support"]) {
+    for (const p of ["/", "/film", "/local", "/connect", "/privacy", "/support"]) {
       const r = await b.go(p);
       assert.equal(r.status, 200, p);
       const csp = r.headers.get("content-security-policy");
@@ -244,9 +244,11 @@ describe("website — real agent-recall-server binary", () => {
       assert.ok(!/script-src[^;]*https?:/.test(csp), "no external script");
       const script = /<script>([\s\S]*?)<\/script>/.exec(r.text)?.[1];
       const style = /<style>([\s\S]*?)<\/style>/.exec(r.text)?.[1];
-      assert.ok(script && style, `${p}: one inline script and one inline style`);
+      assert.ok(style, `${p}: one inline style`);
+      // The home page has no script at all (see hosted-home.test.mjs); every other page has exactly one, hashed.
+      assert.ok(p === "/" ? !script : script, `${p}: ${p === "/" ? "no inline script" : "one inline script"}`);
       const h = (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
-      assert.ok(csp.includes(`script-src ${h(script)}`), `${p}: script hash matches`);
+      assert.ok(p === "/" ? /(^|; )script-src 'none'(;|$)/.test(csp) : csp.includes(`script-src ${h(script)}`), `${p}: script-src matches`);
       assert.ok(csp.includes(`style-src ${h(style)}`), `${p}: style hash matches`);
       assert.equal(r.headers.get("x-content-type-options"), "nosniff");
       assert.equal(r.headers.get("x-frame-options"), "DENY");
@@ -262,12 +264,13 @@ describe("website — real agent-recall-server binary", () => {
 
   it("the home page offers both doors, with the footer links", async () => {
     const r = await new Browser(srv.base).go("/");
-    assert.match(r.text, /<a class="btn" href="\/connect">Connect an agent<\/a>/);
+    assert.match(r.text, /<a class="btn btn--gold" href="\/connect">Connect an agent<\/a>/);
     assert.match(r.text, /href="\/local"/);
+    assert.match(r.text, /href="\/film"/, "the film is one click away");
     assert.match(r.text, /href="https:\/\/github\.com\/Goldentrii\/AgentRecall-X"/);
     assert.match(r.text, /<a href="\/privacy">Privacy<\/a><a href="\/support">Support<\/a>/, "the site's own policy and support pages");
     assert.match(r.text, /href="https:\/\/t\.me\/\+ywZwoHrg3AM0NDVi"/);
-    assert.match(r.text, /<canvas id="stage" aria-hidden="true">/, "the hero is the film canvas");
+    assert.match(r.text, /<h1 id="h1">The distance between you and your agents\./, "the hero is the blueprint home page");
     assert.match(r.text, /<title>[^<]*AgentRecall/);
   });
 
@@ -497,7 +500,7 @@ describe("website — real agent-recall-server binary", () => {
   it("nothing is sent to a third party: no tracker, font or CDN host appears in any page", async () => {
     const b = new Browser(srv.base);
     const hosts = new Set();
-    for (const p of ["/", "/local", "/connect", "/privacy", "/support"]) {
+    for (const p of ["/", "/film", "/local", "/connect", "/privacy", "/support"]) {
       const html = (await b.go(p)).text;
       for (const m of html.matchAll(/(?:href|src|action)="(https?:\/\/[^"/]+)/g)) hosts.add(m[1]);
     }

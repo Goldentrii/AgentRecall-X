@@ -1,13 +1,14 @@
 /**
- * film.ts — the home page film: "Intelligent Distance" in five scroll-driven beats.
+ * film.ts — the film: "Intelligent Distance" in five scroll-driven beats, served at /film
+ * (the home page at / links to it; see home.ts).
  *
  * The page keeps the site's CSP shape: one inline style and one inline script, each
  * allowed by its sha256 hash, and nothing from another origin. The only extra
  * requests are five same-origin JPEG plates under /film/ (img-src 'self').
  *
  * The assets live beside this file in ./film/ (copied into dist by the build). If
- * they are missing or unreadable, FILM is null and the site serves the classic
- * home page instead: a broken build must never take the front door down.
+ * they are missing or unreadable, FILM is null and /film is a 404; the home page
+ * does not depend on it.
  *
  * Without script the page is a plain stacked document with the same copy and the
  * same links, so agents, crawlers and no-script browsers read the whole story.
@@ -53,8 +54,8 @@ export function loadFilm(dir: string): Film | null {
 }
 
 export const FILM: Film | null = loadFilm(fileURLToPath(new URL("./film", import.meta.url)));
-// A build without the assets still serves a home page, but the operator must be able to see why it is the old one.
-if (!FILM) process.stderr.write("[site] home page film assets missing or invalid in dist/http/film; serving the classic home page\n");
+// A build without the assets still serves every other page, but the operator must be able to see why /film is gone.
+if (!FILM) process.stderr.write("[site] film assets missing or invalid in dist/http/film; /film will return 404\n");
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -93,9 +94,9 @@ export function filmPage(film: Film, ctx: SiteCtx): string {
     `<${b.first ? "h1" : "h2"}>${esc(b.h)}</${b.first ? "h1" : "h2"}>` +
     (b.p ? `<p>${esc(b.p)}</p>` : "") +
     `</section>`).join("");
-  const description = "AgentRecall narrows the distance between you and your AI agents: every correction you make is remembered by Claude Code, Codex, Cursor and any MCP client, and measured each time it matters. Hosted or fully local.";
+  const description = "The film: Intelligent Distance in five scenes. AgentRecall narrows the distance between you and your AI agents: every correction you make is remembered by Claude Code, Codex, Cursor and any MCP client, and measured each time it matters. Hosted or fully local.";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<title>AgentRecall: the distance between you and your agents, measured and shortened</title>` +
+    `<title>The film: Intelligent Distance in five scenes | AgentRecall</title>` +
     `<meta name="description" content="${esc(description)}">` +
     `<meta name="color-scheme" content="dark"><meta name="robots" content="index,follow">` +
     `<link rel="icon" href="/favicon.svg" type="image/svg+xml">` +

@@ -146,17 +146,17 @@ describe("GET /support", () => {
 });
 
 describe("links on every site page", () => {
-  const pages = ["/", "/local", "/privacy", "/support"];
+  const pages = ["/", "/film", "/local", "/privacy", "/support"];
   const connectOff = renderStatic("/connect", { ...ctx, hosted: false });
 
-  it("Privacy and Support are in the footer of the home film, /local, /privacy, /support and the sign-in-off page", () => {
+  it("Privacy and Support are in the footer of /, /film, /local, /privacy, /support and the sign-in-off page", () => {
     for (const [p, body] of [...pages.map((p) => [p, renderStatic(p, ctx).body]), ["/connect", connectOff.body]]) {
       assert.match(body, /<nav aria-label="Footer">[^]*<a href="\/privacy"[^>]*>Privacy<\/a><a href="\/support"[^>]*>Support<\/a>/, p);
     }
   });
 
   it("the classic home page has them too", () => {
-    assert.match(renderStatic("/", ctx, null).body, /<a href="\/privacy">Privacy<\/a><a href="\/support">Support<\/a>/);
+    assert.match(renderStatic("/", ctx, null, undefined, null).body, /<a href="\/privacy">Privacy<\/a><a href="\/support">Support<\/a>/);
   });
 
   it("the current page is marked in the footer", () => {

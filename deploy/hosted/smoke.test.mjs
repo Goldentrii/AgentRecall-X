@@ -22,8 +22,11 @@ const JS = "console.log(1);\n";
 function fake(over = {}) {
   const o = { css: CSS, js: JS, eol: "\n", ...over };
   let origin = "";
+  // /film has one inline style and one inline script; / (the home page) has one style and no script: script-src 'none'.
   const csp = () =>
     `default-src 'none'; style-src ${o.cssHash ?? cspHash(o.css)}; script-src ${o.jsHash ?? cspHash(o.js)}; frame-ancestors 'none'`;
+  const homeCsp = () =>
+    `default-src 'none'; style-src ${o.homeCssHash ?? cspHash(o.css)}; script-src ${o.homeScriptSrc ?? "'none'"}; frame-ancestors 'none'`;
   const text = { "content-type": "text/plain; charset=utf-8" };
   const handler = (req, res) => {
     const send = (status, headers, body = "") => { res.writeHead(status, headers); res.end(body); };
@@ -37,9 +40,12 @@ function fake(over = {}) {
     switch (path) {
       case "/healthz":
         return send(200, { "content-type": "application/json" }, JSON.stringify({ ok: o.ok ?? true, version: o.version ?? VERSION }));
-      case "/": {
-        const html = `<!doctype html><html><head><style>${o.css.replace(/\n/g, o.eol)}</style></head><body>x<script>${o.js.replace(/\n/g, o.eol)}</script>${o.extra ?? ""}</body></html>`;
-        const h = { "content-type": "text/html; charset=utf-8", "content-security-policy": o.csp ?? csp(), "x-content-type-options": "nosniff" };
+      case "/": case "/film": {
+        const film = path === "/film";
+        const html = film
+          ? `<!doctype html><html><head><style>${o.css.replace(/\n/g, o.eol)}</style></head><body>x<script>${o.js.replace(/\n/g, o.eol)}</script>${o.extra ?? ""}</body></html>`
+          : `<!doctype html><html><head><style>${o.css.replace(/\n/g, o.eol)}</style></head><body>x${o.homeExtra ?? ""}</body></html>`;
+        const h = { "content-type": "text/html; charset=utf-8", "content-security-policy": o.csp ?? (film ? csp() : homeCsp()), "x-content-type-options": "nosniff" };
         if (!o.noHsts) h["strict-transport-security"] = "max-age=31536000; includeSubDomains";
         for (const k of o.drop ?? []) delete h[k];
         return send(200, h, html);
@@ -121,11 +127,31 @@ test("an extra source in script-src fails (exactly the hash)", async () => {
   assert.deepEqual(failing(r), ["CSP hashes match inline style and script"]);
 });
 
+test("the home page: a script on / fails even when script-src is 'none'; so does a script-src that is not exactly 'none'", async () => {
+  const withScript = await smoke({ homeExtra: "<script>x()</script>" });
+  assert.deepEqual(failing(withScript), ["CSP hashes match inline style and script"]);
+  assert.match(find(withScript, "CSP hashes match inline style and script").evidence, /^\/: script-src is \['none'\]/);
+  const loose = await smoke({ homeScriptSrc: "'none' 'unsafe-inline'" });
+  assert.deepEqual(failing(loose), ["CSP hashes match inline style and script"]);
+  assert.match(find(loose, "CSP hashes match inline style and script").evidence, /^\/: no inline <script>, so script-src must be exactly 'none'/);
+});
+
+test("the home page: a wrong style hash on / fails and names the page", async () => {
+  const r = await smoke({ homeCssHash: "'sha256-AAAA'" });
+  assert.deepEqual(failing(r), ["CSP hashes match inline style and script"]);
+  assert.match(find(r, "CSP hashes match inline style and script").evidence, /^\/: style-src is/);
+});
+
+test("/film is a checked page: a 404 there fails its page check", async () => {
+  assert.deepEqual(failing(await smoke({ status: { "/film": 404 } })), ["GET /film", "CSP hashes match inline style and script"]);
+});
+
 test("missing HSTS, nosniff, or frame-ancestors fails the header check", async () => {
   assert.deepEqual(failing(await smoke({ noHsts: true })), ["security headers on /"]);
   assert.deepEqual(failing(await smoke({ drop: ["x-content-type-options"] })), ["security headers on /"]);
   const noFrame = await smoke({ csp: `default-src 'none'; style-src ${cspHash(CSS)}; script-src ${cspHash(JS)}` });
-  assert.deepEqual(failing(noFrame), ["security headers on /", ].filter((n) => failing(noFrame).includes(n)));
+  // The same policy is served on / and /film, and its script-src does not fit the script-less home page, so the CSP check fails too.
+  assert.deepEqual(failing(noFrame).sort(), ["CSP hashes match inline style and script", "security headers on /"]);
   assert.match(find(noFrame, "security headers on /").evidence, /frame-ancestors/);
 });
 

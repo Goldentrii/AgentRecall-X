@@ -1,6 +1,6 @@
-// The home page film: served under the same strict CSP as every other page, with
-// five same-origin plates, a readable no-script document, and a fallback to the
-// classic home page when the film assets are missing.
+// The film at /film: served under the same strict CSP as every other page, with
+// five same-origin plates, a readable no-script document, and a plain 404 when the
+// film assets are missing (the home page at / does not depend on them).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,14 +16,14 @@ const { FILM, FILM_PLATES, loadFilm } = await import("../dist/http/film.js");
 const ctx = { base: "https://recall.example.com", privacyUrl: "https://example.com/privacy", hosted: true };
 const hash = (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
 
-describe("home page film", () => {
+describe("film at /film", () => {
   it("the build ships the film assets", () => {
     assert.ok(FILM, "dist/http/film/ must hold film.css, film.js and the five plates");
     assert.equal(FILM.plates.size, FILM_PLATES.length);
   });
 
-  it("/ is the film, under a CSP whose hashes match its one inline style and one inline script", () => {
-    const r = renderStatic("/", ctx);
+  it("/film is the film, under a CSP whose hashes match its one inline style and one inline script", () => {
+    const r = renderStatic("/film", ctx);
     assert.equal(r.status, 200);
     const csp = r.headers["content-security-policy"];
     assert.match(csp, /default-src 'none'/);
@@ -42,7 +42,7 @@ describe("home page film", () => {
   });
 
   it("the page tells the Intelligent Distance story and keeps both doors, readable without script", () => {
-    const html = renderStatic("/", ctx).body;
+    const html = renderStatic("/film", ctx).body;
     assert.equal([...html.matchAll(/<h1>/g)].length, 1);
     assert.match(html, /<h1>Two kinds of intelligence\.<\/h1>/);
     assert.match(html, /One correction crosses the gap\./);
@@ -60,14 +60,14 @@ describe("home page film", () => {
   });
 
   it("no host other than the repo and Telegram appears", () => {
-    const html = renderStatic("/", ctx).body;
+    const html = renderStatic("/film", ctx).body;
     const hosts = new Set([...html.matchAll(/(?:href|src|action)="(https?:\/\/[^"/]+)/g)].map((m) => m[1]));
     assert.deepEqual([...hosts].sort(), ["https://github.com", "https://t.me"]);
     assert.ok(!/https?:\/\//.test(/<script>([\s\S]*?)<\/script>/.exec(html)[1]), "the script names no URL");
   });
 
   it("every plate the script loads is served as a cacheable same-origin JPEG", () => {
-    const script = /<script>([\s\S]*?)<\/script>/.exec(renderStatic("/", ctx).body)[1];
+    const script = /<script>([\s\S]*?)<\/script>/.exec(renderStatic("/film", ctx).body)[1];
     const names = /const PLATES = \[([^\]]+)\]/.exec(script)[1].split(",").map((s) => s.trim().replace(/"/g, ""));
     assert.deepEqual(names, [...FILM_PLATES]);
     let total = 0;
@@ -93,14 +93,28 @@ describe("home page film", () => {
     assert.equal(r.headers.vary, undefined);
   });
 
+  it("/film and /film/ are static paths and serve the film", () => {
+    for (const p of ["/film", "/film/"]) {
+      assert.ok(isStaticPath(p, true) && isStaticPath(p, false), p);
+      const r = renderStatic(p, ctx);
+      assert.equal(r.status, 200, p);
+      assert.match(r.body, /<h1>Two kinds of intelligence\.<\/h1>/, p);
+    }
+  });
+
+  it("the film page has its own title, and / is not the film", () => {
+    assert.match(renderStatic("/film", ctx).body, /<title>The film: Intelligent Distance in five scenes \| AgentRecall<\/title>/);
+    assert.ok(!/Two kinds of intelligence/.test(renderStatic("/", ctx).body));
+  });
+
   it("only the five plates are served under /film/", () => {
-    for (const p of ["/film", "/film/", "/film/film.js", "/film/film.css", "/film/other.jpg", "/film/../site.js", "/film/human.jpg/x", "/film/HUMAN.jpg", "/film/human.jpg%00"]) {
+    for (const p of ["/film/film.js", "/film/film.css", "/film/other.jpg", "/film/../site.js", "/film/human.jpg/x", "/film/HUMAN.jpg", "/film/human.jpg%00"]) {
       assert.equal(renderStatic(p, ctx), null, p);
       assert.equal(isStaticPath(p, true), false, p);
     }
   });
 
-  it("missing or wrong assets load as null, and the classic home page is served instead", () => {
+  it("missing or wrong assets load as null, and /film is then a 404 while / is unaffected", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-film-"));
     try {
       assert.equal(loadFilm(tmp), null, "empty dir");
@@ -115,15 +129,17 @@ describe("home page film", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-    const classic = renderStatic("/", ctx, null);
-    assert.equal(classic.status, 200);
-    assert.match(classic.body, /<a class="btn" href="\/connect">Connect an agent<\/a>/);
+    assert.equal(renderStatic("/film", ctx, null), null, "no film assets: /film is a 404");
+    assert.equal(renderStatic("/film/", ctx, null), null);
+    const home = renderStatic("/", ctx, null);
+    assert.equal(home.status, 200, "/ does not depend on the film");
+    assert.match(home.body, /<a class="btn btn--gold" href="\/connect">Connect an agent<\/a>/);
     assert.equal(renderStatic("/film/human.jpg", ctx, null), null);
   });
 });
 
-describe("home page film — accessibility and motion", () => {
-  const html = renderStatic("/", ctx).body;
+describe("film at /film — accessibility and motion", () => {
+  const html = renderStatic("/film", ctx).body;
   const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
   const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
 
@@ -146,8 +162,8 @@ describe("home page film — accessibility and motion", () => {
   });
 });
 
-describe("home page film — calls to action and gold", () => {
-  const html = renderStatic("/", ctx).body;
+describe("film at /film — calls to action and gold", () => {
+  const html = renderStatic("/film", ctx).body;
   const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1];
   const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
   const header = /<header class="top">([\s\S]*?)<\/header>/.exec(html)[1];
@@ -183,7 +199,7 @@ describe("home page film — calls to action and gold", () => {
   });
 });
 
-describe("home page film — line endings", () => {
+describe("film at /film — line endings", () => {
   it("a CRLF checkout hashes exactly the text it inlines (the browser hashes after newline normalisation)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar-film-crlf-"));
     try {
@@ -205,8 +221,8 @@ describe("home page film — line endings", () => {
   });
 });
 
-describe("home page film — the Mobius galaxy background", () => {
-  const html = renderStatic("/", ctx).body;
+describe("film at /film — the Mobius galaxy background", () => {
+  const html = renderStatic("/film", ctx).body;
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   const script = scripts[0][1];
 
@@ -215,7 +231,7 @@ describe("home page film — the Mobius galaxy background", () => {
   });
 
   it("the page still has exactly one inline script and one inline style, hashes matching", () => {
-    const r = renderStatic("/", ctx);
+    const r = renderStatic("/film", ctx);
     const csp = r.headers["content-security-policy"];
     assert.equal(scripts.length, 1);
     assert.equal([...html.matchAll(/<style>/g)].length, 1);
