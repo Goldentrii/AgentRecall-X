@@ -12,8 +12,11 @@
  * throws into the caller). Two files:
  *  - hook-health.jsonl — append-only failure log, rolled to the last 500
  *    lines once it grows past that (same cap/roll contract as sync-errors).
- *  - hook-health.json  — a small derived STATE snapshot a renderer can read
- *    in O(1) without re-parsing the whole JSONL: {last_failure, failures_24h}.
+ *  - hook-health.json  — a small derived STATE snapshot {last_failure,
+ *    failures_24h}, written with every failure. Its count is true only at the
+ *    moment it was written, so readHookHealth() recounts against now from
+ *    the JSONL (at most ROLL_LIMIT lines) and uses the snapshot only when the
+ *    JSONL cannot be read (see readHookHealth).
  *
  * Both paths are resolved via getRoot() (AGENT_RECALL_ROOT / setRoot()
  * override-aware) — never os.homedir() directly. This is the same root-fix
@@ -43,7 +46,11 @@ export interface HookFailureRow {
 export interface HookHealthState {
   /** The most recent recorded failure, or null if none recorded yet. */
   last_failure: HookFailureRow | null;
-  /** Count of failures with ts in the past 24h (relative to when this was computed). */
+  /**
+   * Count of failures with ts in the past 24h. readHookHealth() computes it
+   * against the time of the read; in the stored snapshot it is relative to
+   * when the snapshot was written.
+   */
   failures_24h: number;
 }
 
@@ -86,23 +93,33 @@ function rollJsonl(p: string): void {
   fs.renameSync(tmp, p);
 }
 
-/** Parse every well-formed row out of the JSONL file. Skips malformed lines. */
-function readAllRows(p: string): HookFailureRow[] {
+/** A well-formed HookFailureRow copied out of an untrusted value, or null. */
+function asRow(value: unknown): HookFailureRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Partial<HookFailureRow>;
+  if (typeof row.ts !== "string" || typeof row.hook !== "string" || typeof row.message !== "string") return null;
+  return { ts: row.ts, hook: row.hook, message: row.message };
+}
+
+/**
+ * Parse every well-formed row out of the JSONL file, in file (append) order.
+ * Skips malformed lines. Returns null when the file is missing or cannot be
+ * read, so callers can tell "no log to count" from "a log with no rows".
+ */
+function readRows(p: string): HookFailureRow[] | null {
   let content: string;
   try {
     content = fs.readFileSync(p, "utf-8");
   } catch {
-    return [];
+    return null;
   }
   const rows: HookFailureRow[] = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const row = JSON.parse(trimmed) as Partial<HookFailureRow>;
-      if (row && typeof row.ts === "string" && typeof row.hook === "string" && typeof row.message === "string") {
-        rows.push({ ts: row.ts, hook: row.hook, message: row.message });
-      }
+      const row = asRow(JSON.parse(trimmed));
+      if (row) rows.push(row);
     } catch {
       // skip malformed line — one bad row must never break the whole read
     }
@@ -110,8 +127,24 @@ function readAllRows(p: string): HookFailureRow[] {
   return rows;
 }
 
+/** The stored snapshot, or null when it is missing or not valid JSON. Never throws. */
+function readSnapshot(p: string): HookHealthState | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as Partial<HookHealthState> | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    const stored = parsed.failures_24h;
+    return {
+      last_failure: asRow(parsed.last_failure),
+      failures_24h: typeof stored === "number" && Number.isFinite(stored) ? Math.max(0, Math.floor(stored)) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Count rows whose `ts` falls strictly within the last 24h of `now`.
+ * Count rows whose `ts` falls within the last 24h of `now` (inclusive: a row
+ * exactly 24h old still counts). Rows with an unparseable `ts` never count.
  *
  * Date logic vs TODAY (Worker Done-Definition #4): a row timestamped in the
  * FUTURE (clock skew, malformed input, or a hostile/buggy caller) must NOT
@@ -151,8 +184,9 @@ export function recordHookFailure(hook: string, err: unknown): void {
 
     // Recompute failures_24h from the (now-rolled) log so the derived state
     // file always reflects what's actually on disk, not a running counter
-    // that could drift from it across process restarts.
-    const rows = readAllRows(jsonlPath);
+    // that could drift from it across process restarts. If the log cannot be
+    // read back, the failure just recorded is still one failure in the window.
+    const rows = readRows(jsonlPath) ?? [row];
     const state: HookHealthState = {
       last_failure: row,
       failures_24h: countWithin24h(rows, Date.now()),
@@ -164,33 +198,39 @@ export function recordHookFailure(hook: string, err: unknown): void {
 }
 
 /**
- * Read the derived hook health state for renderers (Wave-2's `ar health` /
- * hook-start ⚠️ line). Never throws — returns a zeroed/empty state on any
- * read error (missing file, corrupt JSON) so a renderer never needs its own
- * try/catch around this call.
+ * Read the hook health state for renderers (`ar health`, the hook-start ⚠️
+ * line), with failures_24h counted against NOW, not against when the last
+ * failure was written. A failure from last week reads as 0 in the window
+ * while staying visible as last_failure (history).
+ *
+ *  - JSONL has at least one well-formed row: it is the source of truth.
+ *    failures_24h is recounted from its rows (countWithin24h, so future-dated
+ *    rows never count) and last_failure is its newest row.
+ *  - JSONL missing, unreadable, or without a well-formed row: only the
+ *    snapshot is left. Every failure it counted happened at or before its
+ *    last_failure.ts, so the stored count can only still hold while that ts
+ *    is inside the window: 0 once it is older than 24h (or future-dated, or
+ *    absent), otherwise the stored count (an upper bound, at least 1 for the
+ *    last failure itself). Erring high here keeps a real recent failure loud;
+ *    the warning still clears 24h after last_failure.ts.
+ *
+ * Cost: one read of the snapshot plus one parse of the JSONL, which
+ * recordHookFailure rolls to ROLL_LIMIT lines. Never throws — returns a
+ * zeroed state on any error so a renderer needs no try/catch of its own.
  */
 export function readHookHealth(): HookHealthState {
   try {
-    const p = hookHealthJsonPath();
-    if (!fs.existsSync(p)) {
-      return { last_failure: null, failures_24h: 0 };
+    const now = Date.now();
+    const snapshot = readSnapshot(hookHealthJsonPath());
+    const rows = readRows(hookHealthJsonlPath());
+    if (rows !== null && rows.length > 0) {
+      return { last_failure: rows[rows.length - 1], failures_24h: countWithin24h(rows, now) };
     }
-    const raw = fs.readFileSync(p, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<HookHealthState>;
-    const lastFailure = parsed.last_failure;
-    const validLastFailure =
-      lastFailure &&
-      typeof lastFailure === "object" &&
-      typeof lastFailure.ts === "string" &&
-      typeof lastFailure.hook === "string" &&
-      typeof lastFailure.message === "string"
-        ? { ts: lastFailure.ts, hook: lastFailure.hook, message: lastFailure.message }
-        : null;
+    const last = snapshot?.last_failure ?? null;
+    const lastInWindow = last !== null && countWithin24h([last], now) === 1;
     return {
-      last_failure: validLastFailure,
-      failures_24h: typeof parsed.failures_24h === "number" && Number.isFinite(parsed.failures_24h)
-        ? parsed.failures_24h
-        : 0,
+      last_failure: last,
+      failures_24h: lastInWindow ? Math.max(1, snapshot?.failures_24h ?? 0) : 0,
     };
   } catch {
     return { last_failure: null, failures_24h: 0 };

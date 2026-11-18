@@ -200,7 +200,38 @@ describe("continuity wave — hook-start renders F5 hook-health warning", () => 
     assert.ok(!stdout.includes("⚠️ AgentRecall:"), `no health warning expected on a clean store; stdout=${stdout}`);
     fs.rmSync(cleanRoot, { recursive: true, force: true });
   });
+
+  it("no health line when the only failures are 3 days old, even though the stored snapshot still says 2", async () => {
+    const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ar-continuity-stale-health-"));
+    tmpDirs.push(staleRoot);
+    writeStaleHealth(staleRoot);
+    const home = isolatedHome();
+    const { code, stdout, stderr } = await new Promise((resolve) => {
+      const child = spawn("node", [CLI, "--root", staleRoot, "--project", "health-stale-test", "hook-start"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, CLAUDE_CODE_SESSION_ID: "", HOME: home, USERPROFILE: home, CLAUDE_SESSION_ID: "hook-start-health-test-3" },
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.end();
+    });
+    assert.equal(code, 0, `expected clean exit, stderr=${stderr}`);
+    assert.ok(!stdout.includes("⚠️ AgentRecall:"), `a 3-day-old failure must not warn; stdout=${stdout.slice(0, 200)}`);
+  });
 });
+
+/** A store whose last failures were 3 days ago, with the snapshot exactly as it was written then. */
+function writeStaleHealth(root) {
+  const t = Date.now() - 72 * 60 * 60 * 1000;
+  const a = { ts: new Date(t).toISOString(), hook: "hook-end-archive", message: "first" };
+  const b = { ts: new Date(t + 60_000).toISOString(), hook: "hook-end-archive", message: "second" };
+  fs.writeFileSync(path.join(root, "hook-health.jsonl"), JSON.stringify(a) + "\n" + JSON.stringify(b) + "\n", "utf-8");
+  fs.writeFileSync(path.join(root, "hook-health.json"), JSON.stringify({ last_failure: b, failures_24h: 2 }), "utf-8");
+  return b;
+}
 
 describe("continuity wave — L1/L2 hook-start continuity rendering (review fixes, 2026-07-31)", () => {
   it("L1 (full mode): renders the ⏪ Continuity block BEFORE the AgentRecall header line, matching the MCP terse formatter's placement", async () => {
@@ -402,5 +433,32 @@ describe("continuity wave — `ar health` (F5 CLI surface)", () => {
     assert.match(stdout, /5 failure\(s\) in the last 24h/);
     assert.match(stdout, /consolidate-async/);
     fs.rmSync(populatedRoot, { recursive: true, force: true });
+  });
+
+  it("failures from 3 days ago: 0 in the last 24h, the last failure still shown as history (text and --json)", async () => {
+    const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ar-continuity-stale-health-cmd-"));
+    tmpDirs.push(staleRoot);
+    const last = writeStaleHealth(staleRoot);
+    const run = (args) => new Promise((resolve) => {
+      const child = spawn("node", [CLI, "--root", staleRoot, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.end();
+    });
+
+    const text = await run(["health"]);
+    assert.equal(text.code, 0, `expected exit 0; stderr=${text.stderr}`);
+    assert.match(text.stdout, /✓ hook health: no failures in the last 24h\./);
+    assert.doesNotMatch(text.stdout, /[1-9]\d* failure\(s\) in the last 24h/);
+    assert.ok(text.stdout.includes(`last: [hook-end-archive] ${last.ts} — second`), `last failure must stay visible; stdout=${text.stdout}`);
+
+    const json = await run(["health", "--json"]);
+    assert.equal(json.code, 0, `expected exit 0; stderr=${json.stderr}`);
+    const parsed = JSON.parse(json.stdout);
+    assert.equal(parsed.failures_24h, 0);
+    assert.deepEqual(parsed.last_failure, last);
   });
 });
