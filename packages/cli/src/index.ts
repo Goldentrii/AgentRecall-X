@@ -1557,13 +1557,16 @@ async function main(): Promise<void> {
       // by default; --json for the raw HookHealthState. Always exit 0 — this
       // is a diagnostic read, not a gate (never exitCode=1, even when failures
       // exist: `ar doctor`/`ar hygiene` are the commands that gate CI on red).
+      // failures_24h is counted against now at read time; last_failure is history and may be older.
       const health = core.readHookHealth();
       if (hasFlag("--json", rest)) {
         output(health);
       } else if (!health.last_failure && health.failures_24h === 0) {
         output("✓ hook health: no failures recorded.");
       } else {
-        const lines: string[] = [`Hook health — ${health.failures_24h} failure(s) in the last 24h`];
+        const lines: string[] = [health.failures_24h === 0
+          ? "✓ hook health: no failures in the last 24h."
+          : `Hook health — ${health.failures_24h} failure(s) in the last 24h`];
         if (health.last_failure) {
           lines.push(`  last: [${health.last_failure.hook}] ${health.last_failure.ts} — ${health.last_failure.message}`);
         }

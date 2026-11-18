@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The scroll film moved to `/film` (still with its five plates). The home page links to it.
 - If the home page assets are missing or fail the load checks, the server logs one line and serves the classic home page; if the film assets are missing, `/film` returns 404.
 
+### Fixed
+
+- **Hook health no longer warns about old failures.** The session-start line `⚠️ AgentRecall: N hook failures (24h)` and `ar health` used the count saved when the last failure was written, so one failure kept warning on every session start for days. `readHookHealth()` now counts the failures in `hook-health.jsonl` against the current time; when that log cannot be read or has no valid rows, it uses the saved count only while the last failure is less than 24h old. With nothing in the last 24h, session start prints no warning and `ar health` prints `✓ hook health: no failures in the last 24h.` followed by the last failure.
+
 ## [3.5.3] — 2026-11-14
 
 All four packages 3.5.3 in lockstep. This is a large release under a patch number: read "Upgrade notes" first.
