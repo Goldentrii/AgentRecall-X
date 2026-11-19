@@ -11,13 +11,13 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { renderStatic, isStaticPath } = await import("../dist/http/site.js");
-const { HOME, HOME_FIGURES, loadHome, loadHomeWithReason } = await import("../dist/http/home.js");
+const { HOME, HOME_FIGURES, HOME_PARTS, loadHome, loadHomeWithReason } = await import("../dist/http/home.js");
 const { footerNav, REPO_URL } = await import("../dist/http/site-pages.js");
 
 const ctx = { base: "https://recall.example.com", privacyUrl: "https://example.com/privacy", hosted: true };
 const hash = (s) => `'sha256-${createHash("sha256").update(s, "utf8").digest("base64")}'`;
 const srcDir = path.join(here, "..", "dist", "http", "home");
-const SHIPPED = ["home.css", "home.html", "icons.svg", ...HOME_FIGURES.map((f) => `${f}.svg`)];
+const SHIPPED = ["home.css", "home.html", "icons.svg", ...HOME_FIGURES.map((f) => `${f}.svg`), ...HOME_PARTS.map((f) => `${f}.svg`)];
 
 const res = renderStatic("/", ctx);
 const html = res.body;
@@ -98,24 +98,123 @@ describe("home page at /", () => {
     assert.ok(uses.length > 0);
     for (const u of uses) assert.ok(u.startsWith("#") && ids.includes(u.slice(1)), `dangling <use> ${u}`);
     const figures = [...html.matchAll(/<figure[\s\S]*?<\/figure>/g)].map((m) => m[0]);
-    assert.equal(figures.length, HOME_FIGURES.length);
-    for (const f of figures) {
+    // The four figures, plus the cabinet: a <figure> whose art is the parts (cabinet + drawer fronts), not one class="art" svg.
+    assert.equal(figures.length, HOME_FIGURES.length + 1);
+    const art = figures.filter((f) => /<svg class="art"/.test(f));
+    assert.equal(art.length, HOME_FIGURES.length, "every figure but the cabinet is a class=art svg");
+    for (const f of art) {
       assert.match(f, /<svg class="art"[^>]*aria-hidden="true"/);
       assert.match(f, /<figcaption/);
     }
+    const cabinet = figures.find((f) => !/<svg class="art"/.test(f));
+    assert.match(cabinet, /<figcaption/);
   });
 
   it("content is readable without any of the CSS: only listed selectors may hide anything", () => {
     // Why each is allowed: .sr/.skip are screen-reader-only and off-screen until focused; .nav/.top__* swap long and short
     // labels or drop the second nav on a phone (same links remain in the page); .cap--br/.lbl-sec are drawing captions
     // (aria-hidden decoration); .fig--cut::after is a decorative corner turned off in forced-colors mode.
-    const allowed = [".sr", ".skip", ".sprite", ".nav", ".top__short", ".top__long", ".top__local", ".cap--br", ".lbl-sec", ".fig--cut::after"];
+    // The interactive panels (each revealed by a control, see the next test): .tc-scn/.tc-p/.tc-r are the scenario, step and
+    // reading panels shown by a checked radio; .pr-on/.pr-d--on/.pr-off/.pr-d--off are the two sides of the checkbox switch;
+    // .cr/.cr0-.cr2 are the cabinet counter, one value shown per number of open drawers; .tc-in/.pr-in are the real inputs,
+    // kept (focusable, in the page) but invisible because their labels are drawn; ::-webkit-details-marker is the browser's
+    // own disclosure triangle (the drawer front is the marker); the drawer tray fades in when its <details> opens; "from" is
+    // a keyframe start state of an entrance animation that ends visible.
+    const allowed = [".sr", ".skip", ".sprite", ".nav", ".top__short", ".top__long", ".top__local", ".cap--br", ".lbl-sec", ".fig--cut::after",
+      ".tc-in", ".pr-in", ".tc-scn", ".tc-p", ".tc-r", ".pr-on", ".pr-d--on", ".pers:has(#pr-on:checked) .pr-off", ".pers:has(#pr-on:checked) .pr-d--off",
+      ".cr", ".cab-fig:has(details[open]) .cr0", ".cab-fig:has(details[open] ~ details[open]) .cr1",
+      ".cab-fig:has(details[open] ~ details[open] ~ details[open]) .cr2",
+      ".drawer > summary::-webkit-details-marker", '.drawer [id$="-tray"]', "from"];
     for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       if (!/opacity:\s*0(?![.\d])|visibility:\s*hidden|display:\s*none/.test(rule[2])) continue;
       for (const sel of rule[1].split(",").map((s) => s.trim())) {
         assert.ok(allowed.includes(sel), `rule hides content without a reason: ${sel}`);
       }
     }
+  });
+
+  it("every panel that starts hidden is revealed by a control that exists in the page", () => {
+    // [panel class, the control id that shows it]
+    const reveals = [
+      ["tc-scn--1", "tc-s1"], ["tc-scn--2", "tc-s2"], ["tc-scn--3", "tc-s3"],
+      ["tc-p--1", "tc-p1"], ["tc-p--2", "tc-p2"], ["tc-p--3", "tc-p3"], ["tc-p--4", "tc-p4"],
+      ["tc-r--1", "tc-p1"], ["tc-r--2", "tc-p2"], ["tc-r--3", "tc-p3"], ["tc-r--4", "tc-p4"],
+      ["pr-on", "pr-on"],
+    ];
+    for (const [panel, control] of reveals) {
+      assert.ok(new RegExp(`class="[^"]*\\b${panel}\\b`).test(html), `no element with class ${panel}`);
+      assert.ok(html.includes(` id="${control}"`), `control #${control} is not in the page`);
+      assert.ok(css.includes(`#${control}:checked`) && new RegExp(`#${control}:checked\\)[^{,]*\\.${panel}\\b`).test(css), `no rule shows .${panel} when #${control} is checked`);
+    }
+    for (const id of ["tc-s1", "tc-s2", "tc-s3"]) assert.match(html, new RegExp(`<input[^>]*type="radio"[^>]*name="tc-scn"[^>]*id="${id}"`));
+    for (const id of ["tc-p1", "tc-p2", "tc-p3", "tc-p4"]) assert.match(html, new RegExp(`<input[^>]*type="radio"[^>]*name="tc-step"[^>]*id="${id}"`));
+    assert.match(html, /<input[^>]*type="checkbox"[^>]*id="pr-on"/);
+    for (const name of ["rules", "you", "project"]) {
+      const id = "dr-" + name;
+      const d = new RegExp(`<details id="${id}" class="drawer drawer--${name}"[^>]*>\\s*<summary>[\\s\\S]*?</details>`).exec(html);
+      assert.ok(d, `<details id="${id}" class="drawer drawer--${name}"> with a <summary>`);
+      assert.ok(d[0].includes(`id="${id}-tray"`), `the tray #${id}-tray sits inside #${id}`);
+      // Trays start hidden by [id$="-tray"], and an open-drawer rule shows them; the per-drawer rule moves that drawer's front.
+      assert.ok(css.includes('.drawer [id$="-tray"]{opacity:0'), "trays start hidden");
+      assert.ok(css.includes('.drawer[open] [id$="-tray"]{opacity:1}'), "an open drawer shows its tray");
+      assert.ok(new RegExp(`\\.drawer--${name}\\[open\\]`).test(css), `no open rule for .drawer--${name}`);
+    }
+    // The cabinet counter: one value per number of open drawers (0..3), each shown by an open-drawer rule.
+    for (const n of [0, 1, 2, 3]) assert.ok(new RegExp(`\\.cr${n}\\{display:inline\\}`).test(css), `no rule shows .cr${n}`);
+  });
+
+  it("the interactive controls: defaults, labels, fieldsets, accessible names", () => {
+    const checked = (id) => new RegExp(`<input[^>]*\\bid="${id}"[^>]*\\bchecked\\b|<input[^>]*\\bchecked\\b[^>]*\\bid="${id}"`).test(html);
+    assert.ok(checked("tc-s1") && !checked("tc-s2") && !checked("tc-s3"), "tc-s1 is the only checked scenario");
+    assert.ok(checked("tc-p1") && !checked("tc-p2") && !checked("tc-p3") && !checked("tc-p4"), "tc-p1 is the only checked step");
+    assert.ok(!checked("pr-on"), "pr-on starts unchecked");
+    assert.ok(!/<details[^>]*\sopen[\s>=]/.test(html), "no drawer starts open");
+    const inputs = [...html.matchAll(/<input\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(inputs.length >= 8);
+    for (const i of inputs) {
+      const id = /\sid="([^"]+)"/.exec(i)?.[1];
+      assert.ok(id, `input without id: ${i}`);
+      assert.ok(new RegExp(`<label[^>]*\\sfor="${id}"`).test(html), `no <label for="${id}">`);
+    }
+    for (const name of ["tc-scn", "tc-step"]) {
+      const fs_ = [...html.matchAll(/<fieldset[\s\S]*?<\/fieldset>/g)].map((m) => m[0]).find((f) => f.includes(`name="${name}"`));
+      assert.ok(fs_, `radios ${name} must sit in a <fieldset>`);
+      assert.match(fs_, /<legend[\s>]/);
+    }
+    const summaries = [...html.matchAll(/<summary>([\s\S]*?)<\/summary>/g)].map((m) => m[1]);
+    assert.equal(summaries.length, 3);
+    for (const s of summaries) assert.match(s, /<span class="sr">[^<]+<\/span>/, "a summary needs a text name; its svg is decoration");
+  });
+
+  it("still no script, no form, and script-src 'none'", () => {
+    assert.ok(!/<script/i.test(html));
+    assert.ok(!/<form/i.test(html));
+    assert.match(res.headers["content-security-policy"], /(^|; )script-src 'none'(;|$)/);
+  });
+
+  it("the copy agents and crawlers need is in the HTML, not only behind a control", () => {
+    for (const s of ["Never deploy without asking me first.", "Reply in the language I write in.", "Lead with the answer.",
+      "Your owner card", "The project state card", "Without AgentRecall", "With AgentRecall", "illustrative"]) {
+      assert.ok(html.includes(s), `missing copy: ${s}`);
+    }
+  });
+
+  it("prefers-reduced-motion turns transitions and animations off", () => {
+    const blocks = [...css.matchAll(/@media \(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n\}/g)].map((x) => x[1]).join("\n");
+    assert.ok(blocks, "the media block");
+    assert.match(blocks, /transition:\s*none/);
+    assert.match(blocks, /animation:\s*none/);
+    // The second block turns off the drawer and .dd transitions specifically.
+    assert.match(blocks, /\.drawer \[id\$="-tray"\],\.dd[^{]*\{transition:none/);
+  });
+
+  it("the drawer parts are inlined as they are (no class=art); the figures still get it", () => {
+    for (const name of HOME_PARTS) {
+      const svg = fs.readFileSync(path.join(srcDir, `${name}.svg`), "utf8").replace(/\r\n/g, "\n").replace(/<\?xml[^>]*\?>/g, "").replace(/\sxmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, "").trim();
+      assert.ok(html.includes(svg), `${name}.svg is inlined verbatim`);
+      assert.ok(!/^<svg[^>]*\bclass="art"/.test(svg));
+    }
+    assert.equal([...html.matchAll(/<svg class="art"/g)].length, HOME_FIGURES.length);
   });
 
   it("what the small-screen rules hide is still reachable: the door links also sit outside the header nav", () => {
@@ -190,6 +289,10 @@ describe("home page — loader", () => {
   const on = (file, from, to) => (f, t) => (f === file ? t.replace(from, to) : t);
   const refusals = [
     ["a missing figure", (f) => (f === "fig3.svg" ? null : undefined), /unreadable: .*fig3\.svg/],
+    ["a missing part", (f) => (f === "drawer-you.svg" ? null : undefined), /unreadable: .*drawer-you\.svg/],
+    ["a part svg with <script>", on("cabinet.svg", "</svg>", "<script>1</script></svg>"), /cabinet\.svg: svg contains <script/],
+    ["a part that starts with <svgx", (f) => (f === "drawer-rules.svg" ? "<svgx></svgx>" : undefined), /drawer-rules\.svg does not start with <svg/],
+    ["a part that does not start with <svg", (f) => (f === "drawer-rules.svg" ? "<div>x</div>" : undefined), /drawer-rules\.svg does not start with <svg/],
     ["css that could close its own style", on("home.css", /$/, "\n/* </style><b> */"), /home\.css could close/],
     ["an svg with <script>", on("fig1.svg", "</svg>", "<script>1</script></svg>"), /fig1\.svg: svg contains <script/],
     ["an svg with <style>", on("fig2-1.svg", "</svg>", "<style>a{}</style></svg>"), /fig2-1\.svg: svg contains <style/],

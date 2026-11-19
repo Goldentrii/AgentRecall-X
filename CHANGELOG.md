@@ -11,6 +11,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Hosted website
 
 - The home page at `/` is now the blueprint page: the distance between you and your agents drawn as a figure, two ways in, how it works, one measured example, a clients table and a link to the film. It has no script, and its content security policy now says `script-src 'none'`.
+- Three parts of the home page now respond to you without any script: pick a situation and step through a correction, flip a switch to see a session with and without AgentRecall, and open the three drawers of what every agent starts from (rules, you, project). They are plain radio buttons, a checkbox and `<details>`, so every panel's text is in the page and its content security policy still says `script-src 'none'`.
 - The scroll film moved to `/film` (still with its five plates). The home page links to it.
 - If the home page assets are missing or fail the load checks, the server logs one line and serves the classic home page; if the film assets are missing, `/film` returns 404.
 

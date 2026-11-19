@@ -8,9 +8,13 @@
  * checked here at load time, because they are the only large markup that is not ours
  * line by line.
  *
+ * The page has CSS-only controls (radio buttons, one checkbox, <details>) that switch panels
+ * without script; a visitor without CSS, an agent or a crawler still gets all the copy.
+ *
  * The assets live beside this file in ./home/ (copied into dist by the build): home.html
- * is a template with {{placeholders}}, home.css is the one stylesheet, and the five svg
- * files are the figures and the icon sprite. loadHome() assembles them and REFUSES the
+ * is a template with {{placeholders}}, home.css is the one stylesheet, four svg files are the
+ * figures, four more (the cabinet and its three drawer fronts) are parts the page positions
+ * itself, and icons.svg is the icon sprite. loadHome() assembles them and REFUSES the
  * result (returns null) if anything could break the CSP or the markup: a stray script,
  * style attribute, external URL, duplicate id or dangling <use>. When HOME is null the
  * site serves the classic home page instead: a broken build must never take the front
@@ -32,6 +36,12 @@ export interface Home {
 
 /** The figure files (home/<name>.svg) and the template placeholders {{name}} they fill. */
 export const HOME_FIGURES = ["fig1", "fig2-1", "fig2-2", "fig3"] as const;
+
+/**
+ * Inline svg pieces the page positions itself (the drawer fronts sit inside <summary> elements).
+ * Filled verbatim: no class="art", because .art makes an svg a full-width block.
+ */
+export const HOME_PARTS = ["cabinet", "drawer-rules", "drawer-you", "drawer-project"] as const;
 
 /** Largest page accepted at load; a bigger one means the wrong asset was shipped. */
 const MAX_HTML_BYTES = 512 * 1024;
@@ -165,6 +175,14 @@ function assemble(dir: string): Loaded {
     if (!svg.startsWith("<svg ")) return { reason: `${name}.svg does not start with <svg` };
     figures.set(name, svg.replace("<svg ", '<svg class="art" '));
   }
+  const parts = new Map<string, string>();
+  for (const name of HOME_PARTS) {
+    const svg = cleanSvg(rd(`${name}.svg`));
+    const bad = svgProblem(svg);
+    if (bad) return { reason: `${name}.svg: ${bad}` };
+    if (!/^<svg[\s>]/.test(svg)) return { reason: `${name}.svg does not start with <svg` };
+    parts.set(name, svg);
+  }
   const iconsRaw = cleanSvg(rd("icons.svg"));
   const iconsBad = svgProblem(iconsRaw);
   if (iconsBad) return { reason: `icons.svg: ${iconsBad}` };
@@ -174,6 +192,7 @@ function assemble(dir: string): Loaded {
 
   const fills: Record<string, string> = { css, icons: sprite, footer: footerNav("home"), repo: REPO_URL };
   for (const [k, v] of figures) fills[k] = v;
+  for (const [k, v] of parts) fills[k] = v;
   // Comments go before anything is checked, so the page that is checked is byte for byte the page that is served.
   let html = stripComments(rd("home.html")).trimStart();
   // split/join, not replace(): the values contain "$" sequences that replace() would interpret.

@@ -135,6 +135,135 @@
   </div>
 </section>
 
+<!-- A. Try one correction -->
+<section class="sec" id="try" aria-labelledby="h-try">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-try">Try one correction</h2>
+      <p class="sub">Pick a situation, then step through what happens. The numbers are illustrative.</p>
+    </header>
+    <div class="try">
+      <fieldset class="tc-fs tc-tabs">
+        <legend class="sr">Situation</legend>
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s1" checked>
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s2">
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s3">
+        <div class="tc-tabs__in">
+          <label for="tc-s1">Ask before you deploy</label>
+          <label for="tc-s2">Reply in my language</label>
+          <label for="tc-s3">Get to the point</label>
+        </div>
+      </fieldset>
+      <fieldset class="tc-fs tc-stepper">
+        <legend class="sr">Step of the correction</legend>
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p1" checked>
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p2">
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p3">
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p4">
+        <div class="tc-rail">
+          <label for="tc-p1"><span class="tc-n">01</span><span class="tc-t">You ask</span></label>
+          <label for="tc-p2"><span class="tc-n">02</span><span class="tc-t">You correct it</span></label>
+          <label for="tc-p3"><span class="tc-n">03</span><span class="tc-t">Next session, another agent</span></label>
+          <label for="tc-p4"><span class="tc-n">04</span><span class="tc-t">It is measured</span></label>
+        </div>
+      </fieldset>
+      <div class="tc-stage">
+        <div class="tc-body" role="region" aria-label="Walkthrough of the selected correction" aria-live="polite">
+      <div class="tc-scn tc-scn--1">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Fix the typo on the pricing page and ship it.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Claude Code)</p><p class="tc-say">Fixed the typo and deployed to production.</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Never deploy without asking me first.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Ask before any deploy, push or publish.</dd></div>
+            <div><dt>Why</dt><dd>Production is shared; a wrong deploy is hard to undo.</dd></div>
+            <div><dt>Applies</dt><dd>Every project.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Ask before any deploy, push or publish.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Codex, a week later)</p><p class="tc-say">Typo fixed. It is ready to deploy. Shall I?</p></div>
+          <p class="tc-note">Codex started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+      <div class="tc-scn tc-scn--2">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say" lang="zh">帮我看看这个报错是什么意思</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent</p><p class="tc-say">This error means the module could not be found…</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Reply in the language I write in. Code stays in English.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer in the user's language; code and comments in English.</dd></div>
+            <div><dt>Why</dt><dd>Reading a second language costs attention.</dd></div>
+            <div><dt>Applies</dt><dd>All chats.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer in the user's language; code and comments in English.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Cursor)</p><p class="tc-say"><span lang="zh">这个报错的意思是找不到模块 <code>./utils</code>，路径少了一级。</span></p></div>
+          <p class="tc-note">Cursor started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+      <div class="tc-scn tc-scn--3">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Is this migration safe to run?</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent</p><p class="tc-say">Great question! Database migrations are an important part of…</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Lead with the answer. No preamble, no closing summary.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer first, in one line; details after.</dd></div>
+            <div><dt>Why</dt><dd>You read on a phone between meetings.</dd></div>
+            <div><dt>Applies</dt><dd>All chats.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer first, in one line; details after.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (claude.ai)</p><p class="tc-say">Yes, it is safe: it only adds a nullable column. Details below.</p></div>
+          <p class="tc-note">claude.ai started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+        </div>
+        <div class="tc-meter">
+          <span class="tc-mlab">Distance</span>
+          <span class="tc-track" aria-hidden="true"><span class="tc-fill"></span></span>
+          <span class="tc-read"><span class="tc-r tc-r--1">d = 1.00</span><span class="tc-r tc-r--2">d = 1.00</span><span class="tc-r tc-r--3">d = 0.72</span><span class="tc-r tc-r--4">d = 0.54</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- 4. Measured -->
 <section class="sec" id="measured" aria-labelledby="h-measured">
   <div class="wrap measured">
@@ -167,6 +296,117 @@
           <span class="stat__t">agents that loaded it: Claude Code, Codex, Cursor, claude.ai</span>
         </li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<!-- B. Drawers (filled in later) -->
+<section class="sec" id="drawers" aria-labelledby="h-drawers">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-drawers">What every agent starts from</h2>
+      <p class="sub">Open the drawers. Each one is loaded at the start of every session, by every agent you connect, so the next answer starts closer to you.</p>
+    </header>
+    <figure class="fig cab-fig">
+      <div class="cab-stage">
+        {{cabinet}}
+        <div class="cab-col">
+          <p class="cab-read"><span class="cr cr0">drawers open: 0/3 · d = 1.00 (illustrative)</span><span class="cr cr1">drawers open: 1/3 · d = 0.80 (illustrative)</span><span class="cr cr2">drawers open: 2/3 · d = 0.64 (illustrative)</span><span class="cr cr3">drawers open: 3/3 · d = 0.54 (illustrative)</span></p>
+          <div class="dd dd--rules">
+            <p class="dd__tag">Rules</p>
+            <h3 class="dd__t">Your corrections</h3>
+            <p class="dd__d">Every correction you make becomes a rule with its reason and where it applies. On the hosted server you approve it first.</p>
+          </div>
+          <details id="dr-rules" class="drawer drawer--rules">
+            <summary><span class="sr">Rules drawer: your corrections</span>{{drawer-rules}}</summary>
+            <ul class="dex" aria-label="Example rule card">
+              <li class="dex__main">Ask before any deploy, push or publish.</li>
+              <li>why: production is shared</li>
+              <li>applies: every project</li>
+              <li>heeded 7 · repeated 1</li>
+            </ul>
+          </details>
+          <div class="dd dd--you">
+            <p class="dd__tag">You</p>
+            <h3 class="dd__t">Your owner card</h3>
+            <p class="dd__d">Who you are and how you like to work. You write it; agents read it first, in every session, and never change it.</p>
+          </div>
+          <details id="dr-you" class="drawer drawer--you">
+            <summary><span class="sr">You drawer: your owner card</span>{{drawer-you}}</summary>
+            <ul class="dex" aria-label="Example owner card">
+              <li class="dex__main">Replies in the language I write in.</li>
+              <li>Terse; show results, not plans.</li>
+              <li>Always ask before deploy or delete.</li>
+            </ul>
+          </details>
+          <div class="dd dd--project">
+            <p class="dd__tag">Project</p>
+            <h3 class="dd__t">The project state card</h3>
+            <p class="dd__d">Where the work stands: the goal, open decisions, blockers, the next step. Rewritten at the end of every session, loaded at the start of the next.</p>
+          </div>
+          <details id="dr-project" class="drawer drawer--project">
+            <summary><span class="sr">Project drawer: the project state card</span>{{drawer-project}}</summary>
+            <ul class="dex" aria-label="Example project state card">
+              <li class="dex__main">goal: first-run in 5 minutes</li>
+              <li>next: answer /terms</li>
+              <li>blocker: reviewer test account</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+      <span class="cap cap--tl" aria-hidden="true">FIG. 4</span>
+      <span class="cap cap--tr" aria-hidden="true">WHAT EVERY AGENT STARTS FROM</span>
+      <span class="cap cap--bl" aria-hidden="true">OPEN A DRAWER</span>
+      <span class="cap cap--br" aria-hidden="true">numbers are illustrative</span>
+      <figcaption class="sr">Figure 4. A filing cabinet with three drawers: Rules, You and Project. Each drawer opens to a card that every agent loads at the start of a session. Opening more drawers shortens the example distance from 1.00 to 0.54. The numbers are illustrative.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- C. Personal -->
+<section class="sec" id="personal" aria-labelledby="h-personal">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-personal">The same request, closer to you</h2>
+      <p class="sub">One request, answered twice. Flip the switch to see what the agent starts from.</p>
+    </header>
+    <div class="pers">
+      <input class="pr-in" type="checkbox" role="switch" id="pr-on" aria-labelledby="pr-l-on">
+      <div class="pr-side">
+        <label class="pr-sw" for="pr-on">
+          <span class="pr-l pr-l--off">Without AgentRecall</span>
+          <span class="pr-track" aria-hidden="true"><span class="pr-knob"></span></span>
+          <span class="pr-l pr-l--on" id="pr-l-on">With AgentRecall</span>
+        </label>
+        <div class="pr-req">
+          <p class="tc-who">You</p>
+          <p class="pr-ask">Write this week's update for the team.</p>
+        </div>
+      </div>
+      <div class="pr-ans" role="region" aria-label="The answer for the selected switch position" aria-live="polite">
+        <div class="pr-off">
+          <p class="tc-who tc-who--dim">Agent, without AgentRecall</p>
+          <p class="pr-say">Here is a template for a weekly update:</p>
+          <ul class="pr-gen"><li>1. Accomplishments</li><li>2. Challenges</li><li>3. Next steps.</li></ul>
+          <p class="pr-say">Fill in each section with…</p>
+          <p class="pr-note">It does not know you, the project, or how you write.</p>
+        </div>
+        <div class="pr-on">
+          <p class="tc-who">Agent, with AgentRecall</p>
+          <ul class="pr-lines">
+            <li><span class="pr-k">Shipped:</span><span>the new home page and 3.5.3 on npm.</span></li>
+            <li><span class="pr-k">Blocked:</span><span>the reviewer test account.</span></li>
+            <li><span class="pr-k">Next:</span><span>answer the /terms questions.</span></li>
+          </ul>
+          <p class="pr-from">Started from</p>
+          <ul class="pr-chips">
+            <li class="pr-chip pr-chip--g">owner card: terse, results first</li>
+            <li class="pr-chip pr-chip--g">rule: no closing summary</li>
+            <li class="pr-chip pr-chip--c">state card + last session: project agentrecallx</li>
+          </ul>
+        </div>
+        <p class="pr-foot"><span>Example answers and an illustrative d, written to show the difference.</span><span class="pr-d"><span class="pr-d--off">d = 1.00</span><span class="pr-d--on">d = 0.54</span></span></p>
+      </div>
     </div>
   </div>
 </section>
