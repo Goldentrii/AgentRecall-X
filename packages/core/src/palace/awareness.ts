@@ -266,9 +266,27 @@ export async function writeAwarenessArchive(archive: Insight[]): Promise<void> {
   await withLock(AWARENESS_STATE_LOCK, () => writeAwarenessArchiveUnlocked(archive));
 }
 
+/** A lesson named in a save report: its title and owning project. */
+export interface LessonRef {
+  title: string;
+  project: string;
+}
+
+function lessonRef(i: Insight): LessonRef {
+  return { title: i.title, project: i.source_project ?? "_global" };
+}
+
+/** What archiving a demoted lesson did (3.5.4 P0-4a). */
+interface ArchiveOutcome {
+  /** Title of the archived lesson the demoted one was merged into, if any. */
+  merged_into?: string;
+  /** Lessons that fell off the end of the archive (cap MAX_ARCHIVE). */
+  dropped: LessonRef[];
+}
+
 /** Archive a demoted insight. If a matching insight exists in archive, strengthen it.
  * Caller MUST hold AWARENESS_STATE_LOCK. */
-function archiveInsight(demoted: Insight): void {
+function archiveInsight(demoted: Insight): ArchiveOutcome {
   const archive = readAwarenessArchive();
   const demotedKeywords = extractKeywords(demoted.title, 3);
 
@@ -279,16 +297,22 @@ function archiveInsight(demoted: Insight): void {
     return overlap.length >= 2;
   });
 
+  let merged_into: string | undefined;
   if (existingIdx >= 0) {
     // Strengthen archived version
     archive[existingIdx].confirmations += demoted.confirmations;
     archive[existingIdx].lastConfirmed = demoted.lastConfirmed;
+    merged_into = archive[existingIdx].title;
   } else {
     // Add to archive (newest first)
     archive.unshift(demoted);
   }
 
+  // writeAwarenessArchiveUnlocked keeps only the newest MAX_ARCHIVE entries;
+  // name the ones it is about to drop instead of losing them silently.
+  const dropped = archive.slice(MAX_ARCHIVE).map(lessonRef);
   writeAwarenessArchiveUnlocked(archive);
+  return merged_into !== undefined ? { merged_into, dropped } : { dropped };
 }
 
 /** Check archive for a matching insight to resurrect. Returns the insight if
@@ -342,9 +366,34 @@ export async function initAwareness(identity: string): Promise<AwarenessState> {
  * If similar insight exists (by title keyword overlap), merge and strengthen.
  * If new, add and demote lowest if over 20.
  */
+export interface AddInsightOutcome {
+  action: "merged" | "added" | "replaced";
+  insight: Insight;
+  /**
+   * 3.5.4 P0-4a. The new title was NOT stored: an archived lesson sharing its
+   * keywords came back instead, and `insight` is that archived lesson
+   * (`action` stays "added" for compatibility).
+   */
+  resurrected?: true;
+  /** A lesson moved from the top list to the archive to make room. */
+  demoted?: LessonRef & { archived_into?: string };
+  /** Lessons that fell off the end of the archive (cap 50) as a result. */
+  archive_dropped?: LessonRef[];
+}
+
+function withDemotion(out: AddInsightOutcome, demoted: Insight, archived: ArchiveOutcome): AddInsightOutcome {
+  return {
+    ...out,
+    demoted: archived.merged_into !== undefined
+      ? { ...lessonRef(demoted), archived_into: archived.merged_into }
+      : lessonRef(demoted),
+    ...(archived.dropped.length > 0 ? { archive_dropped: archived.dropped } : {}),
+  };
+}
+
 export async function addInsight(
   newInsight: Omit<Insight, "id" | "confirmations" | "lastConfirmed"> & { source_project?: string }
-): Promise<{ action: "merged" | "added" | "replaced"; insight: Insight } | { accepted: false; reason: string }> {
+): Promise<AddInsightOutcome | { accepted: false; reason: string }> {
   // ── Quality gate — reject obviously bad insights ──────────────────────────
   const title = newInsight.title?.trim() ?? "";
   // CJK-aware word count (fix #3, 2026-09-11): the pre-fix
@@ -361,7 +410,7 @@ export async function addInsight(
   // fix6-locks: the ENTIRE read→merge→write span runs under the state lock
   // via mutateAwarenessState — the old shape (unlocked read, locked write)
   // lost concurrent sessions' insights wholesale.
-  return mutateAwarenessState<{ action: "merged" | "added" | "replaced"; insight: Insight }>((current) => {
+  return mutateAwarenessState<AddInsightOutcome>((current) => {
   let state = current;
   if (!state) {
     state = createInitialState("(unknown user)");
@@ -390,13 +439,14 @@ export async function addInsight(
     }
     resurrected.trend = computeTrend(resurrected);
     state.topInsights.push(resurrected);
+    const out: AddInsightOutcome = { action: "added" as const, insight: resurrected, resurrected: true };
     // Enforce the top-insights cap — demote lowest if over limit
     if (state.topInsights.length > AWARENESS_TOP_INSIGHTS_CAP) {
       state.topInsights.sort((a, b) => b.confirmations - a.confirmations);
       const demoted = state.topInsights.pop()!;
-      archiveInsight(demoted);
+      return { state, result: withDemotion(out, demoted, archiveInsight(demoted)) };
     }
-    return { state, result: { action: "added" as const, insight: resurrected } };
+    return { state, result: out };
   }
 
   let bestMatch: { idx: number; overlap: number } | null = null;
@@ -482,10 +532,10 @@ export async function addInsight(
   // Over the cap: demote lowest-confirmation insight to archive (not deleted)
   state.topInsights.sort((a, b) => b.confirmations - a.confirmations);
   const demoted = state.topInsights.pop()!;
-  archiveInsight(demoted);
+  const archived = archiveInsight(demoted);
   state.topInsights.push(insight);
 
-  return { state, result: { action: "replaced" as const, insight } };
+  return { state, result: withDemotion({ action: "replaced" as const, insight }, demoted, archived) };
   }); // end mutateAwarenessState
 }
 

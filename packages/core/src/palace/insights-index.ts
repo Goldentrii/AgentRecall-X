@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomicPrivate } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { withLock } from "../storage/filelock.js";
@@ -149,6 +149,29 @@ export function readInsightsIndex(): InsightsIndex {
   }
 }
 
+/** A tmp file older than this cannot belong to a live writer (the index lock is force-broken at 30 s). */
+export const INDEX_TMP_STALE_MS = 60_000;
+
+/**
+ * Remove `insights-index.json.tmp.*` files left by a writer that was killed
+ * between writing its tmp and the rename (a thrown error already removes its
+ * own tmp). Only files older than INDEX_TMP_STALE_MS go. Best effort.
+ */
+function sweepStaleIndexTmp(indexFile: string): void {
+  try {
+    const dir = path.dirname(indexFile);
+    const prefix = `${path.basename(indexFile)}.tmp.`;
+    const cutoff = Date.now() - INDEX_TMP_STALE_MS;
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue;
+      const f = path.join(dir, name);
+      try {
+        if (fs.statSync(f).mtimeMs < cutoff) fs.rmSync(f, { force: true });
+      } catch { /* raced with its writer or another sweep */ }
+    }
+  } catch { /* never fail a save over housekeeping */ }
+}
+
 export function writeInsightsIndex(index: InsightsIndex): void {
   const p = indexPath();
   ensureDir(path.dirname(p));
@@ -159,7 +182,14 @@ export function writeInsightsIndex(index: InsightsIndex): void {
   // copy was clean while the on-disk (and therefore every downstream reader's)
   // copy stayed raw.
   const serialized = scrubForCloud(JSON.stringify(index, null, 2));
-  fs.writeFileSync(p, serialized, "utf-8");
+  // 3.5.4 P0-5a: tmp + rename. A plain writeFileSync could leave a torn file,
+  // which readInsightsIndex reads as EMPTY — and the next save then wrote that
+  // empty index back, dropping up to 200 lessons. The Private variant uses a
+  // pid+random tmp removed on a failed rename (writeTextAtomic's pid-only tmp
+  // leaks on win32 EPERM) and writes mode 0o600, so the index is owner-only on
+  // POSIX like the session cards.
+  writeTextAtomicPrivate(p, serialized);
+  sweepStaleIndexTmp(p);
   // "global" is the Supabase row key for cross-project data; source_project uses "_global" sentinel — these are intentionally different namespaces
   syncToSupabase(p, serialized, "global", "awareness");
 }
@@ -173,8 +203,18 @@ export function writeInsightsIndex(index: InsightsIndex): void {
  *
  * Returns the insight that was confirmed or added.
  * Returns null only when the cap is full of count>=2 entries (no room for count-1).
+ *
+ * `opts.onEvict` (3.5.4 P0-4a) is called, inside the lock, with the entry
+ * evicted to make room — of whatever project — so the caller can report it.
  */
-export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">): Promise<IndexedInsight | null> {
+export interface AddIndexedInsightOptions {
+  onEvict?: (evicted: IndexedInsight) => void;
+}
+
+export async function addIndexedInsight(
+  insight: Omit<IndexedInsight, "id" | "confirmed_count" | "last_confirmed">,
+  opts: AddIndexedInsightOptions = {},
+): Promise<IndexedInsight | null> {
   return withLock("insights-index", () => {
   const index = readInsightsIndex();
   const now = new Date().toISOString();
@@ -226,7 +266,10 @@ export async function addIndexedInsight(insight: Omit<IndexedInsight, "id" | "co
     }
 
     // Evict the oldest count-1 entry
-    index.insights.splice(oldestCount1Idx, 1);
+    const [evicted] = index.insights.splice(oldestCount1Idx, 1);
+    if (evicted && opts.onEvict) {
+      try { opts.onEvict(evicted); } catch { /* reporting must never break the save */ }
+    }
   }
 
   const newInsight: IndexedInsight = {
