@@ -20,7 +20,7 @@
  */
 
 import { resolveProject } from "../storage/project.js";
-import { readCorrections } from "../storage/corrections.js";
+import { readCorrections, displayRule } from "../storage/corrections.js";
 import { listJournalFiles } from "../helpers/journal-files.js";
 import { listMilestones } from "../palace/pipeline.js";
 import { findCrystallizationCandidates, type CrystallizationCandidate } from "../palace/awareness.js";
@@ -109,7 +109,7 @@ export async function sessionEndReflect(input: ReflectInput): Promise<ReflectRes
     .slice(0, 20)
     .map((r) => ({
       id: r.id,
-      rule: r.rule,
+      rule: displayRule(r),
       severity: r.severity,
       precision: r.precision ?? null,
     }));

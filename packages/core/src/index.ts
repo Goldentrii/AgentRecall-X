@@ -305,6 +305,7 @@ export {
   readP0Corrections,
   fullRuleOf,
   boundRule,
+  displayRule,
   WHY_SEPARATOR,
   RULE_RENDER_MAX,
   retractCorrection,

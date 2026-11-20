@@ -141,3 +141,28 @@ describe("other surfaces show the derived rule", () => {
     assert.ok(lines.some((l) => l.includes(FULL)), JSON.stringify(lines));
   });
 });
+
+describe("review follow-ups (M3, M4, L1)", () => {
+  it("M4: session_start context does not repeat the whole rule", async () => {
+    seedCut();
+    const res = await core.sessionStart({ project: PROJECT });
+    const ctx = res.corrections[0].context ?? "";
+    assert.ok(!ctx.startsWith(FULL), `context repeats the rule: ${ctx.slice(0, 60)}`);
+  });
+
+  it("M3: cold-start caps the rule count and bounds context", async () => {
+    for (let i = 0; i < 55; i++) {
+      const d = `2026-10-${String((i % 28) + 1).padStart(2, "0")}`;
+      const r = `Never skip review step number ${i} before merging the branch.`;
+      seedCut({ id: `${d}-step-${i}`, date: d, rule: r, context: `${r}\n\nWhy: ${"x ".repeat(400)}` });
+    }
+    const res = await core.journalColdStart({ project: PROJECT });
+    assert.equal(res.p0_corrections.length, 50);
+    assert.ok(res.p0_corrections.every((c) => c.context.length <= 301));
+  });
+
+  it("L1: boundRule never leaves a lone surrogate", () => {
+    const out = core.boundRule("a".repeat(399) + "\u{1F600}" + " tail", 400);
+    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out), "no lone high surrogate");
+  });
+});

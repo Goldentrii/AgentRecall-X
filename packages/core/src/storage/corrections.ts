@@ -860,12 +860,56 @@ export function fullRuleOf(c: { rule?: string; context?: string }): string {
   return head.length > rule.length && head.startsWith(rule) ? head : rule;
 }
 
-/** A rule bounded for one display line: whole up to `max`, else cut at a word with a visible "…". */
+/**
+ * A rule as ONE display line: control characters and line breaks become spaces
+ * (a rule with a newline could otherwise forge extra lines inside the HARD RULES
+ * block), whitespace collapses, and the text is whole up to `max`, else cut at
+ * a word with a visible "…" (never inside a surrogate pair).
+ */
 export function boundRule(rule: string, max: number = RULE_RENDER_MAX): string {
-  if (rule.length <= max) return rule;
-  const sliced = rule.slice(0, max);
+  const line = rule.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+  if (line.length <= max) return line;
+  let end = max;
+  const code = line.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--; // do not leave a lone high surrogate
+  const sliced = line.slice(0, end);
   const lastSpace = sliced.lastIndexOf(" ");
-  return (lastSpace > max * 0.6 ? sliced.slice(0, lastSpace) : sliced).trimEnd() + "…";
+  return (lastSpace > end * 0.6 ? sliced.slice(0, lastSpace) : sliced).trimEnd() + "…";
+}
+
+/** The whole rule of a correction as one bounded display line (fullRuleOf + boundRule). */
+export function displayRule(c: { rule?: string; context?: string }): string {
+  return boundRule(fullRuleOf(c));
+}
+
+/**
+ * Find the file that holds exactly this record (same id AND same rule, context
+ * and date). Stores written before 3.5.4 can hold two files with one id; the
+ * first-by-id file (findExistingCorrectionFile) may then hold a DIFFERENT rule,
+ * and rewriting it would destroy that rule. `sameId` counts the files with
+ * this id so a caller can refuse to guess.
+ */
+function locateRecordFile(dir: string, rec: CorrectionRecord): { file: string | null; sameId: number } {
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return { file: null, sameId: 0 };
+  }
+  let file: string | null = null;
+  let sameId = 0;
+  for (const f of files) {
+    if (!f.endsWith(".json") || f.startsWith("_")) continue;
+    try {
+      const parsed = JSON.parse(readTextFileTolerant(path.join(dir, f))) as Partial<CorrectionRecord>;
+      if (!parsed || parsed.id !== rec.id) continue;
+      sameId++;
+      if (file === null && parsed.rule === rec.rule && (parsed.context ?? "") === (rec.context ?? "") && parsed.date === rec.date) file = f;
+    } catch {
+      // unreadable: not this record
+    }
+  }
+  return { file, sameId };
 }
 
 export function splitSentences(text: string): string[] {
@@ -1469,8 +1513,14 @@ export async function writeCorrection(
     for (const existing of normNew ? readActiveCorrections(project, allRecords) : []) {
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
       // Identity on the WHOLE rule (3.5.4): a whole restatement of a rule that
-      // 3.5.3 stored cut at 100 characters merges into it.
-      if (normalizeRule(fullRuleOf(existing)) !== normNew && normalizeRule(existing.rule) !== normNew) continue;
+      // 3.5.3 stored cut at 100 characters merges into it, and a shorter rule
+      // that only matches the cut text does not.
+      if (normalizeRule(fullRuleOf(existing)) !== normNew) continue;
+      // H1 (review): with duplicate ids (stores written before 3.5.4) merge only
+      // into the file that holds exactly this record; when it cannot be told
+      // apart, do not merge (the new rule is written as its own record below).
+      const loc = locateRecordFile(dir, existing);
+      if (!loc.file && loc.sameId > 1) continue;
       // A rule restated by a different credential (or by none) has no single author any more.
       const { authored_by: first, ...kept } = existing;
       const merged: CorrectionRecord = {
@@ -1508,7 +1558,8 @@ export async function writeCorrection(
       // Rewrite: reuse the EXISTING file's name (never recompute via slugify —
       // see findExistingCorrectionFile doc). Falls back to a fresh v2 filename
       // only in the defensive case where the file has vanished mid-call.
-      const mfile = findExistingCorrectionFile(dir, existing.id)
+      const mfile = loc.file
+        ?? findExistingCorrectionFile(dir, existing.id)
         ?? `${merged.date}--${slugify(merged.rule || merged.id)}.json`;
       writeRecordAtomic(path.join(dir, mfile), merged);
       // W2-1: regenerate the materialized index on every corrections mutation.

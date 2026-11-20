@@ -13,12 +13,14 @@
  */
 
 import { tokenize, overlap } from "./check-action.js";
-import { fullRuleOf, boundRule } from "../storage/corrections.js";
+import { displayRule } from "../storage/corrections.js";
 
 /** Minimal shape of a correction the prior-builder needs. */
 export interface PriorCorrection {
   id?: string;
   rule: string;
+  /** Rule + "\n\nWhy: " + evidence; lets displayRule derive a rule 3.5.3 stored cut. */
+  context?: string;
   severity?: string;
   tags?: string[];
 }
@@ -78,7 +80,7 @@ export function buildPriors(
     const matched = overlap(promptTokens, ruleTokens);
     if (matched.length >= MIN_OVERLAP) {
       out.push(
-        `⚠ [AgentRecall instinct] Resembles a past correction — ${boundRule(fullRuleOf(c)).replace(/\.$/, "")}. Check before proceeding.`,
+        `⚠ [AgentRecall instinct] Resembles a past correction — ${displayRule(c).replace(/\.$/, "")}. Check before proceeding.`,
       );
     }
   }

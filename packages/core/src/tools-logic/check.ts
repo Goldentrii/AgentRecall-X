@@ -211,7 +211,7 @@ const SOURCE_CHANNEL_TABLE: Record<string, "hook"> = {
 
 /** Owner gate — caps on a proposal, so the owner always reads ALL of what approving it activates. */
 export const PROPOSAL_RULE_MAX = 200;
-// RULE_STORE_MAX (corrections.ts) bounds the local channel's rule; re-exported here for callers of check.
+/** RULE_STORE_MAX lives in corrections.ts (one constant for check and the renderers); re-exported for callers of check. */
 export { RULE_STORE_MAX };
 export const PROPOSAL_WHY_MAX = 600;
 /** applies_when becomes tags and context keys on activation, so it is capped as well: entries, and characters per entry. */
@@ -538,7 +538,8 @@ export async function check(input: CheckInput, origin: CheckOrigin = {}): Promis
           // 3.5.4: the WHOLE rule is stored (it used to be the first sentence cut
           // to 100 characters, which dropped instructions after the cut). Length
           // is bounded by RULE_STORE_MAX above.
-          const corrRule = rule;
+          // One line: a line break inside a rule could forge lines in the HARD RULES block.
+          const corrRule = rule.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
           // Severity from the RULE sentence ONLY — evidence text must never
           // escalate a p1 preference into a p0 override. Shared classifier
           // (corrections.ts detectSeverity) — see the module-level note above.

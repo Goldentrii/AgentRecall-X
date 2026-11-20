@@ -25,7 +25,7 @@ import { journalDirs, projectSubPath } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
 import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
-import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, fullRuleOf, boundRule, type CorrectionRecord } from "../storage/corrections.js";
+import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, fullRuleOf, displayRule, type CorrectionRecord } from "../storage/corrections.js";
 import { activationEnabled, activationTieBreak, loadAssocGraph, todayDayString } from "../retrieval/activation.js";
 // Evolution p4 (2026-09-17) — soft-constraint ladder render tag. `tierOf` is
 // recomputed FRESH here (never reads CorrectionRecord.tier — that field is a
@@ -155,17 +155,19 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
     id: c.id,
     severity: c.severity,
     // 3.5.4: the whole rule (derived from context for rules 3.5.3 stored cut), bounded with a visible "…".
-    rule: boundRule(fullRuleOf(c)),
+    rule: displayRule(c),
     // Evolution p4 — additive presentation tag; see this file's import
     // comment on `tierOf` for why it is recomputed rather than read off
     // `c.tier`. Never fed back into ranking/budget — see applyCorrectionBudget,
     // which only ever reads `severity`/`rule`/`context` from this shape.
     tier: tierOf(c, asOfDay),
   };
-  const ctx = (c.context ?? "").trim();
   const rule = fullRuleOf(c);
+  let ctx = (c.context ?? "").trim();
+  // The rule is already in `rule` (whole since 3.5.4): keep only what context adds.
+  if (rule && ctx.startsWith(rule)) ctx = ctx.slice(rule.length).trim();
   // Include context only when it adds ≥20 chars of additional content.
-  if (ctx && ctx !== rule && ctx.length > rule.length + 20) {
+  if (ctx && ctx !== rule && ctx.length >= 20) {
     slim.context = sliceAtWord(ctx, 300);
   }
   return slim;

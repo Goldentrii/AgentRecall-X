@@ -30,7 +30,7 @@ import { palaceDir, journalDirs } from "../storage/paths.js";
 import { readIdentity } from "../palace/identity.js";
 import { listSkills } from "../palace/skills.js";
 import { listRooms, isRoomStale } from "../palace/rooms.js";
-import { readActiveCorrections, fullRuleOf, type CorrectionRecord } from "../storage/corrections.js";
+import { readActiveCorrections, fullRuleOf, displayRule, type CorrectionRecord } from "../storage/corrections.js";
 import { readBlindSpots } from "../storage/blind-spots-store.js";
 import { isJournalFile, isRescueSourcedContent } from "../helpers/journal-filter.js";
 
@@ -266,8 +266,8 @@ function readCapabilities(
   // PERF (2026-07-27): reuse the caller's preloaded active corrections when
   // provided, instead of re-scanning corrections/*.json.
   const permsAll = (preloadedCorrections ?? readActiveCorrections(project))
-    .filter((c) => c.rule && PERMISSION_RE.test(c.rule))
-    .map((c) => ({ id: c.id, rule: clean(fullRuleOf(c), 160), severity: c.severity }));
+    .filter((c) => c.rule && PERMISSION_RE.test(fullRuleOf(c)))
+    .map((c) => ({ id: c.id, rule: displayRule(c), severity: c.severity }));
 
   // Deterministic order: P0 before P1, then by id (stable, date-prefixed).
   permsAll.sort((a, b) => {

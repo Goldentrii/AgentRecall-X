@@ -126,3 +126,24 @@ describe("lesson files in every Windows encoding", () => {
     });
   }
 });
+
+describe("lesson files: UTF-16 BE, the archive, empty and BOM-only files", () => {
+  it("awareness-archive.json and insights-index.json as UTF-16 BE are read", () => {
+    const arch = [{ title: "Archived lesson about database migrations before deploys", evidence: "e", applies_when: ["deploy"], confirmed: 1 }];
+    fs.writeFileSync(path.join(root, "awareness-archive.json"), encode(JSON.stringify(arch), "utf16be"));
+    assert.equal(core.readAwarenessArchive()[0]?.title, arch[0].title);
+    const idx = { version: "1.0.0", updated: "2026-11-01T00:00:00.000Z", insights: [{ id: "i1", title: "Index lesson about cache TTLs", source: "t", applies_when: ["cache"], file: "", severity: "minor", confirmed_count: 1, last_confirmed: "2026-11-01" }] };
+    fs.writeFileSync(path.join(root, "insights-index.json"), encode(JSON.stringify(idx), "utf16be"));
+    assert.equal(core.readInsightsIndex().insights[0]?.title, "Index lesson about cache TTLs");
+  });
+
+  const broken = [["empty", Buffer.alloc(0)], ["BOM-only", Buffer.from([0xef, 0xbb, 0xbf])], ["binary", Buffer.from([0x00, 0xff, 0x13, 0x88, 0xfe])]];
+  for (const [name, bytes] of broken) {
+    it(`a correction file that is ${name} is skipped without throwing`, async () => {
+      const file = await seedRule();
+      fs.writeFileSync(path.join(path.dirname(file), "2026-01-01--broken.json"), bytes);
+      assert.doesNotThrow(() => core.readCorrections(PROJECT));
+      assert.equal(core.readCorrections(PROJECT).length, 1);
+    });
+  }
+});

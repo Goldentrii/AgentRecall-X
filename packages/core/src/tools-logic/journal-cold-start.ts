@@ -8,7 +8,11 @@ import { readState } from "./journal-state.js";
 import { palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { readAwareness, readAwarenessState } from "../palace/awareness.js";
-import { readP0Corrections, rankCorrections, fullRuleOf, boundRule } from "../storage/corrections.js";
+import { readP0Corrections, rankCorrections, displayRule, boundRule } from "../storage/corrections.js";
+
+/** Sanity ceiling on P0 rules returned by cold-start, and on each rule's context (characters). */
+const COLD_START_P0_MAX = 50;
+const COLD_START_CONTEXT_MAX = 300;
 import { readTierCandidates } from "../retrieval/candidates.js";
 import type { SessionState } from "../types.js";
 
@@ -114,9 +118,12 @@ export async function journalColdStart(input: JournalColdStartInput): Promise<Jo
     // Trajectory read is best-effort
   }
 
-  // 3.5.4: every active P0 (it was the first 5, unranked), whole and ranked.
+  // 3.5.4: active P0s ranked and whole (it was the first 5, unranked), with a
+  // sanity ceiling and a bounded context, so a large store cannot flood the
+  // hookless agent's context.
   const p0Corrections = rankCorrections(readP0Corrections(slug))
-    .map(c => ({ rule: boundRule(fullRuleOf(c)), context: c.context }));
+    .slice(0, COLD_START_P0_MAX)
+    .map(c => ({ rule: displayRule(c), context: boundRule(c.context ?? "", COLD_START_CONTEXT_MAX) }));
 
   const hot: JournalColdStartResult["cache"]["hot"]["entries"] = [];
   let warmCount = 0;
