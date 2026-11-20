@@ -116,6 +116,8 @@ export interface StagePendingInput {
   text: string;
   /** Explicit title/rule (insights pass their title). */
   rule?: string;
+  /** Keep `rule` whole instead of cutting it to 100 characters (owner-gate proposals, already length-capped). */
+  keepWholeRule?: boolean;
   applies_when?: string[];
   /** Why this capture is pending (validation failures, "string form", ...). */
   reason: string;
@@ -344,7 +346,9 @@ function proposalId(date: string, scrubbedRule: string, digest: string): string 
  */
 export async function stagePendingCorrection(project: string, input: StagePendingInput): Promise<StagePendingResult> {
   const contextRaw = (input.text ?? "").trim();
-  const ruleRaw = (input.rule ?? (splitSentences(contextRaw)[0] ?? contextRaw)).slice(0, 100).trim();
+  const ruleRaw = input.keepWholeRule && input.rule !== undefined
+    ? input.rule.trim()
+    : (input.rule ?? (splitSentences(contextRaw)[0] ?? contextRaw)).slice(0, 100).trim();
 
   const rule = scrubForCloud(ruleRaw);
   const context = scrubForCloud(contextRaw);

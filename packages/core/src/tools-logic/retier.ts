@@ -176,6 +176,7 @@ import { isValidProjectSlug } from "../storage/project.js";
 import {
   readActiveCorrections,
   setCorrectionTier,
+  displayRule,
   type CorrectionRecord,
   type CorrectionTier,
 } from "../storage/corrections.js";
@@ -388,7 +389,7 @@ export function archiveCandidates(
     const { touch, observed } = lastTouchAnyKindOf(r);
     const days = daysBetweenDayStrings(utcDayOf(touch), asOfDay);
     if (days !== null && days >= ARCHIVE_STALE_DAYS) {
-      out.push({ project: r.project, id: r.id, rule: r.rule, last_touch: observed });
+      out.push({ project: r.project, id: r.id, rule: displayRule(r), last_touch: observed });
     }
   }
   return out;
@@ -425,7 +426,7 @@ export function promoteToGateCandidates(
     // guard above already excluded that), so its watch-floor
     // short-circuit never applies to this call site.
     if (demotionOf(r, computed, asOfDay).length > 0) continue;
-    out.push({ project: r.project, id: r.id, rule: r.rule, severity: r.severity });
+    out.push({ project: r.project, id: r.id, rule: displayRule(r), severity: r.severity });
   }
   return out;
 }
@@ -552,7 +553,7 @@ export async function runRetier(opts: RetierOptions = {}): Promise<RetierResult>
           project,
           id: r.id,
           severity: r.severity,
-          rule: r.rule,
+          rule: displayRule(r),
           stored_tier: r.tier ?? null,
           computed_tier: computed,
           final_tier: final,

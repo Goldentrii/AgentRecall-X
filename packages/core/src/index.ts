@@ -191,7 +191,7 @@ export type { Tier } from "./storage/classification.js";
 // project-path builder (case-fold reuse + path-escape guard + staging-sentinel
 // routing) instead of hand-rolling the literal join.
 export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir, pickProjectDirEntry, projectSubPath } from "./storage/paths.js";
-export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic, decodeTextFile, readTextFileTolerant } from "./storage/fs-utils.js";
 
 // Storage — _unclaimed staging namespace (fix5, 2026-09-11): failed/zero-
 // confidence resolutions stage here instead of materializing projects/ dirs.
@@ -303,6 +303,11 @@ export {
   readCorrections,
   readActiveCorrections,
   readP0Corrections,
+  fullRuleOf,
+  boundRule,
+  displayRule,
+  WHY_SEPARATOR,
+  RULE_RENDER_MAX,
   retractCorrection,
   isLikelyRealCorrection,
   dropHardNoise,
@@ -555,7 +560,7 @@ export {
   PROMOTION_CONFIRMATION_THRESHOLD,
   type PromotionResult,
 } from "./tools-logic/insight-promotion.js";
-export { confirmPendingCorrection, readStagedProposal, cleanProposalText, PROPOSAL_RULE_MAX, PROPOSAL_WHY_MAX, PROPOSAL_WHEN_MAX_ITEMS, PROPOSAL_WHEN_ITEM_MAX, type ConfirmPendingResult, type StagedProposal } from "./tools-logic/check.js";
+export { confirmPendingCorrection, readStagedProposal, cleanProposalText, PROPOSAL_RULE_MAX, RULE_STORE_MAX, PROPOSAL_WHY_MAX, PROPOSAL_WHEN_MAX_ITEMS, PROPOSAL_WHEN_ITEM_MAX, type ConfirmPendingResult, type StagedProposal } from "./tools-logic/check.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)

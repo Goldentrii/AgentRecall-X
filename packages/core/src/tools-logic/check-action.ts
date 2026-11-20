@@ -16,7 +16,7 @@
  */
 
 import { resolveProject } from "../storage/project.js";
-import { readActiveCorrections, recordOutcome, readOutcomesForToday, type CorrectionRecord, type FailureClass } from "./../storage/corrections.js";
+import { readActiveCorrections, recordOutcome, readOutcomesForToday, displayRule, type CorrectionRecord, type FailureClass } from "./../storage/corrections.js";
 import { readBehaviorPolicies, type BehaviorRule } from "../storage/behavior-policies.js";
 import { readAwarenessState } from "../palace/awareness.js";
 import { tokenize as sharedTokenize } from "../helpers/tokenize.js";
@@ -323,7 +323,7 @@ export async function checkAction(input: CheckActionInput): Promise<CheckActionR
     if (matched.length >= minOverlap) {
       correctionMatches.push({
         id: c.id,
-        rule: c.rule,
+        rule: displayRule(c),
         severity: c.severity,
         date: c.date,
         matched_tokens: matched,

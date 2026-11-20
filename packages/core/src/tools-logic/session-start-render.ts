@@ -9,6 +9,7 @@
  * or retrieved text, and the unfenced tail (hook-less hint, A/B tag) exactly where it was.
  */
 import { fenceMemory } from "../storage/content-guard.js";
+import { boundRule } from "../storage/corrections.js";
 import { agentCorrectionsStaged, ownerReviewUrl } from "../types.js";
 import { formatOwnerSection } from "../storage/identity-card.js";
 import { formatStateSection } from "../storage/state-card.js";
@@ -127,7 +128,8 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
     hard.push("", "⛔ HARD RULES (always follow, no exceptions):");
     for (const c of result.corrections) {
       const tierTag = c.tier ? ` [${c.tier}]` : "";
-      hard.push(`  [${c.severity.toUpperCase()}] ${trunc(c.rule, 120)}${tierTag}`);
+      // Whole rule; bounded only by RULE_RENDER_MAX, always with a visible "…" (3.5.4: no 120-character cut).
+      hard.push(`  [${c.severity.toUpperCase()}] ${boundRule(c.rule)}${tierTag}`);
     }
   }
   add("hard_rules", 0, hard);
