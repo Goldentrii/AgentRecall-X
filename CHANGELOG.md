@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Upgrade notes — read before upgrading
+
+- **`MANIFEST.md` v2: the lesson files are primary data.** Up to 3.5.3 the store's `MANIFEST.md` listed `insights-index.json`, `awareness-state.json`, `awareness-archive.json` and `feedback-log.json` as "regenerable; safe to delete". Nothing rebuilds them: they are the only copy of your lessons and recall feedback, and an agent or restore that followed the manifest lost every lesson. New stores get `manifest_version: 2`, which lists the four files in the `sync` row and says never to delete them. An existing manifest is upgraded in place only when its generated v1 lines are unedited, and only at the next raw-session dump (the Claude Code Stop hook or an explicit save) or when you run `ar repair --apply`. Only those lines change; the rest of the file, its line endings, any BOM and `generated_by` are kept. `session_start` never writes it. A manifest you edited, one that mixes CRLF and LF line endings, or one re-saved as UTF-16 is left alone, and `ar doctor` warns about it: move the four files from the `regenerable` row to the `sync` row yourself.
+- **New `ar doctor` check `manifest_lesson_files`.** It warns while `MANIFEST.md` still lists a lesson file as regenerable, or cannot be read as UTF-8 text. Because the doctor runs on every `session_start`, a store with a v1 manifest shows `⚠ store-doctor: WARN — manifest_lesson_files[warn]` until the manifest is upgraded; on hookless hosts (Codex, Cursor) run `ar repair --apply` once. `ar repair` reports the step as `manifest` (`would_upgrade`, `upgraded`, `edited`, `current`, `absent`, `unreadable` or `failed`), and `runStoreDoctor()` now returns 6 checks.
+
 ### Hosted website
 
 - The home page at `/` is now the blueprint page: the distance between you and your agents drawn as a figure, two ways in, how it works, one measured example, a clients table and a link to the film. It has no script, and its content security policy now says `script-src 'none'`.

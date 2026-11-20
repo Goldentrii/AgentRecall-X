@@ -1434,11 +1434,16 @@ async function main(): Promise<void> {
           lines.push(`  locks:   ${result.locksRemoved.names.join(", ")}`);
         if (result.drained.projects.length)
           lines.push(`  drain:   ${result.drained.projects.join(", ")}`);
+        if (result.manifest.status === "upgraded" || result.manifest.status === "would_upgrade")
+          lines.push("  manifest: MANIFEST.md v1 → v2 (lesson files listed as primary data)");
+        else if (result.manifest.status === "edited")
+          lines.push("  manifest: MANIFEST.md was edited, left alone; run `ar doctor` for the by-hand fix");
         // Surface any per-step error so a clean-looking summary never hides a failure.
         for (const [label, step] of [
           ["reindex", result.reindexed],
           ["locks", result.locksRemoved],
           ["drain", result.drained],
+          ["manifest", result.manifest],
         ] as const) {
           if (step.error) lines.push(`  ⚠ ${label} error: ${step.error}`);
         }
