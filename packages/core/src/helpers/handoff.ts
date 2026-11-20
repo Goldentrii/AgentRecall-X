@@ -10,7 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readP0Corrections } from "../storage/corrections.js";
+import { readP0Corrections, fullRuleOf, boundRule } from "../storage/corrections.js";
 import { readBehaviorPolicies } from "../storage/behavior-policies.js";
 import { readInsightsIndex } from "../palace/insights-index.js";
 import { readIdentity } from "../palace/identity.js";
@@ -104,7 +104,7 @@ export function generateHandoff(slug: string): string {
     if (p0.length > 0) {
       sectionLines.push("## Binding rules");
       for (const c of p0) {
-        sectionLines.push(`- ${c.rule}`);
+        sectionLines.push(`- ${boundRule(fullRuleOf(c))}`);
       }
       sectionLines.push("");
     }

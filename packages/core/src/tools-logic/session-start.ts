@@ -25,7 +25,7 @@ import { journalDirs, projectSubPath } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
 import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
-import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
+import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, fullRuleOf, boundRule, type CorrectionRecord } from "../storage/corrections.js";
 import { activationEnabled, activationTieBreak, loadAssocGraph, todayDayString } from "../retrieval/activation.js";
 // Evolution p4 (2026-09-17) — soft-constraint ladder render tag. `tierOf` is
 // recomputed FRESH here (never reads CorrectionRecord.tier — that field is a
@@ -154,7 +154,8 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
   const slim: SlimCorrection = {
     id: c.id,
     severity: c.severity,
-    rule: c.rule,
+    // 3.5.4: the whole rule (derived from context for rules 3.5.3 stored cut), bounded with a visible "…".
+    rule: boundRule(fullRuleOf(c)),
     // Evolution p4 — additive presentation tag; see this file's import
     // comment on `tierOf` for why it is recomputed rather than read off
     // `c.tier`. Never fed back into ranking/budget — see applyCorrectionBudget,
@@ -162,7 +163,7 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
     tier: tierOf(c, asOfDay),
   };
   const ctx = (c.context ?? "").trim();
-  const rule = (c.rule ?? "").trim();
+  const rule = fullRuleOf(c);
   // Include context only when it adds ≥20 chars of additional content.
   if (ctx && ctx !== rule && ctx.length > rule.length + 20) {
     slim.context = sliceAtWord(ctx, 300);
@@ -176,7 +177,7 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
  * BUDGET BASIS: the `*_total` budgets are measured against the JSON-SERIALIZED
  * length of each item (`JSON.stringify(item).length` summed per section), NOT
  * raw field chars — so keys, quotes, and escapes count against the budget.
- * Per-field limits (`correction_rule`, `insights_title`, …) ARE raw char caps
+ * Per-field limits (`correction_context`, `insights_title`, …) ARE raw char caps
  * applied to the field text before serialization.
  *
  * Token estimate: chars / 4 (conservative; real tokenizer would give ~same for English prose).
@@ -198,7 +199,7 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
  * Total: ~6000 serialized chars → ~1500 tokens (target: ≤1500 tokens median).
  */
 const SECTION_CHAR_LIMITS = {
-  correction_rule: 120,      // per item rule field (raw chars)
+  // correction_rule: removed in 3.5.4 — rules are shown whole (bounded by RULE_RENDER_MAX in toSlimCorrection).
   correction_context: 250,   // per item context field (raw chars, only when included)
   corrections_total: 1200,   // total serialized corrections budget (JSON chars)
   insights_title: 180,       // per insight title (raw chars)
@@ -229,7 +230,6 @@ function applyCorrectionBudget(corrections: SlimCorrection[]): SlimCorrection[] 
 
   const trimmedP0s: SlimCorrection[] = p0s.map(c => ({
     ...c,
-    rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
     context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
   }));
 
@@ -243,7 +243,6 @@ function applyCorrectionBudget(corrections: SlimCorrection[]): SlimCorrection[] 
   for (const c of p1s) {
     const trimmed: SlimCorrection = {
       ...c,
-      rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
       context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
     };
     const itemSize = JSON.stringify(trimmed).length;

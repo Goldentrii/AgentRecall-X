@@ -12,7 +12,7 @@ import { resolveProject } from "../storage/project.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
 import { generateTags } from "../helpers/tag-generator.js";
-import { writeCorrection, readCorrections, splitSentences, detectSeverity } from "../storage/corrections.js";
+import { writeCorrection, readCorrections, splitSentences, detectSeverity, WHY_SEPARATOR, RULE_STORE_MAX } from "../storage/corrections.js";
 import {
   stagePendingCorrection,
   listPendingCorrections,
@@ -207,18 +207,12 @@ const SOURCE_CHANNEL_TABLE: Record<string, "hook"> = {
   "hook-correction": "hook",
 };
 
-/** Joins rule and why in a correction's stored text; confirmPendingCorrection splits a staged row on it. */
-const WHY_SEPARATOR = "\n\nWhy: ";
+// WHY_SEPARATOR joins rule and why in a correction's stored text; confirmPendingCorrection splits a staged row on it.
 
 /** Owner gate — caps on a proposal, so the owner always reads ALL of what approving it activates. */
 export const PROPOSAL_RULE_MAX = 200;
-/**
- * Longest rule the local (non-gated) channel stores, in UTF-16 code units. The
- * rule is stored and shown whole (3.5.4; it used to be cut to its first
- * sentence and 100 characters), so a longer one is refused with an
- * instruction to split it, never cut. The owner's longest real rule was 243.
- */
-export const RULE_STORE_MAX = 300;
+// RULE_STORE_MAX (corrections.ts) bounds the local channel's rule; re-exported here for callers of check.
+export { RULE_STORE_MAX };
 export const PROPOSAL_WHY_MAX = 600;
 /** applies_when becomes tags and context keys on activation, so it is capped as well: entries, and characters per entry. */
 export const PROPOSAL_WHEN_MAX_ITEMS = 8;

@@ -2740,7 +2740,8 @@ async function main(): Promise<void> {
               .sort((a, b) => (a.severity === "p0" ? -1 : b.severity === "p0" ? 1 : 0))
               .slice(0, 2);
             for (const c of topCorrections) {
-              warningLines.push(`  [${c.severity.toUpperCase()}] ${c.rule.slice(0, 100)}`);
+              // Whole rule (check-action derives and bounds it; 3.5.4: no 100-character cut).
+              warningLines.push(`  [${c.severity.toUpperCase()}] ${c.rule}`);
             }
 
             // Top rule
@@ -3251,7 +3252,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
       let corrections: Array<{rule: string; date: string; severity: string}> = [];
       try {
         const allCorr = core.readP0Corrections(resolvedSync);
-        corrections = allCorr.slice(0, 5).map(c => ({ rule: c.rule, date: c.date, severity: c.severity }));
+        corrections = allCorr.slice(0, 5).map(c => ({ rule: core.boundRule(core.fullRuleOf(c)), date: c.date, severity: c.severity }));
       } catch { /* non-blocking */ }
 
       // 2. Read top awareness insights

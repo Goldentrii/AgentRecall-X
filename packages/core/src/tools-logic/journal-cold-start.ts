@@ -8,7 +8,7 @@ import { readState } from "./journal-state.js";
 import { palaceDir } from "../storage/paths.js";
 import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { readAwareness, readAwarenessState } from "../palace/awareness.js";
-import { readP0Corrections } from "../storage/corrections.js";
+import { readP0Corrections, rankCorrections, fullRuleOf, boundRule } from "../storage/corrections.js";
 import { readTierCandidates } from "../retrieval/candidates.js";
 import type { SessionState } from "../types.js";
 
@@ -114,9 +114,9 @@ export async function journalColdStart(input: JournalColdStartInput): Promise<Jo
     // Trajectory read is best-effort
   }
 
-  const p0Corrections = readP0Corrections(slug)
-    .slice(0, 5)
-    .map(c => ({ rule: c.rule, context: c.context }));
+  // 3.5.4: every active P0 (it was the first 5, unranked), whole and ranked.
+  const p0Corrections = rankCorrections(readP0Corrections(slug))
+    .map(c => ({ rule: boundRule(fullRuleOf(c)), context: c.context }));
 
   const hot: JournalColdStartResult["cache"]["hot"]["entries"] = [];
   let warmCount = 0;

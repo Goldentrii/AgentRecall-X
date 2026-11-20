@@ -824,6 +824,50 @@ export interface RankedCorrection extends CorrectionRecord {
  * Empty fragments are dropped. This is a classifier helper, not a linguistic
  * tokenizer — it deliberately errs toward NOT splitting.
  */
+/** Joins rule and why in a correction's stored `context` (written by check()). */
+export const WHY_SEPARATOR = "\n\nWhy: ";
+
+/**
+ * Longest rule the local check() channel stores, in UTF-16 code units (3.5.4).
+ * The rule is stored and shown whole, so a longer one is refused with an
+ * instruction to split it, never cut.
+ */
+export const RULE_STORE_MAX = 300;
+
+/**
+ * Longest rule text printed on one line (HARD RULES, check(action), cli
+ * warnings). Records written by check() are at most RULE_STORE_MAX; this only
+ * bounds hand-edited, imported or harvested records, and always with a visible
+ * "…", never silently.
+ */
+export const RULE_RENDER_MAX = 400;
+
+/**
+ * The whole rule of a correction, for display. Before 3.5.4 check() stored
+ * `rule` as its first sentence cut to 100 characters, while `context` kept
+ * the whole rule followed by WHY_SEPARATOR and the evidence. When the stored
+ * rule is a prefix of the text before the first WHY_SEPARATOR, that text is
+ * the whole rule. Anything else (no separator, a hand-edited context that does
+ * not start with the rule) returns the stored rule unchanged. Read-time only:
+ * nothing is written back.
+ */
+export function fullRuleOf(c: { rule?: string; context?: string }): string {
+  const rule = (c.rule ?? "").trim();
+  const ctx = c.context ?? "";
+  const i = ctx.indexOf(WHY_SEPARATOR);
+  if (i <= 0 || !rule) return rule;
+  const head = ctx.slice(0, i).trim();
+  return head.length > rule.length && head.startsWith(rule) ? head : rule;
+}
+
+/** A rule bounded for one display line: whole up to `max`, else cut at a word with a visible "…". */
+export function boundRule(rule: string, max: number = RULE_RENDER_MAX): string {
+  if (rule.length <= max) return rule;
+  const sliced = rule.slice(0, max);
+  const lastSpace = sliced.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? sliced.slice(0, lastSpace) : sliced).trimEnd() + "…";
+}
+
 export function splitSentences(text: string): string[] {
   // Boundary = one of . ! ? OR a newline, that is followed by whitespace or EOT.
   // A `.` wedged between two non-space chars (4.7, file.md, e.g.) is NOT a boundary.
@@ -1424,7 +1468,9 @@ export async function writeCorrection(
     // (proof_count +1) instead of becoming a second record with the same id.
     for (const existing of normNew ? readActiveCorrections(project, allRecords) : []) {
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
-      if (normalizeRule(existing.rule) !== normNew) continue;
+      // Identity on the WHOLE rule (3.5.4): a whole restatement of a rule that
+      // 3.5.3 stored cut at 100 characters merges into it.
+      if (normalizeRule(fullRuleOf(existing)) !== normNew && normalizeRule(existing.rule) !== normNew) continue;
       // A rule restated by a different credential (or by none) has no single author any more.
       const { authored_by: first, ...kept } = existing;
       const merged: CorrectionRecord = {

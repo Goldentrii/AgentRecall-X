@@ -15,7 +15,7 @@
 
 import { extractKeywords } from "./auto-name.js";
 import { cleanRule, type AlignmentRecord } from "./alignment-patterns.js";
-import type { CorrectionRecord } from "../storage/corrections.js";
+import { fullRuleOf, type CorrectionRecord } from "../storage/corrections.js";
 import { tokenize, overlap } from "../tools-logic/check-action.js";
 import { semanticSimilarity, blindSpotConcepts } from "./semantic-match.js";
 
@@ -118,7 +118,7 @@ const KW_PER_SIGNAL = 4;
 const MIN_SHARED_KEYWORDS = 2;
 
 function normalizeCorrection(c: CorrectionRecord): Signal {
-  const rule = cleanRule(c.rule ?? "");
+  const rule = cleanRule(fullRuleOf(c));
   return {
     rule,
     severity: c.severity === "p0" ? "p0" : "p1",
