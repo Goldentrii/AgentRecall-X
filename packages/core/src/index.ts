@@ -97,6 +97,8 @@ export type {
   CompoundInsight,
   AwarenessState,
   CrystallizationCandidate,
+  AddInsightOutcome,
+  LessonRef,
 } from "./palace/awareness.js";
 
 // Palace — decay pass (Wave 3 compression tier)
@@ -144,6 +146,7 @@ export {
 export type {
   IndexedInsight,
   InsightsIndex,
+  AddIndexedInsightOptions,
 } from "./palace/insights-index.js";
 
 // Palace — identity
@@ -225,7 +228,14 @@ export type { PruneRawArchiveOptions, PruneRawArchiveResult } from "./storage/ar
 export { enqueueConsolidation, drainConsolidationQueue } from "./storage/consolidation-queue.js";
 export type { ConsolidationJob, DrainReport } from "./storage/consolidation-queue.js";
 export { writeMemoryProtocol } from "./storage/memory-protocol.js";
-export { ensureStoreManifest } from "./storage/store-manifest.js";
+export {
+  ensureStoreManifest,
+  inspectStoreManifest,
+  upgradeStoreManifest,
+  MANIFEST_VERSION,
+  MANIFEST_LESSON_FILES,
+} from "./storage/store-manifest.js";
+export type { ManifestState, ManifestInspection, ManifestUpgradeOutcome } from "./storage/store-manifest.js";
 export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
@@ -498,6 +508,7 @@ export {
   type RepairSnapshot,
   type RepairStepProjects,
   type RepairStepLocks,
+  type RepairStepManifest,
 } from "./tools-logic/store-repair.js";
 // hygiene — DETECTION-ONLY store trash audit (sibling to store-doctor above,
 // different axis: junk/trash rather than structural integrity). CLI/core
@@ -516,7 +527,17 @@ export {
   type HygieneGrade,
 } from "./storage/hygiene.js";
 export { palaceSearch, type PalaceSearchInput, type PalaceSearchResult } from "./tools-logic/palace-search.js";
-export { awarenessUpdate, type AwarenessUpdateInput, type AwarenessUpdateResult } from "./tools-logic/awareness-update.js";
+export {
+  awarenessUpdate,
+  buildLessonSaveReport,
+  formatLessonWarnings,
+  LessonSaveError,
+  type AwarenessUpdateInput,
+  type AwarenessUpdateResult,
+  type LessonSaveReport,
+  type ProcessedInsight,
+  type EvictedLesson,
+} from "./tools-logic/awareness-update.js";
 export { recallInsight, type RecallInsightInput, type RecallInsightResult } from "./tools-logic/recall-insight.js";
 
 // Tool logic — journal merge

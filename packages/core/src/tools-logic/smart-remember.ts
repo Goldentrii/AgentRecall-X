@@ -12,7 +12,7 @@ import { scanForConflicts, formatConflictWarning } from "../helpers/conflict-sca
 import { journalCapture } from "./journal-capture.js";
 import { palaceWrite } from "./palace-write.js";
 import { knowledgeWrite } from "./knowledge-write.js";
-import { awarenessUpdate } from "./awareness-update.js";
+import { awarenessUpdate, formatLessonWarnings, type LessonSaveReport } from "./awareness-update.js";
 import { toDisplayPath } from "../types.js";
 import { resolveProject } from "../storage/project.js";
 import { getSessionId } from "../storage/session.js";
@@ -46,6 +46,13 @@ export interface SmartRememberResult {
   consistency_warnings?: ConsistencyWarning[];
   /** Conflict warning: populated when new content contradicts existing memories */
   conflict_warning?: string;
+  /** 3.5.4 P0-4a: lesson route only — what the save did (same vocabulary as session_end). */
+  lessons?: LessonSaveReport;
+  /**
+   * 3.5.4 P0-4a: one line per merge, resurrection, eviction (with project),
+   * demotion or refusal. Quotes STORED lesson titles: fence before showing.
+   */
+  lesson_warnings?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +254,8 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
   // Extract file path and entry indicator from the routed result
   let file_path: string | undefined;
   let entry_indicator: string | undefined;
+  let lessons: LessonSaveReport | undefined;
+  let lesson_warnings: string[] | undefined;
   const resultObj = result as Record<string, unknown> | undefined;
   if (resultObj) {
     // palace_write returns file_path + is_new directly
@@ -271,6 +280,24 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
       const q = typeof resultObj.entry_number === "number" ? resultObj.entry_number : undefined;
       entry_indicator = q !== undefined ? `Q${q}` : "captured";
     }
+  }
+
+  // 3.5.4 P0-4a: the lesson route reports what the save really did. Read
+  // outside the branch chain above, whose first (palace) branch also matches
+  // awareness results because they carry a string file_path.
+  if (route === "awareness_update" && resultObj && typeof resultObj.lessons === "object" && resultObj.lessons !== null) {
+    const l = resultObj.lessons as LessonSaveReport;
+    lessons = l;
+    if (l.added === 0) {
+      entry_indicator = l.confirmed > 0 ? "insight confirmed"
+        : l.merged.length > 0 ? "insight merged"
+        : l.resurrected.length > 0 ? "insight resurrected"
+        : l.not_indexed.length > 0 ? "insight not indexed"
+        : l.rejected.length > 0 ? "insight rejected"
+        : entry_indicator;
+    }
+    const warnings = formatLessonWarnings(l);
+    if (warnings.length > 0) lesson_warnings = warnings;
   }
 
   // Replace agent-recall root dir for readability
@@ -342,5 +369,7 @@ export async function smartRemember(input: SmartRememberInput): Promise<SmartRem
     tags,
     consistency_warnings,
     conflict_warning,
+    ...(lessons ? { lessons } : {}),
+    ...(lesson_warnings ? { lesson_warnings } : {}),
   };
 }

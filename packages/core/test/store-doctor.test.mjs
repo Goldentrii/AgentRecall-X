@@ -272,12 +272,14 @@ describe("store-doctor (read-only integrity diagnostics)", () => {
 
     try {
       const r = doctor.runStoreDoctor();
-      // It returns a well-formed result with all 5 checks present.
+      // It returns a well-formed result with all 6 checks present (3.5.4 adds
+      // manifest_lesson_files, P0-2).
       assert.ok(r && typeof r.status === "string");
-      assert.equal(r.checks.length, 5);
+      assert.equal(r.checks.length, 6);
       const names = r.checks.map((c) => c.name).sort();
       assert.deepEqual(names, [
         "dreaming_stale",
+        "manifest_lesson_files",
         "orphaned_consume_marker",
         "outcomes_ledger_divergence",
         "stale_lock",

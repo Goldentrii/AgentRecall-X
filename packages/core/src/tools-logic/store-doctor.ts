@@ -32,6 +32,7 @@ import { STALE_LOCK_MS } from "../storage/filelock.js";
 import { getDreamHealth } from "../storage/dream-health.js";
 import { resolveRetentionDays } from "../storage/retention.js";
 import { computeLedgerDivergence } from "../storage/corrections.js";
+import { inspectStoreManifest } from "../storage/store-manifest.js";
 import type { PalaceIndex } from "../types.js";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -72,7 +73,8 @@ export interface DoctorCheck {
     | "stale_lock"
     | "dreaming_stale"
     | "orphaned_consume_marker"
-    | "outcomes_ledger_divergence";
+    | "outcomes_ledger_divergence"
+    | "manifest_lesson_files";
   /** Worst level this check found. */
   level: DoctorLevel;
   /** Human-readable detail of what was (or wasn't) found. */
@@ -484,6 +486,53 @@ function checkOutcomesDivergence(): DoctorCheck {
 // Public entry point
 // ───────────────────────────────────────────────────────────────────────────
 
+// ───────────────────────────────────────────────────────────────────────────
+// Check 6 — MANIFEST.md STILL CALLS THE LESSON FILES REGENERABLE (3.5.4 P0-2)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * MANIFEST v1 (up to 3.5.3) listed the lesson files as "regenerable; safe to
+ * delete". Nothing rebuilds them, so an agent or restore that follows it loses
+ * every lesson. The upgrade runs only at a raw-dump write or `ar repair
+ * --apply` (never here: the doctor runs on session_start and stays read-only),
+ * so a store used only from a hookless host keeps the v1 text until repaired.
+ * WARN while any regenerable row names a lesson file. One small file read.
+ */
+function checkManifestLessonFiles(): DoctorCheck {
+  const base = { name: "manifest_lesson_files" as const };
+  try {
+    const m = inspectStoreManifest(getRoot());
+    if (m.state === "v1" || m.state === "edited") {
+      const files = m.lessonFilesMarkedRegenerable.join(", ");
+      return {
+        ...base,
+        level: "warn",
+        detail: `MANIFEST.md lists lesson data as regenerable ("safe to delete"): ${files}. These files are the only copy of the store's lessons.`,
+        fix_hint:
+          m.state === "v1"
+            ? "Run `ar repair --apply` to upgrade MANIFEST.md to v2 in place (only the generated lines change). Never delete those files."
+            : `MANIFEST.md was edited, so it is not upgraded automatically: move ${files} from the regenerable row to the sync row by hand. Never delete those files.`,
+      };
+    }
+    if (m.state === "unreadable") {
+      return {
+        ...base,
+        level: "warn",
+        detail: "MANIFEST.md could not be read as UTF-8 text (for example it was re-saved as UTF-16), so it may still call the lesson files regenerable.",
+        fix_hint: "Re-save MANIFEST.md as UTF-8 and check that insights-index.json, awareness-state.json, awareness-archive.json and feedback-log.json are in the sync row, not the regenerable row. Never delete those files.",
+      };
+    }
+    return {
+      ...base,
+      level: "ok",
+      detail: m.state === "absent" ? "no MANIFEST.md yet" : "MANIFEST.md lists the lesson files as primary data",
+      fix_hint: "",
+    };
+  } catch (err) {
+    return { ...base, level: "ok", detail: `check skipped: ${err instanceof Error ? err.message : String(err)}`, fix_hint: "" };
+  }
+}
+
 /**
  * Run all integrity checks. READ-ONLY, lock-free, never throws.
  * `status` is the worst level across checks ('ok' | 'warn' | 'red').
@@ -495,6 +544,7 @@ export function runStoreDoctor(): StoreDoctorResult {
     checkDreamingStale(),
     checkOrphanedConsumeMarkers(),
     checkOutcomesDivergence(),
+    checkManifestLessonFiles(),
   ];
   return { status: rollupStatus(checks), checks };
 }

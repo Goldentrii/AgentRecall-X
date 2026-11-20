@@ -84,7 +84,12 @@ describe("L2: session_end insights completeness gate", () => {
     });
     assert.equal(result.insights_pending, 1);
     assert.equal(result.awareness_updated, true);
+    // 3.5.4 P0-4a: insights_added is derived from what awareness and the index
+    // actually did. In a fresh store the valid insight really is a new lesson,
+    // so it is still 1, and none of the other outcome fields appear.
     assert.equal(result.insights_added, 1, "only the VALID insight is classified/added");
+    assert.equal(result.insights_merged, undefined);
+    assert.equal(result.insights_not_indexed, undefined);
     const index = readInsightsIndex();
     assert.ok(index.insights.some((i) => i.title === VALID_INSIGHT.title));
     assert.ok(!index.insights.some((i) => i.title === "fixed bug"));
@@ -99,7 +104,10 @@ describe("L2: session_end insights completeness gate", () => {
       project,
     });
     assert.equal(result.insights_pending ?? 0, 0);
+    // 3.5.4 P0-4a: outcome-derived (see the mixed-batch test above).
     assert.equal(result.insights_added, 1);
+    assert.equal(result.insights_resurrected, undefined);
+    assert.equal(result.insights_evicted, undefined);
     assert.equal(result.awareness_updated, true);
     assert.equal((await listPendingCorrections(project)).length, 0);
   });
