@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { ensureDir, renameAtomic } from "./fs-utils.js";
+import { ensureDir, renameAtomic, readTextFileTolerant } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
@@ -528,7 +528,7 @@ function findExistingCorrectionFile(dir: string, id: string): string | null {
   for (const file of files) {
     if (!file.endsWith(".json") || file.startsWith("_")) continue;
     try {
-      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      const raw = readTextFileTolerant(path.join(dir, file));
       const parsed = JSON.parse(raw) as { id?: string };
       if (parsed && parsed.id === id) return file;
     } catch {
@@ -1571,7 +1571,9 @@ export function readCorrections(project: string): CorrectionRecord[] {
   const records: CorrectionRecord[] = [];
   for (const file of files) {
     try {
-      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      // BOM / UTF-16 tolerant (3.5.4): a rule file re-saved by Windows
+      // PowerShell used to fail JSON.parse here and vanish from every surface.
+      const raw = readTextFileTolerant(path.join(dir, file));
       const parsed = JSON.parse(raw) as CorrectionRecord;
       records.push(applyCorrectionDefaults(parsed, parsed.date));
     } catch {

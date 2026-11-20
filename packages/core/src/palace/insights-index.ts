@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir } from "../storage/fs-utils.js";
+import { ensureDir, readTextFileTolerant } from "../storage/fs-utils.js";
 import { syncToSupabase } from "../supabase/sync.js";
 import { scrubForCloud } from "../storage/content-guard.js";
 import { withLock } from "../storage/filelock.js";
@@ -143,7 +143,7 @@ export function readInsightsIndex(): InsightsIndex {
     return { version: "1.0.0", updated: new Date().toISOString(), insights: [] };
   }
   try {
-    return JSON.parse(fs.readFileSync(p, "utf-8"));
+    return JSON.parse(readTextFileTolerant(p));
   } catch {
     return { version: "1.0.0", updated: new Date().toISOString(), insights: [] };
   }

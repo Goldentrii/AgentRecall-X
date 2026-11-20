@@ -18,7 +18,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRoot } from "../types.js";
-import { ensureDir, writeTextAtomic } from "../storage/fs-utils.js";
+import { ensureDir, writeTextAtomic, readTextFileTolerant } from "../storage/fs-utils.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { withLock } from "../storage/filelock.js";
@@ -177,7 +177,7 @@ export function readAwarenessState(): AwarenessState | null {
   const p = AWARENESS_JSON_PATH();
   if (!fs.existsSync(p)) return null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf-8"));
+    return JSON.parse(readTextFileTolerant(p));
   } catch {
     return null;
   }
@@ -243,7 +243,7 @@ export function readAwarenessArchive(): Insight[] {
   const p = AWARENESS_ARCHIVE_PATH();
   if (!fs.existsSync(p)) return [];
   try {
-    return JSON.parse(fs.readFileSync(p, "utf-8"));
+    return JSON.parse(readTextFileTolerant(p));
   } catch {
     return [];
   }

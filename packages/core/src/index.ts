@@ -191,7 +191,7 @@ export type { Tier } from "./storage/classification.js";
 // project-path builder (case-fold reuse + path-escape guard + staging-sentinel
 // routing) instead of hand-rolling the literal join.
 export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir, pickProjectDirEntry, projectSubPath } from "./storage/paths.js";
-export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic, decodeTextFile, readTextFileTolerant } from "./storage/fs-utils.js";
 
 // Storage — _unclaimed staging namespace (fix5, 2026-09-11): failed/zero-
 // confidence resolutions stage here instead of materializing projects/ dirs.

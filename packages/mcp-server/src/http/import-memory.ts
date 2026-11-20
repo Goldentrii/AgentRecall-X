@@ -19,6 +19,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
+import { decodeTextFile } from "agent-recall-core";
 import type * as http from "node:http";
 import { dirSize } from "./limits.js";
 import { tenantRoot } from "./tenant-paths.js";
@@ -515,7 +516,7 @@ export async function countAlwaysFollow(root: string): Promise<number> {
         const file = path.join(dir, f);
         const st = await fs.promises.lstat(file);
         if (!st.isFile() || st.size > 1024 * 1024) continue;
-        const rec = JSON.parse(await fs.promises.readFile(file, "utf-8")) as { severity?: unknown; active?: unknown };
+        const rec = JSON.parse(decodeTextFile(await fs.promises.readFile(file))) as { severity?: unknown; active?: unknown };
         if (rec.severity === "p0" && rec.active !== false) n++;
       } catch { /* unreadable or not a record */ }
     }
