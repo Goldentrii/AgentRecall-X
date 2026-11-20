@@ -7,6 +7,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { resolveProject } from "../storage/project.js";
 import { todayISO } from "../storage/fs-utils.js";
 import { extractKeywords, generateSlug } from "../helpers/auto-name.js";
@@ -211,6 +212,13 @@ const WHY_SEPARATOR = "\n\nWhy: ";
 
 /** Owner gate — caps on a proposal, so the owner always reads ALL of what approving it activates. */
 export const PROPOSAL_RULE_MAX = 200;
+/**
+ * Longest rule the local (non-gated) channel stores, in UTF-16 code units. The
+ * rule is stored and shown whole (3.5.4; it used to be cut to its first
+ * sentence and 100 characters), so a longer one is refused with an
+ * instruction to split it, never cut. The owner's longest real rule was 243.
+ */
+export const RULE_STORE_MAX = 300;
 export const PROPOSAL_WHY_MAX = 600;
 /** applies_when becomes tags and context keys on activation, so it is capped as well: entries, and characters per entry. */
 export const PROPOSAL_WHEN_MAX_ITEMS = 8;
@@ -276,7 +284,7 @@ function refuseUnlessPartialCapture(row: PendingRecord): string | undefined {
 
 export interface ConfirmPendingResult {
   ok: boolean;
-  /** Id of the new active correction, when ok and it can be told apart (ids are date + rule slug, so not always). */
+  /** Id of the new active correction, when ok and it is a new record (not merged into an existing one). */
   correction_id?: string;
   /** True when ok but the rule folded into an already-active correction with the same identity (its text is kept). */
   merged?: boolean;
@@ -318,7 +326,7 @@ export async function confirmPendingCorrection(project: string, id: string): Pro
     };
   }
   const { rule, why, applies_when } = proposal;
-  // Counted, not matched by id: two active records can share an id (date + rule slug).
+  // Counted, not matched by id: stores written before 3.5.4 can hold two records with one id (date + rule slug).
   const before = readCorrections(slug);
   const beforeIds = new Set(before.map((c) => c.id));
   const added = (): { grew: boolean; id?: string } => {
@@ -441,7 +449,20 @@ export async function check(input: CheckInput, origin: CheckOrigin = {}): Promis
       const tooLong = gated && validation.ok
         ? overCaps(proposed.rule ?? "", proposed.why ?? "", proposed.applies_when ?? [])
         : "";
-      if (tooLong) {
+      // Local channel: the rule is stored whole, so an over-long one is refused, never cut.
+      const ruleTooLong = !gated && validation.ok && (proposed.rule ?? "").trim().length > RULE_STORE_MAX
+        ? `rule: longer than ${RULE_STORE_MAX} characters`
+        : "";
+      if (ruleTooLong) {
+        gateRejection = ruleTooLong;
+        correctionPending = {
+          status: "invalid_structured",
+          reason: ruleTooLong,
+          agent_instruction:
+            `The rule is longer than ${RULE_STORE_MAX} characters. Split it into separate rules of at most ${RULE_STORE_MAX} ` +
+            `characters, one behavior each, and call check() once per rule. Nothing was stored.`,
+        };
+      } else if (tooLong) {
         // Not staged: the owner must be able to read all of what they approve.
         gateRejection = tooLong;
         correctionPending = {
@@ -478,7 +499,9 @@ export async function check(input: CheckInput, origin: CheckOrigin = {}): Promis
           kind: "correction",
           channel: "check_structured_unconfirmed",
           text: `${rule}${WHY_SEPARATOR}${proposed.why!}`,
-          rule: splitSentences(rule)[0] ?? rule,
+          // The whole rule (already capped at PROPOSAL_RULE_MAX): what the owner reads is what activates.
+          rule,
+          keepWholeRule: true,
           applies_when: proposed.applies_when,
           // Same input the active path classifies (the FULL rule, never the why),
           // so the severity the owner sees is the severity that gets activated.
@@ -518,9 +541,10 @@ export async function check(input: CheckInput, origin: CheckOrigin = {}): Promis
           const appliesWhen = hc.applies_when!;
           const corrText = `${rule}${WHY_SEPARATOR}${why}`;
           const corrDate = todayISO();
-          // v3 (Loop 8): decimal-safe title slice — the rule is one sentence by
-          // validation, so this is normally the full rule.
-          const corrRule = (splitSentences(rule)[0] ?? rule).slice(0, 100);
+          // 3.5.4: the WHOLE rule is stored (it used to be the first sentence cut
+          // to 100 characters, which dropped instructions after the cut). Length
+          // is bounded by RULE_STORE_MAX above.
+          const corrRule = rule;
           // Severity from the RULE sentence ONLY — evidence text must never
           // escalate a p1 preference into a p0 override. Shared classifier
           // (corrections.ts detectSeverity) — see the module-level note above.
@@ -528,7 +552,14 @@ export async function check(input: CheckInput, origin: CheckOrigin = {}): Promis
           // applies_when tokens fold into tags (the existing p1 context-match
           // mechanism) alongside the auto-generated ones.
           const corrTags = Array.from(new Set([...generateTags(`${rule} ${why}`), ...appliesWhen]));
-          const corrId = `${corrDate}-${corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`;
+          // Id = date + the opening's [a-z0-9] slug. A rule with no Latin letters
+          // (pure Chinese, say) has an empty slug, so it takes a content hash
+          // instead of the bare "date--" every such rule used to share.
+          // writeCorrection makes the id unique within the project.
+          const slugPart = corrRule.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30);
+          const corrId = slugPart.replace(/-/g, "")
+            ? `${corrDate}-${slugPart}`
+            : `${corrDate}-r${crypto.createHash("sha256").update(corrRule).digest("hex").slice(0, 8)}`;
           const writeResult = await writeCorrection(slug, {
             id: corrId,
             date: corrDate,

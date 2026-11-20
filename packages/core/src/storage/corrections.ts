@@ -1337,10 +1337,10 @@ export async function writeCorrection(
   opts?: WriteCorrectionOptions,
 ): Promise<WriteCorrectionResult> {
   // Capture-quality gate — reject noise before touching disk.
-  // v3 (Loop 8): classify on the FULL correction text, not the truncated rule.
-  // `rule` is a first-sentence title slice (set by check.ts) that hid the
-  // directive when it lived in sentence 2 or after a decimal. The full text
-  // lives in `context`. ACCEPT if EITHER the rule OR the context carries a
+  // v3 (Loop 8): classify on the FULL correction text, not only the rule.
+  // Before 3.5.4 `rule` was a first-sentence title slice (set by check.ts) that
+  // hid the directive when it lived in sentence 2 or after a decimal; check()
+  // now stores the whole rule, and the full text still lives in `context`. ACCEPT if EITHER the rule OR the context carries a
   // directive — a directive anywhere in the correction is genuine signal. The
   // gate's own HARD noise gates (system-fragment / doc-header / too-short) run
   // on each candidate, so this can't re-admit a long noise blob: a blob that
@@ -1413,11 +1413,16 @@ export async function writeCorrection(
     // higher severity/authority/weight. High-precision LOCAL gate — no key, no
     // network — so this never runs an LLM on the storage hot path.
     const normNew = normalizeRule(record.rule);
+    // One read serves the merge scan (active records) and the id check below
+    // (every record, retracted included).
+    const allRecords = readCorrections(project);
     // Review fix (2026-09-11, HIGH-2 guard): an empty distilled identity
     // (rule made entirely of stripped symbols) must never match anything —
     // without this, every such record would fold into the first one.
-    for (const existing of normNew ? readActiveCorrections(project) : []) {
-      if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
+    // 3.5.4: no self-skip on a shared id. A record with the same id AND the
+    // same rule identity is the same rule restated the same day, so it merges
+    // (proof_count +1) instead of becoming a second record with the same id.
+    for (const existing of normNew ? readActiveCorrections(project, allRecords) : []) {
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
       if (normalizeRule(existing.rule) !== normNew) continue;
       // A rule restated by a different credential (or by none) has no single author any more.
@@ -1426,7 +1431,7 @@ export async function writeCorrection(
         ...kept,
         ...(first && credentialKeyOf(first) === credentialKeyOf(record.authored_by) ? { authored_by: first } : {}),
         proof_count: (existing.proof_count ?? 1) + 1,
-        merged_from: [...(existing.merged_from ?? []), record.id],
+        merged_from: record.id === existing.id ? (existing.merged_from ?? []) : [...(existing.merged_from ?? []), record.id],
         tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),
         // Fix #2 review fix (2026-09-11, code-review LOW): absorb the incoming
         // structured form's applies_when like tags — union, and only mint the
@@ -1465,7 +1470,19 @@ export async function writeCorrection(
       return { written: true, merged: true, id: merged.id };
     }
 
-    // Brand-new record — no existing file to preserve. v2 delimiter ("--").
+    // Brand-new record. Its id must be unique in the project (3.5.4): every
+    // by-id rewrite (outcome, retier, retract) finds the first file holding an
+    // id, so a shared id let one rule be written over another. A taken id gets
+    // the lowest free "-N" suffix (N >= 2), as pending ids do; retracted
+    // records count as taken.
+    const takenIds = new Set(allRecords.map((c) => c.id));
+    if (takenIds.has(record.id)) {
+      let n = 2;
+      while (takenIds.has(`${record.id}-${n}`)) n++;
+      record.id = `${record.id}-${n}`;
+    }
+
+    // No existing file to preserve. v2 delimiter ("--").
     let filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
     let filepath = path.join(dir, filename);
     if (fs.existsSync(filepath)) {
