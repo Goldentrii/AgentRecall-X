@@ -41,6 +41,7 @@ import {
   type StoreDoctorResult,
 } from "./store-doctor.js";
 import { resolveRetentionDays } from "../storage/retention.js";
+import { inspectStoreManifest, upgradeStoreManifest } from "../storage/store-manifest.js";
 
 export interface RepairStepProjects {
   /** Projects this step acted on (or WOULD act on, in dry-run). */
@@ -51,6 +52,20 @@ export interface RepairStepProjects {
 export interface RepairStepLocks {
   /** `.lock-*` dir names removed (or that WOULD be, in dry-run). */
   names: string[];
+  error?: string;
+}
+
+/**
+ * manifest_lesson_files → upgrade an unedited v1 MANIFEST.md to v2 (P0-2).
+ *   would_upgrade — dry-run, an exact v1 manifest was found
+ *   upgraded      — applied
+ *   edited        — still lists lesson files as regenerable but was hand-edited;
+ *                   left alone (the doctor hint says what to change)
+ *   current / absent / unreadable — nothing to do
+ *   failed        — the write failed; the old file is kept
+ */
+export interface RepairStepManifest {
+  status: "would_upgrade" | "upgraded" | "edited" | "current" | "absent" | "unreadable" | "failed";
   error?: string;
 }
 
@@ -68,6 +83,7 @@ export interface StoreRepairResult {
   reindexed: RepairStepProjects;
   locksRemoved: RepairStepLocks;
   drained: RepairStepProjects;
+  manifest: RepairStepManifest;
   /** Doctor status AFTER applying — null in dry-run (nothing changed to re-check). */
   after: RepairSnapshot | null;
 }
@@ -208,6 +224,7 @@ export async function runStoreRepair(
   const reindexed: RepairStepProjects = { projects: [] };
   const locksRemoved: RepairStepLocks = { names: [] };
   const drained: RepairStepProjects = { projects: [] };
+  const manifest: RepairStepManifest = { status: "absent" };
 
   // ── (1) vector_index_drift → rebuild palace-index.json from .md truth ──────
   // updatePalaceIndex re-counts `### ` blocks and writes atomically under lock.
@@ -271,8 +288,23 @@ export async function runStoreRepair(
     drained.error = err instanceof Error ? err.message : String(err);
   }
 
+  // ── (4) manifest_lesson_files → in-place v1 → v2 MANIFEST.md upgrade ───────
+  try {
+    if (apply) {
+      const outcome = upgradeStoreManifest(getRoot());
+      manifest.status = outcome;
+      if (outcome === "failed") manifest.error = "MANIFEST.md upgrade write failed; the old file is unchanged";
+    } else {
+      const { state } = inspectStoreManifest(getRoot());
+      manifest.status = state === "v1" ? "would_upgrade" : state;
+    }
+  } catch (err) {
+    manifest.status = "failed";
+    manifest.error = err instanceof Error ? err.message : String(err);
+  }
+
   const after = apply ? snapshot(runStoreDoctor()) : null;
-  return { apply, before, reindexed, locksRemoved, drained, after };
+  return { apply, before, reindexed, locksRemoved, drained, manifest, after };
 }
 
 /** One-line summary for CLI / logs. */
@@ -283,6 +315,7 @@ export function storeRepairSummary(r: StoreRepairResult): string {
     `${r.locksRemoved.names.length} lock`,
     `${r.drained.projects.length} drain`,
   ];
+  if (r.manifest?.status === "upgraded" || r.manifest?.status === "would_upgrade") parts.push("manifest v1→v2");
   const tail = r.after ? ` · doctor ${r.before.status}→${r.after.status}` : "";
   return `store-repair ${verb}: ${parts.join(", ")}${tail}`;
 }

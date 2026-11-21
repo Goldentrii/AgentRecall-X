@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { ensureDir, renameAtomic } from "./fs-utils.js";
+import { ensureDir, renameAtomic, readTextFileTolerant } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { journalDir, projectSubPath } from "./paths.js";
 import { withLock, LockContentionError } from "./filelock.js";
@@ -528,7 +528,7 @@ function findExistingCorrectionFile(dir: string, id: string): string | null {
   for (const file of files) {
     if (!file.endsWith(".json") || file.startsWith("_")) continue;
     try {
-      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      const raw = readTextFileTolerant(path.join(dir, file));
       const parsed = JSON.parse(raw) as { id?: string };
       if (parsed && parsed.id === id) return file;
     } catch {
@@ -824,6 +824,94 @@ export interface RankedCorrection extends CorrectionRecord {
  * Empty fragments are dropped. This is a classifier helper, not a linguistic
  * tokenizer — it deliberately errs toward NOT splitting.
  */
+/** Joins rule and why in a correction's stored `context` (written by check()). */
+export const WHY_SEPARATOR = "\n\nWhy: ";
+
+/**
+ * Longest rule the local check() channel stores, in UTF-16 code units (3.5.4).
+ * The rule is stored and shown whole, so a longer one is refused with an
+ * instruction to split it, never cut.
+ */
+export const RULE_STORE_MAX = 300;
+
+/**
+ * Longest rule text printed on one line (HARD RULES, check(action), cli
+ * warnings). Records written by check() are at most RULE_STORE_MAX; this only
+ * bounds hand-edited, imported or harvested records, and always with a visible
+ * "…", never silently.
+ */
+export const RULE_RENDER_MAX = 400;
+
+/**
+ * The whole rule of a correction, for display. Before 3.5.4 check() stored
+ * `rule` as its first sentence cut to 100 characters, while `context` kept
+ * the whole rule followed by WHY_SEPARATOR and the evidence. When the stored
+ * rule is a prefix of the text before the first WHY_SEPARATOR, that text is
+ * the whole rule. Anything else (no separator, a hand-edited context that does
+ * not start with the rule) returns the stored rule unchanged. Read-time only:
+ * nothing is written back.
+ */
+export function fullRuleOf(c: { rule?: string; context?: string }): string {
+  const rule = (c.rule ?? "").trim();
+  const ctx = c.context ?? "";
+  const i = ctx.indexOf(WHY_SEPARATOR);
+  if (i <= 0 || !rule) return rule;
+  const head = ctx.slice(0, i).trim();
+  return head.length > rule.length && head.startsWith(rule) ? head : rule;
+}
+
+/**
+ * A rule as ONE display line: control characters and line breaks become spaces
+ * (a rule with a newline could otherwise forge extra lines inside the HARD RULES
+ * block), whitespace collapses, and the text is whole up to `max`, else cut at
+ * a word with a visible "…" (never inside a surrogate pair).
+ */
+export function boundRule(rule: string, max: number = RULE_RENDER_MAX): string {
+  const line = rule.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+  if (line.length <= max) return line;
+  let end = max;
+  const code = line.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--; // do not leave a lone high surrogate
+  const sliced = line.slice(0, end);
+  const lastSpace = sliced.lastIndexOf(" ");
+  return (lastSpace > end * 0.6 ? sliced.slice(0, lastSpace) : sliced).trimEnd() + "…";
+}
+
+/** The whole rule of a correction as one bounded display line (fullRuleOf + boundRule). */
+export function displayRule(c: { rule?: string; context?: string }): string {
+  return boundRule(fullRuleOf(c));
+}
+
+/**
+ * Find the file that holds exactly this record (same id AND same rule, context
+ * and date). Stores written before 3.5.4 can hold two files with one id; the
+ * first-by-id file (findExistingCorrectionFile) may then hold a DIFFERENT rule,
+ * and rewriting it would destroy that rule. `sameId` counts the files with
+ * this id so a caller can refuse to guess.
+ */
+function locateRecordFile(dir: string, rec: CorrectionRecord): { file: string | null; sameId: number } {
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return { file: null, sameId: 0 };
+  }
+  let file: string | null = null;
+  let sameId = 0;
+  for (const f of files) {
+    if (!f.endsWith(".json") || f.startsWith("_")) continue;
+    try {
+      const parsed = JSON.parse(readTextFileTolerant(path.join(dir, f))) as Partial<CorrectionRecord>;
+      if (!parsed || parsed.id !== rec.id) continue;
+      sameId++;
+      if (file === null && parsed.rule === rec.rule && (parsed.context ?? "") === (rec.context ?? "") && parsed.date === rec.date) file = f;
+    } catch {
+      // unreadable: not this record
+    }
+  }
+  return { file, sameId };
+}
+
 export function splitSentences(text: string): string[] {
   // Boundary = one of . ! ? OR a newline, that is followed by whitespace or EOT.
   // A `.` wedged between two non-space chars (4.7, file.md, e.g.) is NOT a boundary.
@@ -1337,10 +1425,10 @@ export async function writeCorrection(
   opts?: WriteCorrectionOptions,
 ): Promise<WriteCorrectionResult> {
   // Capture-quality gate — reject noise before touching disk.
-  // v3 (Loop 8): classify on the FULL correction text, not the truncated rule.
-  // `rule` is a first-sentence title slice (set by check.ts) that hid the
-  // directive when it lived in sentence 2 or after a decimal. The full text
-  // lives in `context`. ACCEPT if EITHER the rule OR the context carries a
+  // v3 (Loop 8): classify on the FULL correction text, not only the rule.
+  // Before 3.5.4 `rule` was a first-sentence title slice (set by check.ts) that
+  // hid the directive when it lived in sentence 2 or after a decimal; check()
+  // now stores the whole rule, and the full text still lives in `context`. ACCEPT if EITHER the rule OR the context carries a
   // directive — a directive anywhere in the correction is genuine signal. The
   // gate's own HARD noise gates (system-fragment / doc-header / too-short) run
   // on each candidate, so this can't re-admit a long noise blob: a blob that
@@ -1413,20 +1501,33 @@ export async function writeCorrection(
     // higher severity/authority/weight. High-precision LOCAL gate — no key, no
     // network — so this never runs an LLM on the storage hot path.
     const normNew = normalizeRule(record.rule);
+    // One read serves the merge scan (active records) and the id check below
+    // (every record, retracted included).
+    const allRecords = readCorrections(project);
     // Review fix (2026-09-11, HIGH-2 guard): an empty distilled identity
     // (rule made entirely of stripped symbols) must never match anything —
     // without this, every such record would fold into the first one.
-    for (const existing of normNew ? readActiveCorrections(project) : []) {
-      if (existing.id === record.id) continue; // never merge into self (same-day re-slug)
+    // 3.5.4: no self-skip on a shared id. A record with the same id AND the
+    // same rule identity is the same rule restated the same day, so it merges
+    // (proof_count +1) instead of becoming a second record with the same id.
+    for (const existing of normNew ? readActiveCorrections(project, allRecords) : []) {
       if ((existing.kind ?? "correction") !== (record.kind ?? "correction")) continue;
-      if (normalizeRule(existing.rule) !== normNew) continue;
+      // Identity on the WHOLE rule (3.5.4): a whole restatement of a rule that
+      // 3.5.3 stored cut at 100 characters merges into it, and a shorter rule
+      // that only matches the cut text does not.
+      if (normalizeRule(fullRuleOf(existing)) !== normNew) continue;
+      // H1 (review): with duplicate ids (stores written before 3.5.4) merge only
+      // into the file that holds exactly this record; when it cannot be told
+      // apart, do not merge (the new rule is written as its own record below).
+      const loc = locateRecordFile(dir, existing);
+      if (!loc.file && loc.sameId > 1) continue;
       // A rule restated by a different credential (or by none) has no single author any more.
       const { authored_by: first, ...kept } = existing;
       const merged: CorrectionRecord = {
         ...kept,
         ...(first && credentialKeyOf(first) === credentialKeyOf(record.authored_by) ? { authored_by: first } : {}),
         proof_count: (existing.proof_count ?? 1) + 1,
-        merged_from: [...(existing.merged_from ?? []), record.id],
+        merged_from: record.id === existing.id ? (existing.merged_from ?? []) : [...(existing.merged_from ?? []), record.id],
         tags: Array.from(new Set([...(existing.tags ?? []), ...(record.tags ?? [])])),
         // Fix #2 review fix (2026-09-11, code-review LOW): absorb the incoming
         // structured form's applies_when like tags — union, and only mint the
@@ -1457,7 +1558,8 @@ export async function writeCorrection(
       // Rewrite: reuse the EXISTING file's name (never recompute via slugify —
       // see findExistingCorrectionFile doc). Falls back to a fresh v2 filename
       // only in the defensive case where the file has vanished mid-call.
-      const mfile = findExistingCorrectionFile(dir, existing.id)
+      const mfile = loc.file
+        ?? findExistingCorrectionFile(dir, existing.id)
         ?? `${merged.date}--${slugify(merged.rule || merged.id)}.json`;
       writeRecordAtomic(path.join(dir, mfile), merged);
       // W2-1: regenerate the materialized index on every corrections mutation.
@@ -1465,7 +1567,19 @@ export async function writeCorrection(
       return { written: true, merged: true, id: merged.id };
     }
 
-    // Brand-new record — no existing file to preserve. v2 delimiter ("--").
+    // Brand-new record. Its id must be unique in the project (3.5.4): every
+    // by-id rewrite (outcome, retier, retract) finds the first file holding an
+    // id, so a shared id let one rule be written over another. A taken id gets
+    // the lowest free "-N" suffix (N >= 2), as pending ids do; retracted
+    // records count as taken.
+    const takenIds = new Set(allRecords.map((c) => c.id));
+    if (takenIds.has(record.id)) {
+      let n = 2;
+      while (takenIds.has(`${record.id}-${n}`)) n++;
+      record.id = `${record.id}-${n}`;
+    }
+
+    // No existing file to preserve. v2 delimiter ("--").
     let filename = `${record.date}--${slugify(record.rule || record.id)}.json`;
     let filepath = path.join(dir, filename);
     if (fs.existsSync(filepath)) {
@@ -1554,7 +1668,9 @@ export function readCorrections(project: string): CorrectionRecord[] {
   const records: CorrectionRecord[] = [];
   for (const file of files) {
     try {
-      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      // BOM / UTF-16 tolerant (3.5.4): a rule file re-saved by Windows
+      // PowerShell used to fail JSON.parse here and vanish from every surface.
+      const raw = readTextFileTolerant(path.join(dir, file));
       const parsed = JSON.parse(raw) as CorrectionRecord;
       records.push(applyCorrectionDefaults(parsed, parsed.date));
     } catch {

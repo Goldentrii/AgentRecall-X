@@ -30,8 +30,8 @@ export const MANIFEST = [
   // Discovered surface = live `listTools()` union across default / --full /
   // --full+AR_EXTRAS=1 (see fence-discovery.mjs's discoverMcpSurface).
   { channel: "mcp_tool", id: "session_start", status: "fenced", file: "packages/mcp-server/src/tools/session-start.ts" },
-  { channel: "mcp_tool", id: "session_end", status: "allowlisted", reason: "card/quality-warnings echo THIS session's own just-submitted summary/insights (same-turn trust); merge-suggestions are single-token keyword matches with no coherent injection payload possible. writeHandoff() it may trigger is independently fenced in core/helpers/handoff.ts." },
-  { channel: "mcp_tool", id: "remember", status: "allowlisted", reason: "write confirmation only — destination file path and a retrieval hint derived from THIS call's own submitted content, no retrieved stored content is returned." },
+  { channel: "mcp_tool", id: "session_end", status: "allowlisted", reason: "card/quality-warnings echo THIS session's own just-submitted summary/insights (same-turn trust); merge-suggestions are single-token keyword matches with no coherent injection payload possible. writeHandoff() it may trigger is independently fenced in core/helpers/handoff.ts. 3.5.4 P0-4a: the card's lesson notes quote STORED lesson titles (merge targets, resurrected archive entries, lessons evicted from other projects) and are wrapped in fenceMemory() in core/tools-logic/session-end.ts; the JSON payload carries no titles." },
+  { channel: "mcp_tool", id: "remember", status: "allowlisted", reason: "write confirmation only — destination file path and a retrieval hint derived from THIS call's own submitted content, no retrieved stored content is returned. 3.5.4 P0-4a: lesson-route notes quote STORED lesson titles (merge targets, resurrected archive entries, lessons evicted from other projects) and are wrapped in fenceMemory() in this tool's source." },
   { channel: "mcp_tool", id: "recall", status: "fenced", file: "packages/mcp-server/src/tools/recall.ts" },
   { channel: "mcp_tool", id: "check", status: "fenced", file: "packages/mcp-server/src/tools/check.ts" },
   { channel: "mcp_tool", id: "check_action", status: "fenced", file: "packages/mcp-server/src/tools/check-action.ts" },
@@ -141,7 +141,7 @@ export const MANIFEST = [
   { channel: "cli_subaction", id: "palace.search", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "palace.lint", status: "allowlisted", reason: "template-generated diagnostic strings (\"Room 'X' has no connections\") + room slugs, not retrieved prose." },
   { channel: "cli_subaction", id: "awareness.read", status: "fenced", file: "packages/cli/src/index.ts" },
-  { channel: "cli_subaction", id: "awareness.update", status: "allowlisted", reason: "insights_processed echoes back THIS call's own just-submitted insights argument (same-turn trust) — not memory read back from an earlier session." },
+  { channel: "cli_subaction", id: "awareness.update", status: "allowlisted", reason: "insights_processed echoes back THIS call's own just-submitted insights argument (same-turn trust) — not memory read back from an earlier session. 3.5.4 P0-4a: `lessons` / insights_processed[].evicted|merged_into|resurrected also name STORED lesson titles as structured JSON fields (raw machine-parseable precedent, same class as `ar awareness read --json`)." },
   { channel: "cli_subaction", id: "awareness.rollup", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "corrections.rejected", status: "fenced", file: "packages/cli/src/index.ts" },
   { channel: "cli_subaction", id: "corrections.export", status: "allowlisted", reason: "a separate, deliberate egress path already covered by scrubForExport's fail-CLOSED secret scan — different mechanism, different threat model (secret exfil, not agent-context injection)." },
@@ -224,7 +224,7 @@ export const MANIFEST = [
   { channel: "sdk_export", id: "AgentRecall.walk", status: "fenced", wrapper: "withFenced" },
   { channel: "sdk_export", id: "AgentRecall.lint", status: "allowlisted", reason: "template-generated diagnostic strings, not retrieved prose. Parity: CLI `ar palace lint`." },
   { channel: "sdk_export", id: "AgentRecall.palaceSearch", status: "fenced", wrapper: "withFenced" },
-  { channel: "sdk_export", id: "AgentRecall.awarenessUpdate", status: "allowlisted", reason: "insights_processed echoes THIS call's own just-submitted insights argument (same-turn trust)." },
+  { channel: "sdk_export", id: "AgentRecall.awarenessUpdate", status: "allowlisted", reason: "insights_processed echoes THIS call's own just-submitted insights argument (same-turn trust). 3.5.4 P0-4a: `lessons` also names STORED lesson titles as structured fields (raw machine-parseable precedent, same class as readAwarenessState)." },
   { channel: "sdk_export", id: "AgentRecall.readAwareness", status: "fenced", wrapper: "fenceString" },
   { channel: "sdk_export", id: "AgentRecall.readAwarenessState", status: "allowlisted", reason: "established --json/structured precedent: raw machine-parseable AwarenessState, same class as `ar awareness read --json` / agent-recall://awareness/state resource." },
   { channel: "sdk_export", id: "AgentRecall.recallInsight", status: "fenced", wrapper: "withFenced" },
@@ -236,9 +236,9 @@ export const MANIFEST = [
   // Cards v2 (G6): fencedText is agent-recall-core's renderSessionStart (the shared session_start renderer), which fences its
   // whole body with fenceMemory — pinned by packages/core/test/session-start-render.test.mjs (fence first and last, exactly one).
   { channel: "sdk_export", id: "AgentRecall.sessionStart", status: "fenced", wrapper: "renderSessionStart" },
-  { channel: "sdk_export", id: "AgentRecall.remember", status: "allowlisted", reason: "write confirmation only (dest path, retrieval hint). Parity: MCP `remember`." },
+  { channel: "sdk_export", id: "AgentRecall.remember", status: "allowlisted", reason: "write confirmation only (dest path, retrieval hint). Parity: MCP `remember`. 3.5.4 P0-4a: `lessons` / `lesson_warnings` name STORED lesson titles as structured fields (raw machine-parseable precedent); MCP `remember` fences them when rendering." },
   { channel: "sdk_export", id: "AgentRecall.recall", status: "fenced", wrapper: "withFenced" },
-  { channel: "sdk_export", id: "AgentRecall.sessionEnd", status: "allowlisted", reason: "same-turn trust (card/quality-warnings echo THIS session's own submission); writeHandoff() it may trigger is independently fenced in core/helpers/handoff.ts. Parity: MCP `session_end`." },
+  { channel: "sdk_export", id: "AgentRecall.sessionEnd", status: "allowlisted", reason: "same-turn trust (card/quality-warnings echo THIS session's own submission); writeHandoff() it may trigger is independently fenced in core/helpers/handoff.ts. Parity: MCP `session_end`. 3.5.4 P0-4a: the card's lesson notes are fenced in core; the insights_merged/resurrected/demoted/archive_dropped/evicted fields name STORED lesson titles as structured fields (raw machine-parseable precedent)." },
   { channel: "sdk_export", id: "AgentRecall.check", status: "fenced", wrapper: "withFenced" },
   { channel: "sdk_export", id: "AgentRecall.digestStore", status: "allowlisted", reason: "echoes this-turn's own submission / success flag only. Parity: MCP `digest` store action." },
   { channel: "sdk_export", id: "AgentRecall.digestRecall", status: "fenced", wrapper: "withFenced" },

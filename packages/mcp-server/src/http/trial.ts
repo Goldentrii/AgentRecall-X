@@ -42,7 +42,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { credentialKeyOf } from "agent-recall-core";
+import { credentialKeyOf, decodeTextFile } from "agent-recall-core";
 import { tenantRoot } from "./tenant-paths.js";
 
 export const MAX_PROJECTS = 8;
@@ -197,7 +197,7 @@ export function scanRules(dataDir: string, uid: string): RuleScan {
       try {
         const st = fs.lstatSync(p);
         if (!st.isFile() || st.size > MAX_FILE_BYTES) continue; // symlink, directory, oversized: not read
-        const rec = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
+        const rec = JSON.parse(decodeTextFile(fs.readFileSync(p))) as unknown;
         if (!isActive(rec)) continue;
         found.push({ at: (typeof rec.id === "string" ? promoted.get(rec.id) : undefined) ?? st.mtimeMs, text: sameRule(rec.rule), author: credentialKeyOf(rec.authored_by) });
       } catch { /* a malformed correction file is skipped, as readCorrections does */ }
