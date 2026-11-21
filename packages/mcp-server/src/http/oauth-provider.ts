@@ -24,7 +24,7 @@ import { isAllowedRedirect } from "./redirect-policy.js";
 import { OAuthStore, sha256Hex, type StoredClient, type IssuedTokens } from "./oauth-store.js";
 import { Federation, FederationError, PROVIDER_LABEL, b64url, formActionOrigins, newPkce } from "./federation.js";
 import { resolveIdentity, IdentityLinkError } from "./identities.js";
-import { errorPage, signInPage, pageHeaders as pageHeadersFor } from "./oauth-pages.js";
+import { errorPage, signInPage, isCustomSchemeSource, pageHeaders as pageHeadersFor } from "./oauth-pages.js";
 
 export const OAUTH_SCOPE = "memory";
 export const COOKIE_PREFIX = "ar_oauth_";
@@ -93,7 +93,7 @@ interface CodeRecord {
 
 export type LoginResult =
   | { kind: "redirect"; location: string; clearCookieFor?: string }
-  | { kind: "page"; status: number; html: string; csp: string[]; clearCookieFor?: string };
+  | { kind: "page"; status: number; html: string; csp: string[] | null; clearCookieFor?: string };
 
 export interface ProviderDeps {
   config: OAuthConfig;
@@ -222,7 +222,7 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
     const cookie = randomBytes(32).toString("base64url");
     const key = this.d.keyOf && res.req ? this.d.keyOf(res.req) : "-";
     if (this.livePendingFor(key) >= this.maxPendingPerKey) {
-      res.status(429).set(this.pageHeaders()).set("retry-after", "60").send(errorPage(MSG_PER_KEY));
+      res.status(429).set(pageHeadersFor([])).set("retry-after", "60").send(errorPage(MSG_PER_KEY));
       return;
     }
     const id = this.createPending({
@@ -237,14 +237,24 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
       starts: 0,
     });
     if (id === null) {
-      res.status(503).set(this.pageHeaders()).set("retry-after", "5").send(errorPage(MSG_BUSY));
+      res.status(503).set(pageHeadersFor([])).set("retry-after", "5").send(errorPage(MSG_BUSY));
       return;
     }
-    res.status(200).set(this.pageHeaders()).set("set-cookie", this.cookieHeader(id, cookie)).send(this.signIn(id, client.client_name ?? "Unnamed application", params.redirectUri));
+    res.status(200).set(pageHeadersFor(this.formOriginsFor(params.redirectUri))).set("set-cookie", this.cookieHeader(id, cookie)).send(this.signIn(id, client.client_name ?? "Unnamed application", params.redirectUri));
   }
 
-  private pageHeaders(): Record<string, string> {
-    return pageHeadersFor(this.formOrigins);
+  /**
+   * form-action for a page that holds the sign-in form. Browsers apply form-action to every redirect that follows
+   * the POST, the last hop included: when the provider skips its consent screen (an account that already approved
+   * the app), POST /authorize/start → provider → /authorize/callback → the client's redirect_uri is one form
+   * navigation, and without the client's target here the browser blocks the final redirect and the code is lost.
+   * null (no form-action at all) for an IPv6-literal callback, which no CSP source can name. That page still has
+   * default-src 'none' (no script), escaped values and one form, posting to this server.
+   */
+  private formOriginsFor(redirectUri: string): string[] | null {
+    const s = formSourceOf(redirectUri);
+    if (s === IPV6_LITERAL) return null;
+    return s !== null && !this.formOrigins.includes(s) ? [...this.formOrigins, s] : this.formOrigins;
   }
 
   private signIn(requestId: string, clientName: string, redirectUri: string, error?: string): string {
@@ -330,7 +340,7 @@ export class FederatedOAuthProvider implements OAuthServerProvider {
   }
 
   private retryPage(p: Pending, id: string, status: number, error: string): LoginResult {
-    return page(status, this.signIn(id, p.clientName, p.redirectUri, error), this.formOrigins);
+    return page(status, this.signIn(id, p.clientName, p.redirectUri, error), this.formOriginsFor(p.redirectUri));
   }
 
   // ---- POST /authorize/start ---------------------------------------------
@@ -508,7 +518,7 @@ function toOAuthTokens(t: IssuedTokens): OAuthTokens {
   return { access_token: t.access_token, token_type: "Bearer", expires_in: t.expires_in, refresh_token: t.refresh_token, scope: OAUTH_SCOPE };
 }
 
-function page(status: number, html: string, csp: string[]): LoginResult {
+function page(status: number, html: string, csp: string[] | null): LoginResult {
   return { kind: "page", status, html, csp };
 }
 
@@ -520,6 +530,23 @@ function destinationKind(redirectUri: string): "loopback" | "claude" | "other" {
     if (u.protocol === "https:" && (u.hostname === "claude.ai" || u.hostname === "claude.com")) return "claude";
   } catch { /* fall through */ }
   return "other";
+}
+
+const IPV6_LITERAL = Symbol("ipv6-literal");
+
+/**
+ * CSP source for a redirect target: its origin for http(s), its scheme (`cursor:`) for a custom-scheme callback,
+ * IPV6_LITERAL for an IPv6-literal host (CSP host-source has no IP-literal form), null when it has none.
+ */
+function formSourceOf(redirectUri: string): string | typeof IPV6_LITERAL | null {
+  try {
+    const u = new URL(redirectUri);
+    if ((u.protocol === "http:" || u.protocol === "https:") && u.hostname.startsWith("[")) return IPV6_LITERAL;
+    if (u.protocol === "http:" || u.protocol === "https:") return u.origin;
+    return isCustomSchemeSource(u.protocol) ? u.protocol : null;
+  } catch {
+    return null;
+  }
 }
 
 function redirectHost(redirectUri: string): string {
