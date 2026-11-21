@@ -4,9 +4,10 @@
  * EVERY interpolated value goes through esc(). There is no password or code field
  * anywhere: the page only offers "Continue with GitHub / Google" buttons that POST
  * to this server, which then redirects to the provider. Security headers (see
- * pageHeaders): no framing, no referrer, no caching, no scripts, and forms may only
- * post to this server plus the provider origins — browsers also apply form-action
- * to the redirect that follows the form POST.
+ * pageHeaders): no framing, no referrer, no caching, no scripts. form-action lists this
+ * server and the provider origins and, on the sign-in and retry pages, the client's
+ * callback: browsers apply form-action to EVERY redirect after the form POST, and when
+ * the provider skips its consent screen the chain ends at the client.
  */
 
 import { SITE_TOKENS } from "./site-theme.js";
@@ -23,18 +24,32 @@ export function esc(v: unknown): string {
     .replace(/`/g, "&#96;");
 }
 
-/** `formActionOrigins`: extra origins (the providers) the sign-in form may be redirected to. */
-export function pageHeaders(formActionOrigins: readonly string[] = []): Record<string, string> {
-  const extra = formActionOrigins.filter((o) => /^https?:\/\/[A-Za-z0-9.\-:[\]]+$/.test(o));
+/**
+ * `formActionOrigins`: extra sources the sign-in form may be redirected to: the providers' origins and the
+ * client's redirect target (an http(s) origin, or a bare scheme such as `cursor:` for a custom-scheme callback).
+ * `null` leaves form-action out: only for the sign-in form of a client whose callback is an IPv6 literal
+ * (`http://[::1]:…`), which no CSP source can name (browsers drop such a source and would block the redirect).
+ */
+export function pageHeaders(formActionOrigins: readonly string[] | null = []): Record<string, string> {
+  const extra = (formActionOrigins ?? []).filter((o) => /^https?:\/\/[A-Za-z0-9.\-:]+$/.test(o) || isCustomSchemeSource(o));
+  const formAction = formActionOrigins === null ? "" : ` form-action 'self'${extra.length ? " " + extra.join(" ") : ""};`;
   return {
     "content-type": "text/html; charset=utf-8",
     "content-security-policy":
-      `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'${extra.length ? " " + extra.join(" ") : ""}; frame-ancestors 'none'`,
+      `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none';${formAction} frame-ancestors 'none'`,
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
   };
+}
+
+/** Schemes that must never be a bare form-action source: they would allow any web site, a script, or local data. */
+const UNSAFE_SCHEME_SOURCES = new Set(["http:", "https:", "ws:", "wss:", "javascript:", "vbscript:", "data:", "blob:", "file:", "filesystem:", "about:"]);
+
+/** A custom-scheme callback's CSP source (`cursor:`): a bare scheme, never one of the unsafe ones. */
+export function isCustomSchemeSource(o: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:$/.test(o) && !UNSAFE_SCHEME_SOURCES.has(o);
 }
 
 const STYLE = SITE_TOKENS + `

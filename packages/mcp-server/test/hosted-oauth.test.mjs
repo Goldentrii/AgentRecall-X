@@ -1038,6 +1038,54 @@ describe("oauth round 5 — consent page, caps, cookies, Google claims", () => {
     assert.ok(!/running on this computer/.test(a.html));
   });
 
+  // Browsers apply form-action to EVERY redirect after the form POST. When the provider skips its
+  // consent screen (an account that already approved the app), the chain is
+  // POST /authorize/start → provider → /authorize/callback → the client's redirect_uri, all one
+  // form navigation. Without the client's origin in form-action the last hop is blocked: the code
+  // never reaches the client, the user clicks again and gets "no longer valid" (3.5.3 production).
+  it("form-action allows the client's redirect target on the sign-in and retry pages", async () => {
+    const formAction = (csp) => /form-action ([^;]*)/.exec(csp)?.[1].split(" ") ?? [];
+    const cases = [
+      [CB, "http://127.0.0.1:53682"],
+      ["http://localhost:44453/callback", "http://localhost:44453"],
+      ["https://claude.ai/api/mcp/auth_callback", "https://claude.ai"],
+      ["https://chatgpt.com/connector_platform_oauth_redirect", "https://chatgpt.com"],
+      ["cursor://anysphere.cursor-retrieval/oauth/user-agentrecall/callback", "cursor:"],
+    ];
+    for (const [uri, source] of cases) {
+      const c = uri === CB ? client : await newClient(env, { redirect_uris: [uri] });
+      const a = await authorize(env, c, { redirect_uri: uri });
+      assert.equal(a.status, 200, uri);
+      const fa = formAction(a.res.headers.get("content-security-policy"));
+      assert.ok(fa.includes("'self'") && fa.includes(env.mock.url), `${uri}: ${fa}`);
+      assert.ok(fa.includes(source), `sign-in page ${uri}: form-action ${fa.join(" ")} lacks ${source}`);
+      const retry = await start(env, a, "nope");
+      assert.equal(retry.status, 400);
+      assert.match(retry.text, /Choose one of the sign-in options/);
+      assert.ok(formAction(retry.headers.get("content-security-policy")).includes(source), `retry page ${uri}`);
+    }
+    // An IPv6-literal callback: no CSP source can name it (browsers drop `http://[::1]:…` and block), so the
+    // sign-in and retry pages carry no form-action at all; everything else stays.
+    const v6 = await newClient(env, { redirect_uris: ["http://[::1]:44453/callback"] });
+    const a6 = await authorize(env, v6, { redirect_uri: "http://[::1]:44453/callback" });
+    assert.equal(a6.status, 200);
+    const csp6 = a6.res.headers.get("content-security-policy");
+    assert.doesNotMatch(csp6, /form-action/);
+    assert.doesNotMatch(csp6, /\[/);
+    assert.match(csp6, /default-src 'none'.*base-uri 'none'.*frame-ancestors 'none'/);
+    const r6 = await start(env, a6, "nope");
+    assert.equal(r6.status, 400);
+    assert.doesNotMatch(r6.headers.get("content-security-policy"), /form-action/);
+    // The shared header builder drops anything that is not an http(s) origin or a safe custom scheme.
+    const { pageHeaders } = await load("oauth-pages.js");
+    const hostile = ["https:", "http:", "javascript:", "data:", "blob:", "file:", "x y", "a;b", "'unsafe-inline'", "*", "https://a.example/path", "cursor:x", "http://[::1]:44453"];
+    assert.deepEqual(formAction(pageHeaders([...hostile, "cursor:", "http://localhost:1"])["content-security-policy"]), ["'self'", "cursor:", "http://localhost:1"]);
+    // Pages with no form keep the strict policy.
+    const dead = await start(env, { cookie: undefined, requestId: "x".repeat(43) }, "github");
+    assert.equal(dead.status, 400);
+    assert.deepEqual(formAction(dead.headers.get("content-security-policy")), ["'self'"]);
+  });
+
   it("M2: at most 3 provider redirects per request, and the 4th spends no global budget", async () => {
     const e = await startEnv({ loginLimits: { perIp: 1000, global: 4, windowMs: 600000 } });
     try {
