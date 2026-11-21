@@ -101,7 +101,7 @@ Tests: `bash deploy/hosted/domain-switch.test.sh` (stubs, no server) and `bash d
 Run the smoke check from any machine with Node 18+ (no install, no dependencies). It only reads, plus one unauthenticated `POST /mcp` that must be refused:
 
 ```bash
-node deploy/hosted/smoke.mjs --base https://agentrecallx.com --expect-version 3.5.3
+node deploy/hosted/smoke.mjs --base https://agentrecallx.com --expect-version 3.5.4
 node deploy/hosted/smoke.mjs --base https://agentrecallx.com --alias https://recall.aiakada.com   # also checks the alias
 ```
 

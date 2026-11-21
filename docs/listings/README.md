@@ -8,7 +8,7 @@ Positioning for every listing: AgentRecall closes the Intelligent Distance betwe
 
 | # | Directory | State today (2026-11-14) | Method | Owner does by hand | Time | Blocking requirements we do not meet yet |
 |---|---|---|---|---|---|---|
-| 1 | Official MCP Registry | Listed, stale: `io.github.Goldentrii/agent-recall` v3.5.2 is latest, remote still `recall.aiakada.com/mcp` (the old host); description current | `mcp-publisher` CLI | `mcp-publisher login github`, `mcp-publisher publish` | 5 min | npm has 3.5.2, not 3.5.3; `server.json` pins 3.5.3, so publishing before `npm publish` will be rejected. See `submissions/official-mcp-registry.md` | <!-- OLD-HOST -->
+| 1 | Official MCP Registry | Listed, stale: `io.github.Goldentrii/agent-recall` v3.5.2 is latest, remote still `recall.aiakada.com/mcp` (the old host); description current | `mcp-publisher` CLI | `mcp-publisher login github`, `mcp-publisher publish` | 5 min | npm has 3.5.3 until 3.5.4 is published; `server.json` pins 3.5.4, so publishing before `npm publish` will be rejected. See `submissions/official-mcp-registry.md` | <!-- OLD-HOST -->
 | 2 | Claude connectors directory | Not listed (not searched in-product; no public listing URL exists) | Developer portal, `claude.ai/directory/manage`, "MCP connector" | Fill 10 portal steps, paste fields | 45 min | Public support contact; docs URL is ready. Verified review (human) needs a reviewer test account. See `submissions/claude-connectors.md`, `BLOCKERS.md` |
 | 3 | punkpeye/awesome-mcp-servers | Listed but stale: entry says `Goldentrii/AgentRecall` with the old `AgentRecall-MCP` Glama badge | PR editing one line of README.md | Fork, edit, PR (star the repo first is a rule for the remote list) | 10 min | None. Merge of our repo to main so links resolve |
 | 4 | Cline MCP marketplace | Not listed (no issue for AgentRecall in `cline/mcp-marketplace`; 53 memory-related issues seen, none ours) | GitHub issue with template | Test the install in Cline, open the issue | 20 min | The Cline test run must be done by the owner; `llms-install.md` is ready |
@@ -51,6 +51,6 @@ Run `node --test scripts/listings-drift.test.mjs` after any version or URL chang
 ## Order of work for the owner
 
 1. Merge this branch to main (links and icon URLs resolve only on main).
-2. Release 3.5.3 to npm (your yes), then `mcp-publisher publish`: row 1. Rows 14, 12, 13, 18 follow.
+2. Release 3.5.4 to npm (your yes), then `mcp-publisher publish`: row 1. Rows 14, 12, 13, 18 follow.
 3. Rows 2, 3, 4, 5 on the same day.
 4. Row 8 then row 11. Rows 6, 7, 9 when convenient. Row 10 only after `BLOCKERS.md` is closed.

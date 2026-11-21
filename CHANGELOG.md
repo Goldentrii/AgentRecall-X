@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [3.5.4] — 2026-11-21
 
 ### Upgrade notes — read before upgrading
 
@@ -41,6 +41,7 @@ All four packages move in lockstep. No tool, command, flag, export or environmen
 - **`ar cold-start` returns every active P0 rule** (up to 50), ranked, instead of the first five; each rule's `context` is cut at 300 characters.
 - **A rule is one line.** Line breaks and control characters in a rule become spaces when it is stored and when it is shown, so a rule cannot add lines of its own to the HARD RULES block.
 - **A restated rule merges only into the record it matches.** In a store that already held two records with one id (written before this release), restating the second wrote the merged record into the first one's file. The merge now writes only to the file that holds exactly that record, and adds a new record when it cannot tell which one it is.
+- **Session cards are written once, without a false hook failure.** When two writers saved the card for the same session at once (the Stop hook and the end-of-session rescue), the second could rename its file over the first while a reader held it, and Windows answered `EPERM`: the card survived, but the save recorded a `session-card-write` hook failure and left a `.tmp.<pid>` file next to the card. Cards (and staged cards for unclaimed sessions) are now created with an atomic create-if-absent; the second writer is a no-op that reports 0 bytes, and its temporary file is always removed.
 - **Hook health no longer warns about old failures.** The session-start line `⚠️ AgentRecall: N hook failures (24h)` and `ar health` used the count saved when the last failure was written, so one failure kept warning on every session start for days. `readHookHealth()` now counts the failures in `hook-health.jsonl` against the current time; when that log cannot be read or has no valid rows, it uses the saved count only while the last failure is less than 24h old. With nothing in the last 24h, session start prints no warning and `ar health` prints `✓ hook health: no failures in the last 24h.` followed by the last failure.
 
 ## [3.5.3] — 2026-11-14

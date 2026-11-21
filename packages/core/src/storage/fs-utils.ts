@@ -221,8 +221,8 @@ export function writeTextAtomicPrivate(filePath: string, text: string): void {
  * (another writer won — idempotent no-op, never an error, never a replace).
  *
  * Live-store regression (2026-11-07): the card writers did existsSync(dest)
- * then tmp + renameSync. Two writers for one session (hook-end + MCP
- * session_end) both passed the check; the loser renamed OVER the winner's
+ * then tmp + renameSync. Two writers for one session (hook-end and
+ * distillOneSession) both passed the check; the loser renamed OVER the winner's
  * fresh card while a lock-free reader held it without FILE_SHARE_DELETE →
  * NTFS EPERM, a recorded hook failure, and an orphaned `.tmp.<pid>`.
  *
