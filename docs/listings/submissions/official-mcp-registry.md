@@ -4,7 +4,7 @@ State 2026-11-14 (fetched `/v0/servers?search=agent-recall`): `io.github.Goldent
 
 ## Before you publish (blocker)
 
-`packages/mcp-server/server.json` pins npm package version 3.5.3. npm still has 3.5.2. The registry checks the npm package, so publish to npm first (release step, needs your explicit yes), then publish here. Do not edit `server.json` down to 3.5.2: the drift test requires it to equal `package.json`.
+`packages/mcp-server/server.json` pins npm package version 3.5.4. npm has 3.5.3 until 3.5.4 is published. The registry checks the npm package, so publish to npm first (release step, needs your explicit yes), then publish here. Do not edit `server.json` down to 3.5.3: the drift test requires it to equal `package.json`.
 
 ## Values (already in `packages/mcp-server/server.json`, schema `2025-12-11`)
 
@@ -20,7 +20,7 @@ mcp-publisher login github        # device code, you authorise in the browser
 mcp-publisher publish
 ```
 
-The binary and token files are git-ignored. Verify: `https://registry.modelcontextprotocol.io/v0/servers?search=agent-recall` shows 3.5.3 as `isLatest` and the new URL.
+The binary and token files are git-ignored. Verify: `https://registry.modelcontextprotocol.io/v0/servers?search=agent-recall` shows 3.5.4 as `isLatest` and the new URL.
 
 ## After
 
