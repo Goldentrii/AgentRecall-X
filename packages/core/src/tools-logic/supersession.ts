@@ -73,7 +73,7 @@ import {
   decayClassOf,
   effectiveConfidenceOf,
 } from "../storage/corrections.js";
-import type { CorrectionRecord } from "../storage/corrections.js";
+import { displayRule, type CorrectionRecord } from "../storage/corrections.js";
 import type { Confidence, DecayClass } from "../types.js";
 
 export interface SupersessionMatch {
@@ -143,7 +143,7 @@ export function detectCorrectionConflicts(
     if (conflicts.length > 0) {
       matches.push({
         existingId: existing.id,
-        existingRule: existing.rule,
+        existingRule: displayRule(existing),
         conflictingValues: conflicts,
       });
     }

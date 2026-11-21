@@ -1,32 +1,18 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { VERSION, getRoot, getLegacyRoot } from "agent-recall-core";
-import { server } from "./server.js";
-import { installAmbientCapture } from "./lib/ambient-capture.js";
+import { VERSION, getRoot, getLegacyRoot, resolveHostProfile } from "agent-recall-core";
+import { buildServer } from "./build-server.js";
 import { installLifecycleExitHandlers } from "./lib/lifecycle-exit.js";
 
 // ── v3.4 primary tools (5-tool surface) ──────────────────────────────────
-import { register as registerSessionStart } from "./tools/session-start.js";
-import { register as registerRemember } from "./tools/remember.js";
-import { register as registerRecall } from "./tools/recall.js";
-import { register as registerSessionEnd } from "./tools/session-end.js";
-import { register as registerCheck } from "./tools/check.js";
 
 // ── Pre-action proactive matcher (--full) ────────────────────────────────
-import { register as registerCheckAction } from "./tools/check-action.js";
 
 // ── AR_EXTRAS quarantine zone — purity-census-2026-07-05 ─────────────────
 // These tools are ZOMBIE/low-use (pipeline: 1 organic use in 60d; register_rule: 2;
 // digest: 0 MCP calls). Core logic files stay untouched for reversibility.
 // Activate with: AR_EXTRAS=1 npx agent-recall-mcp --full
-import { register as registerPipelineOpen } from "./tools/pipeline-open.js";
-import { register as registerPipelineClose } from "./tools/pipeline-close.js";
-import { register as registerPipelineList } from "./tools/pipeline-list.js";
-import { register as registerPipelineCurrent } from "./tools/pipeline-current.js";
-import { register as registerPipelineShow } from "./tools/pipeline-show.js";
-import { register as registerRegisterRule } from "./tools/register-rule.js";
-import { register as registerDigest } from "./tools/digest.js";
 
 // ── Legacy tools (still importable for SDK/CLI, not registered by default) ──
 // DEPRECATED v3.4: use session_start instead
@@ -73,9 +59,6 @@ import { register as registerDigest } from "./tools/digest.js";
 // NOTE: bootstrap CLI command STAYS (ar bootstrap); skill logic stays (palace/skills.ts);
 //       session_end_reflect logic stays (ar consolidate); project_board logic stays (ar status).
 
-import { register as registerJournalResources } from "./resources/journal-resources.js";
-import { register as registerAwarenessResource } from "./resources/awareness-resource.js";
-import { register as registerSessionPrompts } from "./prompts/session-prompts.js";
 
 const args = process.argv.slice(2);
 
@@ -160,56 +143,14 @@ if (args.includes("--list-tools")) {
   process.exit(0);
 }
 
-// ── C-1 (Train C, 2026-08-12 wave) — passive ambient capture ────────────────
-// Must run BEFORE any register*(server) call below: wraps server.registerTool
-// once so EVERY tool registration (present AND future, default surface AND
-// --full/AR_EXTRAS) gets one scrubbed working-memory line per call, keyed by
-// this process's SESSION_ID. See lib/ambient-capture.ts's doc comment for
-// the full design rationale.
-installAmbientCapture(server);
-
-// ── Default surface: 5 tools (two verbs + three essentials) ─────────────────
-// Automaticity Law: only memory that arrives unasked gets used.
-// Push channels (session_start/end, hooks) drive behavior; pull channels don't.
-// Every extra tool in the default surface burns tool-definition tokens every session.
-registerSessionStart(server);
-registerSessionEnd(server);
-registerRemember(server);
-registerRecall(server);
-registerCheck(server);
-
-// ── Extended tools (--full mode only) ────────────────────────────────────────
-// P3b purity-census-2026-07-05: stripped to check_action only.
-// skill_write/recall/list, dashboard_export, session_end_reflect, project_board,
-// project_status, bootstrap_scan/import, memory_query, brief all removed from MCP
-// surface (owner-approved 2026-07-05). CLI paths for these remain intact.
-if (fullMode) {
-  registerCheckAction(server);
-}
-
-// ── AR_EXTRAS quarantine zone (purity-census-2026-07-05) ─────────────────────
-// Activate with: AR_EXTRAS=1 npx agent-recall-mcp --full
-// Pipeline: 1 organic use (60d); register_rule: 2 uses; digest: 0 MCP uses.
-// Core logic untouched for reversibility. These tools do NOT appear in the default
-// --full listing — they are invisible until AR_EXTRAS=1 is set.
-if (extrasMode) {
-  // Pipeline tools — project narrative spine (ZOMBIE: last used 2026-05-30)
-  registerPipelineOpen(server);
-  registerPipelineClose(server);
-  registerPipelineList(server);
-  registerPipelineCurrent(server);
-  registerPipelineShow(server);
-
-  // Behavior policies (ZOMBIE: 2 organic uses, last 2026-06-03)
-  registerRegisterRule(server);
-
-  // Context cache (DEAD via MCP: 0 MCP calls; CLI last used 2026-06-18)
-  registerDigest(server);
-}
-
-registerJournalResources(server);
-registerAwarenessResource(server);
-registerSessionPrompts(server);
+// One builder for both entry points (see build-server.ts). Stdio = one local
+// user per process: tier from the host env, ambient capture on.
+const server = buildServer({
+  tier: resolveHostProfile().tier,
+  full: fullMode,
+  extras: extrasMode,
+  ambientCapture: true,
+});
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

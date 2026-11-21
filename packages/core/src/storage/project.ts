@@ -6,8 +6,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getLegacyRoot } from "../types.js";
+import { getLegacyRoot, getTenantContext, isTenantScoped } from "../types.js";
 import { projectsRootDir, UNCLAIMED_PROJECT, isUnclaimedProject } from "./paths.js";
+import { bookkeep, inReadScope } from "./deferred-bookkeeping.js";
 import type { ProjectInfo } from "../types.js";
 
 const execFileAsync = promisify(execFile);
@@ -170,6 +171,11 @@ function isProjectRoot(dir: string): boolean {
  * Use AGENT_RECALL_PROJECT env var for a stable override across calls.
  */
 export async function detectProject(): Promise<string> {
+  // 0. Hosted multi-tenant mode: the server's env and cwd say nothing about
+  // the remote agent's project, so "auto" resolves to the tenant's default.
+  const tenant = getTenantContext();
+  if (tenant) return tenant.defaultProject;
+
   // 1. Env var — stable explicit override
   if (process.env.AGENT_RECALL_PROJECT) {
     return process.env.AGENT_RECALL_PROJECT;
@@ -301,12 +307,14 @@ async function stageFailedResolution(reason: string, candidate: string | null): 
   try {
     const { recordUnclaimedProvenance } = await import("./unclaimed.js");
     const { getSessionId } = await import("./session.js");
-    recordUnclaimedProvenance(getSessionId(), {
-      cwd: process.cwd(),
+    const provenance = {
+      cwd: isTenantScoped() ? "(hosted)" : process.cwd(),
       reason,
       slug_candidates: candidate ? [{ slug: candidate, count: 1 }] : [],
       slug_confidence: 0,
-    });
+    };
+    const sid = getSessionId();
+    await bookkeep({ key: `unclaimed:${sid}`, apply: () => { recordUnclaimedProvenance(sid, provenance); } });
   } catch {
     // provenance is best-effort — never let it break resolution
   }
@@ -385,9 +393,19 @@ export async function resolveProject(project: string | undefined): Promise<strin
   // `isProjectRoot`'s doc comment for the full repro).
   try {
     const cwd = process.cwd();
-    if (isProjectRoot(cwd)) {
-      const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
-      addCwdToAllowlist(project, cwd);
+    // Hosted: the server's cwd is not the agent's — never teach a tenant's allowlist about it.
+    if (!isTenantScoped() && isProjectRoot(cwd)) {
+      // Teaching the allowlist is bookkeeping: a read must not register a directory. The write is queued, but
+      // the registration is visible to this process's next "auto" resolution at once (notePendingCwd), so
+      // deferring it never changes what a following read resolves to.
+      if (inReadScope()) {
+        const { notePendingCwd } = await import("./cwd-allowlist.js");
+        notePendingCwd(project, cwd);
+      }
+      await bookkeep({ key: `cwd:${project}:${cwd}`, apply: async () => {
+        const { addCwdToAllowlist } = await import("./cwd-allowlist.js");
+        addCwdToAllowlist(project, cwd);
+      } });
     }
   } catch {
     // never let allowlist write break resolution

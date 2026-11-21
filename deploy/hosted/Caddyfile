@@ -1,0 +1,29 @@
+# Caddy gets and renews a Let's Encrypt certificate for $AR_DOMAIN automatically
+# (port 80 must be reachable for the HTTP-01 challenge, and DNS must point here).
+# No access log on purpose: agent-recall-server already logs one line per request
+# (method, path, uid, status, ms) and never logs tokens or bodies.
+{$AR_DOMAIN} {
+	encode zstd gzip
+	header -Server
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy server:8787
+}
+
+# Optional alias names (an old domain, or www), set with domain-switch.sh as
+# AR_DOMAIN_ALIAS="old.example.com, www.example.com". The agent endpoint is
+# proxied, not redirected: a client may drop its Authorization header when it
+# follows a redirect to another host. Every other path goes to the primary.
+# While no alias is set, compose passes a plain-http placeholder name that never
+# matches a request and never asks for a certificate.
+{$AR_DOMAIN_ALIAS} {
+	encode zstd gzip
+	header -Server
+	header Strict-Transport-Security "max-age=31536000"
+	@agent path /mcp /mcp/* /healthz
+	handle @agent {
+		reverse_proxy server:8787
+	}
+	handle {
+		redir https://{$AR_DOMAIN}{uri} 308
+	}
+}

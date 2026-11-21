@@ -1,10 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { smartRemember } from "agent-recall-core";
+import { smartRemember, fenceMemory } from "agent-recall-core";
+import { OVERWRITE } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool("remember", {
     title: "Remember",
+    annotations: OVERWRITE,
     description: "[MID-SESSION WRITE — single fact/decision; saying it is not saving it] Use when the user asks to remember, store, note, or save a specific decision, fact, or insight.",
     inputSchema: {
       content: z.string().describe("What to remember."),
@@ -35,6 +37,13 @@ export function register(server: McpServer): void {
     if (result.retrieval_hint) lines.push(`Find again: ${result.retrieval_hint}`);
     if (result.consistency_warnings && result.consistency_warnings.length > 0) {
       lines.push(`⚠ Consistency: ${result.consistency_warnings.map(w => w.detail).join("; ")}`);
+    }
+    // 3.5.4 P0-4a: what the lesson save really did (merged, resurrected,
+    // evicted from another project, not indexed, ...). The lines quote STORED
+    // lesson titles, so they are fenced like any retrieved memory.
+    if (result.lesson_warnings && result.lesson_warnings.length > 0) {
+      lines.push(`⚠ Lessons: ${result.lesson_warnings.length} note(s) on this save:`);
+      lines.push(fenceMemory(result.lesson_warnings.map((w) => `- ${w}`).join("\n")));
     }
 
     return { content: [{ type: "text" as const, text: lines.join("\n") }] };

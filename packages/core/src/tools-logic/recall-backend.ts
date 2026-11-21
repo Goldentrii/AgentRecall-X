@@ -1,5 +1,6 @@
 // packages/core/src/tools-logic/recall-backend.ts
 import type { SmartRecallResultItem } from "./smart-recall.js";
+import { isTenantScoped } from "../types.js";
 import { readSupabaseConfig } from "../supabase/config.js";
 import { LocalVectorRecallBackend } from "../vector/local-vector-backend.js";
 
@@ -99,6 +100,14 @@ export async function getRecallBackend(): Promise<RecallBackend> {
   // If the breaker is tripped, always return local immediately.
   if (_breakerTripped) {
     return new LocalRecallBackend();
+  }
+
+  // Hosted multi-tenant mode: never reuse (or populate) the process-wide cache —
+  // a backend whose availability was probed under one tenant's root must not
+  // serve another. Remote is already off in tenant scope (readSupabaseConfig).
+  if (isTenantScoped()) {
+    const vectorBackend = new LocalVectorRecallBackend();
+    return vectorBackend.available() ? vectorBackend : new LocalRecallBackend();
   }
 
   if (_cachedBackend) return _cachedBackend;

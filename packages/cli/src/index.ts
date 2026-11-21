@@ -1434,11 +1434,16 @@ async function main(): Promise<void> {
           lines.push(`  locks:   ${result.locksRemoved.names.join(", ")}`);
         if (result.drained.projects.length)
           lines.push(`  drain:   ${result.drained.projects.join(", ")}`);
+        if (result.manifest.status === "upgraded" || result.manifest.status === "would_upgrade")
+          lines.push("  manifest: MANIFEST.md v1 → v2 (lesson files listed as primary data)");
+        else if (result.manifest.status === "edited")
+          lines.push("  manifest: MANIFEST.md was edited, left alone; run `ar doctor` for the by-hand fix");
         // Surface any per-step error so a clean-looking summary never hides a failure.
         for (const [label, step] of [
           ["reindex", result.reindexed],
           ["locks", result.locksRemoved],
           ["drain", result.drained],
+          ["manifest", result.manifest],
         ] as const) {
           if (step.error) lines.push(`  ⚠ ${label} error: ${step.error}`);
         }
@@ -1557,13 +1562,16 @@ async function main(): Promise<void> {
       // by default; --json for the raw HookHealthState. Always exit 0 — this
       // is a diagnostic read, not a gate (never exitCode=1, even when failures
       // exist: `ar doctor`/`ar hygiene` are the commands that gate CI on red).
+      // failures_24h is counted against now at read time; last_failure is history and may be older.
       const health = core.readHookHealth();
       if (hasFlag("--json", rest)) {
         output(health);
       } else if (!health.last_failure && health.failures_24h === 0) {
         output("✓ hook health: no failures recorded.");
       } else {
-        const lines: string[] = [`Hook health — ${health.failures_24h} failure(s) in the last 24h`];
+        const lines: string[] = [health.failures_24h === 0
+          ? "✓ hook health: no failures in the last 24h."
+          : `Hook health — ${health.failures_24h} failure(s) in the last 24h`];
         if (health.last_failure) {
           lines.push(`  last: [${health.last_failure.hook}] ${health.last_failure.ts} — ${health.last_failure.message}`);
         }
@@ -2737,7 +2745,8 @@ async function main(): Promise<void> {
               .sort((a, b) => (a.severity === "p0" ? -1 : b.severity === "p0" ? 1 : 0))
               .slice(0, 2);
             for (const c of topCorrections) {
-              warningLines.push(`  [${c.severity.toUpperCase()}] ${c.rule.slice(0, 100)}`);
+              // Whole rule (check-action derives and bounds it; 3.5.4: no 100-character cut).
+              warningLines.push(`  [${c.severity.toUpperCase()}] ${c.rule}`);
             }
 
             // Top rule
@@ -3248,7 +3257,7 @@ ${correctionCount === 0 ? "\n  Warning: No corrections captured yet. Use the too
       let corrections: Array<{rule: string; date: string; severity: string}> = [];
       try {
         const allCorr = core.readP0Corrections(resolvedSync);
-        corrections = allCorr.slice(0, 5).map(c => ({ rule: c.rule, date: c.date, severity: c.severity }));
+        corrections = allCorr.slice(0, 5).map(c => ({ rule: core.displayRule(c), date: c.date, severity: c.severity }));
       } catch { /* non-blocking */ }
 
       // 2. Read top awareness insights

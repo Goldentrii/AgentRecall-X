@@ -1,12 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { pipelineCurrent, fenceMemory } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool(
     "pipeline_current",
     {
       title: "Get Currently Active Pipeline Phase",
+      annotations: ADD,
       description:
         "Return the full content of the currently active project phase, or null if none is open. " +
         "Use to ground an agent in 'where the project is right now' at the start of a session.",

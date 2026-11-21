@@ -8,9 +8,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { journalWrite } from "./journal-write.js";
-import { awarenessUpdate } from "./awareness-update.js";
+import { awarenessUpdate, formatLessonWarnings, LessonSaveError, type LessonSaveReport } from "./awareness-update.js";
 import { promoteConfirmedInsights } from "./insight-promotion.js";
-import { readInsightsIndex, findSimilarInsight } from "../palace/insights-index.js";
+import { fenceMemory } from "../storage/content-guard.js";
 import { consolidateJournalToPalace } from "../palace/consolidate.js";
 import { resolveProject } from "../storage/project.js";
 import { readCorrections, readActiveCorrections, recordOutcome, readOutcomesForToday, readOutcomesBefore, splitSentences, type CorrectionOutcome, type FailureClass } from "../storage/corrections.js";
@@ -20,7 +20,7 @@ import { ensurePalaceInitialized, listRooms } from "../palace/rooms.js";
 import { journalDir, palaceDir, projectSubPath, projectsRootDir } from "../storage/paths.js";
 import { readAwarenessState } from "../palace/awareness.js";
 import { todayISO } from "../storage/fs-utils.js";
-import { getRoot } from "../types.js";
+import { toDisplayPath } from "../types.js";
 import { extractKeywords } from "../helpers/auto-name.js";
 import type { SaveType } from "../storage/session.js";
 import { getSessionId, getCachedSessionEnd, setCachedSessionEnd } from "../storage/session.js";
@@ -116,10 +116,33 @@ export interface SessionEndResult {
   journal_written: boolean;
   journal_write_error?: string;
   insights_processed: number;
-  /** New insights added to the index (no prior match found). */
+  /**
+   * Lessons stored as new under their own title. Since 3.5.4 (P0-4a) this is
+   * derived from what awareness and the index actually did, not from a
+   * pre-pass, so merges, resurrections and refusals no longer count as added.
+   */
   insights_added: number;
-  /** Existing insights confirmed (near-duplicate title matched, count++). */
+  /** Existing indexed lessons confirmed (near-duplicate title matched, count++). */
   insights_confirmed: number;
+  /**
+   * 3.5.4 P0-4a — additive lesson outcome fields, each present only when
+   * non-empty. Titles here are STORED lessons for merged.into, resurrected,
+   * demoted, archive_dropped and evicted; the card shows them fenced.
+   */
+  /** Awareness merged the lesson into an existing one instead of adding it. */
+  insights_merged?: Array<{ title: string; into: string }>;
+  /** An archived lesson came back instead of the new title. */
+  insights_resurrected?: Array<{ title: string; resurrected: string }>;
+  /** Lessons moved from the top 20 to the awareness archive to make room. */
+  insights_demoted?: Array<{ title: string; project: string }>;
+  /** Lessons that fell off the awareness archive (cap 50). */
+  insights_archive_dropped?: Array<{ title: string; project: string }>;
+  /** Lessons evicted from the full insights index — of any project. */
+  insights_evicted?: Array<{ title: string; projects: string[]; other_project: boolean }>;
+  /** Lessons the full index refused (all 200 entries confirmed 2+ times). */
+  insights_not_indexed?: string[];
+  /** Lessons the awareness quality gate rejected. */
+  insights_rejected?: Array<{ title: string; reason: string }>;
   /**
    * Fix #2 (dual-channel capture gate, 2026-09-11) — insights that failed
    * completeness validation (validateInsightCompleteness: full-sentence
@@ -317,6 +340,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   let insightsProcessed = 0;
   let insightsAdded = 0;
   let insightsConfirmed = 0;
+  let lessonReport: LessonSaveReport | undefined;
   let awarenessUpdated = false;
   let awarenessError: string | undefined;
   let palaceConsolidated = false;
@@ -706,17 +730,9 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
 
   if (validInsights.length > 0) {
     try {
-      // Read the current index once for confirm-first classification
-      const currentIndex = readInsightsIndex();
-      for (const insight of validInsights) {
-        const match = findSimilarInsight(insight.title, currentIndex.insights);
-        if (match) {
-          insightsConfirmed++;
-        } else {
-          insightsAdded++;
-        }
-      }
-
+      // 3.5.4 P0-4a: counts come from what awareness and the index actually
+      // did (result.lessons below), not from a pre-pass over the index — the
+      // pre-pass said "1 added" for merged, resurrected and refused lessons.
       const scopedTrajectory = input.trajectory
         ? `${slug}: ${input.trajectory}`
         : undefined;
@@ -733,12 +749,23 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
         trajectory: scopedTrajectory,
       });
       insightsProcessed = result.insights_processed?.length ?? validInsights.length;
+      lessonReport = result.lessons;
+      insightsAdded = result.lessons.added;
+      insightsConfirmed = result.lessons.confirmed;
       awarenessUpdated = true;
     } catch (err) {
       awarenessError = err instanceof Error ? err.message : String(err);
-      // Reset tallies on error so they don't misreport
-      insightsAdded = 0;
-      insightsConfirmed = 0;
+      // Reset tallies on error so they don't misreport — except for lessons a
+      // part-way failure had already stored (3.5.4 P0-4a): report those.
+      if (err instanceof LessonSaveError) {
+        lessonReport = err.lessons;
+        insightsAdded = err.lessons.added;
+        insightsConfirmed = err.lessons.confirmed;
+      } else {
+        insightsAdded = 0;
+        insightsConfirmed = 0;
+        lessonReport = undefined;
+      }
       // F5 depth (2026-08-12, followups wave): same invisible-unless-the-
       // caller-checks-the-result-object class as journalWriteError above.
       recordHookFailure("session-end-awareness", err);
@@ -880,7 +907,6 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
   }
 
   // 5. Render save card — server-side, always correct
-  const root = getRoot();
   const date = todayISO();
   const jDir = journalDir(slug);
   const journalCount = fs.existsSync(jDir)
@@ -940,16 +966,23 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     recordHookFailure("session-end-correction-count", err);
   }
 
+  const lessonWarnings = lessonReport ? formatLessonWarnings(lessonReport) : [];
   const line = "──────────────────────────────────────────────────────────────";
   const cardLines = [
     line,
     `  AgentRecall  ✓ Saved    ${slug}   ${date}   #${journalCount}`,
     line,
     "",
-    `  Journal       ${jDir.replace(root, "~/.agent-recall")}/`,
+    `  Journal       ${toDisplayPath(jDir)}/`,
     `                └─ ${date}.md                    ${journalWritten ? "[written]" : journalWriteError ? `[FAILED: ${journalWriteError}]` : "[skipped]"}`,
     "",
     `  Awareness     ${insightsAdded} added, ${insightsConfirmed} confirmed  (${totalInsights} total)`,
+    // 3.5.4 P0-4a: what else happened to the lessons. The lines quote STORED
+    // titles (another project's evicted lesson, a merge target, an archived
+    // lesson), so they are fenced like any other retrieved memory.
+    ...(lessonWarnings.length > 0
+      ? [`  ⚠ Lessons     ${lessonWarnings.length} note(s) on this save:`, fenceMemory(lessonWarnings.map((w) => `    - ${w}`).join("\n"))]
+      : []),
     ...(insightsPending > 0 ? [`  ⏳ Pending      ${insightsPending} insight(s) staged for review (incomplete — see quality_warnings)`] : []),
     ...(awarenessError ? [`  [WARN: awareness update failed: ${awarenessError}]`] : []),
     ...(palaceError ? [`  [WARN: palace consolidation failed: ${palaceError}]`] : []),
@@ -958,7 +991,7 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
 
   if (palaceConsolidated && roomNames.length > 0) {
     // F2 fix (independent review, 2026-07-20): route through paths.ts (see corrDir above).
-    const palacePath = `${palaceDir(slug)}/`.replace(root, "~/.agent-recall");
+    const palacePath = `${toDisplayPath(palaceDir(slug))}/`;
     cardLines.push(`  Palace        ${palacePath}`);
     for (let i = 0; i < roomNames.length; i++) {
       const prefix = i === roomNames.length - 1 ? "└─" : "├─";
@@ -1074,6 +1107,13 @@ export async function sessionEnd(input: SessionEndInput): Promise<SessionEndResu
     insights_processed: insightsProcessed,
     insights_added: insightsAdded,
     insights_confirmed: insightsConfirmed,
+    ...(lessonReport?.merged.length ? { insights_merged: lessonReport.merged } : {}),
+    ...(lessonReport?.resurrected.length ? { insights_resurrected: lessonReport.resurrected } : {}),
+    ...(lessonReport?.demoted.length ? { insights_demoted: lessonReport.demoted } : {}),
+    ...(lessonReport?.archive_dropped.length ? { insights_archive_dropped: lessonReport.archive_dropped } : {}),
+    ...(lessonReport?.evicted.length ? { insights_evicted: lessonReport.evicted } : {}),
+    ...(lessonReport?.not_indexed.length ? { insights_not_indexed: lessonReport.not_indexed } : {}),
+    ...(lessonReport?.rejected.length ? { insights_rejected: lessonReport.rejected } : {}),
     ...(insightsPending > 0 ? { insights_pending: insightsPending } : {}),
     awareness_updated: awarenessUpdated,
     ...(awarenessError ? { awareness_error: awarenessError } : {}),

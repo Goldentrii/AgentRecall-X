@@ -1,12 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { registerRule } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool(
     "register_rule",
     {
       title: "Register a Behavior Policy (Always-Loaded High-Salience Rule)",
+      annotations: ADD,
       description:
         "Save a permanent IF-THEN behavior commitment for the project. Unlike insights (semantic facts) " +
         "and corrections (one-shot rebukes), behavior rules are surfaced at the TOP of every session_start " +

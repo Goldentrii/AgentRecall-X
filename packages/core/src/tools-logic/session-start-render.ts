@@ -9,6 +9,8 @@
  * or retrieved text, and the unfenced tail (hook-less hint, A/B tag) exactly where it was.
  */
 import { fenceMemory } from "../storage/content-guard.js";
+import { boundRule } from "../storage/corrections.js";
+import { agentCorrectionsStaged, ownerReviewUrl } from "../types.js";
 import { formatOwnerSection } from "../storage/identity-card.js";
 import { formatStateSection } from "../storage/state-card.js";
 import { continuityEntryMarker, continuityHeaderText, type SessionStartResult } from "./session-start.js";
@@ -126,7 +128,8 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
     hard.push("", "⛔ HARD RULES (always follow, no exceptions):");
     for (const c of result.corrections) {
       const tierTag = c.tier ? ` [${c.tier}]` : "";
-      hard.push(`  [${c.severity.toUpperCase()}] ${trunc(c.rule, 120)}${tierTag}`);
+      // Whole rule; bounded only by RULE_RENDER_MAX, always with a visible "…" (3.5.4: no 120-character cut).
+      hard.push(`  [${c.severity.toUpperCase()}] ${boundRule(c.rule)}${tierTag}`);
     }
   }
   add("hard_rules", 0, hard);
@@ -143,9 +146,13 @@ export function sessionStartSections(result: SessionStartResult, extraLines: str
   }
   add("watch_for", 7, watch);
 
-  // pending-review count: both modes (one line, count only — the agent must learn staged items exist to check() them)
+  // pending-review count: both modes (one line, count only). Locally the agent learns staged items exist so it can
+  // check() them; in an agent channel behind the owner gate it is told they are the owner's to confirm.
   add("pending", 3, result.pending_corrections && result.pending_corrections.count > 0
-    ? [`⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`]
+    ? [agentCorrectionsStaged()
+        // Owner gate: agents cannot confirm here, so do not invite them to try.
+        ? `⏳ ${result.pending_corrections.count} proposed correction${result.pending_corrections.count === 1 ? " awaits" : "s await"} the owner's confirmation — not active, and agents cannot confirm them. Do not follow or re-submit them.${ownerReviewUrl() ? ` The owner reviews them at ${ownerReviewUrl()}` : ""}`
+        : `⏳ ${result.pending_corrections.count} pending corrections await review — confirm or reject via check() with structured human_correction {rule, why, applies_when, pending_id}.`]
     : []);
 
   const recent: string[] = [];
@@ -220,7 +227,7 @@ export function renderSessionStart(result: SessionStartResult, opts: RenderSessi
   const preamble = opts.preamble ?? [];
   const tail: string[] = [];
   // P4 cross-surface adapter — hook-less host pointer; text layer only, omitted where hooks drive the lifecycle.
-  if (opts.hooklessTail) tail.push("", "Hook-less host? call brief() once for lifecycle rules.");
+  if (opts.hooklessTail) tail.push("", "No hooks here: call session_end before you stop.");
   // C4 A/B experiment marker (quiet trailing tag, not a banner).
   if (result.ab_arm && opts.abTag !== false) tail.push(`[ab:${result.ab_arm}]`);
 

@@ -238,7 +238,8 @@ import { readTierCandidates, filterTrusted, type MemoryCandidate } from "./candi
 import { loadJournalLexicalSnapshot } from "./lexical-index.js";
 import { applyScope } from "./scope.js";
 import { detectContradictions, type ContradictionItem } from "./contradiction.js";
-import { listRooms, recordAccess, ensurePalaceInitialized } from "../palace/rooms.js";
+import { listRooms, recordAccess, ensurePalaceInitializedForRead } from "../palace/rooms.js";
+import { bookkeep } from "../storage/deferred-bookkeeping.js";
 import { stem, expandQuery } from "../helpers/normalize.js";
 import { tokenizeWords } from "../helpers/tokenize.js";
 import { recallInsights } from "../palace/insights-index.js";
@@ -1261,7 +1262,7 @@ async function scorePalaceTier(
   // project whose palace/ has never been initialized, even when `rooms/*/`.md
   // content already exists on disk — `listRooms()` requires a `_room.json`
   // per room dir, which only `ensurePalaceInitialized`/`createRoom` write.
-  ensurePalaceInitialized(project);
+  ensurePalaceInitializedForRead(project);
   const candidates = filterTrusted(
     readTierCandidates("palace-room", project, { room: opts.room, includeUntrusted: true }),
   );
@@ -1375,7 +1376,8 @@ async function scorePalaceTier(
   // (once per room that contributed >=1 hit).
   for (const room of roomsWithHits) {
     try {
-      await recordAccess(project, room);
+      // Ranking input (access_count, salience): queued inside a read; N accesses to one room are N increments.
+      await bookkeep({ key: `room-access:${project}:${room}`, repeat: true, apply: () => recordAccess(project, room) });
     } catch { /* best-effort, never block scoring on a bookkeeping write */ }
   }
 

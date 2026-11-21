@@ -173,11 +173,14 @@ export function installAmbientCapture(server: McpServer): void {
 
   const originalRegisterTool = server.registerTool.bind(server);
 
-  server.registerTool = ((name: string, config: unknown, handler: (...cbArgs: unknown[]) => unknown) => {
+  server.registerTool = ((name: string, config: { annotations?: { readOnlyHint?: boolean } }, handler: (...cbArgs: unknown[]) => unknown) => {
+    // A tool that declares readOnlyHint: true must not write: a retrieval call (session_start, recall) is not
+    // work worth crash-rescuing, and its query text must never land on disk because of a read.
+    const readOnly = config?.annotations?.readOnlyHint === true;
     return (originalRegisterTool as (...regArgs: unknown[]) => unknown)(
       name,
       config,
-      withAmbientCapture(name, handler),
+      readOnly ? handler : withAmbientCapture(name, handler),
     );
   }) as typeof server.registerTool;
 }

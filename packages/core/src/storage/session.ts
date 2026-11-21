@@ -28,7 +28,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { generateSlug } from "../helpers/auto-name.js";
 import { sanitizeName } from "./sanitize.js";
-import { getRoot } from "../types.js";
+import { getRoot, getTenantContext } from "../types.js";
 import type { SignificanceTag, ThemeTag } from "../helpers/journal-sig-theme.js";
 
 /**
@@ -71,8 +71,36 @@ const ownedFiles = new Set<string>();
  * hosts: still unique per process, exactly as before this fix.
  */
 export function getSessionId(): string {
+  // Hosted server: the session id belongs to the request's tenant context,
+  // never the process (FALLBACK_SESSION_ID/env would merge every tenant's sessions).
+  const tenant = getTenantContext();
+  if (tenant) return tenant.sid;
   const real = process.env["CLAUDE_CODE_SESSION_ID"];
   return real && real.trim() ? real.trim() : FALLBACK_SESSION_ID;
+}
+
+/** Short per-session filename suffix (validated hex in tenant mode). */
+function sessionSuffix(): string {
+  const tenant = getTenantContext();
+  return tenant ? tenant.sid.replace(/-/g, "").slice(0, 6) : FALLBACK_SESSION_ID;
+}
+
+/** ownedFiles key scoped to store root + session, so stores/sessions never share ownership decisions. */
+function ownKey(key: string): string {
+  return `${getRoot()}::${getSessionId()}::${key}`;
+}
+
+// Hosted (tenant scope): every request has a fresh sid, so per-process
+// ownership memory would grow without bound and never be read again. Skip it;
+// the smart-naming path's same-day rule decides from the filesystem instead.
+function markOwned(key: string): void {
+  if (getTenantContext()) return;
+  ownedFiles.add(ownKey(key));
+}
+
+function isOwned(key: string): boolean {
+  if (getTenantContext()) return false;
+  return ownedFiles.has(ownKey(key));
 }
 
 /** Save type for intelligent naming. */
@@ -148,7 +176,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
       if (themeTag !== "none") segments.push(themeTag);
       segments.push(slug, uniq);
       const name = `${segments.join("--")}.md`;
-      if (dir) ownedFiles.add(`smart:${name}`);
+      if (dir) markOwned(`smart:${name}`);
       return name;
     }
 
@@ -168,7 +196,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
         [0];
 
       if (existingToday) {
-        ownedFiles.add(`smart:${existingToday}`);
+        markOwned(`smart:${existingToday}`);
         return existingToday;
       }
     }
@@ -180,7 +208,7 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
     const name = `${date}--${joinTagSegments(opts.saveType, sigTag, themeTag, slug)}.md`;
 
     if (dir) {
-      ownedFiles.add(`smart:${name}`);
+      markOwned(`smart:${name}`);
     }
     return name;
   }
@@ -188,15 +216,15 @@ export function journalFileName(date: string, baseExists: boolean, opts?: SmartN
   // Legacy naming (backward compat)
   const baseKey = `journal:${date}`;
 
-  if (ownedFiles.has(`${baseKey}:base`)) return `${date}.md`;
-  if (ownedFiles.has(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}.md`;
+  if (isOwned(`${baseKey}:base`)) return `${date}.md`;
+  if (isOwned(`${baseKey}:session`)) return `${date}-${sessionSuffix()}.md`;
 
   if (!baseExists) {
-    ownedFiles.add(`${baseKey}:base`);
+    markOwned(`${baseKey}:base`);
     return `${date}.md`;
   }
-  ownedFiles.add(`${baseKey}:session`);
-  return `${date}-${FALLBACK_SESSION_ID}.md`;
+  markOwned(`${baseKey}:session`);
+  return `${date}-${sessionSuffix()}.md`;
 }
 
 /**
@@ -226,15 +254,15 @@ export function captureLogFileName(date: string, baseExists: boolean, opts?: Sma
   // Legacy naming
   const baseKey = `capture:${date}`;
 
-  if (ownedFiles.has(`${baseKey}:base`)) return `${date}-log.md`;
-  if (ownedFiles.has(`${baseKey}:session`)) return `${date}-${FALLBACK_SESSION_ID}-log.md`;
+  if (isOwned(`${baseKey}:base`)) return `${date}-log.md`;
+  if (isOwned(`${baseKey}:session`)) return `${date}-${sessionSuffix()}-log.md`;
 
   if (!baseExists) {
-    ownedFiles.add(`${baseKey}:base`);
+    markOwned(`${baseKey}:base`);
     return `${date}-log.md`;
   }
-  ownedFiles.add(`${baseKey}:session`);
-  return `${date}-${FALLBACK_SESSION_ID}-log.md`;
+  markOwned(`${baseKey}:session`);
+  return `${date}-${sessionSuffix()}-log.md`;
 }
 
 /** Reset owned files tracking (call at session boundaries). */

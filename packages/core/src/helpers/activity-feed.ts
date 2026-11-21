@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { palaceDir, journalDir as journalDirPath, projectSubPath } from "../storage/paths.js";
 import { isRescueSourcedContent } from "./journal-filter.js";
+import { readTextFileTolerant } from "../storage/fs-utils.js";
 
 export interface ActivityEvent {
   ts: string;   // ISO-8601
@@ -42,7 +43,7 @@ export interface ActivityEvent {
  */
 function safeRead(p: string): string | null {
   try {
-    return fs.readFileSync(p, "utf-8");
+    return readTextFileTolerant(p); // BOM / UTF-16 tolerant (3.5.4)
   } catch {
     return null;
   }

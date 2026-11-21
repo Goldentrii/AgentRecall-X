@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { pipelineClose } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 const TEXT_FIELD = z.string().min(1).max(8192);
 const REF_LIST = z.array(z.string().max(200)).max(50);
@@ -10,6 +11,7 @@ export function register(server: McpServer): void {
     "pipeline_close",
     {
       title: "Close Active Pipeline Phase",
+      annotations: ADD,
       description:
         "Close the currently active project phase with the three reflection fields: " +
         "what_was_hard, how_solved, synthesis (one-sentence reusable lesson). " +

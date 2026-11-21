@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentRecall: the distance between you and your agents, measured and shortened</title>
+<meta name="robots" content="index,follow">
+<meta name="description" content="AgentRecall measures and shortens the distance between what you mean and what your agents build.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="text/markdown" href="/connect.md" title="Connect an agent (for AI agents)">
+<link rel="alternate" type="text/markdown" href="/local.md" title="Run it locally (for AI agents)">
+<style>{{css}}</style>
+</head>
+<body>
+{{icons}}
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap top__in">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 40 40" aria-hidden="true" focusable="false"><rect x="9" y="3" width="28" height="22" rx="5" fill="#1e2a3b" stroke="#9aaec3" stroke-width="2.4"/><rect x="5" y="9" width="28" height="22" rx="5" fill="#0c121c" stroke="#9aaec3" stroke-width="2.4"/><rect x="1.5" y="15" width="28" height="22" rx="5" fill="#F5C451" stroke="#9aaec3" stroke-width="2.4"/><circle cx="23.5" cy="21.5" r="3" fill="#04060a"/></svg>
+      <span>AgentRecall</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#clients">Clients</a>
+      <a href="/film">Film</a>
+      <a href="{{repo}}" rel="noopener">GitHub</a>
+    </nav>
+    <div class="top__cta">
+      <a class="btn btn--line btn--sm top__local" href="/local">Run it locally</a>
+      <a class="btn btn--gold btn--sm" href="/connect"><span class="top__long">Connect an agent</span><span class="top__short">Connect</span></a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- 1. Hero -->
+<section class="hero" aria-labelledby="h1">
+  <div class="wrap hero__in">
+    <div class="hero__text">
+      <p class="kicker">Intelligent Distance</p>
+      <h1 id="h1">The distance between you and your agents. <span class="gold">Measured, <span class="nb">and shortened.</span></span></h1>
+      <p class="lead"><strong>You correct an agent once.</strong> AgentRecall keeps the correction as a rule with its reason, gives it to every agent you connect, and records whether it was heeded the next time it mattered.</p>
+      <div class="btns">
+        <a class="btn btn--gold" href="/connect">Connect an agent</a>
+        <a class="btn btn--line" href="/local">Run it locally</a>
+      </div>
+      <p class="minor">
+        <a class="ulink" href="#how">See how it works ↓</a>
+        <a class="ulink" href="/film">Watch the film →</a>
+      </p>
+    </div>
+    <figure class="fig fig--cut fig--hero">
+      {{fig1}}
+      <span class="cap cap--tl" aria-hidden="true">FIG. 1</span>
+      <span class="cap cap--tr" aria-hidden="true">THE DISTANCE, IN SECTION</span>
+      <span class="cap cap--bl" aria-hidden="true">ISOMETRIC, NOT TO SCALE</span>
+      <span class="cap cap--br" aria-hidden="true">d = 1.00 → 0.54</span>
+      <figcaption class="sr">Figure 1. The distance, in section: your workplace on the left, your agents' machines on the right, and a rule card crossing the gap between them. The gap is marked d = 1.00, with a shorter distance of 0.54 below it.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 2. Two ways in -->
+<section class="sec" id="ways" aria-labelledby="h-ways">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-ways">Two ways in</h2>
+      <p class="sub">The same rules and the same measurement. You choose where they live.</p>
+    </header>
+    <div class="cards">
+      <article class="card">
+        <figure class="fig">
+          {{fig2-1}}
+          <span class="cap cap--tl" aria-hidden="true">FIG. 2.1</span>
+          <span class="cap cap--tr" aria-hidden="true">HOSTED, FRANKFURT</span>
+          <span class="cap cap--bl" aria-hidden="true">ISOMETRIC, NOT TO SCALE</span>
+          <span class="cap cap--br" aria-hidden="true">eu-central</span>
+          <figcaption class="sr">Figure 2.1. A hosted server cabinet in a Frankfurt data hall, locked with a key. Labels in the drawing: hall 1 row A, cabinet FRA-01, and a globe marked FRA, the Frankfurt location.</figcaption>
+        </figure>
+        <h3 class="card__title"><a href="/connect">Connect an agent <span aria-hidden="true">→</span></a></h3>
+        <p>We host it. Sign in with GitHub and add one URL to your agent. Ready in about a minute, free, stored in Frankfurt (EU).</p>
+      </article>
+      <article class="card">
+        <figure class="fig">
+          {{fig2-2}}
+          <span class="cap cap--tl" aria-hidden="true">FIG. 2.2</span>
+          <span class="cap cap--tr" aria-hidden="true">LOCAL, ON YOUR MACHINE</span>
+          <span class="cap cap--bl" aria-hidden="true">ISOMETRIC, NOT TO SCALE</span>
+          <span class="cap cap--br" aria-hidden="true">~/.agent-recall</span>
+          <figcaption class="sr">Figure 2.2. A laptop showing a file tree, a stack of markdown files beside it, and a network cable unplugged: everything stays on your machine. Labels in the drawing: the folder ~/.agent-recall holding rules.md, state.md, a journal folder with dated files, and a projects folder.</figcaption>
+        </figure>
+        <h3 class="card__title"><a href="/local">Run it locally <span aria-hidden="true">→</span></a></h3>
+        <p>Everything stays on your machine by default, as plain markdown files you can read. Works offline. One npx command, or let your agent install it.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- 3. How it works -->
+<section class="sec" id="how" aria-labelledby="h-how">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-how">How the distance gets shorter</h2>
+    </header>
+    <ol class="steps">
+      <li class="step">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-correct"/></svg>
+        <span class="num">01</span>
+        <h3>You correct an agent</h3>
+        <p>The correction becomes a rule, with its reason and where it applies. On the hosted server you approve it first.</p>
+      </li>
+      <li class="step">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-load"/></svg>
+        <span class="num">02</span>
+        <h3>Every agent loads it</h3>
+        <p>Each session starts from the same rules and the state of your project, in Claude Code, Codex, Cursor or claude.ai.</p>
+      </li>
+      <li class="step">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-record"/></svg>
+        <span class="num">03</span>
+        <h3>The outcome is recorded</h3>
+        <p>When the situation comes back, the rule is marked heeded or repeated.</p>
+      </li>
+      <li class="step">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-rewrite"/></svg>
+        <span class="num">04</span>
+        <h3>Failing rules get rewritten</h3>
+        <p>A rule that keeps being repeated is rewritten, so the next agent gets a clearer one.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- A. Try one correction -->
+<section class="sec" id="try" aria-labelledby="h-try">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-try">Try one correction</h2>
+      <p class="sub">Pick a situation, then step through what happens. The numbers are illustrative.</p>
+    </header>
+    <div class="try">
+      <fieldset class="tc-fs tc-tabs">
+        <legend class="sr">Situation</legend>
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s1" checked>
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s2">
+        <input class="tc-in" type="radio" name="tc-scn" id="tc-s3">
+        <div class="tc-tabs__in">
+          <label for="tc-s1">Ask before you deploy</label>
+          <label for="tc-s2">Reply in my language</label>
+          <label for="tc-s3">Get to the point</label>
+        </div>
+      </fieldset>
+      <fieldset class="tc-fs tc-stepper">
+        <legend class="sr">Step of the correction</legend>
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p1" checked>
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p2">
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p3">
+        <input class="tc-in" type="radio" name="tc-step" id="tc-p4">
+        <div class="tc-rail">
+          <label for="tc-p1"><span class="tc-n">01</span><span class="tc-t">You ask</span></label>
+          <label for="tc-p2"><span class="tc-n">02</span><span class="tc-t">You correct it</span></label>
+          <label for="tc-p3"><span class="tc-n">03</span><span class="tc-t">Next session, another agent</span></label>
+          <label for="tc-p4"><span class="tc-n">04</span><span class="tc-t">It is measured</span></label>
+        </div>
+      </fieldset>
+      <div class="tc-stage">
+        <div class="tc-body" role="region" aria-label="Walkthrough of the selected correction" aria-live="polite">
+      <div class="tc-scn tc-scn--1">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Fix the typo on the pricing page and ship it.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Claude Code)</p><p class="tc-say">Fixed the typo and deployed to production.</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Never deploy without asking me first.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Ask before any deploy, push or publish.</dd></div>
+            <div><dt>Why</dt><dd>Production is shared; a wrong deploy is hard to undo.</dd></div>
+            <div><dt>Applies</dt><dd>Every project.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Ask before any deploy, push or publish.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Codex, a week later)</p><p class="tc-say">Typo fixed. It is ready to deploy. Shall I?</p></div>
+          <p class="tc-note">Codex started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+      <div class="tc-scn tc-scn--2">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say" lang="zh">帮我看看这个报错是什么意思</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent</p><p class="tc-say">This error means the module could not be found…</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Reply in the language I write in. Code stays in English.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer in the user's language; code and comments in English.</dd></div>
+            <div><dt>Why</dt><dd>Reading a second language costs attention.</dd></div>
+            <div><dt>Applies</dt><dd>All chats.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer in the user's language; code and comments in English.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (Cursor)</p><p class="tc-say"><span lang="zh">这个报错的意思是找不到模块 <code>./utils</code>，路径少了一级。</span></p></div>
+          <p class="tc-note">Cursor started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+      <div class="tc-scn tc-scn--3">
+        <div class="tc-p tc-p--1 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Is this migration safe to run?</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent</p><p class="tc-say">Great question! Database migrations are an important part of…</p></div>
+        </div>
+        <div class="tc-p tc-p--2 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">You</p><p class="tc-say">Lead with the answer. No preamble, no closing summary.</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Rule card</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer first, in one line; details after.</dd></div>
+            <div><dt>Why</dt><dd>You read on a phone between meetings.</dd></div>
+            <div><dt>Applies</dt><dd>All chats.</dd></div>
+          </dl></div>
+          <p class="tc-note">On the hosted server it becomes a rule once you approve it at /review.</p>
+        </div>
+        <div class="tc-p tc-p--3 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Loaded at session start</p>
+          <dl class="tc-card">
+            <div class="tc-rule"><dt>Rule</dt><dd>Answer first, in one line; details after.</dd></div>
+          </dl></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">Agent (claude.ai)</p><p class="tc-say">Yes, it is safe: it only adds a nullable column. Details below.</p></div>
+          <p class="tc-note">claude.ai started from the same rule.</p>
+        </div>
+        <div class="tc-p tc-p--4 tc-chat">
+          <div class="tc-col tc-col--you"><p class="tc-who">Result</p><p class="tc-done"><svg class="tc-tick" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7"/></svg><span>Heeded</span></p><p class="tc-tally">heeded 1 · repeated 0 · example</p></div>
+          <div class="tc-col tc-col--ag"><p class="tc-who">What follows</p><p class="tc-say">The rule held. When a rule keeps being repeated, it gets rewritten.</p></div>
+        </div>
+      </div>
+        </div>
+        <div class="tc-meter">
+          <span class="tc-mlab">Distance</span>
+          <span class="tc-track" aria-hidden="true"><span class="tc-fill"></span></span>
+          <span class="tc-read"><span class="tc-r tc-r--1">d = 1.00</span><span class="tc-r tc-r--2">d = 1.00</span><span class="tc-r tc-r--3">d = 0.72</span><span class="tc-r tc-r--4">d = 0.54</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Measured -->
+<section class="sec" id="measured" aria-labelledby="h-measured">
+  <div class="wrap measured">
+    <figure class="fig measured__fig">
+      {{fig3}}
+      <span class="cap cap--tl" aria-hidden="true">FIG. 3</span>
+      <span class="cap cap--tr" aria-hidden="true">ONE RULE, AS MEASURED</span>
+      <span class="cap cap--bl" aria-hidden="true">EXAMPLE</span>
+      <span class="cap cap--br" aria-hidden="true">session 50</span>
+      <figcaption class="sr">Figure 3. An example rule card after fifty sessions: seven marks for heeded and one for repeated. Labels in the drawing: Rule 07 with its title, why and scope lines, Heeded 7, Repeated 1, and a stamp reading 50 sessions measured.</figcaption>
+    </figure>
+    <div class="measured__text">
+      <h2 id="h-measured">Measured, not assumed.</h2>
+      <p class="lead">Every rule carries its own record: where it came from, where it applies, and what happened each time it mattered. Here is an example rule after fifty sessions.</p>
+      <p class="eyebrow eyebrow--lt">Example rule. Your own rules show their own record.</p>
+      <ul class="stats" aria-label="Example rule record">
+        <li class="stat">
+          <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-heeded"/></svg>
+          <span class="stat__n">7</span>
+          <span class="stat__t">times heeded since it was written</span>
+        </li>
+        <li class="stat">
+          <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-repeated"/></svg>
+          <span class="stat__n">1</span>
+          <span class="stat__t">time repeated, in session 12</span>
+        </li>
+        <li class="stat">
+          <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-agents"/></svg>
+          <span class="stat__n">4</span>
+          <span class="stat__t">agents that loaded it: Claude Code, Codex, Cursor, claude.ai</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- B. Drawers (filled in later) -->
+<section class="sec" id="drawers" aria-labelledby="h-drawers">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-drawers">What every agent starts from</h2>
+      <p class="sub">Open the drawers. Each one is loaded at the start of every session, by every agent you connect, so the next answer starts closer to you.</p>
+    </header>
+    <figure class="fig cab-fig">
+      <div class="cab-stage">
+        {{cabinet}}
+        <div class="cab-col">
+          <p class="cab-read"><span class="cr cr0">drawers open: 0/3 · d = 1.00 (illustrative)</span><span class="cr cr1">drawers open: 1/3 · d = 0.80 (illustrative)</span><span class="cr cr2">drawers open: 2/3 · d = 0.64 (illustrative)</span><span class="cr cr3">drawers open: 3/3 · d = 0.54 (illustrative)</span></p>
+          <div class="dd dd--rules">
+            <p class="dd__tag">Rules</p>
+            <h3 class="dd__t">Your corrections</h3>
+            <p class="dd__d">Every correction you make becomes a rule with its reason and where it applies. On the hosted server you approve it first.</p>
+          </div>
+          <details id="dr-rules" class="drawer drawer--rules">
+            <summary><span class="sr">Rules drawer: your corrections</span>{{drawer-rules}}</summary>
+            <ul class="dex" aria-label="Example rule card">
+              <li class="dex__main">Ask before any deploy, push or publish.</li>
+              <li>why: production is shared</li>
+              <li>applies: every project</li>
+              <li>heeded 7 · repeated 1</li>
+            </ul>
+          </details>
+          <div class="dd dd--you">
+            <p class="dd__tag">You</p>
+            <h3 class="dd__t">Your owner card</h3>
+            <p class="dd__d">Who you are and how you like to work. You write it; agents read it first, in every session, and never change it.</p>
+          </div>
+          <details id="dr-you" class="drawer drawer--you">
+            <summary><span class="sr">You drawer: your owner card</span>{{drawer-you}}</summary>
+            <ul class="dex" aria-label="Example owner card">
+              <li class="dex__main">Replies in the language I write in.</li>
+              <li>Terse; show results, not plans.</li>
+              <li>Always ask before deploy or delete.</li>
+            </ul>
+          </details>
+          <div class="dd dd--project">
+            <p class="dd__tag">Project</p>
+            <h3 class="dd__t">The project state card</h3>
+            <p class="dd__d">Where the work stands: the goal, open decisions, blockers, the next step. Rewritten at the end of every session, loaded at the start of the next.</p>
+          </div>
+          <details id="dr-project" class="drawer drawer--project">
+            <summary><span class="sr">Project drawer: the project state card</span>{{drawer-project}}</summary>
+            <ul class="dex" aria-label="Example project state card">
+              <li class="dex__main">goal: first-run in 5 minutes</li>
+              <li>next: answer /terms</li>
+              <li>blocker: reviewer test account</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+      <span class="cap cap--tl" aria-hidden="true">FIG. 4</span>
+      <span class="cap cap--tr" aria-hidden="true">WHAT EVERY AGENT STARTS FROM</span>
+      <span class="cap cap--bl" aria-hidden="true">OPEN A DRAWER</span>
+      <span class="cap cap--br" aria-hidden="true">numbers are illustrative</span>
+      <figcaption class="sr">Figure 4. A filing cabinet with three drawers: Rules, You and Project. Each drawer opens to a card that every agent loads at the start of a session. Opening more drawers shortens the example distance from 1.00 to 0.54. The numbers are illustrative.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- C. Personal -->
+<section class="sec" id="personal" aria-labelledby="h-personal">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-personal">The same request, closer to you</h2>
+      <p class="sub">One request, answered twice. Flip the switch to see what the agent starts from.</p>
+    </header>
+    <div class="pers">
+      <input class="pr-in" type="checkbox" role="switch" id="pr-on" aria-labelledby="pr-l-on">
+      <div class="pr-side">
+        <label class="pr-sw" for="pr-on">
+          <span class="pr-l pr-l--off">Without AgentRecall</span>
+          <span class="pr-track" aria-hidden="true"><span class="pr-knob"></span></span>
+          <span class="pr-l pr-l--on" id="pr-l-on">With AgentRecall</span>
+        </label>
+        <div class="pr-req">
+          <p class="tc-who">You</p>
+          <p class="pr-ask">Write this week's update for the team.</p>
+        </div>
+      </div>
+      <div class="pr-ans" role="region" aria-label="The answer for the selected switch position" aria-live="polite">
+        <div class="pr-off">
+          <p class="tc-who tc-who--dim">Agent, without AgentRecall</p>
+          <p class="pr-say">Here is a template for a weekly update:</p>
+          <ul class="pr-gen"><li>1. Accomplishments</li><li>2. Challenges</li><li>3. Next steps.</li></ul>
+          <p class="pr-say">Fill in each section with…</p>
+          <p class="pr-note">It does not know you, the project, or how you write.</p>
+        </div>
+        <div class="pr-on">
+          <p class="tc-who">Agent, with AgentRecall</p>
+          <ul class="pr-lines">
+            <li><span class="pr-k">Shipped:</span><span>the new home page and 3.5.3 on npm.</span></li>
+            <li><span class="pr-k">Blocked:</span><span>the reviewer test account.</span></li>
+            <li><span class="pr-k">Next:</span><span>answer the /terms questions.</span></li>
+          </ul>
+          <p class="pr-from">Started from</p>
+          <ul class="pr-chips">
+            <li class="pr-chip pr-chip--g">owner card: terse, results first</li>
+            <li class="pr-chip pr-chip--g">rule: no closing summary</li>
+            <li class="pr-chip pr-chip--c">state card + last session: project agentrecallx</li>
+          </ul>
+        </div>
+        <p class="pr-foot"><span>Example answers and an illustrative d, written to show the difference.</span><span class="pr-d"><span class="pr-d--off">d = 1.00</span><span class="pr-d--on">d = 0.54</span></span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Clients -->
+<section class="sec" id="clients" aria-labelledby="h-clients">
+  <div class="wrap">
+    <header class="sec__head">
+      <h2 id="h-clients">One rule set, every agent</h2>
+      <p class="sub">Connect once per client. Each one starts the session from the same place.</p>
+    </header>
+    <table class="spec" role="table">
+      <thead role="rowgroup">
+        <tr role="row"><th scope="col" role="columnheader">Client</th><th scope="col" role="columnheader">Hosted</th><th scope="col" role="columnheader">Local</th></tr>
+      </thead>
+      <tbody role="rowgroup">
+        <tr role="row">
+          <th scope="row" role="rowheader"><span class="idx" aria-hidden="true">01</span><span>Claude Code</span></th>
+          <td role="cell" data-l="Hosted">One URL, sign in with /mcp</td>
+          <td role="cell" data-l="Local">npx command, optional hooks run the loop for you <span class="badge">Hooks</span></td>
+        </tr>
+        <tr role="row">
+          <th scope="row" role="rowheader"><span class="idx" aria-hidden="true">02</span><span>Codex</span></th>
+          <td role="cell" data-l="Hosted">One URL, then codex mcp login</td>
+          <td role="cell" data-l="Local">npx command</td>
+        </tr>
+        <tr role="row">
+          <th scope="row" role="rowheader"><span class="idx" aria-hidden="true">03</span><span>Cursor</span></th>
+          <td role="cell" data-l="Hosted">One URL in mcp.json</td>
+          <td role="cell" data-l="Local">npx command in mcp.json</td>
+        </tr>
+        <tr role="row">
+          <th scope="row" role="rowheader"><span class="idx" aria-hidden="true">04</span><span>claude.ai</span></th>
+          <td role="cell" data-l="Hosted">Custom connector, one URL (where available)</td>
+          <td role="cell" data-l="Local" class="na">Hosted only</td>
+        </tr>
+        <tr role="row">
+          <th scope="row" role="rowheader"><span class="idx" aria-hidden="true">05</span><span>Any MCP client</span></th>
+          <td role="cell" data-l="Hosted">Streamable HTTP with OAuth</td>
+          <td role="cell" data-l="Local"><code>npx -y agent-recall-mcp</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 6. Stands for -->
+<section class="sec" id="values" aria-labelledby="h-values">
+  <div class="wrap values">
+    <div class="values__l"><span class="sq" aria-hidden="true"></span><h2 id="h-values" class="values__h">What it stands for.</h2></div>
+    <ul class="vlist">
+      <li class="v">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-read"/></svg>
+        <div><h3>You can read it.</h3><p>Rules and project state are plain markdown, on your machine or downloadable from your hosted account at any time.</p></div>
+      </li>
+      <li class="v">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-approve"/></svg>
+        <div><h3>You approve it.</h3><p>On the hosted server, nothing an agent proposes becomes a rule until you approve it.</p></div>
+      </li>
+      <li class="v">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-yours"/></svg>
+        <div><h3>It stays yours.</h3><p>Hosted memory is stored in Frankfurt and private to your account. Local memory stays on your machine by default.</p></div>
+      </li>
+      <li class="v">
+        <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-open"/></svg>
+        <div><h3>It is open source.</h3><p>MIT licensed. Run it yourself, or read every line of what runs here.</p></div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- 7. CTA -->
+<section class="cta" aria-labelledby="h-cta">
+  <div class="wrap cta__in">
+    <div>
+      <h2 id="h-cta">Start with one correction.</h2>
+      <p class="lead">Connect an agent in about a minute, or install it locally. The next time it matters, you will see whether it was heeded.</p>
+      <p class="agentnote">Are you an AI agent? Read <a href="/connect.md">/connect.md</a> or <a href="/local.md">/local.md</a>.</p>
+    </div>
+    <div class="btns">
+      <a class="btn btn--gold" href="/connect">Connect an agent</a>
+      <a class="btn btn--line" href="/local">Run it locally</a>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Film -->
+<section class="film" aria-labelledby="h-film">
+  <div class="wrap film__in">
+    <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-film"/></svg>
+    <div class="film__t">
+      <h2 id="h-film">The film.</h2>
+      <p>Intelligent Distance in five scenes.</p>
+    </div>
+    <a class="btn btn--line" href="/film">Watch the film →</a>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <p>AgentRecall is open source (MIT). Memory you host here is private to your account.</p>
+    {{footer}}
+  </div>
+</footer>
+</body>
+</html>

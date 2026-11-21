@@ -10,7 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const VERSION = "3.5.2";
+export const VERSION = "3.5.3";
 
 // ---------------------------------------------------------------------------
 // Root directory (configurable at runtime for SDK usage)
@@ -64,11 +64,198 @@ export function withRoot<T>(root: string, fn: () => T): T {
   return _rootScope.run(root, fn);
 }
 
+// ---------------------------------------------------------------------------
+// Multi-tenant scope (hosted server). One process serves many users; every
+// request runs inside withTenant(). Inside a tenant scope, everything that is
+// process-global or tied to the server's OS user is switched off or derived
+// from the tenant: storage root, session id, default project, legacy
+// ~/.claude scans, Supabase/cloud-embedding config (process-wide singletons
+// and env overrides that would cross tenants). See
+// docs/superpowers/plans/2026-11-07-hosted-server-target.md.
+// ---------------------------------------------------------------------------
+
+export interface TenantContext {
+  /** Absolute storage root for this tenant (e.g. DATA/tenants/<uid>). */
+  root: string;
+  /** Per-request/MCP-session id: lowercase hex/uuid chars only. */
+  sid: string;
+  /** Project slug used when a tool is called with project "auto". */
+  defaultProject: string;
+  /**
+   * Owner gate. When true, this scope is an AGENT channel: check()'s structured
+   * human_correction is staged for the owner instead of written to the active
+   * ledger, and confirmPendingCorrection() refuses to run. The hosted server
+   * sets it on every MCP request, because whoever holds a tenant's token (or
+   * steers an agent that does) could otherwise plant an always-loaded P0 rule.
+   * The operator CLI runs without it and is the only way to activate.
+   */
+  stageAgentCorrections?: boolean;
+  /**
+   * Where the owner approves staged corrections in a browser (the hosted server's
+   * /review page). Set by the server from its own config, never from a request.
+   * It is shown to agents so they can tell the user where to go.
+   */
+  reviewUrl?: string;
+  /**
+   * Which credential this request authenticated with: the opaque, non-secret id the server
+   * already uses to key agent activity ("grant:<12 hex>" / "token:<12 hex>"), never a token.
+   * Set by the server from the authenticated request, never from tool input. Staged proposals
+   * record it as their author (PendingRecord.authored_by).
+   */
+  credential?: string;
+}
+
+/** The shape of a credential id, as TenantContext.credential and the server's activity keys carry it. */
+export const CREDENTIAL_ID_RE = /^(grant|token):([a-f0-9]{12})$/;
+
+/**
+ * A credential as a staged or active correction stores it (`authored_by`). An object, not the
+ * "token:<id>" string, because the write path scrubs anything that reads like a `token: <value>`
+ * assignment and would blank the id.
+ */
+export interface CredentialRef {
+  type: "grant" | "token";
+  id: string;
+}
+
+/** The stored form of a credential id; undefined when `key` is not one. */
+export function toCredentialRef(key: string | undefined): CredentialRef | undefined {
+  const m = key === undefined ? null : CREDENTIAL_ID_RE.exec(key);
+  return m ? { type: m[1] as CredentialRef["type"], id: m[2] } : undefined;
+}
+
+/** The credential id ("token:<id>") a stored `authored_by` names; undefined unless it is a well-formed ref. */
+export function credentialKeyOf(ref: unknown): string | undefined {
+  if (ref === null || typeof ref !== "object") return undefined;
+  const { type, id } = ref as Record<string, unknown>;
+  const key = `${type}:${id}`;
+  return typeof type === "string" && typeof id === "string" && CREDENTIAL_ID_RE.test(key) ? key : undefined;
+}
+
+const _tenantScope = new AsyncLocalStorage<TenantContext>();
+let _strictTenantMode = false;
+const TENANT_SID_RE = /^[a-f0-9-]{6,64}$/;
+const TENANT_PROJECT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const REVIEW_URL_MAX = 200;
+
+/** A plain http(s) URL, printable ASCII only, no credentials: it is printed inside agent-facing text. */
+function assertReviewUrl(raw: string): string {
+  let u: URL | undefined;
+  try {
+    u = new URL(raw);
+  } catch {
+    u = undefined;
+  }
+  const ok = u !== undefined && (u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password
+    && raw.length <= REVIEW_URL_MAX && /^[\x21-\x7e]+$/.test(raw);
+  if (!ok) throw new Error("withTenant: reviewUrl must be a plain http(s) URL of at most " + REVIEW_URL_MAX + " printable characters");
+  return raw;
+}
+
+/**
+ * Run `fn` as tenant `ctx`. Validates the context: a malformed root/sid/project
+ * is a server bug, so it throws rather than silently falling back.
+ */
+export function withTenant<T>(ctx: TenantContext, fn: () => T): T {
+  if (!path.isAbsolute(ctx.root)) throw new Error("withTenant: root must be absolute");
+  if (!TENANT_SID_RE.test(ctx.sid)) throw new Error("withTenant: sid must match " + TENANT_SID_RE);
+  if (!TENANT_PROJECT_RE.test(ctx.defaultProject)) throw new Error("withTenant: defaultProject must match " + TENANT_PROJECT_RE);
+  // The owner gate never lifts by nesting: a scope opened inside an agent channel is one too.
+  const outer = _tenantScope.getStore();
+  const stage = ctx.stageAgentCorrections === true || outer?.stageAgentCorrections === true;
+  if (ctx.credential !== undefined && !CREDENTIAL_ID_RE.test(ctx.credential)) throw new Error("withTenant: credential must match " + CREDENTIAL_ID_RE);
+  // Like the gate, the review URL is inherited by a nested scope that does not set its own.
+  const reviewUrl = ctx.reviewUrl !== undefined ? assertReviewUrl(ctx.reviewUrl) : outer?.reviewUrl;
+  return _tenantScope.run({
+    ...ctx,
+    root: path.resolve(ctx.root),
+    ...(stage ? { stageAgentCorrections: true } : {}),
+    ...(reviewUrl !== undefined ? { reviewUrl } : {}),
+  }, fn);
+}
+
+/** The page where the owner approves staged corrections, when the server has one (see TenantContext.reviewUrl). */
+export function ownerReviewUrl(): string | undefined {
+  return _tenantScope.getStore()?.reviewUrl;
+}
+
+/** The credential the current agent request authenticated with, when the server said so (see TenantContext.credential). */
+export function requestCredential(): string | undefined {
+  return _tenantScope.getStore()?.credential;
+}
+
+export function getTenantContext(): TenantContext | undefined {
+  return _tenantScope.getStore();
+}
+
+export function isTenantScoped(): boolean {
+  return _tenantScope.getStore() !== undefined;
+}
+
+/** True inside an agent channel whose corrections need the owner's confirmation (see TenantContext). */
+export function agentCorrectionsStaged(): boolean {
+  return _tenantScope.getStore()?.stageAgentCorrections === true;
+}
+
+/**
+ * Hosted server only: from now on, getRoot() outside a tenant scope THROWS
+ * instead of falling back to the server user's default store. Defence in
+ * depth: any code path that loses the tenant context fails loudly instead of
+ * reading/writing another store. Irreversible for the process lifetime.
+ */
+export function enableStrictTenantMode(): void {
+  _strictTenantMode = true;
+}
+
 export function getRoot(): string {
+  const tenant = _tenantScope.getStore();
+  if (tenant) return tenant.root;
+  if (_strictTenantMode) {
+    throw new Error("[agent-recall] getRoot() called outside a tenant scope while strict tenant mode is on");
+  }
   return _rootScope.getStore() ?? _root ?? process.env.AGENT_RECALL_ROOT ?? path.join(os.homedir(), ".agent-recall");
 }
 
+/** Prefix shown to agents in place of the hosted tenant root. */
+export const HOSTED_DISPLAY_ROOT = "hosted:";
+
+/**
+ * A store path as shown to the agent. Locally: the root becomes
+ * "~/.agent-recall" (unchanged behaviour). Inside a tenant: the root becomes
+ * "hosted:" with forward slashes, so responses never reveal the server's
+ * filesystem layout and never point the agent at a local ~/.agent-recall.
+ */
+export function toDisplayPath(p: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant) return p.replace(getRoot(), "~/.agent-recall");
+  if (p !== tenant.root && !p.startsWith(tenant.root + path.sep)) {
+    // Fail closed: an absolute path outside the tenant is server layout, not the agent's business.
+    return path.isAbsolute(p) ? `${HOSTED_DISPLAY_ROOT}<outside-tenant>` : p;
+  }
+  return HOSTED_DISPLAY_ROOT + p.slice(tenant.root.length).replace(/\\/g, "/");
+}
+
+/**
+ * Hosted backstop: replace every occurrence of the tenant root in free text
+ * (tool results, error messages) with "hosted:". Covers the native form, the
+ * forward-slash form and the JSON-escaped form (Windows backslashes doubled).
+ * Identity outside a tenant scope.
+ */
+export function redactTenantPaths(s: string): string {
+  const tenant = _tenantScope.getStore();
+  if (!tenant || !s) return s;
+  const forms = new Set([tenant.root, tenant.root.replace(/\\/g, "/"), tenant.root.replace(/\\/g, "\\\\")]);
+  let out = s;
+  for (const form of [...forms].sort((a, b) => b.length - a.length)) out = out.split(form).join(HOSTED_DISPLAY_ROOT);
+  return out;
+}
+
 export function getLegacyRoot(): string {
+  // Inside a tenant, never scan the server OS user's ~/.claude/projects:
+  // return a tenant-local path that does not exist, so every caller's
+  // existsSync() guard skips the legacy scan.
+  const tenant = _tenantScope.getStore();
+  if (tenant) return path.join(tenant.root, "_legacy-disabled");
   return path.join(os.homedir(), ".claude", "projects");
 }
 

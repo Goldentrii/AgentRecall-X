@@ -32,6 +32,9 @@ import * as path from "node:path";
 // Keyword overlap (exported for use by store.ts dedup check)
 // ---------------------------------------------------------------------------
 
+/** Valid digest ID format: digest-{timestamp}-{8 hex chars}. An id from a stored index is untrusted until it matches. */
+export const DIGEST_ID_PATTERN = /^digest-\d+-[a-f0-9]{8}$/;
+
 /**
  * Compute keyword overlap ratio between two keyword sets.
  * Returns 0..1 where 1 = perfect overlap.
@@ -122,6 +125,8 @@ function scoreEntries(
   out: MatchedDigest[]
 ): void {
   for (const entry of entries) {
+    // The index is a file: an id that is not a digest id would be joined into a path below.
+    if (typeof entry.id !== "string" || !DIGEST_ID_PATTERN.test(entry.id)) continue;
     if (entry.stale && !includeStale) continue;
 
     // Keyword overlap with title+keywords

@@ -1,0 +1,28 @@
+{
+  "name": "agent-recall-tray",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentRecall Windows tray app (Tauri v2)",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "type": "module",
+  "scripts": {
+    "build:ui": "tsc --noEmit && node scripts/build-ui.mjs",
+    "dev": "tauri dev",
+    "tauri": "tauri",
+    "build": "tauri build --no-bundle",
+    "build:bundle": "tauri build",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "e2e": "node e2e/chain.mjs",
+    "check:release": "node e2e/check-release.mjs release/agent-recall-tray.exe",
+    "test:ui": "node --test test/view.test.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/cli": "^2",
+    "esbuild": "^0.25.0",
+    "playwright-core": "^1.65.1",
+    "typescript": "^5.6.0"
+  }
+}

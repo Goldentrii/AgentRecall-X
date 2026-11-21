@@ -92,7 +92,8 @@ describe("ensureStoreManifest (store-root self-description)", () => {
       body.includes(`agent-recall-core@${VERSION}`),
       "generated_by stamp must match types.ts VERSION"
     );
-    assert.match(body, /manifest_version:\s*1/);
+    // 3.5.4 (P0-2): v2 lists the lesson files as primary data.
+    assert.match(body, /manifest_version:\s*2/);
   });
 
   it("never embeds '~' or the machine's absolute home directory", async () => {

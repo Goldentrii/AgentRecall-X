@@ -15,7 +15,22 @@ export {
   resetRoot,
   getRoot,
   getLegacyRoot,
+  withTenant,
+  getTenantContext,
+  isTenantScoped,
+  agentCorrectionsStaged,
+  ownerReviewUrl,
+  requestCredential,
+  CREDENTIAL_ID_RE,
+  toCredentialRef,
+  credentialKeyOf,
+  type CredentialRef,
+  enableStrictTenantMode,
+  toDisplayPath,
+  redactTenantPaths,
+  HOSTED_DISPLAY_ROOT,
 } from "./types.js";
+export type { TenantContext } from "./types.js";
 export type {
   JournalEntry,
   ProjectInfo,
@@ -82,6 +97,8 @@ export type {
   CompoundInsight,
   AwarenessState,
   CrystallizationCandidate,
+  AddInsightOutcome,
+  LessonRef,
 } from "./palace/awareness.js";
 
 // Palace — decay pass (Wave 3 compression tier)
@@ -129,6 +146,7 @@ export {
 export type {
   IndexedInsight,
   InsightsIndex,
+  AddIndexedInsightOptions,
 } from "./palace/insights-index.js";
 
 // Palace — identity
@@ -176,7 +194,7 @@ export type { Tier } from "./storage/classification.js";
 // project-path builder (case-fold reuse + path-escape guard + staging-sentinel
 // routing) instead of hand-rolling the literal join.
 export { journalDir, journalDirs, palaceDir, roomDir, sanitizeSlug, sanitizeProject, archiveRawDir, pickProjectDirEntry, projectSubPath } from "./storage/paths.js";
-export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic } from "./storage/fs-utils.js";
+export { ensureDir, todayISO, readJsonSafe, writeJsonAtomic, decodeTextFile, readTextFileTolerant } from "./storage/fs-utils.js";
 
 // Storage — _unclaimed staging namespace (fix5, 2026-09-11): failed/zero-
 // confidence resolutions stage here instead of materializing projects/ dirs.
@@ -210,7 +228,14 @@ export type { PruneRawArchiveOptions, PruneRawArchiveResult } from "./storage/ar
 export { enqueueConsolidation, drainConsolidationQueue } from "./storage/consolidation-queue.js";
 export type { ConsolidationJob, DrainReport } from "./storage/consolidation-queue.js";
 export { writeMemoryProtocol } from "./storage/memory-protocol.js";
-export { ensureStoreManifest } from "./storage/store-manifest.js";
+export {
+  ensureStoreManifest,
+  inspectStoreManifest,
+  upgradeStoreManifest,
+  MANIFEST_VERSION,
+  MANIFEST_LESSON_FILES,
+} from "./storage/store-manifest.js";
+export type { ManifestState, ManifestInspection, ManifestUpgradeOutcome } from "./storage/store-manifest.js";
 export { detectProject, resolveProject, listAllProjects, isValidProjectSlug } from "./storage/project.js";
 export { readCwdAllowlist, addCwdToAllowlist, findProjectByCwd } from "./storage/cwd-allowlist.js";
 export type { CwdAllowlist } from "./storage/cwd-allowlist.js";
@@ -268,6 +293,8 @@ export {
 } from "./storage/session.js";
 // C2 — zero-cloud lifecycle telemetry (counters only, no transcript content).
 export { recordLifecycleEvent, lifecycleStats } from "./storage/lifecycle-telemetry.js";
+export { bookkeep, inReadScope, withDeferredBookkeeping, flushBookkeeping, flushAllBookkeeping, bookkeepingStats } from "./storage/deferred-bookkeeping.js";
+export type { BookkeepingOp, FlushResult } from "./storage/deferred-bookkeeping.js";
 export type { LifecycleEvent, LifecycleTelemetryRow, LifecycleStats } from "./storage/lifecycle-telemetry.js";
 // fix9 (2026-09-12): acquireLockSync/withLockSync retired — the async
 // primitive is the only locking surface (see filelock.ts header).
@@ -286,6 +313,11 @@ export {
   readCorrections,
   readActiveCorrections,
   readP0Corrections,
+  fullRuleOf,
+  boundRule,
+  displayRule,
+  WHY_SEPARATOR,
+  RULE_RENDER_MAX,
   retractCorrection,
   isLikelyRealCorrection,
   dropHardNoise,
@@ -326,6 +358,7 @@ export {
   validateStructuredCorrection,
   validateInsightCompleteness,
   isRealAppliesWhenToken,
+  proposalDigest,
 } from "./storage/pending.js";
 export type {
   PendingRecord,
@@ -475,6 +508,7 @@ export {
   type RepairSnapshot,
   type RepairStepProjects,
   type RepairStepLocks,
+  type RepairStepManifest,
 } from "./tools-logic/store-repair.js";
 // hygiene — DETECTION-ONLY store trash audit (sibling to store-doctor above,
 // different axis: junk/trash rather than structural integrity). CLI/core
@@ -493,7 +527,17 @@ export {
   type HygieneGrade,
 } from "./storage/hygiene.js";
 export { palaceSearch, type PalaceSearchInput, type PalaceSearchResult } from "./tools-logic/palace-search.js";
-export { awarenessUpdate, type AwarenessUpdateInput, type AwarenessUpdateResult } from "./tools-logic/awareness-update.js";
+export {
+  awarenessUpdate,
+  buildLessonSaveReport,
+  formatLessonWarnings,
+  LessonSaveError,
+  type AwarenessUpdateInput,
+  type AwarenessUpdateResult,
+  type LessonSaveReport,
+  type ProcessedInsight,
+  type EvictedLesson,
+} from "./tools-logic/awareness-update.js";
 export { recallInsight, type RecallInsightInput, type RecallInsightResult } from "./tools-logic/recall-insight.js";
 
 // Tool logic — journal merge
@@ -537,6 +581,7 @@ export {
   PROMOTION_CONFIRMATION_THRESHOLD,
   type PromotionResult,
 } from "./tools-logic/insight-promotion.js";
+export { confirmPendingCorrection, readStagedProposal, cleanProposalText, PROPOSAL_RULE_MAX, RULE_STORE_MAX, PROPOSAL_WHY_MAX, PROPOSAL_WHEN_MAX_ITEMS, PROPOSAL_WHEN_ITEM_MAX, type ConfirmPendingResult, type StagedProposal } from "./tools-logic/check.js";
 export { check, type CheckInput, type CheckResult, type WatchFor, type PastDelta, type HumanCorrectionStructured } from "./tools-logic/check.js";
 // Tool logic — cross-surface adapter (P4): bootstrap exports
 // brief, memoryQuery, projectStatus removed 2026-07-05 (owner-approved P3b purity deletions)

@@ -377,7 +377,7 @@ describe("session_start injection efficacy", () => {
   it("dense P0s overflow the corrections budget: all kept, zero P1s, cap exceeded", async () => {
     const proj = "test-p0-overflow";
 
-    // 6 dense P0s: rule ~170 raw chars (trims to ≤120), context ~430 raw chars
+    // 6 dense P0s: rule ~170 raw chars (shown whole since 3.5.4), context ~430 raw chars
     // (trims to ≤250). Each trimmed item serializes to ~450 JSON chars, so the
     // six P0s alone (~2700) far exceed corrections_total (1200).
     for (let i = 0; i < 6; i++) {

@@ -1,7 +1,7 @@
 {
   "name": "agent-recall-cli",
-  "version": "3.5.2",
-  "description": "CLI for AgentRecall memory system",
+  "version": "3.5.3",
+  "description": "AgentRecall CLI: corrections, rules and session context shared by all your agents",
   "type": "module",
   "bin": {
     "ar": "dist/index.js"
@@ -30,7 +30,7 @@
     "compounding-memory"
   ],
   "dependencies": {
-    "agent-recall-core": "3.5.2"
+    "agent-recall-core": "3.5.3"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

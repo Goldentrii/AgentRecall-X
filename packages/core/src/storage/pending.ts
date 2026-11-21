@@ -14,6 +14,8 @@
  * validation — stages HERE instead of the active corrections ledger. The
  * active ledger is reachable ONLY through check()'s validated STRUCTURED
  * form {rule, why, applies_when} (or an explicit promote of a staged item).
+ * Behind the owner gate (hosted server) that form is staged here too, as
+ * `check_structured_unconfirmed`, and only confirmPendingCorrection activates.
  *
  * INVARIANTS
  *  - Nothing is silently dropped: a capture either becomes a *.json row here
@@ -43,6 +45,7 @@ import * as crypto from "node:crypto";
 import { ensureDir } from "./fs-utils.js";
 import { byteCap, sanitizeName } from "./sanitize.js";
 import { projectSubPath } from "./paths.js";
+import { toCredentialRef, credentialKeyOf, type CredentialRef } from "../types.js";
 import { withLock } from "./filelock.js";
 import { scrubForCloud } from "./content-guard.js";
 import {
@@ -78,6 +81,7 @@ export type PendingKind = "correction" | "insight";
 export type PendingChannel =
   | "check_string"               // check() legacy string human_correction
   | "check_structured_incomplete" // structured form that failed completeness
+  | "check_structured_unconfirmed" // COMPLETE structured form from an agent channel, awaiting the owner (owner gate)
   | "hook"                        // CLI hook-correction channel
   | "session_end_insight";        // session_end insight that failed completeness
 
@@ -94,6 +98,14 @@ export interface PendingRecord {
   severity: "p0" | "p1"; // stamped with the same classifier a direct capture gets
   applies_when?: string[];
   reason: string;      // why this is pending, not active
+  /** Owner gate rows only: proposalDigest(context, applies_when), fixed for the life of the row. */
+  digest?: string;
+  /**
+   * Hosted server: the credential (an opaque id, never a token) of the agent that first
+   * proposed this row. Carried onto the active correction when the owner approves it. Absent on
+   * rows from before the field existed and on rows not written by a hosted agent request.
+   */
+  authored_by?: CredentialRef;
   provenance: { source: string; mode: "told" | "observed" };
 }
 
@@ -104,11 +116,17 @@ export interface StagePendingInput {
   text: string;
   /** Explicit title/rule (insights pass their title). */
   rule?: string;
+  /** Keep `rule` whole instead of cutting it to 100 characters (owner-gate proposals, already length-capped). */
+  keepWholeRule?: boolean;
   applies_when?: string[];
   /** Why this capture is pending (validation failures, "string form", ...). */
   reason: string;
   /** Provenance source — session id / hook name. Defaults to the channel. */
   source?: string;
+  /** Severity decided by the caller; default classifies rule + text. */
+  severity?: "p0" | "p1";
+  /** Credential id ("token:<id>") of the proposing agent (see PendingRecord.authored_by). A malformed value is dropped. */
+  authoredBy?: string;
 }
 
 export interface StagePendingResult {
@@ -181,13 +199,14 @@ function logPendingRejection(
 // Read / prune
 // ---------------------------------------------------------------------------
 
-function readPendingRaw(project: string): Array<{ file: string; record: PendingRecord }> {
+function readPendingRaw(project: string, strict = false): Array<{ file: string; record: PendingRecord }> {
   const dir = pendingDir(project);
   if (!fs.existsSync(dir)) return [];
   let files: string[];
   try {
     files = fs.readdirSync(dir);
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return [];
   }
   const out: Array<{ file: string; record: PendingRecord }> = [];
@@ -256,17 +275,21 @@ function prunePending(project: string, nowMs: number = Date.now()): void {
 
 /**
  * List staged rows, newest (last_seen) first. Runs the TTL/cap sweep first so
- * a reader never sees an expired row. Never throws.
+ * a reader never sees an expired row. Never throws, unless `strict`: then a lock
+ * or directory read failure is thrown instead of looking like an empty queue
+ * (the owner's review page must not say "nothing waiting" when it could not look).
  */
-export async function listPendingCorrections(project: string): Promise<PendingRecord[]> {
+export async function listPendingCorrections(project: string, opts: { strict?: boolean } = {}): Promise<PendingRecord[]> {
+  const run = () => withLock(`pending-${project}`, () => {
+    prunePending(project);
+    return readPendingRaw(project, opts.strict === true)
+      .map((e) => e.record)
+      .sort((a, b) =>
+        new Date(b.last_seen ?? b.ts).getTime() - new Date(a.last_seen ?? a.ts).getTime());
+  });
+  if (opts.strict === true) return run();
   try {
-    return await withLock(`pending-${project}`, () => {
-      prunePending(project);
-      return readPendingRaw(project)
-        .map((e) => e.record)
-        .sort((a, b) =>
-          new Date(b.last_seen ?? b.ts).getTime() - new Date(a.last_seen ?? a.ts).getTime());
-    });
+    return await run();
   } catch {
     return [];
   }
@@ -276,11 +299,42 @@ export async function listPendingCorrections(project: string): Promise<PendingRe
 // Stage
 // ---------------------------------------------------------------------------
 
-function pendingId(date: string, scrubbedRule: string, identity: string): string {
-  const slug = byteCap(sanitizeName(stripInterjections(scrubbedRule) || scrubbedRule || "pending", 32), 32)
+/** Hex length of proposalDigest: 128 bits, so finding other content for a GIVEN digest is not feasible. */
+export const PROPOSAL_DIGEST_HEX = 32;
+
+/**
+ * Owner gate — digest of exactly what approving a staged proposal activates:
+ * the stored context (rule + why) and applies_when. It is stored on the row
+ * AND is the tail of the row's id (proposalIdMatchesDigest), so the id the
+ * owner approves names that content and nothing else.
+ */
+export function proposalDigest(context: string, appliesWhen: string[] | undefined): string {
+  return crypto.createHash("sha256").update(JSON.stringify([context, appliesWhen ?? []])).digest("hex").slice(0, PROPOSAL_DIGEST_HEX);
+}
+
+/** True when `id` is an owner-gate proposal id carrying exactly `digest`. */
+export function proposalIdMatchesDigest(id: string, digest: string): boolean {
+  return digest.length === PROPOSAL_DIGEST_HEX && id.endsWith(`-${digest}`);
+}
+
+function pendingSlug(scrubbedRule: string): string {
+  return byteCap(sanitizeName(stripInterjections(scrubbedRule) || scrubbedRule || "pending", 32), 32)
     .replace(/-+$/g, "") || "pending";
+}
+
+function pendingId(date: string, scrubbedRule: string, identity: string): string {
   const hash = crypto.createHash("sha256").update(identity || scrubbedRule).digest("hex").slice(0, 6);
-  return `${date}--${slug}-${hash}`;
+  return `${date}--${pendingSlug(scrubbedRule)}-${hash}`;
+}
+
+/**
+ * Owner gate — id of a complete proposal: it ends in the FULL content digest.
+ * (pendingId's 6-hex tail is only 24 bits: with the rule text fixed, a why
+ * that collides with a row the owner already saw takes seconds to find, and
+ * the write would have replaced that row under the id the owner approves.)
+ */
+function proposalId(date: string, scrubbedRule: string, digest: string): string {
+  return `${date}--${pendingSlug(scrubbedRule)}-${digest}`;
 }
 
 /**
@@ -292,7 +346,9 @@ function pendingId(date: string, scrubbedRule: string, identity: string): string
  */
 export async function stagePendingCorrection(project: string, input: StagePendingInput): Promise<StagePendingResult> {
   const contextRaw = (input.text ?? "").trim();
-  const ruleRaw = (input.rule ?? (splitSentences(contextRaw)[0] ?? contextRaw)).slice(0, 100).trim();
+  const ruleRaw = input.keepWholeRule && input.rule !== undefined
+    ? input.rule.trim()
+    : (input.rule ?? (splitSentences(contextRaw)[0] ?? contextRaw)).slice(0, 100).trim();
 
   const rule = scrubForCloud(ruleRaw);
   const context = scrubForCloud(contextRaw);
@@ -317,11 +373,33 @@ export async function stagePendingCorrection(project: string, input: StagePendin
       // rows. Review fix (2026-09-11, HIGH-2 guard): an EMPTY identity (rule
       // made entirely of stripped symbols) must never match anything — without
       // this, distinct symbol-only captures would fold into one row.
+      //
+      // Owner gate: a `check_structured_unconfirmed` row is a proposal the
+      // owner approves BY ID, so its content must never change under that id.
+      // Such a row is keyed by a digest of exactly what would be activated
+      // (context + applies_when): an identical re-submission bumps seen_count,
+      // anything else — even one flipped symbol that distills to the same
+      // identity ("coverage < 80%" vs "> 80%") — becomes its OWN row with its
+      // own id. A complete proposal retires earlier PARTIAL captures of the same
+      // rule (string form, hook) instead of rewriting them in place.
+      const complete = input.channel === "check_structured_unconfirmed";
+      const appliesWhen = input.applies_when && input.applies_when.length > 0
+        ? input.applies_when.map((t) => scrubForCloud(t))
+        : undefined;
+      const digest = complete ? proposalDigest(context, appliesWhen) : undefined;
+      const retire: Array<{ file: string; record: PendingRecord }> = [];
       for (const entry of identity ? readPendingRaw(project) : []) {
         if (entry.record.kind !== input.kind) continue;
         if (distillRuleIdentity(entry.record.rule) !== identity) continue;
+        const entryComplete = entry.record.channel === "check_structured_unconfirmed";
+        if (complete && entryComplete && entry.record.digest !== digest) continue; // different content: separate row
+        if (complete && !entryComplete) { retire.push(entry); continue; }
+        // Two credentials proposing the same rule: neither is its single author any more.
+        const { authored_by: first, ...rest } = entry.record;
+        const sameAuthor = credentialKeyOf(first) === credentialKeyOf(toCredentialRef(input.authoredBy));
         const merged: PendingRecord = {
-          ...entry.record,
+          ...rest,
+          ...(first && sameAuthor ? { authored_by: first } : {}),
           seen_count: (entry.record.seen_count ?? 1) + 1,
           last_seen: nowISO,
         };
@@ -329,8 +407,28 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         return { staged: true, merged: true, id: merged.id };
       }
 
+      // NEVER overwrite a staged row. Reaching an occupied id here means the
+      // dedupe loop above did not claim it, i.e. the file holds DIFFERENT
+      // content under the id this capture maps to.
+      //  - complete proposal: the id carries the full digest, so this is a
+      //    digest collision or a file planted/edited on disk. Refuse; the row
+      //    the owner may already have read stays exactly as it is.
+      //  - partial capture: a 24-bit hash clash between unrelated captures.
+      //    Take the next free suffix; both rows are kept.
+      let id = complete ? proposalId(date, rule, digest!) : pendingId(date, rule, identity);
+      if (fs.existsSync(path.join(dir, `${id}.json`))) {
+        if (complete) {
+          const reason = `staging refused: id ${id} is already taken by different content`;
+          logPendingRejection(project, { id, rule, reason, channel: input.channel });
+          return { staged: false, reason };
+        }
+        let n = 2;
+        while (fs.existsSync(path.join(dir, `${id}-${n}.json`))) n++;
+        id = `${id}-${n}`;
+      }
+
       const record: PendingRecord = {
-        id: pendingId(date, rule, identity),
+        id,
         ts: nowISO,
         last_seen: nowISO,
         seen_count: 1,
@@ -340,16 +438,30 @@ export async function stagePendingCorrection(project: string, input: StagePendin
         rule,
         context,
         // Same severity classifier a direct capture would get (S-M1 twin:
-        // the classifier sees ONLY what the caller scoped into `text`).
-        severity: detectSeverity(`${ruleRaw} ${contextRaw}`),
-        ...(input.applies_when && input.applies_when.length > 0
-          ? { applies_when: input.applies_when.map((t) => scrubForCloud(t)) }
-          : {}),
+        // the classifier sees ONLY what the caller scoped into `text`). A
+        // caller that knows better (the owner gate classifies the full rule,
+        // never the why) passes `severity`.
+        severity: input.severity ?? detectSeverity(`${ruleRaw} ${contextRaw}`),
+        ...(appliesWhen ? { applies_when: appliesWhen } : {}),
+        ...(digest ? { digest } : {}),
+        ...(toCredentialRef(input.authoredBy) ? { authored_by: toCredentialRef(input.authoredBy) } : {}),
         reason: input.reason,
         provenance: { source: input.source ?? input.channel, mode: "told" },
       };
 
       writeRecordAtomic(path.join(dir, `${record.id}.json`), record);
+      for (const old of retire) {
+        if (old.record.id === record.id) continue;
+        try {
+          fs.unlinkSync(path.join(dir, old.file));
+          logPendingRejection(project, {
+            id: old.record.id,
+            rule: old.record.rule,
+            reason: `superseded by complete proposal ${record.id}`,
+            channel: old.record.channel,
+          });
+        } catch { /* best effort: a leftover partial row is harmless */ }
+      }
       prunePending(project);
       return { staged: true, merged: false, id: record.id };
     });
@@ -371,12 +483,17 @@ export async function stagePendingCorrection(project: string, input: StagePendin
  * promotion audit line (the ACTIVE write itself is the caller's job — check()
  * runs the validated structured write first, then resolves). "reject" removes
  * the row and appends it to _rejected.jsonl with the reviewer's reason.
+ *
+ * `detail.refuse` runs under the lock on the row about to be resolved; a
+ * returned string leaves the row untouched and becomes the error. The owner
+ * gate uses it so an agent channel can only discard partial captures, never a
+ * proposal that is waiting for the owner.
  */
 export async function resolvePendingCorrection(
   project: string,
   id: string,
   action: "promote" | "reject",
-  detail?: { reason?: string; correction_id?: string },
+  detail?: { reason?: string; correction_id?: string; refuse?: (row: PendingRecord) => string | undefined },
 ): Promise<ResolvePendingResult> {
   try {
     return await withLock(`pending-${project}`, (): ResolvePendingResult => {
@@ -385,6 +502,8 @@ export async function resolvePendingCorrection(
       if (!entry) {
         return { success: false, error: `pending correction not found: ${id}` };
       }
+      const refused = detail?.refuse?.(entry.record);
+      if (refused) return { success: false, error: refused };
       try {
         fs.unlinkSync(path.join(dir, entry.file));
       } catch (err) {

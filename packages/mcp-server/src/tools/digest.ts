@@ -1,10 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { digestStore, digestRecall, digestRead, markStale, resolveProject, fenceMemory } from "agent-recall-core";
+import { OVERWRITE } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool("digest", {
     title: "Digest",
+    annotations: OVERWRITE,
     description:
       "Context cache — store or recall pre-computed analysis results. " +
       "Use 'store' after expensive operations (subagent explorations, code analysis) to cache the result. " +

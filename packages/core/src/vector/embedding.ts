@@ -30,6 +30,8 @@
  * are reachable only via an explicitly configured embedding_api_key.
  */
 
+import { isTenantScoped } from "../types.js";
+
 /** Timeout in ms for the embedding fetch. Not a user-facing env flag — internal seam only. */
 const EMBED_TIMEOUT_MS = parseInt(process.env.AGENT_RECALL_EMBED_TIMEOUT_MS ?? "2000", 10);
 
@@ -40,6 +42,7 @@ const EMBED_TIMEOUT_MS = parseInt(process.env.AGENT_RECALL_EMBED_TIMEOUT_MS ?? "
  * this (embed() below checks it itself, as the egress chokepoint).
  */
 export function cloudEmbeddingsEnabled(): boolean {
+  if (isTenantScoped()) return false; // hosted: never embed tenant text on the operator's ambient key
   const flag = process.env.AGENT_RECALL_CLOUD_EMBEDDINGS;
   if (flag !== "1" && flag !== "true") return false;
   return !!process.env.OPENAI_API_KEY;

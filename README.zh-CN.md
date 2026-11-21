@@ -1,10 +1,24 @@
 [English](README.md) · **中文**
 
+> [!NOTE]
+> **AgentRecall 不是记忆仓库。** 人靠直觉和零散片段思考，agent 靠 token 和字面指令工作，两者之间的鸿沟是结构性的，我们称之为**智能间距（Intelligent Distance）**。AgentRecall 让它可见（动手前先对齐理解）、可测量（每条被记录的纠正都是一次读数，同样的情境再出现时记录为被遵守 heeded 还是再次出现 recurred；这套测量还很年轻，样本很小）、可缩短（对一个 agent 的纠正，所有已连接的 agent 在下次会话开始时都会加载；托管版需要你先批准）。详见 [Intelligent Distance Protocol](docs/intelligent-distance-protocol.md)。
+>
+> **新：托管版已上线。** 用 GitHub 登录 `https://agentrecallx.com/mcp`，一个 URL 连接任何 MCP agent（Claude Code、Codex、Cursor、claude.ai），所有 agent 共享同一份记忆。接入命令见英文版 [Hosted: connect your agent](README.md#hosted-connect-your-agent)。本中文页仍是本地安装版的说明，正在更新中。
+
 <h1 align="center">AgentRecall</h1>
 
 <p align="center"><strong>纠正你的 agent 一次，下个会话它仍然记得——而且我们会测量它是否真的不再犯。</strong></p>
 
 <p align="center">为 AI agent 打造的本地优先记忆，围绕纠正账本与可审计的数学构建。MCP · SDK · CLI · Skill。</p>
+
+<p align="center">
+  <a href="https://agentrecallx.com"><img src="assets/readme/site-home.jpg" alt="AgentRecall 首页 agentrecallx.com：金色的树与青色的塔，标题 Two kinds of intelligence，以及 Connect an agent 和 Run it locally 两个按钮。" width="100%"></a>
+</p>
+
+<p align="center">
+  <strong>马上试用：<a href="https://agentrecallx.com">agentrecallx.com</a></strong> 一个 URL 连接任何 MCP agent，用 GitHub 登录，免费。<br>
+  给 agent：连接说明见 <a href="https://agentrecallx.com/connect.md">https://agentrecallx.com/connect.md</a>。
+</p>
 
 <p align="center">
   <a href="https://t.me/+ywZwoHrg3AM0NDVi"><img src="https://img.shields.io/badge/Telegram-Community-2CA5E0?style=flat-square&logo=telegram" alt="Telegram Community"></a>

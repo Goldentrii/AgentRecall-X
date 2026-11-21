@@ -24,14 +24,13 @@ import {
   MAX_DIGESTS_PER_PROJECT,
   REFRESH_OVERLAP_THRESHOLD,
 } from "./types.js";
-import { keywordOverlap } from "./match.js";
+import { keywordOverlap, DIGEST_ID_PATTERN } from "./match.js";
 
 // ---------------------------------------------------------------------------
 // Index helpers
 // ---------------------------------------------------------------------------
 
-/** Valid digest ID format: digest-{timestamp}-{8 hex chars} */
-const ID_PATTERN = /^digest-\d+-[a-f0-9]{8}$/;
+const ID_PATTERN = DIGEST_ID_PATTERN;
 
 function indexPath(dir: string): string {
   return path.join(dir, "index.json");

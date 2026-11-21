@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AgentRecall Tray",
+  "version": "0.1.0",
+  "identifier": "com.agentrecall.tray",
+  "build": {
+    "beforeBuildCommand": "npm run build:ui",
+    "beforeDevCommand": "npm run build:ui",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "AgentRecall",
+        "width": 380,
+        "height": 560,
+        "resizable": false,
+        "maximizable": false,
+        "center": true,
+        "theme": "Dark",
+        "backgroundColor": "#04060a",
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+  }
+}

@@ -13,8 +13,9 @@
 import { resolveProject, isValidProjectSlug } from "../storage/project.js";
 import { resetOwnedFiles, getSessionId, claimSessionStartOnce } from "../storage/session.js";
 import { recordLifecycleEvent } from "../storage/lifecycle-telemetry.js";
-import { ensurePalaceInitialized, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
-import { DEFAULT_PALACE_ROOMS, getRoot } from "../types.js";
+import { bookkeep } from "../storage/deferred-bookkeeping.js";
+import { ensurePalaceInitializedForRead, listRooms, isRoomStale, countRoomEntries } from "../palace/rooms.js";
+import { DEFAULT_PALACE_ROOMS, getRoot, isTenantScoped } from "../types.js";
 import { readIdentity } from "../palace/identity.js";
 import { readIdentityCard } from "../storage/identity-card.js";
 import { readStateCard, stateCardHasContent, type StateCard } from "../storage/state-card.js";
@@ -24,7 +25,7 @@ import { journalDirs, projectSubPath } from "../storage/paths.js";
 import { extractSection } from "../helpers/sections.js";
 import { todayISO, truncateUtf8Bytes } from "../storage/fs-utils.js";
 import { readAlignmentLog, extractWatchPatterns, computeDecisionCalibration, type WatchForPattern } from "../helpers/alignment-patterns.js";
-import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, type CorrectionRecord } from "../storage/corrections.js";
+import { readCorrections, readActiveCorrections, readP0Corrections, recordOutcome, getCorrectionKPIs, rankCorrections, fullRuleOf, displayRule, type CorrectionRecord } from "../storage/corrections.js";
 import { activationEnabled, activationTieBreak, loadAssocGraph, todayDayString } from "../retrieval/activation.js";
 // Evolution p4 (2026-09-17) — soft-constraint ladder render tag. `tierOf` is
 // recomputed FRESH here (never reads CorrectionRecord.tier — that field is a
@@ -153,17 +154,20 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
   const slim: SlimCorrection = {
     id: c.id,
     severity: c.severity,
-    rule: c.rule,
+    // 3.5.4: the whole rule (derived from context for rules 3.5.3 stored cut), bounded with a visible "…".
+    rule: displayRule(c),
     // Evolution p4 — additive presentation tag; see this file's import
     // comment on `tierOf` for why it is recomputed rather than read off
     // `c.tier`. Never fed back into ranking/budget — see applyCorrectionBudget,
     // which only ever reads `severity`/`rule`/`context` from this shape.
     tier: tierOf(c, asOfDay),
   };
-  const ctx = (c.context ?? "").trim();
-  const rule = (c.rule ?? "").trim();
+  const rule = fullRuleOf(c);
+  let ctx = (c.context ?? "").trim();
+  // The rule is already in `rule` (whole since 3.5.4): keep only what context adds.
+  if (rule && ctx.startsWith(rule)) ctx = ctx.slice(rule.length).trim();
   // Include context only when it adds ≥20 chars of additional content.
-  if (ctx && ctx !== rule && ctx.length > rule.length + 20) {
+  if (ctx && ctx !== rule && ctx.length >= 20) {
     slim.context = sliceAtWord(ctx, 300);
   }
   return slim;
@@ -175,7 +179,7 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
  * BUDGET BASIS: the `*_total` budgets are measured against the JSON-SERIALIZED
  * length of each item (`JSON.stringify(item).length` summed per section), NOT
  * raw field chars — so keys, quotes, and escapes count against the budget.
- * Per-field limits (`correction_rule`, `insights_title`, …) ARE raw char caps
+ * Per-field limits (`correction_context`, `insights_title`, …) ARE raw char caps
  * applied to the field text before serialization.
  *
  * Token estimate: chars / 4 (conservative; real tokenizer would give ~same for English prose).
@@ -197,7 +201,7 @@ function toSlimCorrection(c: CorrectionRecord, asOfDay: string): SlimCorrection 
  * Total: ~6000 serialized chars → ~1500 tokens (target: ≤1500 tokens median).
  */
 const SECTION_CHAR_LIMITS = {
-  correction_rule: 120,      // per item rule field (raw chars)
+  // correction_rule: removed in 3.5.4 — rules are shown whole (bounded by RULE_RENDER_MAX in toSlimCorrection).
   correction_context: 250,   // per item context field (raw chars, only when included)
   corrections_total: 1200,   // total serialized corrections budget (JSON chars)
   insights_title: 180,       // per insight title (raw chars)
@@ -228,7 +232,6 @@ function applyCorrectionBudget(corrections: SlimCorrection[]): SlimCorrection[] 
 
   const trimmedP0s: SlimCorrection[] = p0s.map(c => ({
     ...c,
-    rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
     context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
   }));
 
@@ -242,7 +245,6 @@ function applyCorrectionBudget(corrections: SlimCorrection[]): SlimCorrection[] 
   for (const c of p1s) {
     const trimmed: SlimCorrection = {
       ...c,
-      rule: sliceAtWord(c.rule, SECTION_CHAR_LIMITS.correction_rule),
       context: c.context ? sliceAtWord(c.context, SECTION_CHAR_LIMITS.correction_context) : undefined,
     };
     const itemSize = JSON.stringify(trimmed).length;
@@ -535,7 +537,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // not scaffold a palace anywhere, and everything below degrades to empty
   // reads for the sentinel. Call left unconditional so the gate lives in ONE
   // place (the function itself), not per-caller.
-  ensurePalaceInitialized(slug);
+  ensurePalaceInitializedForRead(slug); // a read of a project with no palace yet does not create one
 
   // C2 (2026-07-26) — idempotency: getSessionId() is process-scoped, a
   // workable identity for one MCP-server lifetime. claimSessionStartOnce
@@ -764,8 +766,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // accepted as an acceptable synchronous cost at session_start/hook-start
   // frequency (not the ambient-capture hot path) — only its POSITION within
   // sessionStart() changed, not its cost or its failure semantics.
+  // Deferred inside a read (it writes journal entries and the recency ledger): a crashed session is recovered by
+  // the next flush, so only the same call's full-mode continuity no longer shows it.
   try {
-    rescueOrphanedWorkingMemory();
+    void bookkeep({ key: "wm-rescue", apply: () => { rescueOrphanedWorkingMemory(); } });
   } catch {
     // rescueOrphanedWorkingMemory never throws — guard kept so a future
     // change to that contract can never break session_start.
@@ -780,7 +784,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // the guard mirrors the rescue call's.
   let unclaimedCount = 0;
   try {
-    archiveExpiredUnclaimed(); // both modes: the TTL sweep is maintenance, not payload
+    void bookkeep({ key: "unclaimed-ttl", apply: () => { archiveExpiredUnclaimed(); } }); // both modes: the TTL sweep is maintenance, not payload
     unclaimedCount = full ? countUnclaimedSessions() : 0;
   } catch {
     unclaimedCount = 0;
@@ -1074,14 +1078,15 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     for (const c of rawCorrections) {
       if (c.last_retrieved && new Date(c.last_retrieved).toLocaleDateString("sv") === todayStr) continue; // already counted today
       try {
-        await recordOutcome({
+        // Ranking input (retrieved_count, last_retrieved, the alignment KPI): queued inside a read.
+        await bookkeep({ key: `retrieved:${slug}:${c.id}`, apply: () => recordOutcome({
           correction_id: c.id,
           project: slug,
           kind: "retrieved",
           at: nowISO,
           evidence: "surfaced at session_start",
           session_id: sessionId,
-        });
+        }) });
       } catch {
         // Outcome tracking must NEVER break orientation — swallow all errors
       }
@@ -1205,9 +1210,8 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // Trigger backfill if Supabase is configured (non-blocking)
   const sbConfig = readSupabaseConfig();
   if (sbConfig) {
-    setImmediate(() => {
-      void autoBackfill(slug);
-    });
+    // Owner opt-in sync to the owner's own Supabase; never on the hosted server. Queued so a read pushes nothing.
+    void bookkeep({ key: `backfill:${slug}`, apply: () => { setImmediate(() => { void autoBackfill(slug); }); } });
   }
 
   // Behavior policies — always-loaded high-salience rules. Bump hit counter
@@ -1218,7 +1222,7 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // same session would double (or triple, ...) count every rule's hits.
   // Cards v2: behaviour policies are always-follow rules the owner registered, so they render in BOTH modes (right
   // before the HARD RULES, as before) and the load is counted in both — nothing registered as a rule goes silent by default.
-  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) recordPolicyLoad(slug);
+  if (isFirstCallThisSession && readBehaviorPolicies(slug).rules.length > 0) void bookkeep({ key: `policy-load:${slug}`, apply: () => recordPolicyLoad(slug) });
   const behaviorRules = readBehaviorPolicies(slug).rules;
 
   // North-star alignment metric — correction precision (heeded/retrieved).
@@ -1503,9 +1507,12 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
     mirror_available: mirrorAvailable,
     // fix5: absent-when-zero — see the field's doc comment above.
     unclaimed_cards: unclaimedCount > 0 ? unclaimedCount : undefined,
-    empty_state: !isEmpty ? undefined : full
-      ? "No memory found for this project. Try: bootstrap_scan() to import existing projects, or start working and use remember() to save decisions."
-      : `No cards yet for ${slug} — session_end writes the state card; ar identity init creates the owner card.`,
+    // Hosted: a new user has no CLI, so the text names only tools the agent can call here.
+    empty_state: !isEmpty ? undefined : isTenantScoped()
+      ? `No memory yet for ${slug}: this is a new AgentRecall memory. Ask the user which rules every agent should follow and save each with remember; session_end before you stop writes the first state card.`
+      : full
+        ? "No memory found for this project. Try `ar bootstrap` in a terminal to import existing projects, or start working and use remember() to save decisions."
+        : `No cards yet for ${slug} — session_end writes the state card; ar identity init creates the owner card.`,
     // C4: ab_arm is included only when the experiment is running (saves bytes otherwise).
     ab_arm: abArm ?? undefined,
   };
@@ -1521,7 +1528,10 @@ export async function sessionStart(input: SessionStartInput): Promise<SessionSta
   // C2 — lifecycle telemetry: counters only, never transcript content.
   // dup=true means this call's write-phase was idempotent-suppressed (a
   // repeat session_start for this process's session + project).
-  recordLifecycleEvent("session_start", sessionId, slug, !isFirstCallThisSession);
+  // Pure telemetry, never read back by behaviour; queued so the call itself writes nothing (stamped now, not at flush).
+  const calledAt = new Date().toISOString();
+  const wasDup = !isFirstCallThisSession;
+  void bookkeep({ apply: () => recordLifecycleEvent("session_start", sessionId, slug, wasDup, calledAt) });
 
   return result;
 }

@@ -45,6 +45,32 @@ export function isLegacyJsonArrayFile(p: string): boolean {
   }
 }
 
+/**
+ * Decode a text file the way Windows tools save it. Stock Windows PowerShell 5.1
+ * writes UTF-8 WITH a BOM (`Set-Content -Encoding UTF8`) or UTF-16 LE with a BOM
+ * (`Out-File`, `>`); Node's utf-8 decode keeps a BOM as U+FEFF, so JSON.parse
+ * fails and the file was skipped as if it did not exist.
+ *   EF BB BF -> UTF-8 without the BOM;  FF FE -> UTF-16 LE;  FE FF -> UTF-16 BE;
+ *   anything else -> UTF-8, minus a leading U+FEFF.
+ * UTF-16 WITHOUT a BOM is not detected (PowerShell always writes one). Never
+ * throws: an odd trailing byte is dropped by the UTF-16 decode.
+ */
+export function decodeTextFile(buf: Buffer): string {
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf.subarray(3).toString("utf-8");
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString("utf16le");
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    const body = Buffer.from(buf.subarray(2, 2 + ((buf.length - 2) & ~1)));
+    return body.swap16().toString("utf16le");
+  }
+  const text = buf.toString("utf-8");
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/** readFileSync + decodeTextFile: a text file in UTF-8 (with or without a BOM) or UTF-16 with a BOM. */
+export function readTextFileTolerant(filePath: string): string {
+  return decodeTextFile(fs.readFileSync(filePath));
+}
+
 export function readJsonSafe<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) return null;
   try {

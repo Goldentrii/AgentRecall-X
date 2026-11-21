@@ -1,12 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { checkAction, fenceMemory } from "agent-recall-core";
+import { ADD } from "./annotations.js";
 
 export function register(server: McpServer): void {
   server.registerTool(
     "check_action",
     {
       title: "Pre-action Proactive Matcher",
+      annotations: ADD,
       description:
         "Call BEFORE any non-trivial action (publish, push, deploy, schema change, file delete, " +
         "send message, modify config). Pass a one-sentence description of what you're about to do. " +
